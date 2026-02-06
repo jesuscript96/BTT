@@ -173,8 +173,8 @@ def run_backtest(request: BacktestRequest):
                 FROM historical_data h
                 INNER JOIN ({sub_query}) d 
                 ON h.ticker = d.ticker 
-                AND h.timestamp >= d.date 
-                AND h.timestamp < d.date + INTERVAL 1 DAY
+                AND h.timestamp >= CAST(d.date AS TIMESTAMP)
+                AND h.timestamp < CAST(d.date AS TIMESTAMP) + INTERVAL 1 DAY
                 WHERE 1=1
             """
             params = sub_params
@@ -183,11 +183,11 @@ def run_backtest(request: BacktestRequest):
             params = []
         
         if request.dataset_filters.date_from:
-            query += " AND h.timestamp >= ?"
+            query += " AND h.timestamp >= CAST(? AS TIMESTAMP)"
             params.append(request.dataset_filters.date_from)
         
         if request.dataset_filters.date_to:
-            query += " AND h.timestamp <= ?"
+            query += " AND h.timestamp <= CAST(? AS TIMESTAMP)"
             params.append(request.dataset_filters.date_to)
         
         if request.dataset_filters.ticker:
