@@ -43,47 +43,98 @@ class MassiveClient:
 
 def pulse_ingest_cycle():
     """
-    Core MVP Logic: Failsafe, rate-limited pulse.
-    Fetches the 5 oldest updated tickers and pulls their history.
+    Lightweight incremental update cycle.
+    Fetches the 3 oldest updated tickers and pulls only recent history (last 7 days).
+    Designed to run every ~60s without overlapping.
     """
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Pulse started...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 📊 Pulse started...")
     con = get_db_connection()
     
-    # Identify 5 tickers to update
     try:
+        # Get 3 tickers (reduced from 5 for faster execution)
         tickers = con.execute("""
             SELECT ticker FROM tickers 
             WHERE active = true 
             ORDER BY last_updated ASC 
-            LIMIT 5
+            LIMIT 3
         """).fetch_df()['ticker'].tolist()
         
         if not tickers:
-            print("No tickers found to ingest.")
+            print("⚠️  No tickers found to ingest.")
             return
 
         client = MassiveClient()
         
         for ticker in tickers:
-            days_to_pull = 730 # 2 years for deep history
+            # Only pull last 7 days for incremental updates
+            days_to_pull = 7
             to_date = datetime.now().strftime("%Y-%m-%d")
             from_date = (datetime.now() - timedelta(days=days_to_pull)).strftime("%Y-%m-%d")
             
-            print(f"  -> Pulling {ticker} deep history ({from_date} to {to_date})...")
-            ingest_ticker_history_range(client, ticker, from_date, to_date, con=con)
+            print(f"  ✓ Updating {ticker} (last {days_to_pull} days)...")
+            ingest_ticker_history_range(client, ticker, from_date, to_date, con=con, skip_sleep=True)
             
             # Mark as updated
             con.execute("UPDATE tickers SET last_updated = ? WHERE ticker = ?", [datetime.now(), ticker])
             
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Pulse complete (5 tickers processed).")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Pulse complete ({len(tickers)} tickers updated).")
     except Exception as e:
-        print(f"Pulse error: {e}")
+        print(f"❌ Pulse error: {e}")
     finally:
         con.close()
 
-def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None):
+
+def ingest_deep_history(ticker_list=None, days=730):
+    """
+    Deep history ingestion for initial data load.
+    Use this for first-time setup or backfilling historical data.
+    
+    Args:
+        ticker_list: List of tickers to ingest. If None, uses all active tickers.
+        days: Number of days to pull (default: 730 = 2 years)
+    """
+    print(f"\n🚀 Starting DEEP HISTORY ingestion ({days} days)...")
+    con = get_db_connection()
+    
+    try:
+        if ticker_list is None:
+            tickers = con.execute("""
+                SELECT ticker FROM tickers 
+                WHERE active = true
+            """).fetch_df()['ticker'].tolist()
+        else:
+            tickers = ticker_list
+        
+        if not tickers:
+            print("⚠️  No tickers found.")
+            return
+        
+        print(f"📋 Processing {len(tickers)} tickers...\n")
+        client = MassiveClient()
+        
+        for i, ticker in enumerate(tickers, 1):
+            to_date = datetime.now().strftime("%Y-%m-%d")
+            from_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+            
+            print(f"[{i}/{len(tickers)}] 📥 Pulling {ticker} deep history ({from_date} to {to_date})...")
+            ingest_ticker_history_range(client, ticker, from_date, to_date, con=con, skip_sleep=False)
+            
+            # Mark as updated
+            con.execute("UPDATE tickers SET last_updated = ? WHERE ticker = ?", [datetime.now(), ticker])
+            print(f"  ✅ {ticker} complete\n")
+            
+        print(f"\n🎉 Deep history ingestion complete! ({len(tickers)} tickers processed)")
+    except Exception as e:
+        print(f"❌ Deep history error: {e}")
+    finally:
+        con.close()
+
+def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None, skip_sleep=False):
     """
     Downloads and saves history for a ticker in manageable chunks.
+    
+    Args:
+        skip_sleep: If True, skips the rate limit sleep (use for small date ranges)
     """
     start_dt = datetime.strptime(from_date, "%Y-%m-%d")
     end_dt = datetime.strptime(to_date, "%Y-%m-%d")
@@ -91,6 +142,7 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None):
     # 45-day chunks to stay safely under Massive 50k result limit (1m bars)
     chunk_size = 45
     current_start = start_dt
+    chunk_count = 0
     
     while current_start < end_dt:
         current_end = min(current_start + timedelta(days=chunk_size), end_dt)
@@ -145,17 +197,21 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None):
                     
                     local_con.register('daily_chunk', daily_metrics_df)
                     local_con.execute("INSERT OR REPLACE INTO daily_metrics SELECT * FROM daily_chunk")
+                    
+                print(f"      ✓ Saved {len(final_df)} bars")
             except Exception as e:
-                print(f"Chunk DB error for {ticker}: {e}")
+                print(f"      ❌ Chunk DB error for {ticker}: {e}")
             finally:
                 if not con:
                     local_con.close()
         
-        if current_end < end_dt:
+        chunk_count += 1
+        current_start = current_end + timedelta(days=1)
+        
+        # Only sleep if there are more chunks AND we're not skipping sleep
+        if current_start < end_dt and not skip_sleep:
             print("    - Sleeping 12s to respect Massive API rate limit...")
             time.sleep(12)
-
-        current_start = current_end + timedelta(days=1)
 
 FALLBACK_TICKERS = [
     "AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "NFLX", "COIN",
