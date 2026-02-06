@@ -41,6 +41,72 @@ class MassiveClient:
             print(f"Error fetching aggregates for {ticker}: {e}")
             return []
 
+def night_pulse_cycle():
+    """
+    Aggressive night-time data ingestion cycle.
+    Runs ONLY during off-peak hours (12am-8am Mexico time).
+    
+    Configuration:
+    - 5 tickers per cycle (more aggressive than daytime)
+    - Last 30 days (expands historical coverage)
+    - Memory optimized: Processes one ticker at a time
+    
+    This allows the backend to stay idle during the day for backtests.
+    """
+    from datetime import datetime
+    
+    current_hour = datetime.now().hour
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🌙 Night Pulse started (Hour: {current_hour})...")
+    
+    # Safety check: Only run during night hours (12am-8am)
+    if current_hour >= 8 and current_hour < 24:
+        print("⏸️  Daytime detected. Pulse skipped to preserve memory for backtests.")
+        return
+    
+    try:
+        # Get 5 oldest updated tickers
+        con = get_db_connection()
+        tickers = con.execute("""
+            SELECT ticker FROM tickers 
+            WHERE active = true 
+            ORDER BY last_updated ASC 
+            LIMIT 5
+        """).fetch_df()['ticker'].tolist()
+        con.close()
+        
+        if not tickers:
+            print("⚠️  No tickers found to ingest.")
+            return
+
+        client = MassiveClient()
+        
+        # Process each ticker independently to minimize memory usage
+        for ticker in tickers:
+            try:
+                # Pull last 30 days to expand historical coverage
+                days_to_pull = 30
+                to_date = datetime.now().strftime("%Y-%m-%d")
+                from_date = (datetime.now() - timedelta(days=days_to_pull)).strftime("%Y-%m-%d")
+                
+                print(f"  🌙 Updating {ticker} (last {days_to_pull} days)...")
+                
+                # Use fresh connection for each ticker
+                ticker_con = get_db_connection()
+                ingest_ticker_history_range(client, ticker, from_date, to_date, con=ticker_con, skip_sleep=True)
+                
+                # Mark as updated
+                ticker_con.execute("UPDATE tickers SET last_updated = ? WHERE ticker = ?", [datetime.now(), ticker])
+                ticker_con.close()
+                
+            except Exception as ticker_error:
+                print(f"  ❌ Error updating {ticker}: {ticker_error}")
+                continue
+            
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Night Pulse complete ({len(tickers)} tickers, 30 days each).")
+    except Exception as e:
+        print(f"❌ Night Pulse error: {e}")
+
+
 def pulse_ingest_cycle():
     """
     Lightweight incremental update cycle.
@@ -48,6 +114,9 @@ def pulse_ingest_cycle():
     Designed to run every ~60s without overlapping.
     
     Memory optimized: Processes one ticker at a time and closes connection after each.
+    
+    NOTE: This function is now DEPRECATED in favor of night_pulse_cycle.
+    Kept for backward compatibility.
     """
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 📊 Pulse started...")
     
