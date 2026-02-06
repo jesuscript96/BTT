@@ -1,0 +1,434 @@
+"""
+Backtest API Endpoints
+"""
+from fastapi import APIRouter, HTTPException
+from typing import List, Dict, Optional
+from pydantic import BaseModel
+from uuid import uuid4
+from datetime import datetime
+import json
+
+from app.database import get_db_connection
+from app.schemas.strategy import Strategy
+from app.routers.data import FilterRequest
+from app.backtester.engine import BacktestEngine
+from app.backtester.portfolio import (
+    monte_carlo_simulation,
+    calculate_correlation_matrix,
+    calculate_drawdown_series,
+    calculate_strategy_equity_curves
+)
+
+router = APIRouter()
+
+
+class BacktestRequest(BaseModel):
+    """Request to run a backtest"""
+    strategy_ids: List[str]
+    weights: Dict[str, float]  # strategy_id -> weight % (0-100)
+    dataset_filters: FilterRequest  # Reuse from Market Analysis
+    query_id: Optional[str] = None  # Dynamic dataset ID
+    commission_per_trade: float = 1.0
+    initial_capital: float = 100000
+    max_holding_minutes: int = 390  # Full RTH session
+
+
+class BacktestResponse(BaseModel):
+    """Backtest execution response"""
+    run_id: str
+    status: str
+    message: str
+
+
+class BacktestResultResponse(BaseModel):
+    """Full backtest results"""
+    run_id: str
+    strategy_ids: List[str]
+    strategy_names: List[str]
+    weights: Dict[str, float]
+    initial_capital: float
+    final_balance: float
+    total_return_pct: float
+    total_return_r: float
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    avg_r_multiple: float
+    max_drawdown_pct: float
+    max_drawdown_value: float
+    sharpe_ratio: float
+    equity_curve: List[Dict]
+    drawdown_series: List[Dict]
+    trades: List[Dict]
+    r_distribution: Dict[str, int]
+    ev_by_time: Dict[str, float]
+    ev_by_day: Dict[str, float]
+    monthly_returns: Dict[str, float]
+    correlation_matrix: Optional[Dict[str, Dict[str, float]]]
+    monte_carlo: Optional[Dict]
+    executed_at: str
+
+
+@router.post("/run", response_model=BacktestResponse)
+def run_backtest(request: BacktestRequest):
+    """
+    Execute a backtest with given strategies and dataset
+    """
+    print("\n" + "="*50)
+    print("BACKTEST EXECUTION STARTED")
+    print("="*50)
+    print(f"Strategy IDs: {request.strategy_ids}")
+    print(f"Weights: {request.weights}")
+    print(f"Dataset filters: {request.dataset_filters}")
+    print(f"Initial capital: ${request.initial_capital}")
+    
+    try:
+        con = get_db_connection()
+        print("✓ Database connection established")
+        
+        # 1. Fetch strategies from database
+        print("\n[1/5] Fetching strategies...")
+        strategies = []
+        strategy_names = {}
+        
+        for strategy_id in request.strategy_ids:
+            print(f"  - Looking up strategy: {strategy_id}")
+            row = con.execute(
+                "SELECT definition FROM strategies WHERE id = ?",
+                (strategy_id,)
+            ).fetchone()
+            
+            if not row:
+                print(f"  ✗ Strategy {strategy_id} not found!")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Strategy {strategy_id} not found"
+                )
+            
+            strategy_dict = json.loads(row[0])
+            strategy = Strategy(**strategy_dict)
+            strategies.append(strategy)
+            strategy_names[strategy_id] = strategy.name
+            print(f"  ✓ Loaded: {strategy.name}")
+        
+        # 2. Fetch market data based on filters
+        print("\n[2/5] Fetching market data...")
+        
+        # Base query depends on whether we have a saved dataset (query_id)
+        if request.query_id:
+            print(f"  - Using Saved Dataset: {request.query_id}")
+            # Fetch the saved query
+            sq_row = con.execute("SELECT filters FROM saved_queries WHERE id = ?", (request.query_id,)).fetchone()
+            if not sq_row:
+                raise HTTPException(status_code=404, detail=f"Saved dataset {request.query_id} not found")
+            
+            saved_filters_dict = json.loads(sq_row[0])
+            # We need to build the subquery for daily_metrics
+            from app.routers.data import METRIC_MAP
+            
+            sub_query = "SELECT ticker, date FROM daily_metrics WHERE 1=1"
+            sub_params = []
+            
+            # Map saved filters to subquery
+            # For simplicity, we assume saved_filters_dict follows FilterRequest structure
+            f = saved_filters_dict
+            
+            # Static filters from saved query
+            if f.get('min_gap_pct') is not None:
+                sub_query += " AND gap_at_open_pct >= ?"
+                sub_params.append(f['min_gap_pct'])
+            if f.get('max_gap_pct') is not None:
+                sub_query += " AND gap_at_open_pct <= ?"
+                sub_params.append(f['max_gap_pct'])
+            if f.get('min_rth_volume') is not None:
+                sub_query += " AND rth_volume >= ?"
+                sub_params.append(f['min_rth_volume'])
+            
+            # Rules from saved query
+            rules = f.get('rules', [])
+            for rule_dict in rules:
+                col = METRIC_MAP.get(rule_dict.get('metric'))
+                op = rule_dict.get('operator')
+                val = rule_dict.get('value')
+                v_type = rule_dict.get('valueType')
+                
+                if col and op in ["=", "!=", ">", ">=", "<", "<="] and val:
+                    if v_type == "static":
+                        try:
+                            # Try to convert to float for numeric comparison
+                            val_float = float(val)
+                            sub_query += f" AND {col} {op} ?"
+                            sub_params.append(val_float)
+                        except ValueError:
+                            # Fallback to string (e.g. for time or custom strings)
+                            sub_query += f" AND {col} {op} ?"
+                            sub_params.append(val)
+                    elif v_type == "variable":
+                        target_col = METRIC_MAP.get(val)
+                        if target_col:
+                            sub_query += f" AND {col} {op} {target_col}"
+
+            # Main query with JOIN
+            query = f"""
+                SELECT h.* 
+                FROM historical_data h
+                INNER JOIN ({sub_query}) d 
+                ON h.ticker = d.ticker 
+                AND h.timestamp >= d.date 
+                AND h.timestamp < d.date + INTERVAL 1 DAY
+                WHERE 1=1
+            """
+            params = sub_params
+        else:
+            # Legacy/Manual only
+            query = "SELECT * FROM historical_data h WHERE 1=1"
+            params = []
+        
+        # Apply manual backtest filters (dates, ticker) on top
+        # Use 'h.' alias to be explicit and avoid ambiguity with the JOIN
+        if request.dataset_filters.date_from:
+            query += " AND h.timestamp >= ?"
+            params.append(request.dataset_filters.date_from)
+            print(f"  - Date from: {request.dataset_filters.date_from}")
+        
+        if request.dataset_filters.date_to:
+            query += " AND h.timestamp <= ?"
+            params.append(request.dataset_filters.date_to)
+            print(f"  - Date to: {request.dataset_filters.date_to}")
+        
+        if request.dataset_filters.ticker:
+            query += " AND h.ticker = ?"
+            params.append(request.dataset_filters.ticker.upper())
+            print(f"  - Ticker: {request.dataset_filters.ticker}")
+        
+        query += " ORDER BY h.timestamp ASC"
+        print(f"  - Executing integrated query...")
+        
+        market_data = con.execute(query, params).fetch_df()
+        print(f"  ✓ Loaded {len(market_data)} rows")
+        
+        if market_data.empty:
+            print("  ✗ No market data found!")
+            raise HTTPException(
+                status_code=400,
+                detail="No market data found for given filters"
+            )
+        
+        # 3. Run backtest
+        print("\n[3/5] Running backtest engine...")
+        engine = BacktestEngine(
+            strategies=strategies,
+            weights=request.weights,
+            market_data=market_data,
+            commission_per_trade=request.commission_per_trade,
+            initial_capital=request.initial_capital,
+            max_holding_minutes=request.max_holding_minutes
+        )
+        print("  - Engine initialized")
+        
+        result = engine.run()
+        print(f"  ✓ Backtest complete: {result.total_trades} trades")
+        
+        # 4. Calculate additional metrics
+        # Monte Carlo simulation
+        monte_carlo_result = monte_carlo_simulation(
+            trades=result.trades,
+            initial_capital=request.initial_capital,
+            num_simulations=1000
+        )
+        
+        # Correlation matrix (if multiple strategies)
+        correlation_matrix = None
+        if len(strategies) > 1:
+            strategy_curves = calculate_strategy_equity_curves(
+                result.trades,
+                request.initial_capital
+            )
+            # Convert to balance lists for correlation
+            balance_curves = {
+                sid: [point['balance'] for point in curve]
+                for sid, curve in strategy_curves.items()
+            }
+            correlation_matrix = calculate_correlation_matrix(balance_curves)
+        
+        # Drawdown series
+        drawdown_series = calculate_drawdown_series(result.equity_curve)
+        
+        # 5. Store results in database
+        run_id = str(uuid4())
+        now = datetime.now()
+        
+        total_return_pct = ((result.final_balance - request.initial_capital) / request.initial_capital * 100)
+        total_return_r = sum(t.get('r_multiple', 0) for t in result.trades if t.get('r_multiple') is not None)
+        
+        results_json = {
+            "run_id": run_id,
+            "strategy_ids": request.strategy_ids,
+            "strategy_names": list(strategy_names.values()),
+            "weights": request.weights,
+            "initial_capital": request.initial_capital,
+            "final_balance": result.final_balance,
+            "total_return_pct": total_return_pct,
+            "total_return_r": total_return_r,
+            "total_trades": result.total_trades,
+            "winning_trades": result.winning_trades,
+            "losing_trades": result.losing_trades,
+            "win_rate": result.win_rate,
+            "avg_r_multiple": result.avg_r_multiple,
+            "max_drawdown_pct": result.max_drawdown_pct,
+            "max_drawdown_value": result.max_drawdown_value,
+            "sharpe_ratio": result.sharpe_ratio,
+            "equity_curve": result.equity_curve,
+            "drawdown_series": drawdown_series,
+            "trades": result.trades,
+            "r_distribution": result.r_distribution,
+            "ev_by_time": result.ev_by_time,
+            "ev_by_day": result.ev_by_day,
+            "monthly_returns": result.monthly_returns,
+            "correlation_matrix": correlation_matrix,
+            "monte_carlo": {
+                "worst_drawdown_pct": monte_carlo_result.worst_drawdown_pct,
+                "best_final_balance": monte_carlo_result.best_final_balance,
+                "worst_final_balance": monte_carlo_result.worst_final_balance,
+                "median_final_balance": monte_carlo_result.median_final_balance,
+                "percentile_5": monte_carlo_result.percentile_5,
+                "percentile_25": monte_carlo_result.percentile_25,
+                "percentile_75": monte_carlo_result.percentile_75,
+                "percentile_95": monte_carlo_result.percentile_95,
+                "probability_of_ruin": monte_carlo_result.probability_of_ruin
+            },
+            "executed_at": now.isoformat()
+        }
+        
+        con.execute(
+            """
+            INSERT INTO backtest_results (
+                id, strategy_ids, weights, dataset_summary,
+                commission_per_trade, initial_capital, final_balance,
+                total_trades, win_rate, avg_r_multiple,
+                max_drawdown_pct, sharpe_ratio,
+                results_json, executed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                json.dumps(request.strategy_ids),
+                json.dumps(request.weights),
+                f"{len(market_data)} bars, {market_data['ticker'].nunique()} tickers",
+                request.commission_per_trade,
+                request.initial_capital,
+                result.final_balance,
+                result.total_trades,
+                result.win_rate,
+                result.avg_r_multiple,
+                result.max_drawdown_pct,
+                result.sharpe_ratio,
+                json.dumps(results_json),
+                now
+            )
+        )
+        
+        return BacktestResponse(
+            run_id=run_id,
+            status="success",
+            message=f"Backtest completed: {result.total_trades} trades, {result.win_rate:.1f}% win rate"
+        )
+        
+    except Exception as e:
+        print(f"Backtest error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/results/{run_id}", response_model=BacktestResultResponse)
+def get_backtest_results(run_id: str):
+    """
+    Get full results for a backtest run
+    """
+    try:
+        con = get_db_connection(read_only=True)
+        
+        row = con.execute(
+            "SELECT results_json FROM backtest_results WHERE id = ?",
+            (run_id,)
+        ).fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Backtest run not found")
+        
+        results = json.loads(row[0])
+        
+        return BacktestResultResponse(**results)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching backtest results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/history")
+def get_backtest_history():
+    """
+    Get list of all backtest runs
+    """
+    try:
+        con = get_db_connection(read_only=True)
+        
+        rows = con.execute(
+            """
+            SELECT 
+                id, strategy_ids, dataset_summary,
+                total_trades, win_rate, final_balance,
+                max_drawdown_pct, executed_at
+            FROM backtest_results
+            ORDER BY executed_at DESC
+            LIMIT 50
+            """
+        ).fetchall()
+        
+        history = []
+        for row in rows:
+            history.append({
+                "run_id": row[0],
+                "strategy_ids": json.loads(row[1]),
+                "dataset_summary": row[2],
+                "total_trades": row[3],
+                "win_rate": row[4],
+                "final_balance": row[5],
+                "max_drawdown_pct": row[6],
+                "executed_at": row[7]
+            })
+        
+        return {"history": history}
+        
+    except Exception as e:
+        print(f"Error fetching backtest history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{run_id}")
+def delete_backtest(run_id: str):
+    """
+    Delete a backtest run
+    """
+    try:
+        con = get_db_connection()
+        
+        row = con.execute(
+            "SELECT id FROM backtest_results WHERE id = ?",
+            (run_id,)
+        ).fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Backtest run not found")
+        
+        con.execute("DELETE FROM backtest_results WHERE id = ?", (run_id,))
+        
+        return {"status": "success", "message": "Backtest deleted"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting backtest: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

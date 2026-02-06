@@ -2,40 +2,40 @@ import duckdb
 import os
 from threading import Lock
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'backtester.duckdb')
-
 # Global connection and lock for thread safety
 _con = None
 _lock = Lock()
 
 def _establish_connection():
-    """Helper to create a connection with correct MotherDuck settings."""
+    """Establish connection to MotherDuck cloud database."""
     token = os.getenv("MOTHERDUCK_TOKEN")
-    if token:
-        # Step 1: Ensure btt database exists
-        print("Ensuring MotherDuck 'btt' database exists...")
-        temp_con = duckdb.connect(f"md:?motherduck_token={token}")
-        temp_con.execute("CREATE DATABASE IF NOT EXISTS btt")
-        temp_con.close()
-        
-        # Step 2: Connect directly to btt
-        print("Connecting to MotherDuck catalog: btt")
-        con = duckdb.connect(f"md:btt?motherduck_token={token}")
-        con.execute("SET search_path = 'main'")
-        
-        # Diagnostic: List tables
-        tables = con.execute("SHOW TABLES").fetchall()
-        print(f"Tables found in btt.main: {tables}")
-        
-        return con
-    else:
-        print(f"Connecting to local DuckDB at {DB_PATH}...")
-        return duckdb.connect(DB_PATH, read_only=False)
+    
+    if not token:
+        raise RuntimeError(
+            "MOTHERDUCK_TOKEN environment variable is required. "
+            "Please set it in your .env file."
+        )
+    
+    # Step 1: Ensure btt database exists
+    print("Connecting to MotherDuck...")
+    temp_con = duckdb.connect(f"md:?motherduck_token={token}")
+    temp_con.execute("CREATE DATABASE IF NOT EXISTS btt")
+    temp_con.close()
+    
+    # Step 2: Connect directly to btt database
+    print("Connected to MotherDuck catalog: btt")
+    con = duckdb.connect(f"md:btt?motherduck_token={token}")
+    con.execute("SET search_path = 'main'")
+    
+    # Diagnostic: List tables
+    tables = con.execute("SHOW TABLES").fetchall()
+    print(f"Tables in btt.main: {[t[0] for t in tables]}")
+    
+    return con
 
 def get_db_connection(read_only=False):
     """
-    Returns a DuckDB connection or cursor.
-    Supports local DuckDB or MotherDuck (Cloud) if MOTHERDUCK_TOKEN is set.
+    Returns a DuckDB connection cursor to MotherDuck cloud database.
     """
     global _con
     with _lock:
@@ -45,10 +45,9 @@ def get_db_connection(read_only=False):
 
 def init_db():
     """
-    Initialize the database with necessary tables.
+    Initialize the MotherDuck database with necessary tables.
     """
     print("Database Initialization Started")
-    # We use a separate connection for init to avoid interference with the global _con
     con = _establish_connection()
     
     # Tickers table
@@ -109,6 +108,49 @@ def init_db():
             lod_time VARCHAR,
             close_direction VARCHAR,
             PRIMARY KEY (ticker, date)
+        )
+    """)
+    
+    # Strategies Table (JSON Storage for logic)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS strategies (
+            id VARCHAR PRIMARY KEY,
+            name VARCHAR,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            definition JSON
+        )
+    """)
+
+    # Backtest Results Table
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS backtest_results (
+            id VARCHAR PRIMARY KEY,
+            strategy_ids JSON,
+            weights JSON,
+            dataset_summary VARCHAR,
+            commission_per_trade DOUBLE,
+            initial_capital DOUBLE,
+            final_balance DOUBLE,
+            total_trades INTEGER,
+            win_rate DOUBLE,
+            avg_r_multiple DOUBLE,
+            max_drawdown_pct DOUBLE,
+            sharpe_ratio DOUBLE,
+            results_json JSON,
+            executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Saved Queries (Datasets) Table
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS saved_queries (
+            id VARCHAR PRIMARY KEY,
+            name VARCHAR,
+            filters JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
     

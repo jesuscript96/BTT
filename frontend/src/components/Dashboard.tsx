@@ -45,7 +45,7 @@ interface DashboardProps {
     aggregateSeries?: TimeSeriesItem[];
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data }) => {
     if (!stats || !stats.averages) return (
         <div className="p-20 text-center text-zinc-500 bg-[#F9F9F8] min-h-screen">
             Apply filters to see performance analysis
@@ -117,67 +117,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries }) 
                     </div>
                 </div>
 
-                {/* Right Column: Main Area Chart */}
-                <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm space-y-6">
-                    <div className="flex items-center justify-between">
-                        <h3 className="text-[13px] font-black text-zinc-400 uppercase tracking-[0.15em]">Change vs. Open Price (210 Extensions Aggregate)</h3>
-                        <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-zinc-400">
-                            <div className="flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-blue-600" /> Average
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                                <span className="w-3 border-t border-dashed border-zinc-400" /> Median
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="h-[400px] relative">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart data={aggregateSeries && aggregateSeries.length > 0 ? aggregateSeries : placeholderSeries}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                                <XAxis
-                                    dataKey="time"
-                                    stroke="#94a3b8"
-                                    fontSize={10}
-                                    tickLine={false}
-                                    axisLine={false}
-                                    minTickGap={40}
-                                    padding={{ left: 10, right: 10 }}
-                                />
-                                <YAxis
-                                    stroke="#94a3b8"
-                                    fontSize={10}
-                                    tickLine={false}
-                                    axisLine={false}
-                                    tickFormatter={(v) => `${v.toFixed(2)}%`}
-                                    domain={['auto', 'auto']}
-                                />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '11px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
-                                    cursor={{ stroke: '#cbd5e1', strokeWidth: 1 }}
-                                />
-                                <ReferenceLine x="09:15" stroke="#e2e8f0" strokeDasharray="3 3" label={{ position: 'top', value: 'Pre-Market', fill: '#94a3b8', fontSize: 10 }} />
-                                <Area
-                                    type="monotone"
-                                    dataKey="value"
-                                    stroke="#2563eb"
-                                    strokeWidth={2}
-                                    fillOpacity={0.05}
-                                    fill="#2563eb"
-                                    dot={false}
-                                />
-                                <Line
-                                    type="monotone"
-                                    dataKey="median"
-                                    stroke="#94a3b8"
-                                    strokeWidth={1}
-                                    strokeDasharray="4 4"
-                                    dot={false}
-                                />
-                            </ComposedChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
+                {/* Right Column: Main Area Chart (Intraday for Top Ticker) */}
+                <IntradayDashboardChart data={data} />
             </div>
 
             {/* Bottom Row: Distribution Cards */}
@@ -217,25 +158,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries }) 
     );
 };
 
-const StatProgress = ({ label, value, color }: { label: string; value: number; color: string }) => (
-    <div className="space-y-1.5">
-        <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wide">
-            <span className="text-zinc-500">{label}</span>
-            <span style={{ color: value < 0 ? '#ef4444' : color }} className="font-black">
-                {value >= 0 ? `${value.toFixed(2)}%` : `${value.toFixed(2)}%`}
-            </span>
+const StatProgress = ({ label, value, color }: { label: string; value: number | undefined; color: string }) => {
+    const safeValue = value ?? 0;
+    return (
+        <div className="space-y-1.5">
+            <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wide">
+                <span className="text-zinc-500">{label}</span>
+                <span style={{ color: safeValue < 0 ? '#ef4444' : color }} className="font-black">
+                    {safeValue >= 0 ? `${safeValue.toFixed(2)}%` : `${safeValue.toFixed(2)}%`}
+                </span>
+            </div>
+            <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden border border-zinc-200/50">
+                <div
+                    className="h-full transition-all duration-700 ease-out"
+                    style={{
+                        width: `${Math.min(Math.max(Math.abs(safeValue), 5), 100)}%`,
+                        backgroundColor: safeValue < 0 ? '#ef4444' : color
+                    }}
+                />
+            </div>
         </div>
-        <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden border border-zinc-200/50">
-            <div
-                className="h-full transition-all duration-700 ease-out"
-                style={{
-                    width: `${Math.min(Math.max(Math.abs(value), 5), 100)}%`,
-                    backgroundColor: value < 0 ? '#ef4444' : color
-                }}
-            />
-        </div>
-    </div>
-);
+    );
+};
 
 const formatLargeNumber = (num: number) => {
     if (!num) return "0";
@@ -336,13 +280,103 @@ const returnDistribution = [
     { label: "-40 to -60%", value: 5 },
 ];
 
-const placeholderSeries = Array.from({ length: 60 }).map((_, i) => {
-    const hours = Math.floor(i / 6) + 9;
-    const mins = (i % 6) * 10;
-    const time = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-    return {
-        time,
-        value: Math.sin(i / 10) * 8 + (i / 4),
-        median: Math.sin(i / 12) * 4 + (i / 6)
-    };
-});
+const IntradayDashboardChart = ({ data }: { data: any[] }) => {
+    const [chartData, setChartData] = React.useState<any[]>([]);
+    const [loading, setLoading] = React.useState(false);
+    const [activeTicker, setActiveTicker] = React.useState<string>("");
+
+    // Effect to update ticker when data changes
+    React.useEffect(() => {
+        if (data && data.length > 0) {
+            setActiveTicker(data[0].ticker);
+        }
+    }, [data]);
+
+    React.useEffect(() => {
+        if (!activeTicker) return;
+        setLoading(true);
+        // Default to latest date logic handled by backend if trade_date not passed
+        // We could pass date from data[0].date if available
+        let url = `http://localhost:8000/api/market/ticker/${activeTicker}/intraday`;
+        if (data && data[0] && data[0].date) {
+            url += `?trade_date=${data[0].date}`;
+        }
+
+        fetch(url)
+            .then(res => res.json())
+            .then(resData => {
+                const parsed = resData.map((d: any) => ({
+                    ...d,
+                    timeShort: d.timestamp.split(' ')[1].substring(0, 5)
+                }));
+                setChartData(parsed);
+            })
+            .catch(e => console.error("Chart fetch error", e))
+            .finally(() => setLoading(false));
+    }, [activeTicker]);
+
+    if (!activeTicker) {
+        return (
+            <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm flex items-center justify-center text-zinc-400 text-sm">
+                No data selected for charting.
+            </div>
+        );
+    }
+
+    // Min/Max for domain
+    const prices = chartData.map(d => d.close);
+    const minPrice = prices.length ? Math.min(...prices) * 0.99 : 0;
+    const maxPrice = prices.length ? Math.max(...prices) * 1.01 : 0;
+    const pmHigh = chartData.length > 0 ? chartData[0].pm_high : 0;
+
+    return (
+        <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm space-y-6">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <h3 className="text-lg font-black text-zinc-900 tracking-tight">{activeTicker}</h3>
+                    <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">INTRADAY ACTION</span>
+                </div>
+                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-zinc-400">
+                    <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
+                    <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> VWAP</div>
+                    {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
+                </div>
+            </div>
+
+            <div className="h-[400px] relative">
+                {loading ? (
+                    <div className="flex h-full items-center justify-center text-zinc-400 text-xs uppercase font-bold tracking-widest animate-pulse">Loading Chart...</div>
+                ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                                dataKey="timeShort"
+                                stroke="#94a3b8"
+                                fontSize={10}
+                                tickLine={false}
+                                axisLine={false}
+                                minTickGap={40}
+                            />
+                            <YAxis
+                                stroke="#94a3b8"
+                                fontSize={10}
+                                tickLine={false}
+                                axisLine={false}
+                                domain={[minPrice, maxPrice]}
+                                tickFormatter={(v) => v.toFixed(2)}
+                                orientation="right"
+                            />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '11px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                            />
+                            {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
+                            <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} />
+                            <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} />
+                        </ComposedChart>
+                    </ResponsiveContainer>
+                )}
+            </div>
+        </div>
+    );
+};

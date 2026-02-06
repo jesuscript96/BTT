@@ -6,14 +6,24 @@ import { Search, Filter, RefreshCw, Download, ChevronDown, ChevronUp } from "luc
 interface AdvancedFilterPanelProps {
     onFilter: (filters: any) => void;
     onExport: () => void;
+    onSaveDataset: () => void;
+    onLoadDataset: () => void;
     isLoading: boolean;
 }
 
-export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({ onFilter, onExport, isLoading }) => {
+export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
+    onFilter,
+    onExport,
+    onSaveDataset,
+    onLoadDataset,
+    isLoading
+}) => {
     const [ticker, setTicker] = useState("");
     const [minGap, setMinGap] = useState("");
     const [maxGap, setMaxGap] = useState("");
     const [minVol, setMinVol] = useState("");
+    const [startDate, setStartDate] = useState("");
+    const [endDate, setEndDate] = useState("");
     const [m15Ret, setM15Ret] = useState("");
     const [dayRet, setDayRet] = useState("");
     const [highSpike, setHighSpike] = useState("");
@@ -36,6 +46,8 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({ onFilt
             hod_after: hodAfter || undefined,
             lod_before: lodBefore || undefined,
             open_lt_vwap: openLtVwap || undefined,
+            start_date: startDate || undefined,
+            end_date: endDate || undefined
         });
     };
 
@@ -51,6 +63,24 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({ onFilt
                             value={ticker}
                             onChange={(e) => setTicker(e.target.value)}
                             className="bg-white border border-zinc-200 text-zinc-900 pl-8 pr-3 py-2 rounded-lg text-sm w-32 focus:border-blue-500 outline-none shadow-sm transition-all"
+                        />
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                        <input
+                            type="date"
+                            value={startDate}
+                            onChange={(e) => setStartDate(e.target.value)}
+                            title="Start Date"
+                            className="bg-white border border-zinc-200 text-zinc-900 px-2 py-2 rounded-lg text-sm focus:border-blue-500 outline-none shadow-sm transition-all w-32"
+                        />
+                        <span className="text-zinc-400">-</span>
+                        <input
+                            type="date"
+                            value={endDate}
+                            onChange={(e) => setEndDate(e.target.value)}
+                            title="End Date"
+                            className="bg-white border border-zinc-200 text-zinc-900 px-2 py-2 rounded-lg text-sm focus:border-blue-500 outline-none shadow-sm transition-all w-32"
                         />
                     </div>
 
@@ -79,8 +109,23 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({ onFilt
                         Run Scan
                     </button>
                     <button
+                        onClick={onLoadDataset}
+                        className="bg-white hover:bg-zinc-50 text-zinc-600 px-4 py-2 rounded-lg text-sm font-bold border border-zinc-200 shadow-sm transition-all"
+                        title="Load dataset"
+                    >
+                        <RefreshCw className="h-4 w-4" />
+                    </button>
+                    <button
+                        onClick={onSaveDataset}
+                        className="bg-white hover:bg-zinc-50 text-zinc-600 px-4 py-2 rounded-lg text-sm font-bold border border-zinc-200 shadow-sm transition-all"
+                        title="Save dataset"
+                    >
+                        <Download className="h-4 w-4 rotate-180" />
+                    </button>
+                    <button
                         onClick={onExport}
                         className="bg-white hover:bg-zinc-50 text-zinc-600 px-4 py-2 rounded-lg text-sm font-bold border border-zinc-200 shadow-sm transition-all"
+                        title="Export CSV"
                     >
                         <Download className="h-4 w-4" />
                     </button>

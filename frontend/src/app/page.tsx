@@ -5,6 +5,7 @@ import { AdvancedFilterPanel } from "@/components/AdvancedFilterPanel";
 import { Dashboard } from "@/components/Dashboard";
 import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
+import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -16,21 +17,52 @@ export default function Home() {
   const [currentFilters, setCurrentFilters] = useState<any>({});
   const [isFilterBuilderOpen, setIsFilterBuilderOpen] = useState(false);
   const [activeRules, setActiveRules] = useState<any[]>([]);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+  const [filterPanelKey, setFilterPanelKey] = useState(0); // To force refresh panel UI
 
   const fetchData = async (filters: any = currentFilters, rules: any[] = activeRules) => {
     setIsLoading(true);
     setCurrentFilters(filters);
+
+    // Convert generic filters to Market Screener params
+    // AdvancedFilterPanel uses generic names, we map them here:
+    // This assumes the AdvancedFilterPanel is sending us "min_gap", "min_run", etc. 
+    // If not, we might need to adjust the Panel or mapping.
+    // For now, let's assume direct mapping or default values.
+
+    const queryParams = new URLSearchParams({
+      min_gap: filters.min_gap || "0",
+      min_run: filters.min_run || "0",
+      min_volume: filters.min_volume || "0",
+      limit: "100"
+    });
+
+    if (filters.start_date) {
+      queryParams.append("start_date", filters.start_date);
+    }
+    if (filters.end_date) {
+      queryParams.append("end_date", filters.end_date);
+    }
+
+    if (filters.ticker) {
+      queryParams.append("ticker", filters.ticker);
+    }
+
     try {
-      const res = await fetch(`${API_URL}/filter`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...filters, rules }),
-      });
+      const res = await fetch(`${API_URL}/market/screener?${queryParams.toString()}`);
       if (res.ok) {
         const result = await res.json();
-        setData(result.records || []);
-        setStats(result.stats || null);
-        setAggregateSeries(result.aggregate_series || []);
+        // Backend now returns { records, stats }
+        // If result is just a list (legacy/fallback), handle it.
+        if (Array.isArray(result)) {
+          setData(result);
+          // Fallback calc if backend didn't return stats (shouldn't happen with new code)
+          setStats(null);
+        } else {
+          setData(result.records || []);
+          setStats(result.stats || null);
+        }
       }
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -63,6 +95,13 @@ export default function Home() {
     }
   };
 
+  const handleLoadDataset = (filters: any) => {
+    const { rules, ...basicFilters } = filters;
+    setCurrentFilters(basicFilters);
+    setActiveRules(rules || []);
+    setFilterPanelKey(prev => prev + 1); // Reset panel with new values
+  };
+
   // Initial load
   useEffect(() => {
     fetchData();
@@ -71,8 +110,11 @@ export default function Home() {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <AdvancedFilterPanel
+        key={filterPanelKey}
         onFilter={(newFilters) => fetchData(newFilters, activeRules)}
         onExport={handleExport}
+        onSaveDataset={() => setIsSaveModalOpen(true)}
+        onLoadDataset={() => setIsLoadModalOpen(true)}
         isLoading={isLoading}
       />
 
@@ -111,6 +153,19 @@ export default function Home() {
             setActiveRules(prev => [...prev, ...newRules]);
             setIsFilterBuilderOpen(false);
           }}
+        />
+
+        <SaveDatasetModal
+          isOpen={isSaveModalOpen}
+          onClose={() => setIsSaveModalOpen(false)}
+          filters={currentFilters}
+          rules={activeRules}
+        />
+
+        <LoadDatasetModal
+          isOpen={isLoadModalOpen}
+          onClose={() => setIsLoadModalOpen(false)}
+          onLoad={handleLoadDataset}
         />
         <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
         <div className="px-6 pb-20">

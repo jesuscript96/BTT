@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
@@ -129,6 +130,19 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None):
                 from .processor import process_daily_metrics
                 daily_metrics_df = process_daily_metrics(final_df)
                 if not daily_metrics_df.empty:
+                    # Enforce strict column order matching database schema to prevent misalignment
+                    daily_metrics_columns = [
+                        'ticker', 'date', 'rth_open', 'rth_high', 'rth_low', 'rth_close', 'rth_volume', 
+                        'gap_at_open_pct', 'rth_run_pct', 'pm_high', 'pm_volume', 'high_spike_pct', 
+                        'low_spike_pct', 'pmh_fade_to_open_pct', 'rth_fade_to_close_pct', 'open_lt_vwap', 
+                        'pm_high_break', 'm15_return_pct', 'm30_return_pct', 'm60_return_pct', 
+                        'close_lt_m15', 'close_lt_m30', 'close_lt_m60', 'hod_time', 'lod_time', 'close_direction'
+                    ]
+                    
+                    # Reorder DataFrame to match table definition exactly
+                    # Any missing columns (shouldn't happen with correct processor) would raise KeyError, which is good for safety.
+                    daily_metrics_df = daily_metrics_df[daily_metrics_columns]
+                    
                     local_con.register('daily_chunk', daily_metrics_df)
                     local_con.execute("INSERT OR REPLACE INTO daily_metrics SELECT * FROM daily_chunk")
             except Exception as e:
@@ -137,6 +151,10 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None):
                 if not con:
                     local_con.close()
         
+        if current_end < end_dt:
+            print("    - Sleeping 12s to respect Massive API rate limit...")
+            time.sleep(12)
+
         current_start = current_end + timedelta(days=1)
 
 FALLBACK_TICKERS = [
