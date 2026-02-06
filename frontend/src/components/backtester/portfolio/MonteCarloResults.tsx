@@ -91,7 +91,7 @@ export function MonteCarloResults({ monteCarlo, initialCapital }: MonteCarloResu
                         <YAxis
                             stroke="#6b7280"
                             tick={{ fill: '#6b7280', fontSize: 12 }}
-                            tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                            tickFormatter={(value: number | undefined) => value !== undefined ? `$${(value / 1000).toFixed(0)}k` : '$0'}
                         />
                         <Tooltip
                             contentStyle={{
@@ -100,7 +100,10 @@ export function MonteCarloResults({ monteCarlo, initialCapital }: MonteCarloResu
                                 borderRadius: '8px',
                                 color: '#000'
                             }}
-                            formatter={(value: number) => [`$${value.toLocaleString()}`, 'Final Balance']}
+                            formatter={(value: number | undefined) => {
+                                if (value === undefined) return ['$0', 'Final Balance'];
+                                return [`$${value.toLocaleString()}`, 'Final Balance'];
+                            }}
                         />
                         <ReferenceLine
                             y={initialCapital}

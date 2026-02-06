@@ -63,7 +63,7 @@ export function EquityCurveChart({ result }: EquityCurveChartProps) {
                     <YAxis
                         stroke="#6b7280"
                         tick={{ fill: '#6b7280', fontSize: 12 }}
-                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        tickFormatter={(value: number | undefined) => value !== undefined ? `$${(value / 1000).toFixed(0)}k` : '$0'}
                     />
                     <Tooltip
                         contentStyle={{
@@ -72,7 +72,10 @@ export function EquityCurveChart({ result }: EquityCurveChartProps) {
                             borderRadius: '8px',
                             color: '#000'
                         }}
-                        formatter={(value: number | string) => [`$${Number(value).toLocaleString()}`, 'Balance']}
+                        formatter={(value: number | string | undefined) => {
+                            if (value === undefined) return ['$0', 'Balance'];
+                            return [`$${Number(value).toLocaleString()}`, 'Balance'];
+                        }}
                     />
                     <Legend
                         wrapperStyle={{ color: '#6b7280' }}

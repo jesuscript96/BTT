@@ -51,7 +51,7 @@ export function EVCharts({ evByTime, evByDay }: EVChartsProps) {
                         <YAxis
                             stroke="#6b7280"
                             tick={{ fill: '#6b7280', fontSize: 12 }}
-                            tickFormatter={(value) => `${value.toFixed(1)}R`}
+                            tickFormatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)}R` : '0R'}
                         />
                         <Tooltip
                             contentStyle={{
@@ -60,7 +60,10 @@ export function EVCharts({ evByTime, evByDay }: EVChartsProps) {
                                 borderRadius: '8px',
                                 color: '#000'
                             }}
-                            formatter={(value: number) => [`${value.toFixed(2)}R`, 'Avg R-Multiple']}
+                            formatter={(value: number | undefined) => {
+                                if (value === undefined) return ['0R', 'Avg R-Multiple'];
+                                return [`${value.toFixed(2)}R`, 'Avg R-Multiple'];
+                            }}
                         />
                         <Bar dataKey="ev" radius={[4, 4, 0, 0]}>
                             {timeData.map((entry, index) => (
@@ -95,7 +98,7 @@ export function EVCharts({ evByTime, evByDay }: EVChartsProps) {
                         <YAxis
                             stroke="#6b7280"
                             tick={{ fill: '#6b7280', fontSize: 12 }}
-                            tickFormatter={(value) => `${value.toFixed(1)}R`}
+                            tickFormatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)}R` : '0R'}
                         />
                         <Tooltip
                             contentStyle={{
@@ -104,7 +107,10 @@ export function EVCharts({ evByTime, evByDay }: EVChartsProps) {
                                 borderRadius: '8px',
                                 color: '#000'
                             }}
-                            formatter={(value: number) => [`${value.toFixed(2)}R`, 'Avg R-Multiple']}
+                            formatter={(value: number | undefined) => {
+                                if (value === undefined) return ['0R', 'Avg R-Multiple'];
+                                return [`${value.toFixed(2)}R`, 'Avg R-Multiple'];
+                            }}
                         />
                         <Bar dataKey="ev" radius={[4, 4, 0, 0]}>
                             {dayData.map((entry, index) => (

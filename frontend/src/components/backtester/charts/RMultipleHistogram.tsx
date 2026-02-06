@@ -59,7 +59,10 @@ export function RMultipleHistogram({ distribution }: RMultipleHistogramProps) {
                             borderRadius: '8px',
                             color: '#000'
                         }}
-                        formatter={(value: number) => [value, 'Trades']}
+                        formatter={(value: number | undefined) => {
+                            if (value === undefined) return [0, 'Trades'];
+                            return [value, 'Trades'];
+                        }}
                     />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                         {data.map((entry, index) => (

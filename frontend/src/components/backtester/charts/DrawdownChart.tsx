@@ -61,7 +61,7 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
                     <YAxis
                         stroke="#6b7280"
                         tick={{ fill: '#6b7280', fontSize: 12 }}
-                        tickFormatter={(value) => `${value.toFixed(0)}%`}
+                        tickFormatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(0)}%` : '0%'}
                     />
                     <Tooltip
                         contentStyle={{
@@ -70,7 +70,10 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
                             borderRadius: '8px',
                             color: '#000'
                         }}
-                        formatter={(value: number | string) => [`${Math.abs(Number(value)).toFixed(2)}%`, 'Drawdown']}
+                        formatter={(value: number | string | undefined) => {
+                            if (value === undefined) return ['0%', 'Drawdown'];
+                            return [`${Math.abs(Number(value)).toFixed(2)}%`, 'Drawdown'];
+                        }}
                     />
                     <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="3 3" />
                     <Area
