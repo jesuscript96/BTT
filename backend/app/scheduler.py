@@ -3,6 +3,8 @@ from app.ingestion import ingest_ticker_snapshot
 import atexit
 import os
 
+# v2.0 - Night-time pulse with timezone support
+
 def start_scheduler():
     """
     Start the background scheduler for data ingestion.
