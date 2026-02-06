@@ -50,20 +50,20 @@ export default function Home() {
     }
 
     try {
-      const res = await fetch(`${API_URL}/market/screener?${queryParams.toString()}`);
-      if (res.ok) {
-        const result = await res.json();
-        // Backend now returns { records, stats }
-        // If result is just a list (legacy/fallback), handle it.
-        if (Array.isArray(result)) {
-          setData(result);
-          // Fallback calc if backend didn't return stats (shouldn't happen with new code)
-          setStats(null);
-        } else {
-          setData(result.records || []);
-          setStats(result.stats || null);
-        }
+      const [result, aggregateResult] = await Promise.all([
+        fetch(`${API_URL}/market/screener?${queryParams.toString()}`).then(r => r.json()),
+        fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`).then(r => r.json())
+      ]);
+
+      if (Array.isArray(result)) {
+        setData(result);
+        setStats(null);
+      } else {
+        setData(result.records || []);
+        setStats(result.stats || null);
       }
+
+      setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {

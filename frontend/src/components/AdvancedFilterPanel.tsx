@@ -117,10 +117,11 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                     </button>
                     <button
                         onClick={onSaveDataset}
-                        className="bg-white hover:bg-zinc-50 text-zinc-600 px-4 py-2 rounded-lg text-sm font-bold border border-zinc-200 shadow-sm transition-all"
+                        className="bg-white hover:bg-zinc-50 text-zinc-600 px-4 py-2 rounded-lg text-sm font-bold border border-zinc-200 shadow-sm transition-all flex items-center gap-2"
                         title="Save dataset"
                     >
                         <Download className="h-4 w-4 rotate-180" />
+                        Save Dataset
                     </button>
                     <button
                         onClick={onExport}

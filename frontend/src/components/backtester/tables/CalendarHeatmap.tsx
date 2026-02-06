@@ -24,8 +24,8 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
     const dates = Object.keys(tradesByDate).sort();
     if (dates.length === 0) {
         return (
-            <div className="bg-[#0f1419] rounded-lg border border-gray-800 p-6">
-                <p className="text-gray-400">No trade data available</p>
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <p className="text-gray-500">No trade data available</p>
             </div>
         );
     }
@@ -58,10 +58,10 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
     };
 
     return (
-        <div className="bg-[#0f1419] rounded-lg border border-gray-800 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-2">Calendar Heatmap</h2>
-                <p className="text-sm text-gray-400">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Calendar Heatmap</h2>
+                <p className="text-sm text-gray-500">
                     Daily P&L visualization
                 </p>
             </div>
@@ -98,10 +98,10 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
                                     >
                                         <div
                                             className={`w-9 h-9 m-0.5 rounded ${dayData
-                                                    ? getColorIntensity(dayData.totalR)
-                                                    : isInRange
-                                                        ? 'bg-gray-800'
-                                                        : 'bg-transparent'
+                                                ? getColorIntensity(dayData.totalR)
+                                                : isInRange
+                                                    ? 'bg-gray-100'
+                                                    : 'bg-transparent'
                                                 } ${dayData ? 'cursor-pointer' : ''}`}
                                             title={dayData ? `${dateStr}: ${dayData.trades} trades, ${dayData.totalR.toFixed(2)}R` : ''}
                                         />
@@ -109,10 +109,10 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
                                         {/* Tooltip */}
                                         {dayData && (
                                             <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-                                                <div className="bg-gray-900 text-white text-xs rounded py-2 px-3 whitespace-nowrap border border-gray-700">
+                                                <div className="bg-white text-gray-900 text-xs rounded py-2 px-3 whitespace-nowrap border border-gray-200 shadow-lg">
                                                     <div className="font-medium">{dateStr}</div>
-                                                    <div className="text-gray-400">{dayData.trades} trades</div>
-                                                    <div className={dayData.totalR > 0 ? 'text-green-400' : 'text-red-400'}>
+                                                    <div className="text-gray-500">{dayData.trades} trades</div>
+                                                    <div className={dayData.totalR > 0 ? 'text-green-600' : 'text-red-600'}>
                                                         {dayData.totalR > 0 ? '+' : ''}{dayData.totalR.toFixed(2)}R
                                                     </div>
                                                 </div>
@@ -127,9 +127,9 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
             </div>
 
             {/* Legend */}
-            <div className="flex items-center gap-2 mt-6 pt-6 border-t border-gray-800">
+            <div className="flex items-center gap-2 mt-6 pt-6 border-t border-gray-200">
                 <span className="text-xs text-gray-500">Less</span>
-                <div className="w-4 h-4 bg-gray-800 rounded"></div>
+                <div className="w-4 h-4 bg-gray-100 rounded"></div>
                 <div className="w-4 h-4 bg-red-600 rounded"></div>
                 <div className="w-4 h-4 bg-red-400 rounded"></div>
                 <div className="w-4 h-4 bg-green-400 rounded"></div>

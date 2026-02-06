@@ -31,46 +31,46 @@ export function PerformanceTable({ result }: PerformanceTableProps) {
 
     const getCellColor = (value: number | undefined) => {
         if (value === undefined) return 'text-gray-600';
-        if (value > 0) return 'text-green-400 bg-green-900/20';
-        if (value < 0) return 'text-red-400 bg-red-900/20';
+        if (value > 0) return 'text-green-600 bg-green-50';
+        if (value < 0) return 'text-red-600 bg-red-50';
         return 'text-gray-400';
     };
 
     return (
-        <div className="bg-[#0f1419] rounded-lg border border-gray-800 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-2">Monthly Performance</h2>
-                <p className="text-sm text-gray-400">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Monthly Performance</h2>
+                <p className="text-sm text-gray-500">
                     Returns in R-multiples by month and year
                 </p>
             </div>
 
             <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                    <thead className="bg-[#1a1f2e] border-b border-gray-800">
+                    <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                                 Year
                             </th>
                             {monthNames.map(month => (
-                                <th key={month} className="px-3 py-3 text-center text-xs font-medium text-gray-400 uppercase">
+                                <th key={month} className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                                     {month}
                                 </th>
                             ))}
-                            <th className="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase">
+                            <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                                 Total
                             </th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-800">
+                    <tbody className="divide-y divide-gray-200">
                         {years.map(year => {
                             const yearTotal = months.reduce((sum, month) => {
                                 return sum + (monthlyData[year][month] || 0);
                             }, 0);
 
                             return (
-                                <tr key={year} className="hover:bg-[#1a1f2e]/50">
-                                    <td className="px-4 py-3 font-medium text-white">
+                                <tr key={year} className="hover:bg-gray-50">
+                                    <td className="px-4 py-3 font-medium text-gray-900">
                                         {year}
                                     </td>
                                     {months.map(month => {
@@ -95,22 +95,22 @@ export function PerformanceTable({ result }: PerformanceTableProps) {
             </div>
 
             {/* Summary Stats */}
-            <div className="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-800">
+            <div className="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-200">
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Best Month</div>
-                    <div className="text-lg font-semibold text-green-400">
+                    <div className="text-lg font-semibold text-green-600">
                         {formatR(Math.max(...Object.values(result.monthly_returns)))}
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Worst Month</div>
-                    <div className="text-lg font-semibold text-red-400">
+                    <div className="text-lg font-semibold text-red-600">
                         {formatR(Math.min(...Object.values(result.monthly_returns)))}
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Avg Monthly Return</div>
-                    <div className="text-lg font-semibold text-white">
+                    <div className="text-lg font-semibold text-gray-900">
                         {formatR(
                             Object.values(result.monthly_returns).reduce((a, b) => a + b, 0) /
                             Object.values(result.monthly_returns).length

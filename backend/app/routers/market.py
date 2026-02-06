@@ -114,6 +114,10 @@ def screen_market(
         averages = {}
         count = 0
         if not df_stats.empty:
+            # Handle NaN values (which are not valid JSON)
+            # DuckDB returns NaN for AVG() on empty sets or filtered rows
+            df_stats = df_stats.where(pd.notnull(df_stats), None)
+            
             stats_dict = df_stats.iloc[0].to_dict()
             count = stats_dict.pop('count', 0)
             averages = stats_dict
@@ -157,6 +161,9 @@ def screen_market(
         }
 
     except Exception as e:
+        import traceback
+        with open("error.log", "w") as f:
+            f.write(traceback.format_exc())
         print(f"Screener Error details: {e}")
         raise HTTPException(status_code=500, detail=f"Screener Error: {str(e)}")
     finally:
@@ -212,5 +219,75 @@ def get_latest_market_date():
         if latest and latest[0]:
             return {"date": str(latest[0])}
         return {"date": None}
+    finally:
+        con.close()
+@router.get("/aggregate/intraday")
+def get_aggregate_intraday(
+    min_gap: float = 0.0,
+    min_run: float = 0.0,
+    min_volume: float = 0.0,
+    trade_date: Optional[date] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    ticker: Optional[str] = None
+):
+    """
+    Get Aggregate (Average & Median) Intraday % Change for the filtered dataset.
+    """
+    con = get_db_connection(read_only=True)
+    try:
+        # Reuse Filter Logic (DRY principle would suggest extracting this, but for now we copy)
+        where_clauses = [
+            "d.gap_at_open_pct >= ?",
+            "d.rth_run_pct >= ?",
+            "d.rth_volume >= ?"
+        ]
+        params = [min_gap, min_run, min_volume]
+        
+        if start_date and end_date:
+            where_clauses.append("d.date BETWEEN ? AND ?")
+            params.extend([start_date, end_date])
+        elif trade_date:
+            where_clauses.append("d.date = ?")
+            params.append(trade_date)
+            
+        if ticker:
+            where_clauses.append("d.ticker = ?")
+            params.append(ticker.upper())
+            
+        where_sql = " AND ".join(where_clauses)
+        
+        # Aggregate Query using DuckDB
+        # - Joins historical_data (h) with daily_metrics (d)
+        # - Calculates % change from rth_open for each minute
+        # - Aggregates by time bucket
+        query = f"""
+            WITH filtered_scope AS (
+                SELECT ticker, date, rth_open
+                FROM daily_metrics d
+                WHERE {where_sql}
+            )
+            SELECT 
+                CAST(h.timestamp AS TIME) as time_obj,
+                strftime(h.timestamp, '%H:%M') as time,
+                AVG( (h.close - f.rth_open) / f.rth_open * 100 ) as avg_change,
+                MEDIAN( (h.close - f.rth_open) / f.rth_open * 100 ) as median_change
+            FROM historical_data h
+            JOIN filtered_scope f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
+            WHERE h.timestamp IS NOT NULL
+            GROUP BY 1, 2
+            ORDER BY 1 ASC
+        """
+        
+        df = con.execute(query, params).fetch_df()
+        
+        if df.empty:
+            return []
+            
+        return df[['time', 'avg_change', 'median_change']].to_dict(orient="records")
+        
+    except Exception as e:
+        print(f"Aggregate Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         con.close()

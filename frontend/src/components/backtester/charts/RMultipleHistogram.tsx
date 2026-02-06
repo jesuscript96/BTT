@@ -31,33 +31,33 @@ export function RMultipleHistogram({ distribution }: RMultipleHistogramProps) {
     const totalTrades = data.reduce((sum, item) => sum + item.count, 0);
 
     return (
-        <div className="bg-[#0f1419] rounded-lg border border-gray-800 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-2">R-Multiple Distribution</h2>
-                <p className="text-sm text-gray-400">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">R-Multiple Distribution</h2>
+                <p className="text-sm text-gray-500">
                     Frequency of trades by R-multiple outcome
                 </p>
             </div>
 
             <ResponsiveContainer width="100%" height={350}>
                 <BarChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis
                         dataKey="bucket"
                         stroke="#6b7280"
-                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                        tick={{ fill: '#6b7280', fontSize: 12 }}
                     />
                     <YAxis
                         stroke="#6b7280"
-                        tick={{ fill: '#9ca3af', fontSize: 12 }}
-                        label={{ value: 'Number of Trades', angle: -90, position: 'insideLeft', fill: '#9ca3af' }}
+                        tick={{ fill: '#6b7280', fontSize: 12 }}
+                        label={{ value: 'Number of Trades', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
                     />
                     <Tooltip
                         contentStyle={{
-                            backgroundColor: '#1f2937',
-                            border: '1px solid #374151',
+                            backgroundColor: '#fff',
+                            border: '1px solid #e5e7eb',
                             borderRadius: '8px',
-                            color: '#fff'
+                            color: '#000'
                         }}
                         formatter={(value: number) => [value, 'Trades']}
                     />
@@ -73,28 +73,28 @@ export function RMultipleHistogram({ distribution }: RMultipleHistogramProps) {
             </ResponsiveContainer>
 
             {/* Distribution Stats */}
-            <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t border-gray-800">
+            <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t border-gray-200">
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Total Trades</div>
-                    <div className="text-lg font-semibold text-white">
+                    <div className="text-lg font-semibold text-gray-900">
                         {totalTrades}
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Winning Trades</div>
-                    <div className="text-lg font-semibold text-green-400">
+                    <div className="text-lg font-semibold text-green-600">
                         {data.filter(d => d.isPositive).reduce((sum, d) => sum + d.count, 0)}
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Losing Trades</div>
-                    <div className="text-lg font-semibold text-red-400">
+                    <div className="text-lg font-semibold text-red-600">
                         {data.filter(d => !d.isPositive && d.bucket !== '0R').reduce((sum, d) => sum + d.count, 0)}
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Breakeven Trades</div>
-                    <div className="text-lg font-semibold text-gray-400">
+                    <div className="text-lg font-semibold text-gray-500">
                         {distribution['0R'] || 0}
                     </div>
                 </div>

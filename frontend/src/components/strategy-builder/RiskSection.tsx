@@ -31,9 +31,9 @@ export const RiskSection: React.FC<Props> = ({ exitLogic, onChange }) => {
                                 value={exitLogic.stop_loss_type}
                                 onChange={(e) => handleChange('stop_loss_type', e.target.value)}
                             >
-                                <option value="Fixed Price">Fixed Price Level</option>
-                                <option value="Percentage">Percentage from Entry</option>
-                                <option value="Structure">High of Day + Buffer</option>
+                                <option value={RiskType.FIXED}>Fixed Price Level</option>
+                                <option value={RiskType.PERCENT}>Percentage from Entry</option>
+                                <option value={RiskType.STRUCTURE}>High of Day + Buffer</option>
                             </select>
                         </div>
                         <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-4 relative">

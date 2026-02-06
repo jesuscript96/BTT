@@ -20,6 +20,18 @@ type TabType = 'equity' | 'drawdown' | 'performance' | 'calendar' | 'trades' | '
 
 export function BacktestDashboard({ result }: BacktestDashboardProps) {
     const [activeTab, setActiveTab] = useState<TabType>('equity');
+    const [isReady, setIsReady] = useState(false);
+
+    console.log("BacktestDashboard Render. Result keys:", result ? Object.keys(result) : 'null');
+
+    // Defer rendering of heavy chart components to prevent UI freeze on mount
+    React.useEffect(() => {
+        setIsReady(false);
+        const timer = setTimeout(() => {
+            setIsReady(true);
+        }, 100); // Short delay to allow initial paint
+        return () => clearTimeout(timer);
+    }, [result.run_id]); // Re-run when a new backtest result arrives
 
     const tabs = [
         { id: 'equity' as TabType, label: 'Equity Curve' },
@@ -31,13 +43,15 @@ export function BacktestDashboard({ result }: BacktestDashboardProps) {
         { id: 'portfolio' as TabType, label: 'Portfolio' },
     ];
 
+    if (!result) return null;
+
     return (
         <div className="h-full flex flex-col">
-            {/* Header with Metrics */}
-            <div className="bg-[#0f1419] border-b border-gray-800 p-6">
+            {/* Header with Metrics (Always Render Immediately) */}
+            <div className="bg-white border-b border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h1 className="text-2xl font-bold text-white">Backtest Results</h1>
-                    <span className="text-sm text-gray-400">
+                    <h1 className="text-2xl font-bold text-gray-900">Backtest Results</h1>
+                    <span className="text-sm text-gray-500">
                         {new Date(result.executed_at).toLocaleString()}
                     </span>
                 </div>
@@ -47,56 +61,56 @@ export function BacktestDashboard({ result }: BacktestDashboardProps) {
                     <MetricCard
                         label="Total Trades"
                         value={result.total_trades.toString()}
-                        color="text-blue-400"
+                        color="text-blue-600"
                     />
                     <MetricCard
                         label="Win Rate"
                         value={`${result.win_rate.toFixed(1)}%`}
-                        color={result.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}
+                        color={result.win_rate >= 50 ? 'text-green-600' : 'text-red-600'}
                     />
                     <MetricCard
                         label="Avg R-Multiple"
                         value={result.avg_r_multiple.toFixed(2) + 'R'}
-                        color={result.avg_r_multiple > 0 ? 'text-green-400' : 'text-red-400'}
+                        color={result.avg_r_multiple > 0 ? 'text-green-600' : 'text-red-600'}
                     />
                     <MetricCard
                         label="Total Return"
                         value={`${result.total_return_r.toFixed(1)}R`}
-                        color={result.total_return_r > 0 ? 'text-green-400' : 'text-red-400'}
+                        color={result.total_return_r > 0 ? 'text-green-600' : 'text-red-600'}
                     />
                     <MetricCard
                         label="Return %"
                         value={`${result.total_return_pct.toFixed(1)}%`}
-                        color={result.total_return_pct > 0 ? 'text-green-400' : 'text-red-400'}
+                        color={result.total_return_pct > 0 ? 'text-green-600' : 'text-red-600'}
                     />
                     <MetricCard
                         label="Max Drawdown"
                         value={`-${result.max_drawdown_pct.toFixed(1)}%`}
-                        color="text-red-400"
+                        color="text-red-600"
                     />
                     <MetricCard
                         label="Sharpe Ratio"
                         value={result.sharpe_ratio.toFixed(2)}
-                        color={result.sharpe_ratio > 1 ? 'text-green-400' : 'text-yellow-400'}
+                        color={result.sharpe_ratio > 1 ? 'text-green-600' : 'text-yellow-600'}
                     />
                     <MetricCard
                         label="Final Balance"
                         value={`$${result.final_balance.toLocaleString()}`}
-                        color="text-teal-400"
+                        color="text-teal-600"
                     />
                 </div>
             </div>
 
             {/* Tabs */}
-            <div className="bg-[#0f1419] border-b border-gray-800">
+            <div className="bg-white border-b border-gray-200">
                 <div className="flex gap-1 px-6">
                     {tabs.map(tab => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`px-4 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === tab.id
-                                    ? 'text-blue-400 border-blue-400'
-                                    : 'text-gray-400 border-transparent hover:text-gray-300'
+                                ? 'text-blue-600 border-blue-600'
+                                : 'text-gray-500 border-transparent hover:text-gray-700'
                                 }`}
                         >
                             {tab.label}
@@ -105,34 +119,45 @@ export function BacktestDashboard({ result }: BacktestDashboardProps) {
                 </div>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-auto p-6 bg-[#0a0e1a]">
-                {activeTab === 'equity' && <EquityCurveChart result={result} />}
-                {activeTab === 'drawdown' && <DrawdownChart result={result} />}
-                {activeTab === 'performance' && <PerformanceTable result={result} />}
-                {activeTab === 'calendar' && <CalendarHeatmap result={result} />}
-                {activeTab === 'trades' && <TradesTable trades={result.trades} />}
-                {activeTab === 'charts' && (
-                    <div className="space-y-6">
-                        <RMultipleHistogram distribution={result.r_distribution} />
-                        <EVCharts evByTime={result.ev_by_time} evByDay={result.ev_by_day} />
+            {/* Content Area - Lazy Loaded */}
+            <div className="flex-1 overflow-auto p-6 bg-gray-50 relative">
+                {!isReady ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-gray-50/80 z-10">
+                        <div className="flex flex-col items-center gap-3">
+                            <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                            <span className="text-sm font-medium text-gray-500">Rendering Charts...</span>
+                        </div>
                     </div>
-                )}
-                {activeTab === 'portfolio' && (
-                    <div className="space-y-6">
-                        {result.correlation_matrix && (
-                            <CorrelationMatrix
-                                matrix={result.correlation_matrix}
-                                strategyNames={result.strategy_names}
-                            />
+                ) : (
+                    <>
+                        {activeTab === 'equity' && <EquityCurveChart result={result} />}
+                        {activeTab === 'drawdown' && <DrawdownChart result={result} />}
+                        {activeTab === 'performance' && <PerformanceTable result={result} />}
+                        {activeTab === 'calendar' && <CalendarHeatmap result={result} />}
+                        {activeTab === 'trades' && <TradesTable trades={result.trades} />}
+                        {activeTab === 'charts' && (
+                            <div className="space-y-6">
+                                <RMultipleHistogram distribution={result.r_distribution} />
+                                <EVCharts evByTime={result.ev_by_time} evByDay={result.ev_by_day} />
+                            </div>
                         )}
-                        {result.monte_carlo && (
-                            <MonteCarloResults
-                                monteCarlo={result.monte_carlo}
-                                initialCapital={result.initial_capital}
-                            />
+                        {activeTab === 'portfolio' && (
+                            <div className="space-y-6">
+                                {result.correlation_matrix && (
+                                    <CorrelationMatrix
+                                        matrix={result.correlation_matrix}
+                                        strategyNames={result.strategy_names}
+                                    />
+                                )}
+                                {result.monte_carlo && (
+                                    <MonteCarloResults
+                                        monteCarlo={result.monte_carlo}
+                                        initialCapital={result.initial_capital}
+                                    />
+                                )}
+                            </div>
                         )}
-                    </div>
+                    </>
                 )}
             </div>
         </div>
@@ -147,7 +172,7 @@ interface MetricCardProps {
 
 function MetricCard({ label, value, color }: MetricCardProps) {
     return (
-        <div className="bg-[#1a1f2e]/50 rounded-lg p-3 border border-gray-800">
+        <div className="bg-white rounded-lg p-3 border border-gray-200 shadow-sm">
             <div className="text-xs text-gray-500 mb-1">{label}</div>
             <div className={`text-lg font-semibold ${color}`}>{value}</div>
         </div>

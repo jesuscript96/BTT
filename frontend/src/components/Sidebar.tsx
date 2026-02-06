@@ -66,7 +66,7 @@ export const Sidebar = () => {
                                 <span className="text-sm">New Strategy</span>
                             </Link>
                             <Link
-                                href="/strategies/database"
+                                href="/database"
                                 className="flex items-center gap-2.5 py-1.5 px-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 rounded-md transition-colors"
                             >
                                 <span className="text-sm">Database</span>

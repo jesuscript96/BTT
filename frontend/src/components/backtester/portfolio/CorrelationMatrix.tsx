@@ -22,10 +22,10 @@ export function CorrelationMatrix({ matrix, strategyNames }: CorrelationMatrixPr
     };
 
     return (
-        <div className="bg-[#0f1419] rounded-lg border border-gray-800 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-2">Strategy Correlation Matrix</h2>
-                <p className="text-sm text-gray-400">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Strategy Correlation Matrix</h2>
+                <p className="text-sm text-gray-500">
                     Correlation between strategy equity curves (-1 to +1)
                 </p>
             </div>
@@ -34,9 +34,9 @@ export function CorrelationMatrix({ matrix, strategyNames }: CorrelationMatrixPr
                 <table className="w-full text-sm">
                     <thead>
                         <tr>
-                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-400"></th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500"></th>
                             {strategyNames.map((name, index) => (
-                                <th key={index} className="px-3 py-2 text-center text-xs font-medium text-gray-400">
+                                <th key={index} className="px-3 py-2 text-center text-xs font-medium text-gray-500">
                                     S{index + 1}
                                 </th>
                             ))}
@@ -45,7 +45,7 @@ export function CorrelationMatrix({ matrix, strategyNames }: CorrelationMatrixPr
                     <tbody>
                         {strategyIds.map((id1, i) => (
                             <tr key={id1}>
-                                <td className="px-3 py-2 text-xs font-medium text-gray-400">
+                                <td className="px-3 py-2 text-xs font-medium text-gray-500">
                                     S{i + 1}
                                 </td>
                                 {strategyIds.map((id2, j) => {
@@ -68,21 +68,21 @@ export function CorrelationMatrix({ matrix, strategyNames }: CorrelationMatrixPr
             </div>
 
             {/* Strategy Names Legend */}
-            <div className="mt-6 pt-6 border-t border-gray-800">
-                <h3 className="text-sm font-medium text-gray-400 mb-3">Strategy Names</h3>
+            <div className="mt-6 pt-6 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-500 mb-3">Strategy Names</h3>
                 <div className="grid grid-cols-1 gap-2">
                     {strategyNames.map((name, index) => (
                         <div key={index} className="flex items-center gap-2">
                             <span className="text-xs font-medium text-gray-500 w-8">S{index + 1}:</span>
-                            <span className="text-sm text-white">{name}</span>
+                            <span className="text-sm text-gray-900">{name}</span>
                         </div>
                     ))}
                 </div>
             </div>
 
             {/* Color Legend */}
-            <div className="mt-6 pt-6 border-t border-gray-800">
-                <h3 className="text-sm font-medium text-gray-400 mb-3">Correlation Scale</h3>
+            <div className="mt-6 pt-6 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-500 mb-3">Correlation Scale</h3>
                 <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-500">-1.0</span>
                     <div className="flex-1 h-6 flex rounded overflow-hidden">

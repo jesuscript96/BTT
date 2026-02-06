@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Short Selling Backtester API", lifespan=lifespan)
 
-from app.routers import data, strategies, backtest, query, market
+from app.routers import data, strategies, backtest, query, market, strategy_search
 import logging
 
 # ... (logging setup if needed)
@@ -46,6 +46,7 @@ app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(strategies.router, prefix="/api/strategies", tags=["Strategies"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
+app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(market.router)
 
 # CORS Configuration - Allow all origins for production

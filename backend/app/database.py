@@ -138,6 +138,13 @@ def init_db():
             avg_r_multiple DOUBLE,
             max_drawdown_pct DOUBLE,
             sharpe_ratio DOUBLE,
+            profit_factor DOUBLE,
+            total_return_pct DOUBLE,
+            total_return_r DOUBLE,
+            search_mode VARCHAR,
+            search_space VARCHAR,
+            partials_config JSON,
+            trailing_stop_config JSON,
             results_json JSON,
             executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )

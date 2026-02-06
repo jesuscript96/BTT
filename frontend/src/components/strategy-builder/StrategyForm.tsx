@@ -47,8 +47,20 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Failed to save');
+                const errorData = await response.json().catch(() => ({ detail: 'Failed to parse error response' }));
+                const detail = errorData.detail;
+
+                if (Array.isArray(detail)) {
+                    // Handle Pydantic validation errors
+                    const messages = detail.map((err: any) => {
+                        const field = err.loc ? err.loc[err.loc.length - 1] : 'Field';
+                        return `${field}: ${err.msg}`;
+                    });
+                    throw new Error(messages.join('\n'));
+                } else if (typeof detail === 'object') {
+                    throw new Error(JSON.stringify(detail));
+                }
+                throw new Error(detail || 'Failed to save');
             }
 
             const savedStrategy = await response.json();
@@ -65,7 +77,13 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             }
         } catch (error) {
             console.error(error);
-            alert(`Error saving strategy: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            let errorMessage = 'Unknown error';
+            if (error instanceof Error) {
+                errorMessage = error.message;
+            } else if (typeof error === 'object' && error !== null) {
+                errorMessage = JSON.stringify(error);
+            }
+            alert(`Error saving strategy: ${errorMessage}`);
         } finally {
             setIsSubmitting(false);
         }

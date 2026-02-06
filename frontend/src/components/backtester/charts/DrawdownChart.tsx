@@ -36,10 +36,10 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
     }, [result.drawdown_series]);
 
     return (
-        <div className="bg-[#0f1419] rounded-lg border border-gray-800 p-6">
+        <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-2">Drawdown & Stagnation</h2>
-                <p className="text-sm text-gray-400">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Drawdown & Stagnation</h2>
+                <p className="text-sm text-gray-500">
                     Distance from all-time high equity
                 </p>
             </div>
@@ -52,23 +52,23 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
                             <stop offset="95%" stopColor="#ef4444" stopOpacity={0.1} />
                         </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis
                         dataKey="timestamp"
                         stroke="#6b7280"
-                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                        tick={{ fill: '#6b7280', fontSize: 12 }}
                     />
                     <YAxis
                         stroke="#6b7280"
-                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                        tick={{ fill: '#6b7280', fontSize: 12 }}
                         tickFormatter={(value) => `${value.toFixed(0)}%`}
                     />
                     <Tooltip
                         contentStyle={{
-                            backgroundColor: '#1f2937',
-                            border: '1px solid #374151',
+                            backgroundColor: '#fff',
+                            border: '1px solid #e5e7eb',
                             borderRadius: '8px',
-                            color: '#fff'
+                            color: '#000'
                         }}
                         formatter={(value: number | string) => [`${Math.abs(Number(value)).toFixed(2)}%`, 'Drawdown']}
                     />
@@ -85,22 +85,22 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
             </ResponsiveContainer>
 
             {/* Drawdown Stats */}
-            <div className="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-800">
+            <div className="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-200">
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Max Drawdown</div>
-                    <div className="text-lg font-semibold text-red-400">
+                    <div className="text-lg font-semibold text-red-600">
                         -{result.max_drawdown_pct.toFixed(2)}%
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Max DD Value</div>
-                    <div className="text-lg font-semibold text-red-400">
+                    <div className="text-lg font-semibold text-red-600">
                         -${result.max_drawdown_value.toLocaleString()}
                     </div>
                 </div>
                 <div>
                     <div className="text-xs text-gray-500 mb-1">Max DD Date</div>
-                    <div className="text-sm font-medium text-gray-300">
+                    <div className="text-sm font-medium text-gray-700">
                         {maxDDPoint ? new Date(maxDDPoint.timestamp).toLocaleDateString() : 'N/A'}
                     </div>
                 </div>

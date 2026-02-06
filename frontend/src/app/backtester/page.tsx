@@ -19,7 +19,7 @@ export default function BacktesterPage() {
     };
 
     return (
-        <div className="flex h-screen bg-[#0a0e1a]">
+        <div className="flex h-screen bg-gray-50">
             {/* Execution Panel - Sidebar */}
             <ExecutionPanel
                 onBacktestStart={handleBacktestStart}
@@ -34,7 +34,7 @@ export default function BacktesterPage() {
                 ) : (
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center">
-                            <h2 className="text-2xl font-semibold text-gray-300 mb-2">
+                            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
                                 Backtester Pro
                             </h2>
                             <p className="text-gray-500">

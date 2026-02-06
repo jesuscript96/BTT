@@ -117,8 +117,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                     </div>
                 </div>
 
-                {/* Right Column: Main Area Chart (Intraday for Top Ticker) */}
-                <IntradayDashboardChart data={data} />
+                {/* Right Column: Main Area Chart (Intraday for Top Ticker or Aggregate) */}
+                <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} />
             </div>
 
             {/* Bottom Row: Distribution Cards */}
@@ -280,23 +280,29 @@ const returnDistribution = [
     { label: "-40 to -60%", value: 5 },
 ];
 
-const IntradayDashboardChart = ({ data }: { data: any[] }) => {
+const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggregateSeries?: TimeSeriesItem[] }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");
 
-    // Effect to update ticker when data changes
+    const isAggregate = aggregateSeries && aggregateSeries.length > 0;
+
+    // Effect to update ticker when data changes (Only if NOT aggregate mode)
     React.useEffect(() => {
-        if (data && data.length > 0) {
+        if (!isAggregate && data && data.length > 0) {
             setActiveTicker(data[0].ticker);
         }
-    }, [data]);
+    }, [data, isAggregate]);
 
     React.useEffect(() => {
+        if (isAggregate) {
+            // Use Aggregate Data
+            setChartData(aggregateSeries || []);
+            return;
+        }
+
         if (!activeTicker) return;
         setLoading(true);
-        // Default to latest date logic handled by backend if trade_date not passed
-        // We could pass date from data[0].date if available
         let url = `http://localhost:8000/api/market/ticker/${activeTicker}/intraday`;
         if (data && data[0] && data[0].date) {
             url += `?trade_date=${data[0].date}`;
@@ -313,9 +319,9 @@ const IntradayDashboardChart = ({ data }: { data: any[] }) => {
             })
             .catch(e => console.error("Chart fetch error", e))
             .finally(() => setLoading(false));
-    }, [activeTicker]);
+    }, [activeTicker, isAggregate, aggregateSeries]);
 
-    if (!activeTicker) {
+    if (!isAggregate && !activeTicker) {
         return (
             <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm flex items-center justify-center text-zinc-400 text-sm">
                 No data selected for charting.
@@ -324,22 +330,54 @@ const IntradayDashboardChart = ({ data }: { data: any[] }) => {
     }
 
     // Min/Max for domain
-    const prices = chartData.map(d => d.close);
-    const minPrice = prices.length ? Math.min(...prices) * 0.99 : 0;
-    const maxPrice = prices.length ? Math.max(...prices) * 1.01 : 0;
-    const pmHigh = chartData.length > 0 ? chartData[0].pm_high : 0;
+    let minPrice, maxPrice;
+    if (isAggregate) {
+        // Find min/max of avg_change and median_change
+        const vals = chartData.flatMap(d => [d.avg_change, d.median_change].filter(v => v !== undefined));
+        minPrice = vals.length ? Math.min(...vals) : -1;
+        maxPrice = vals.length ? Math.max(...vals) : 1;
+        // Add some padding
+        const range = maxPrice - minPrice;
+        minPrice -= range * 0.1;
+        maxPrice += range * 0.1;
+    } else {
+        const prices = chartData.map(d => d.close);
+        minPrice = prices.length ? Math.min(...prices) * 0.99 : 0;
+        maxPrice = prices.length ? Math.max(...prices) * 1.01 : 0;
+    }
+
+    // PM High check only for single ticker
+    const pmHigh = !isAggregate && chartData.length > 0 ? chartData[0].pm_high : 0;
 
     return (
         <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm space-y-6">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                    <h3 className="text-lg font-black text-zinc-900 tracking-tight">{activeTicker}</h3>
-                    <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">INTRADAY ACTION</span>
+                    {isAggregate ? (
+                        <>
+                            <h3 className="text-lg font-black text-zinc-900 tracking-tight">CHANGE VS. OPEN PRICE</h3>
+                            <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
+                        </>
+                    ) : (
+                        <>
+                            <h3 className="text-lg font-black text-zinc-900 tracking-tight">{activeTicker}</h3>
+                            <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">INTRADAY ACTION</span>
+                        </>
+                    )}
                 </div>
                 <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-zinc-400">
-                    <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
-                    <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> VWAP</div>
-                    {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
+                    {isAggregate ? (
+                        <>
+                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> AVERAGE</div>
+                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-blue-400 border-dashed" /> MEDIAN</div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
+                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> VWAP</div>
+                            {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -351,7 +389,7 @@ const IntradayDashboardChart = ({ data }: { data: any[] }) => {
                         <ComposedChart data={chartData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                             <XAxis
-                                dataKey="timeShort"
+                                dataKey={isAggregate ? "time" : "timeShort"}
                                 stroke="#94a3b8"
                                 fontSize={10}
                                 tickLine={false}
@@ -364,15 +402,28 @@ const IntradayDashboardChart = ({ data }: { data: any[] }) => {
                                 tickLine={false}
                                 axisLine={false}
                                 domain={[minPrice, maxPrice]}
-                                tickFormatter={(v) => v.toFixed(2)}
+                                tickFormatter={(v) => v.toFixed(2) + (isAggregate ? "%" : "")}
                                 orientation="right"
                             />
                             <Tooltip
                                 contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '11px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                                formatter={(value: any) => [value.toFixed(2) + (isAggregate ? "%" : ""), ""]}
                             />
-                            {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
-                            <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} />
-                            <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} />
+                            {/* Pre-Market / RTH Separator Line (09:30) */}
+                            {isAggregate && <ReferenceLine x="09:30" stroke="#cbd5e1" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: 'Market Open', fill: '#cbd5e1', fontSize: 10 }} />}
+
+                            {isAggregate ? (
+                                <>
+                                    <Line type="monotone" dataKey="avg_change" stroke="#2563eb" strokeWidth={3} dot={false} name="Average" />
+                                    <Line type="monotone" dataKey="median_change" stroke="#60a5fa" strokeWidth={2} strokeDasharray="4 4" dot={false} name="Median" />
+                                </>
+                            ) : (
+                                <>
+                                    {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
+                                    <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} />
+                                    <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} />
+                                </>
+                            )}
                         </ComposedChart>
                     </ResponsiveContainer>
                 )}

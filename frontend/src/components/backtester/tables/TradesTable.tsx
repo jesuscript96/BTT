@@ -62,110 +62,110 @@ export function TradesTable({ trades }: TradesTableProps) {
     };
 
     return (
-        <div className="bg-[#0f1419] rounded-lg border border-gray-800">
-            <div className="p-6 border-b border-gray-800">
-                <h2 className="text-xl font-semibold text-white mb-2">Trades Log</h2>
-                <p className="text-sm text-gray-400">
+        <div className="bg-white rounded-lg border border-gray-200">
+            <div className="p-6 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">Trades Log</h2>
+                <p className="text-sm text-gray-500">
                     Detailed record of all {trades.length} trades
                 </p>
             </div>
 
             <div className="overflow-x-auto">
                 <table className="w-full">
-                    <thead className="bg-[#1a1f2e] border-b border-gray-800">
+                    <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 <button
                                     onClick={() => handleSort('entry_time')}
-                                    className="flex items-center gap-1 hover:text-white"
+                                    className="flex items-center gap-1 hover:text-gray-900"
                                 >
                                     Date/Time
                                     <ArrowUpDown className="w-3 h-3" />
                                 </button>
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 <button
                                     onClick={() => handleSort('ticker')}
-                                    className="flex items-center gap-1 hover:text-white"
+                                    className="flex items-center gap-1 hover:text-gray-900"
                                 >
                                     Ticker
                                     <ArrowUpDown className="w-3 h-3" />
                                 </button>
                             </th>
-                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Entry
                             </th>
-                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Exit
                             </th>
-                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 <button
                                     onClick={() => handleSort('r_multiple')}
-                                    className="flex items-center gap-1 hover:text-white ml-auto"
+                                    className="flex items-center gap-1 hover:text-gray-900 ml-auto"
                                 >
                                     R-Multiple
                                     <ArrowUpDown className="w-3 h-3" />
                                 </button>
                             </th>
-                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Fees
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 <button
                                     onClick={() => handleSort('exit_reason')}
-                                    className="flex items-center gap-1 hover:text-white"
+                                    className="flex items-center gap-1 hover:text-gray-900"
                                 >
                                     Reason
                                     <ArrowUpDown className="w-3 h-3" />
                                 </button>
                             </th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Strategy
                             </th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-800">
+                    <tbody className="divide-y divide-gray-200">
                         {paginatedTrades.map((trade, index) => (
                             <tr
                                 key={trade.id}
-                                className={index % 2 === 0 ? 'bg-[#0a0e1a]' : 'bg-[#0f1419]'}
+                                className={index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}
                             >
-                                <td className="px-4 py-3 text-sm text-gray-300">
+                                <td className="px-4 py-3 text-sm text-gray-700">
                                     {new Date(trade.entry_time).toLocaleString()}
                                 </td>
-                                <td className="px-4 py-3 text-sm font-medium text-white">
+                                <td className="px-4 py-3 text-sm font-medium text-gray-900">
                                     {trade.ticker}
                                 </td>
-                                <td className="px-4 py-3 text-sm text-right text-gray-300">
+                                <td className="px-4 py-3 text-sm text-right text-gray-700">
                                     ${trade.entry_price.toFixed(2)}
                                 </td>
-                                <td className="px-4 py-3 text-sm text-right text-gray-300">
+                                <td className="px-4 py-3 text-sm text-right text-gray-700">
                                     ${trade.exit_price?.toFixed(2) || '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-right font-medium">
                                     <span className={
                                         trade.r_multiple && trade.r_multiple > 0
-                                            ? 'text-green-400'
+                                            ? 'text-green-600'
                                             : trade.r_multiple && trade.r_multiple < 0
-                                                ? 'text-red-400'
-                                                : 'text-gray-400'
+                                                ? 'text-red-600'
+                                                : 'text-gray-500'
                                     }>
                                         {trade.r_multiple ? `${trade.r_multiple > 0 ? '+' : ''}${trade.r_multiple.toFixed(2)}R` : '-'}
                                     </span>
                                 </td>
-                                <td className="px-4 py-3 text-sm text-right text-gray-400">
+                                <td className="px-4 py-3 text-sm text-right text-gray-500">
                                     ${trade.fees.toFixed(2)}
                                 </td>
                                 <td className="px-4 py-3 text-sm">
-                                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded ${trade.exit_reason === 'TP' ? 'bg-green-900/30 text-green-400' :
-                                            trade.exit_reason === 'SL' ? 'bg-red-900/30 text-red-400' :
-                                                trade.exit_reason === 'TIME' ? 'bg-yellow-900/30 text-yellow-400' :
-                                                    'bg-gray-800 text-gray-400'
+                                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded ${trade.exit_reason === 'TP' ? 'bg-green-100 text-green-700' :
+                                        trade.exit_reason === 'SL' ? 'bg-red-100 text-red-700' :
+                                            trade.exit_reason === 'TIME' ? 'bg-yellow-100 text-yellow-700' :
+                                                'bg-gray-100 text-gray-600'
                                         }`}>
                                         {trade.exit_reason || '-'}
                                     </span>
                                 </td>
-                                <td className="px-4 py-3 text-sm text-gray-400 truncate max-w-xs">
+                                <td className="px-4 py-3 text-sm text-gray-500 truncate max-w-xs">
                                     {trade.strategy_name}
                                 </td>
                             </tr>
@@ -175,7 +175,7 @@ export function TradesTable({ trades }: TradesTableProps) {
             </div>
 
             {/* Pagination */}
-            <div className="p-4 border-t border-gray-800 flex items-center justify-between">
+            <div className="p-4 border-t border-gray-200 flex items-center justify-between">
                 <div className="text-sm text-gray-400">
                     Showing {startIndex + 1} to {Math.min(startIndex + tradesPerPage, trades.length)} of {trades.length} trades
                 </div>
@@ -183,17 +183,17 @@ export function TradesTable({ trades }: TradesTableProps) {
                     <button
                         onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                         disabled={currentPage === 1}
-                        className="px-3 py-1 bg-[#1a1f2e] border border-gray-700 rounded text-sm text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#252a3a]"
+                        className="px-3 py-1 bg-white border border-gray-300 rounded text-sm text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                     >
                         Previous
                     </button>
-                    <span className="px-3 py-1 text-sm text-gray-400">
+                    <span className="px-3 py-1 text-sm text-gray-500">
                         Page {currentPage} of {totalPages}
                     </span>
                     <button
                         onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                         disabled={currentPage === totalPages}
-                        className="px-3 py-1 bg-[#1a1f2e] border border-gray-700 rounded text-sm text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#252a3a]"
+                        className="px-3 py-1 bg-white border border-gray-300 rounded text-sm text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                     >
                         Next
                     </button>

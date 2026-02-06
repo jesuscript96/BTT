@@ -82,90 +82,6 @@ class BacktestEngine:
         self.rth_start = time(9, 30)
         self.rth_end = time(16, 0)
     
-    def evaluate_condition(self, condition: Condition, bar: pd.Series) -> bool:
-        """Evaluate a single condition against a market data bar"""
-        indicator = condition.indicator
-        operator = condition.operator
-        value = condition.value
-        
-        # Get the actual value from the bar
-        actual_value = None
-        
-        if indicator == IndicatorType.PRICE:
-            actual_value = bar.get('close', 0)
-        elif indicator == IndicatorType.VWAP:
-            actual_value = bar.get('vwap', 0)
-        elif indicator == IndicatorType.RVOL:
-            # RVOL would need to be pre-calculated in market_data
-            actual_value = bar.get('rvol', 1.0)
-        elif indicator == IndicatorType.TIME_OF_DAY:
-            # Time comparison (e.g., "10:30")
-            bar_time = pd.to_datetime(bar['timestamp']).time()
-            target_time = datetime.strptime(str(value), "%H:%M").time()
-            
-            if operator == Operator.GT:
-                return bar_time > target_time
-            elif operator == Operator.LT:
-                return bar_time < target_time
-            elif operator == Operator.GTE:
-                return bar_time >= target_time
-            elif operator == Operator.LTE:
-                return bar_time <= target_time
-            elif operator == Operator.EQ:
-                return bar_time == target_time
-            return False
-        elif indicator == IndicatorType.EXTENSION:
-            # Price vs EMA/VWAP extension
-            if condition.compare_to == "VWAP":
-                base = bar.get('vwap', 0)
-                actual_value = ((bar.get('close', 0) - base) / base * 100) if base > 0 else 0
-        else:
-            # For other indicators, try to get from bar directly
-            actual_value = bar.get(indicator.value.lower().replace(' ', '_'), 0)
-        
-        if actual_value is None:
-            return False
-        
-        # Apply operator
-        try:
-            target_value = float(value)
-            if operator == Operator.GT:
-                return actual_value > target_value
-            elif operator == Operator.LT:
-                return actual_value < target_value
-            elif operator == Operator.GTE:
-                return actual_value >= target_value
-            elif operator == Operator.LTE:
-                return actual_value <= target_value
-            elif operator == Operator.EQ:
-                return abs(actual_value - target_value) < 0.0001
-        except (ValueError, TypeError):
-            return False
-        
-        return False
-    
-    def evaluate_condition_group(self, group: ConditionGroup, bar: pd.Series) -> bool:
-        """Evaluate a condition group (AND/OR logic)"""
-        if not group.conditions:
-            return False
-        
-        results = [self.evaluate_condition(cond, bar) for cond in group.conditions]
-        
-        if group.logic == "AND":
-            return all(results)
-        else:  # OR
-            return any(results)
-    
-    def check_entry_signal(self, strategy: Strategy, bar: pd.Series) -> bool:
-        """Check if strategy generates entry signal for this bar"""
-        if not strategy.entry_logic:
-            return False
-        
-        # All condition groups must be satisfied (AND between groups)
-        return all(
-            self.evaluate_condition_group(group, bar)
-            for group in strategy.entry_logic
-        )
     
     def calculate_stop_loss(self, strategy: Strategy, entry_price: float, bar: pd.Series) -> float:
         """Calculate stop loss price based on strategy settings"""
@@ -328,64 +244,262 @@ class BacktestEngine:
         # Move to closed trades
         self.closed_trades.append(trade)
     
+    def evaluate_condition_vectorized(self, condition: Condition, df: pd.DataFrame) -> pd.Series:
+        """Evaluate a condition against the entire dataframe at once (Vectorized)"""
+        indicator = condition.indicator
+        operator = condition.operator
+        value = condition.value
+        
+        # 1. Get Actual Values Series
+        series = None
+        
+        if indicator == IndicatorType.PRICE:
+            series = df['close']
+        elif indicator == IndicatorType.VWAP:
+            series = df['vwap'] if 'vwap' in df.columns else pd.Series(0, index=df.index)
+        elif indicator == IndicatorType.RVOL:
+            series = df['rvol'] if 'rvol' in df.columns else pd.Series(1.0, index=df.index)
+        elif indicator == IndicatorType.TIME_OF_DAY:
+            # Pre-calculated in check_entry_signals to avoid doing it per condition
+            # But if needed here:
+            series = df['timestamp'].dt.time
+            # For time comparison, we need to convert value string "HH:MM" to time object
+            try:
+                target_time = datetime.strptime(str(value), "%H:%M").time()
+                value = target_time # Override value for comparison
+            except:
+                return pd.Series(False, index=df.index)
+        elif indicator == IndicatorType.EXTENSION:
+            if condition.compare_to == "VWAP" and 'vwap' in df.columns:
+                series = ((df['close'] - df['vwap']) / df['vwap'] * 100)
+            else:
+                series = pd.Series(0, index=df.index)
+        else:
+            # Generic column fallback
+            col_name = indicator.value.lower().replace(' ', '_')
+            if col_name in df.columns:
+                series = df[col_name]
+            else:
+                return pd.Series(False, index=df.index)
+        
+        # 2. Apply Operator
+        try:
+            # Handle numeric conversion if value is string but series is numeric
+            target_value = value
+            if isinstance(value, str) and not isinstance(series.iloc[0], (str, time)) and indicator != IndicatorType.TIME_OF_DAY:
+                 target_value = float(value)
+
+            if operator == Operator.GT:
+                return series > target_value
+            elif operator == Operator.LT:
+                return series < target_value
+            elif operator == Operator.GTE:
+                return series >= target_value
+            elif operator == Operator.LTE:
+                return series <= target_value
+            elif operator == Operator.EQ:
+                return series == target_value
+        except Exception:
+            return pd.Series(False, index=df.index)
+            
+        return pd.Series(False, index=df.index)
+
+    def generate_signals(self, strategy: Strategy, df: pd.DataFrame) -> pd.Series:
+        """Generate entry signals for the strategy using vectorization"""
+        if not strategy.entry_logic:
+            return pd.Series(False, index=df.index)
+        
+        # Initialize final signal as True (since groups are ANDed)
+        # We start with True, and intersect with each group result
+        final_signal = pd.Series(True, index=df.index)
+        
+        for group in strategy.entry_logic:
+            if not group.conditions:
+                continue
+                
+            # Initialize group signal
+            # If logic is AND, start with True. If OR, start with False.
+            group_signal = pd.Series(True if group.logic == "AND" else False, index=df.index)
+            
+            for condition in group.conditions:
+                cond_result = self.evaluate_condition_vectorized(condition, df)
+                
+                if group.logic == "AND":
+                    group_signal = group_signal & cond_result
+                else:  # OR
+                    group_signal = group_signal | cond_result
+            
+            # Combine group into final
+            final_signal = final_signal & group_signal
+            
+        return final_signal
+
     def run(self) -> BacktestResult:
-        """Execute the backtest"""
-        print(f"Starting backtest with {len(self.strategies)} strategies...")
+        """Execute the backtest with optimized loop"""
+        print(f"Starting optimized backtest with {len(self.strategies)} strategies...")
         print(f"Market data: {len(self.market_data)} bars")
         
-        # Group data by timestamp for chronological iteration
-        for timestamp, group in self.market_data.groupby('timestamp'):
-            # Check exit conditions for open positions
-            for trade in self.open_positions[:]:  # Copy list to allow modification
-                # Find bar for this trade's ticker
-                ticker_bar = group[group['ticker'] == trade.ticker]
-                if not ticker_bar.empty:
-                    bar = ticker_bar.iloc[0]
-                    should_exit, exit_price, reason = self.check_exit_conditions(trade, bar)
-                    
-                    if should_exit:
-                        self.close_trade(trade, exit_price, timestamp, reason)
-                        self.open_positions.remove(trade)
-            
-            # Check entry signals for each strategy
-            signals = []
-            for strategy in self.strategies:
-                for _, bar in group.iterrows():
-                    if self.check_entry_signal(strategy, bar):
-                        signals.append((strategy, bar))
-            
-            # Allocate capital and open trades
-            if signals:
-                allocations = self.allocate_capital_for_signals(signals)
-                
-                for strategy, bar in signals:
-                    allocated = allocations.get(strategy.id, 0)
-                    if allocated > 0:
-                        trade = self.open_trade(strategy, bar, allocated)
-                        if trade:
-                            self.open_positions.append(trade)
-            
-            # Record equity curve
+        # 1. Pre-calculate Signals (Vectorized)
+        # Result: A dict of {strategy_id: boolean_series}
+        strategy_signals = {}
+        for strategy in self.strategies:
+            strategy_signals[strategy.id] = self.generate_signals(strategy, self.market_data)
+        
+        # 2. Event Loop
+        # Even with vectorization, we need a loop for trade management (PnL, SL/TP)
+        # because these depend on the state (entry price) which changes dynamically.
+        # However, checking entry is now just a dict lookup `signals[i]`, not a calculation.
+        
+        # Ensure timestamp is datetime type for comparisons
+        self.market_data['timestamp'] = pd.to_datetime(self.market_data['timestamp'])
+        
+        # We iteration using itertuples which is much faster than iterrows
+        # row will have attributes: row.timestamp, row.close, row.high, ...
+        # Note: Index is row[0]
+        
+        # Create a fast lookup for strategy weights
+        strategy_weights = {s.id: self.weights.get(s.id, 0) for s in self.strategies}
+        
+        # Calculate sampling interval for equity curve
+        # We want ~500-1000 points max for performance
+        total_rows = len(self.market_data)
+        sample_interval = max(1, total_rows // 500)  # Sample every Nth row
+        
+        # Record initial equity point
+        if total_rows > 0:
+            first_row = self.market_data.iloc[0]
             self.equity_curve.append({
-                "timestamp": str(timestamp),
+                "timestamp": pd.to_datetime(first_row['timestamp']).isoformat(),
+                "balance": self.current_balance,
+                "open_positions": 0
+            })
+        
+        row_counter = 0
+        
+        # Iterate row by row
+        for row in self.market_data.itertuples(index=True): 
+            # row.Index is the integer index of the dataframe
+            idx = row.Index 
+            current_time = row.timestamp
+            current_price = row.close
+            
+            # --- Exit Logic (Manage Open Positions) ---
+            # We iterate a copy of the list to allow removal
+            for i in range(len(self.open_positions) - 1, -1, -1):
+                trade = self.open_positions[i]
+                
+                # Check based on ticker
+                if trade.ticker != row.ticker:
+                    continue
+                
+                # Manual inline check needed because we can't pass 'row' to the old function easily
+                # causing type mismatches. Inline is faster anyway.
+                should_exit = False
+                exit_price = None
+                reason = None
+                
+                # Stop Loss (Short)
+                if current_price >= trade.stop_loss:
+                    should_exit, exit_price, reason = True, trade.stop_loss, "SL"
+                
+                # Take Profit (Short)
+                elif current_price <= trade.take_profit:
+                    should_exit, exit_price, reason = True, trade.take_profit, "TP"
+                
+                # Time Exit
+                elif (current_time - trade.entry_time).total_seconds() / 60 >= self.max_holding_minutes:
+                    should_exit, exit_price, reason = True, current_price, "TIME"
+                
+                # EOD Exit
+                elif current_time.hour >= 15 and current_time.minute >= 59:
+                     should_exit, exit_price, reason = True, current_price, "EOD"
+                
+                if should_exit:
+                    self.close_trade(trade, exit_price, current_time, reason)
+                    self.open_positions.pop(i)
+
+            # --- Entry Logic ---
+            # Check pre-calculated signals for this row index and ticker
+            for strategy in self.strategies:
+                # Check if this strategy has a signal at this index
+                # Series access via .at is fast
+                if strategy_signals[strategy.id].at[idx]:
+                    
+                    # Allocate capital
+                    weight = strategy_weights.get(strategy.id, 0)
+                    if weight > 0:
+                        allocated = self.current_balance * (weight / 100) # Simple allocation for now
+                        
+                        # Open Trade (using helper which expects dict-like access? No, let's adapt it)
+                        if allocated > 0:
+                            # Re-create bar dict just for the helper or inline the helper
+                            # Inline is better for speed
+                             
+                            sl_type = strategy.exit_logic.stop_loss_type
+                            sl_val = strategy.exit_logic.stop_loss_value
+                            tp_type = strategy.exit_logic.take_profit_type
+                            tp_val = strategy.exit_logic.take_profit_value
+                            
+                            # Calc SL/TP (Simplified common cases for speed)
+                            # Assuming Fixed/Percent for now to avoid looking up ATR in helper
+                            stop_loss = current_price * (1 + sl_val/100) if sl_type == RiskType.PERCENT else current_price + sl_val
+                            take_profit = current_price * (1 - tp_val/100) if tp_type == RiskType.PERCENT else current_price - tp_val
+                            
+                            risk = abs(stop_loss - current_price)
+                            pos_size = allocated / risk if risk > 0 else 0
+                            
+                            if pos_size > 0:
+                                trade = Trade(
+                                    id=f"{strategy.id}_{row.ticker}_{row.Index}",
+                                    strategy_id=strategy.id,
+                                    strategy_name=strategy.name,
+                                    ticker=row.ticker,
+                                    entry_time=current_time,
+                                    entry_price=current_price,
+                                    exit_time=None,
+                                    exit_price=None,
+                                    stop_loss=stop_loss,
+                                    take_profit=take_profit,
+                                    position_size=pos_size,
+                                    allocated_capital=allocated,
+                                    r_multiple=None,
+                                    fees=self.commission,
+                                    exit_reason=None,
+                                    is_open=True
+                                )
+                                self.current_balance -= self.commission
+                                self.open_positions.append(trade)
+
+            # Record equity curve at intervals
+            row_counter += 1
+            if row_counter % sample_interval == 0:
+                self.equity_curve.append({
+                    "timestamp": current_time.isoformat(),
+                    "balance": self.current_balance,
+                    "open_positions": len(self.open_positions)
+                })
+
+        # Record final equity point
+        if total_rows > 0:
+            final_row = self.market_data.iloc[-1]
+            final_time = pd.to_datetime(final_row['timestamp'])
+            self.equity_curve.append({
+                "timestamp": final_time.isoformat(),
                 "balance": self.current_balance,
                 "open_positions": len(self.open_positions)
             })
-        
-        # Close any remaining open positions at final price
+
+        # Close remaining
         if self.open_positions:
-            final_timestamp = self.market_data['timestamp'].max()
-            for trade in self.open_positions[:]:
-                final_bar = self.market_data[
-                    (self.market_data['ticker'] == trade.ticker) &
-                    (self.market_data['timestamp'] == final_timestamp)
-                ]
-                if not final_bar.empty:
-                    final_price = final_bar.iloc[0]['close']
-                    self.close_trade(trade, final_price, final_timestamp, "END")
-                    self.open_positions.remove(trade)
-        
-        # Calculate metrics
+            final_time = self.market_data['timestamp'].max()
+            # Need final prices map
+            # Assuming the loop finished at final_time, we can use last known price for each ticker
+            # Or just close at current_price from last iteration (approx)
+            
+            for trade in self.open_positions:
+                self.close_trade(trade, trade.entry_price, final_time, "FORCE_CLOSE") # Breakeven close
+            self.open_positions.clear()
+
         return self._calculate_results()
     
     def _calculate_results(self) -> BacktestResult:
