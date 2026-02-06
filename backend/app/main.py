@@ -23,16 +23,11 @@ from app.routers import data
 
 app.include_router(data.router, prefix="/api", tags=["Data"])
 
-# CORS Configuration
-origins = [
-    "http://localhost:3000",  # Next.js frontend
-    "http://127.0.0.1:3000",
-]
-
+# CORS Configuration - Allow all origins for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"],  # Allow all origins (Vercel, localhost, etc.)
+    allow_credentials=False,  # Must be False when using allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
