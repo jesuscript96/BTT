@@ -22,6 +22,11 @@ def _establish_connection():
         print("Connecting to MotherDuck catalog: btt")
         con = duckdb.connect(f"md:btt?motherduck_token={token}")
         con.execute("SET search_path = 'main'")
+        
+        # Diagnostic: List tables
+        tables = con.execute("SHOW TABLES").fetchall()
+        print(f"Tables found in btt.main: {tables}")
+        
         return con
     else:
         print(f"Connecting to local DuckDB at {DB_PATH}...")
