@@ -11,24 +11,35 @@ _lock = Lock()
 def get_db_connection(read_only=False):
     """
     Returns a DuckDB connection or cursor.
-    For MVP simplicity in a single-process FastAPI app, we share one master connection.
+    Supports local DuckDB or MotherDuck (Cloud) if MOTHERDUCK_TOKEN is set.
     """
     global _con
     with _lock:
         if _con is None:
-            # We open as read-write because the scheduler needs to write.
-            # DuckDB allows concurrent reads from the same connection object.
-            _con = duckdb.connect(DB_PATH, read_only=False)
+            token = os.getenv("MOTHERDUCK_TOKEN")
+            if token:
+                # Connect to MotherDuck
+                print("Connecting to MotherDuck...")
+                # We use the btt database in MotherDuck
+                _con = duckdb.connect(f"md:btt?motherduck_token={token}")
+            else:
+                # Fallback to local DuckDB
+                print(f"Connecting to local DuckDB at {DB_PATH}...")
+                _con = duckdb.connect(DB_PATH, read_only=False)
         
-        # Return a cursor to allow independent transactions/state if needed
         return _con.cursor()
 
 def init_db():
     """
     Initialize the database with necessary tables.
     """
-    # Use a direct connection for initialization
-    con = duckdb.connect(DB_PATH)
+    token = os.getenv("MOTHERDUCK_TOKEN")
+    if token:
+        print("Initializing MotherDuck database...")
+        con = duckdb.connect(f"md:btt?motherduck_token={token}")
+    else:
+        print(f"Initializing local DuckDB at {DB_PATH}...")
+        con = duckdb.connect(DB_PATH)
     
     # Tickers table
     con.execute("""
