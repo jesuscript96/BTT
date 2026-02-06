@@ -6,7 +6,7 @@ export const Sidebar = () => {
         <aside className="w-64 bg-[#F2F0ED] border-r border-zinc-200 h-screen fixed left-0 top-0 flex flex-col transition-colors shadow-sm">
             <div className="px-6 py-5 border-b border-zinc-200">
                 <h1 className="text-lg font-black bg-gradient-to-r from-blue-600 to-indigo-700 bg-clip-text text-transparent uppercase tracking-tight">
-                    BTT Backtester
+                    BTT (ASG ft. JVC)
                 </h1>
             </div>
 
@@ -14,7 +14,7 @@ export const Sidebar = () => {
                 <div className="text-[10px] font-black text-zinc-400 uppercase px-3 mb-2 tracking-widest">Platform</div>
                 <a href="#" className="flex items-center gap-3 px-3 py-2 bg-white text-zinc-900 rounded-lg border border-zinc-200 shadow-sm transition-all hover:border-blue-300">
                     <LayoutDashboard className="h-4 w-4 text-blue-600" />
-                    <span className="text-sm font-black tracking-tight">Backtester</span>
+                    <span className="text-sm font-black tracking-tight">Market Analysis</span>
                 </a>
                 <a href="#" className="flex items-center gap-3 px-3 py-2 text-zinc-500 hover:text-zinc-900 hover:bg-white/50 rounded-lg transition-colors">
                     <LineChart className="h-4 w-4" />
