@@ -25,29 +25,93 @@ export default function Home() {
     setIsLoading(true);
     setCurrentFilters(filters);
 
-    // Convert generic filters to Market Screener params
-    // AdvancedFilterPanel uses generic names, we map them here:
-    // This assumes the AdvancedFilterPanel is sending us "min_gap", "min_run", etc. 
-    // If not, we might need to adjust the Panel or mapping.
-    // For now, let's assume direct mapping or default values.
+    // Build query params from filters
+    const queryParams = new URLSearchParams();
 
-    const queryParams = new URLSearchParams({
-      min_gap: filters.min_gap || "0",
-      min_run: filters.min_run || "0",
-      min_volume: filters.min_volume || "0",
-      limit: "100"
-    });
+    // Basic filters - use full column names to match backend dynamic system
+    if (filters.min_gap_pct !== undefined) queryParams.append("min_gap_at_open_pct", filters.min_gap_pct.toString());
+    if (filters.max_gap_pct !== undefined) queryParams.append("max_gap_at_open_pct", filters.max_gap_pct.toString());
+    if (filters.min_rth_volume !== undefined) queryParams.append("min_rth_volume", filters.min_rth_volume.toString());
 
-    if (filters.start_date) {
-      queryParams.append("start_date", filters.start_date);
-    }
-    if (filters.end_date) {
-      queryParams.append("end_date", filters.end_date);
+    // Date filters
+    if (filters.start_date) queryParams.append("start_date", filters.start_date);
+    if (filters.end_date) queryParams.append("end_date", filters.end_date);
+    if (filters.ticker) queryParams.append("ticker", filters.ticker);
+
+    // Advanced filters
+    if (filters.min_m15_ret_pct !== undefined) queryParams.append("min_m15_return_pct", filters.min_m15_ret_pct.toString());
+    if (filters.min_rth_run_pct !== undefined) queryParams.append("min_rth_run_pct", filters.min_rth_run_pct.toString());
+    if (filters.min_high_spike_pct !== undefined) queryParams.append("min_high_spike_pct", filters.min_high_spike_pct.toString());
+    if (filters.min_low_spike_pct !== undefined) queryParams.append("min_low_spike_pct", filters.min_low_spike_pct.toString());
+    if (filters.hod_after) queryParams.append("hod_after", filters.hod_after);
+    if (filters.lod_before) queryParams.append("lod_before", filters.lod_before);
+    if (filters.open_lt_vwap !== undefined) queryParams.append("open_lt_vwap", filters.open_lt_vwap.toString());
+
+    // Convert Advanced Rules to query parameters
+    // Map metric names to database columns and parameter names
+    const metricToParamMap: Record<string, { column: string, paramPrefix: string }> = {
+      // Price metrics
+      "Open Price": { column: "rth_open", paramPrefix: "open_price" },
+      "Close Price": { column: "rth_close", paramPrefix: "close_price" },
+      "Previous Day Close Price": { column: "prev_close", paramPrefix: "prev_close" },
+      "Pre-Market High Price": { column: "pm_high", paramPrefix: "pm_high" },
+      "High Spike Price": { column: "high_spike", paramPrefix: "high_spike_price" },
+      "Low Spike Price": { column: "low_spike", paramPrefix: "low_spike_price" },
+      "M1 Price": { column: "m1_price", paramPrefix: "m1_price" },
+      "M5 Price": { column: "m5_price", paramPrefix: "m5_price" },
+      "M15 Price": { column: "m15_price", paramPrefix: "m15_price" },
+      "M30 Price": { column: "m30_price", paramPrefix: "m30_price" },
+      "M60 Price": { column: "m60_price", paramPrefix: "m60_price" },
+      "M90 Price": { column: "m90_price", paramPrefix: "m90_price" },
+      "M120 Price": { column: "m120_price", paramPrefix: "m120_price" },
+      "M180 Price": { column: "m180_price", paramPrefix: "m180_price" },
+
+      // Volume metrics
+      "EOD Volume": { column: "rth_volume", paramPrefix: "eod_volume" },
+      "Premarket Volume": { column: "pm_volume", paramPrefix: "pm_volume" },
+
+      // Gap & Run metrics
+      "Open Gap %": { column: "gap_at_open_pct", paramPrefix: "gap_pct" },
+      "RTH Run %": { column: "rth_run_pct", paramPrefix: "rth_run_pct" },
+      "PMH Gap %": { column: "pmh_gap_pct", paramPrefix: "pmh_gap_pct" },
+      "PMH Fade to Open %": { column: "pmh_fade_to_open_pct", paramPrefix: "pmh_fade_pct" },
+      "RTH Fade to Close %": { column: "rth_fade_to_close_pct", paramPrefix: "rth_fade_pct" },
+
+      // Volatility metrics
+      "RTH Range %": { column: "rth_range_pct", paramPrefix: "rth_range_pct" },
+      "High Spike %": { column: "high_spike_pct", paramPrefix: "high_spike_pct" },
+      "Low Spike %": { column: "low_spike_pct", paramPrefix: "low_spike_pct" },
+      "M15 High Spike %": { column: "m15_high_spike_pct", paramPrefix: "m15_high_spike_pct" },
+      "M15 Low Spike %": { column: "m15_low_spike_pct", paramPrefix: "m15_low_spike_pct" },
+
+      // Return metrics
+      "Day Return %": { column: "rth_run_pct", paramPrefix: "day_return_pct" },
+      "M15 Return %": { column: "m15_return_pct", paramPrefix: "m15_return_pct" },
+      "M30 Return %": { column: "m30_return_pct", paramPrefix: "m30_return_pct" },
+      "M60 Return %": { column: "m60_return_pct", paramPrefix: "m60_return_pct" },
+    };
+
+    // Process Advanced Rules
+    for (const rule of rules) {
+      const mapping = metricToParamMap[rule.metric];
+      if (!mapping) continue; // Skip unmapped metrics
+
+      const { column, paramPrefix } = mapping;
+      const value = rule.value;
+
+      // Convert operator to parameter name
+      // For simplicity, we'll use min_/max_ prefixes based on operator
+      if (rule.operator === ">" || rule.operator === ">=") {
+        queryParams.append(`min_${column}`, value);
+      } else if (rule.operator === "<" || rule.operator === "<=") {
+        queryParams.append(`max_${column}`, value);
+      } else if (rule.operator === "=") {
+        queryParams.append(`exact_${column}`, value);
+      }
     }
 
-    if (filters.ticker) {
-      queryParams.append("ticker", filters.ticker);
-    }
+    // Always add limit
+    queryParams.append("limit", "100");
 
     try {
       const [result, aggregateResult] = await Promise.all([

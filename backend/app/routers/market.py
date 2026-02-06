@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from typing import List, Optional, Any
 from datetime import date
 from app.database import get_db_connection
@@ -11,7 +11,9 @@ router = APIRouter(
 
 @router.get("/screener")
 def screen_market(
+    request: Request,
     min_gap: float = 0.0,
+    max_gap: Optional[float] = None,
     min_run: float = 0.0,
     min_volume: float = 0.0,
     trade_date: Optional[date] = None,
@@ -29,13 +31,61 @@ def screen_market(
     con = get_db_connection(read_only=True)
     
     try:
-        # 1. Base Filter Conditions
-        where_clauses = [
-            "gap_at_open_pct >= ?",
-            "rth_run_pct >= ?",
-            "rth_volume >= ?"
-        ]
-        params = [min_gap, min_run, min_volume]
+        # Get all query parameters
+        query_params = dict(request.query_params)
+        
+        # 1. Build Filter Conditions Dynamically
+        where_clauses = []
+        params = []
+        
+        # Process all query parameters dynamically
+        for param_name, param_value in query_params.items():
+            # Skip special parameters
+            if param_name in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker']:
+                continue
+            
+            # Handle min_* parameters (>=)
+            if param_name.startswith('min_'):
+                column_name = param_name[4:]  # Remove 'min_' prefix
+                try:
+                    value = float(param_value)
+                    where_clauses.append(f"{column_name} >= ?")
+                    params.append(value)
+                except ValueError:
+                    continue
+            
+            # Handle max_* parameters (<=)
+            elif param_name.startswith('max_'):
+                column_name = param_name[4:]  # Remove 'max_' prefix
+                try:
+                    value = float(param_value)
+                    where_clauses.append(f"{column_name} <= ?")
+                    params.append(value)
+                except ValueError:
+                    continue
+            
+            # Handle exact_* parameters (=)
+            elif param_name.startswith('exact_'):
+                column_name = param_name[6:]  # Remove 'exact_' prefix
+                try:
+                    value = float(param_value)
+                    where_clauses.append(f"{column_name} = ?")
+                    params.append(value)
+                except ValueError:
+                    continue
+        
+        # Add default filters if not already present
+        if 'min_gap_at_open_pct' not in query_params.keys() and 'min_gap' in query_params:
+            where_clauses.append("gap_at_open_pct >= ?")
+            params.append(float(query_params.get('min_gap', 0)))
+        
+        if 'min_rth_volume' not in query_params.keys() and 'min_volume' in query_params:
+            where_clauses.append("rth_volume >= ?")
+            params.append(float(query_params.get('min_volume', 0)))
+        
+        if 'min_rth_run_pct' not in query_params.keys() and 'min_run' in query_params:
+            where_clauses.append("rth_run_pct >= ?")
+            params.append(float(query_params.get('min_run', 0)))
         
         # Date Logic: Range > Single Date > All Time
         if start_date and end_date:
@@ -49,6 +99,10 @@ def screen_market(
         if ticker:
             where_clauses.append("ticker = ?")
             params.append(ticker.upper())
+        
+        # If no filters, add a default true condition
+        if not where_clauses:
+            where_clauses.append("1=1")
             
         where_sql = " AND ".join(where_clauses)
         
@@ -223,7 +277,9 @@ def get_latest_market_date():
         con.close()
 @router.get("/aggregate/intraday")
 def get_aggregate_intraday(
+    request: Request,
     min_gap: float = 0.0,
+    max_gap: Optional[float] = None,
     min_run: float = 0.0,
     min_volume: float = 0.0,
     trade_date: Optional[date] = None,
@@ -236,13 +292,61 @@ def get_aggregate_intraday(
     """
     con = get_db_connection(read_only=True)
     try:
-        # Reuse Filter Logic (DRY principle would suggest extracting this, but for now we copy)
-        where_clauses = [
-            "d.gap_at_open_pct >= ?",
-            "d.rth_run_pct >= ?",
-            "d.rth_volume >= ?"
-        ]
-        params = [min_gap, min_run, min_volume]
+        # Get all query parameters
+        query_params = dict(request.query_params)
+        
+        # Build Filter Conditions Dynamically (same as screener)
+        where_clauses = []
+        params = []
+        
+        # Process all query parameters dynamically
+        for param_name, param_value in query_params.items():
+            # Skip special parameters
+            if param_name in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker']:
+                continue
+            
+            # Handle min_* parameters (>=)
+            if param_name.startswith('min_'):
+                column_name = param_name[4:]  # Remove 'min_' prefix
+                try:
+                    value = float(param_value)
+                    where_clauses.append(f"d.{column_name} >= ?")
+                    params.append(value)
+                except ValueError:
+                    continue
+            
+            # Handle max_* parameters (<=)
+            elif param_name.startswith('max_'):
+                column_name = param_name[4:]  # Remove 'max_' prefix
+                try:
+                    value = float(param_value)
+                    where_clauses.append(f"d.{column_name} <= ?")
+                    params.append(value)
+                except ValueError:
+                    continue
+            
+            # Handle exact_* parameters (=)
+            elif param_name.startswith('exact_'):
+                column_name = param_name[6:]  # Remove 'exact_' prefix
+                try:
+                    value = float(param_value)
+                    where_clauses.append(f"d.{column_name} = ?")
+                    params.append(value)
+                except ValueError:
+                    continue
+        
+        # Add default filters if not already present
+        if 'min_gap_at_open_pct' not in query_params.keys() and 'min_gap' in query_params:
+            where_clauses.append("d.gap_at_open_pct >= ?")
+            params.append(float(query_params.get('min_gap', 0)))
+        
+        if 'min_rth_volume' not in query_params.keys() and 'min_volume' in query_params:
+            where_clauses.append("d.rth_volume >= ?")
+            params.append(float(query_params.get('min_volume', 0)))
+        
+        if 'min_rth_run_pct' not in query_params.keys() and 'min_run' in query_params:
+            where_clauses.append("d.rth_run_pct >= ?")
+            params.append(float(query_params.get('min_run', 0)))
         
         if start_date and end_date:
             where_clauses.append("d.date BETWEEN ? AND ?")
@@ -254,6 +358,10 @@ def get_aggregate_intraday(
         if ticker:
             where_clauses.append("d.ticker = ?")
             params.append(ticker.upper())
+        
+        # If no filters, add a default true condition
+        if not where_clauses:
+            where_clauses.append("1=1")
             
         where_sql = " AND ".join(where_clauses)
         
