@@ -5,12 +5,14 @@ import os
 from contextlib import asynccontextmanager
 
 from app.scheduler import start_scheduler
+from app.database import init_db
 
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize data, scheduler etc.
     print("Startup: Initializing Application...")
+    init_db()
     start_scheduler()
     yield
     # Shutdown
