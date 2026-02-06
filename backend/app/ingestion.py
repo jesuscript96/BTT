@@ -46,18 +46,21 @@ def pulse_ingest_cycle():
     Lightweight incremental update cycle.
     Fetches the 3 oldest updated tickers and pulls only recent history (last 7 days).
     Designed to run every ~60s without overlapping.
+    
+    Memory optimized: Processes one ticker at a time and closes connection after each.
     """
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 📊 Pulse started...")
-    con = get_db_connection()
     
     try:
-        # Get 3 tickers (reduced from 5 for faster execution)
+        # Get tickers in a separate connection scope
+        con = get_db_connection()
         tickers = con.execute("""
             SELECT ticker FROM tickers 
             WHERE active = true 
             ORDER BY last_updated ASC 
-            LIMIT 3
+            LIMIT 2
         """).fetch_df()['ticker'].tolist()
+        con.close()
         
         if not tickers:
             print("⚠️  No tickers found to ingest.")
@@ -65,23 +68,31 @@ def pulse_ingest_cycle():
 
         client = MassiveClient()
         
+        # Process each ticker independently to minimize memory usage
         for ticker in tickers:
-            # Only pull last 7 days for incremental updates
-            days_to_pull = 7
-            to_date = datetime.now().strftime("%Y-%m-%d")
-            from_date = (datetime.now() - timedelta(days=days_to_pull)).strftime("%Y-%m-%d")
-            
-            print(f"  ✓ Updating {ticker} (last {days_to_pull} days)...")
-            ingest_ticker_history_range(client, ticker, from_date, to_date, con=con, skip_sleep=True)
-            
-            # Mark as updated
-            con.execute("UPDATE tickers SET last_updated = ? WHERE ticker = ?", [datetime.now(), ticker])
+            try:
+                # Only pull last 7 days for incremental updates
+                days_to_pull = 7
+                to_date = datetime.now().strftime("%Y-%m-%d")
+                from_date = (datetime.now() - timedelta(days=days_to_pull)).strftime("%Y-%m-%d")
+                
+                print(f"  ✓ Updating {ticker} (last {days_to_pull} days)...")
+                
+                # Use fresh connection for each ticker
+                ticker_con = get_db_connection()
+                ingest_ticker_history_range(client, ticker, from_date, to_date, con=ticker_con, skip_sleep=True)
+                
+                # Mark as updated
+                ticker_con.execute("UPDATE tickers SET last_updated = ? WHERE ticker = ?", [datetime.now(), ticker])
+                ticker_con.close()
+                
+            except Exception as ticker_error:
+                print(f"  ❌ Error updating {ticker}: {ticker_error}")
+                continue
             
         print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Pulse complete ({len(tickers)} tickers updated).")
     except Exception as e:
         print(f"❌ Pulse error: {e}")
-    finally:
-        con.close()
 
 
 def ingest_deep_history(ticker_list=None, days=730):
