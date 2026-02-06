@@ -1,0 +1,143 @@
+"use client";
+
+import React, { useState } from "react";
+import { Search, Filter, RefreshCw, Download, ChevronDown, ChevronUp } from "lucide-react";
+
+interface AdvancedFilterPanelProps {
+    onFilter: (filters: any) => void;
+    onExport: () => void;
+    isLoading: boolean;
+}
+
+export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({ onFilter, onExport, isLoading }) => {
+    const [ticker, setTicker] = useState("");
+    const [minGap, setMinGap] = useState("");
+    const [maxGap, setMaxGap] = useState("");
+    const [minVol, setMinVol] = useState("");
+    const [m15Ret, setM15Ret] = useState("");
+    const [dayRet, setDayRet] = useState("");
+    const [highSpike, setHighSpike] = useState("");
+    const [lowSpike, setLowSpike] = useState("");
+    const [hodAfter, setHodAfter] = useState("");
+    const [lodBefore, setLodBefore] = useState("");
+    const [openLtVwap, setOpenLtVwap] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(true);
+
+    const handleApply = () => {
+        onFilter({
+            ticker: ticker || undefined,
+            min_gap_pct: minGap ? parseFloat(minGap) : undefined,
+            max_gap_pct: maxGap ? parseFloat(maxGap) : undefined,
+            min_rth_volume: minVol ? parseFloat(minVol) : undefined,
+            min_m15_ret_pct: m15Ret ? parseFloat(m15Ret) : undefined,
+            min_rth_run_pct: dayRet ? parseFloat(dayRet) : undefined,
+            min_high_spike_pct: highSpike ? parseFloat(highSpike) : undefined,
+            min_low_spike_pct: lowSpike ? parseFloat(lowSpike) : undefined,
+            hod_after: hodAfter || undefined,
+            lod_before: lodBefore || undefined,
+            open_lt_vwap: openLtVwap || undefined,
+        });
+    };
+
+    return (
+        <div className="bg-[#F2F0ED]/80 backdrop-blur-md border-b border-zinc-200 sticky top-0 z-10 transition-all shadow-sm">
+            <div className="p-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-zinc-400" />
+                        <input
+                            type="text"
+                            placeholder="Ticker..."
+                            value={ticker}
+                            onChange={(e) => setTicker(e.target.value)}
+                            className="bg-white border border-zinc-200 text-zinc-900 pl-8 pr-3 py-2 rounded-lg text-sm w-32 focus:border-blue-500 outline-none shadow-sm transition-all"
+                        />
+                    </div>
+
+                    <div className="h-6 w-px bg-zinc-200" />
+
+                    <div className="flex gap-2">
+                        <FilterInput label="Min Gap" value={minGap} onChange={setMinGap} />
+                        <FilterInput label="Max Gap" value={maxGap} onChange={setMaxGap} />
+                        <FilterInput label="Min Vol" value={minVol} onChange={setMinVol} />
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        className="p-2 text-zinc-400 hover:text-zinc-600 transition-colors"
+                    >
+                        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    </button>
+                    <button
+                        onClick={handleApply}
+                        disabled={isLoading}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-black tracking-tight transition-all flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50"
+                    >
+                        {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+                        Run Scan
+                    </button>
+                    <button
+                        onClick={onExport}
+                        className="bg-white hover:bg-zinc-50 text-zinc-600 px-4 py-2 rounded-lg text-sm font-bold border border-zinc-200 shadow-sm transition-all"
+                    >
+                        <Download className="h-4 w-4" />
+                    </button>
+                </div>
+            </div>
+
+            {isExpanded && (
+                <div className="px-4 pb-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 border-t border-zinc-200/50 pt-4">
+                    <CategoryGroup title="Returns">
+                        <FilterInput label="M15 Ret %" value={m15Ret} onChange={setM15Ret} />
+                        <FilterInput label="Day Ret %" value={dayRet} onChange={setDayRet} />
+                    </CategoryGroup>
+                    <CategoryGroup title="Volatility">
+                        <FilterInput label="High Spike %" value={highSpike} onChange={setHighSpike} />
+                        <FilterInput label="Low Spike %" value={lowSpike} onChange={setLowSpike} />
+                    </CategoryGroup>
+                    <CategoryGroup title="Time">
+                        <FilterInput label="HOD After" value={hodAfter} onChange={setHodAfter} />
+                        <FilterInput label="LOD Before" value={lodBefore} onChange={setLodBefore} />
+                    </CategoryGroup>
+                    <CategoryGroup title="VWAP">
+                        <FilterInput label="Close > VWAP" value="" isCheck />
+                        <FilterInput label="Open < VWAP" checked={openLtVwap} onChange={(v: any) => setOpenLtVwap(v)} isCheck />
+                    </CategoryGroup>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) => (
+    <div className="flex flex-col gap-1">
+        <span className="text-[10px] text-zinc-400 uppercase font-black tracking-widest">{label}</span>
+        {isCheck ? (
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="h-4 w-4 rounded border-zinc-300 bg-white text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+        ) : (
+            <input
+                type="text"
+                placeholder="-"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="bg-white border border-zinc-200 text-zinc-900 px-2 py-1 rounded text-xs w-20 focus:border-blue-500 outline-none shadow-inner"
+            />
+        )}
+    </div>
+);
+
+const CategoryGroup = ({ title, children }: any) => (
+    <div className="space-y-2">
+        <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest border-l-2 border-blue-500 pl-2">{title}</h4>
+        <div className="flex flex-wrap gap-2 text-zinc-500">
+            {children}
+        </div>
+    </div>
+)
