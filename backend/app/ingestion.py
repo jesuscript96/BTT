@@ -64,12 +64,11 @@ def pulse_ingest_cycle():
         client = MassiveClient()
         
         for ticker in tickers:
-            days_to_pull = 60
+            days_to_pull = 730 # 2 years for deep history
             to_date = datetime.now().strftime("%Y-%m-%d")
             from_date = (datetime.now() - timedelta(days=days_to_pull)).strftime("%Y-%m-%d")
             
-            print(f"  -> Pulling {ticker} history ({from_date} to {to_date})...")
-            # PASS THE CONNECTION HERE
+            print(f"  -> Pulling {ticker} deep history ({from_date} to {to_date})...")
             ingest_ticker_history_range(client, ticker, from_date, to_date, con=con)
             
             # Mark as updated
@@ -83,51 +82,62 @@ def pulse_ingest_cycle():
 
 def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None):
     """
-    Downloads and saves history for a ticker.
+    Downloads and saves history for a ticker in manageable chunks.
     """
-    candles = client.get_aggregates(ticker, from_date, to_date)
-    if not candles:
-        return
-
-    df = pd.DataFrame(candles)
-    df = df.rename(columns={
-        'v': 'volume', 'o': 'open', 'c': 'close', 
-        'h': 'high', 'l': 'low', 't': 'timestamp', 'vw': 'vwap'
-    })
+    start_dt = datetime.strptime(from_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(to_date, "%Y-%m-%d")
     
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    df['ticker'] = ticker
+    # 45-day chunks to stay safely under Massive 50k result limit (1m bars)
+    chunk_size = 45
+    current_start = start_dt
     
-    # Standardize columns for historical_data schema
-    target_columns = [
-        'ticker', 'timestamp', 'open', 'high', 'low', 'close', 
-        'volume', 'vwap', 'pm_high', 'pm_volume', 'gap_percent'
-    ]
-    
-    for col in target_columns:
-        if col not in df.columns:
-            df[col] = 0.0
-            
-    final_df = df[target_columns]
-    
-    # Use provided connection or open a new one
-    local_con = con if con else get_db_connection()
-    try:
-        local_con.register('candles_pulse', final_df)
-        local_con.execute("INSERT OR IGNORE INTO historical_data SELECT * FROM candles_pulse")
+    while current_start < end_dt:
+        current_end = min(current_start + timedelta(days=chunk_size), end_dt)
+        fs = current_start.strftime("%Y-%m-%d")
+        ts = current_end.strftime("%Y-%m-%d")
         
-        # After ingesting historical 1m data, trigger daily metrics calculation
-        from .processor import process_daily_metrics
-        daily_metrics_df = process_daily_metrics(final_df)
-        if not daily_metrics_df.empty:
-            local_con.register('daily_pulse', daily_metrics_df)
-            local_con.execute("INSERT OR REPLACE INTO daily_metrics SELECT * FROM daily_pulse")
+        print(f"    - Fetching chunk {fs} to {ts}...")
+        candles = client.get_aggregates(ticker, fs, ts)
+        
+        if candles:
+            df = pd.DataFrame(candles)
+            df = df.rename(columns={
+                'v': 'volume', 'o': 'open', 'c': 'close', 
+                'h': 'high', 'l': 'low', 't': 'timestamp', 'vw': 'vwap'
+            })
             
-    except Exception as e:
-        print(f"Database error during pulse for {ticker}: {e}")
-    finally:
-        if not con: # Only close if we opened it locally
-            local_con.close()
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df['ticker'] = ticker
+            
+            target_columns = [
+                'ticker', 'timestamp', 'open', 'high', 'low', 'close', 
+                'volume', 'vwap', 'pm_high', 'pm_volume', 'gap_percent'
+            ]
+            
+            for col in target_columns:
+                if col not in df.columns:
+                    df[col] = 0.0
+                    
+            final_df = df[target_columns]
+            
+            local_con = con if con else get_db_connection()
+            try:
+                local_con.register('candles_chunk', final_df)
+                local_con.execute("INSERT OR IGNORE INTO historical_data SELECT * FROM candles_chunk")
+                
+                # Update daily metrics for this chunk
+                from .processor import process_daily_metrics
+                daily_metrics_df = process_daily_metrics(final_df)
+                if not daily_metrics_df.empty:
+                    local_con.register('daily_chunk', daily_metrics_df)
+                    local_con.execute("INSERT OR REPLACE INTO daily_metrics SELECT * FROM daily_chunk")
+            except Exception as e:
+                print(f"Chunk DB error for {ticker}: {e}")
+            finally:
+                if not con:
+                    local_con.close()
+        
+        current_start = current_end + timedelta(days=1)
 
 FALLBACK_TICKERS = [
     "AAPL", "TSLA", "NVDA", "AMD", "META", "MSFT", "GOOGL", "AMZN", "NFLX", "COIN",
