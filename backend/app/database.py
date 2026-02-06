@@ -8,6 +8,25 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 _con = None
 _lock = Lock()
 
+def _establish_connection():
+    """Helper to create a connection with correct MotherDuck settings."""
+    token = os.getenv("MOTHERDUCK_TOKEN")
+    if token:
+        # Step 1: Ensure btt database exists
+        print("Ensuring MotherDuck 'btt' database exists...")
+        temp_con = duckdb.connect(f"md:?motherduck_token={token}")
+        temp_con.execute("CREATE DATABASE IF NOT EXISTS btt")
+        temp_con.close()
+        
+        # Step 2: Connect directly to btt
+        print("Connecting to MotherDuck catalog: btt")
+        con = duckdb.connect(f"md:btt?motherduck_token={token}")
+        con.execute("SET search_path = 'main'")
+        return con
+    else:
+        print(f"Connecting to local DuckDB at {DB_PATH}...")
+        return duckdb.connect(DB_PATH, read_only=False)
+
 def get_db_connection(read_only=False):
     """
     Returns a DuckDB connection or cursor.
@@ -16,35 +35,16 @@ def get_db_connection(read_only=False):
     global _con
     with _lock:
         if _con is None:
-            token = os.getenv("MOTHERDUCK_TOKEN")
-            if token:
-                # Connect to MotherDuck (broadly first)
-                print("Connecting to MotherDuck...")
-                _con = duckdb.connect(f"md:?motherduck_token={token}")
-                # Ensure the 'btt' database exists and use it
-                _con.execute("CREATE DATABASE IF NOT EXISTS btt")
-                _con.execute("USE btt")
-                print("Using MotherDuck database: btt")
-            else:
-                # Fallback to local DuckDB
-                print(f"Connecting to local DuckDB at {DB_PATH}...")
-                _con = duckdb.connect(DB_PATH, read_only=False)
-        
+            _con = _establish_connection()
         return _con.cursor()
 
 def init_db():
     """
     Initialize the database with necessary tables.
     """
-    token = os.getenv("MOTHERDUCK_TOKEN")
-    if token:
-        print("Initializing MotherDuck database...")
-        con = duckdb.connect(f"md:?motherduck_token={token}")
-        con.execute("CREATE DATABASE IF NOT EXISTS btt")
-        con.execute("USE btt")
-    else:
-        print(f"Initializing local DuckDB at {DB_PATH}...")
-        con = duckdb.connect(DB_PATH)
+    print("Database Initialization Started")
+    # We use a separate connection for init to avoid interference with the global _con
+    con = _establish_connection()
     
     # Tickers table
     con.execute("""
@@ -108,4 +108,4 @@ def init_db():
     """)
     
     con.close()
-    print(f"Database initialized at {DB_PATH}")
+    print("Database initialization completed.")
