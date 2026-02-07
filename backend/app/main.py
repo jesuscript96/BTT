@@ -15,6 +15,13 @@ async def lifespan(app: FastAPI):
     print("Startup: Initializing Application...")
     init_db()
     
+    # Run migrations to fix schema mismatches
+    try:
+        from app.migrations import run_all_migrations
+        run_all_migrations()
+    except Exception as e:
+        print(f"⚠️  Migration error (non-fatal): {e}")
+    
     # Check if we need to fetch initial tickers
     try:
         con = get_db_connection()
