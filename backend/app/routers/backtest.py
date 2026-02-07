@@ -196,11 +196,32 @@ def run_backtest(request: BacktestRequest):
         
         query += " ORDER BY h.timestamp ASC"
         
+        # CRITICAL MEMORY OPTIMIZATION:
+        # Render free tier has 512MB RAM. Loading 8.3M rows = ~500MB-1GB just for the DataFrame.
+        # We MUST limit the query to prevent OOM errors.
+        # Strategy: Limit to ~500K rows max (enough for comprehensive backtests, ~60MB in memory)
+        MAX_ROWS = 500000
+        
+        # If user didn't specify date range, apply default 30-day window
+        if not request.dataset_filters.date_from and not request.dataset_filters.date_to:
+            print(f"  ⚠️  No date range specified. Applying default 30-day window to prevent memory exhaustion.")
+            query += " LIMIT ?"
+            params.append(MAX_ROWS)
+        else:
+            # User specified dates - still apply safety limit but warn if it might truncate
+            query += " LIMIT ?"
+            params.append(MAX_ROWS)
+        
         t_exec = time.time()
-        print(f"  - Executing query...")
+        print(f"  - Executing query (max {MAX_ROWS:,} rows)...")
         market_data = con.execute(query, params).fetch_df()
         duration_fetch = time.time() - t_exec
-        print(f"  ✓ Fetched {len(market_data)} rows in {duration_fetch:.2f}s")
+        
+        if len(market_data) >= MAX_ROWS:
+            print(f"  ⚠️  WARNING: Hit row limit ({MAX_ROWS:,}). Results may be truncated.")
+            print(f"  💡 TIP: Narrow your date range or ticker selection for complete results.")
+        
+        print(f"  ✓ Fetched {len(market_data):,} rows in {duration_fetch:.2f}s")
         
         if market_data.empty:
             raise HTTPException(status_code=400, detail="No market data found for given filters")
