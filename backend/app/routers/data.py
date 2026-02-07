@@ -191,3 +191,33 @@ def get_tickers():
     finally:
         if con:
             con.close()
+@router.get("/historical")
+def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
+    """
+    Fetch intraday OHLC data for a specific ticker and range.
+    """
+    con = None
+    try:
+        con = get_db_connection(read_only=True)
+        query = """
+            SELECT 
+                timestamp, open, high, low, close, volume, vwap 
+            FROM historical_data 
+            WHERE ticker = ? AND timestamp >= ? AND timestamp <= ?
+            ORDER BY timestamp ASC
+        """
+        df = con.execute(query, [ticker.upper(), date_from, date_to]).fetch_df()
+        
+        if df.empty:
+            return []
+            
+        # Convert timestamp to ISO format for JSON
+        df['time'] = df['timestamp'].view('int64') // 10**9 # Convert to unix timestamp for lightweight-charts
+        
+        return df[['time', 'open', 'high', 'low', 'close', 'volume', 'vwap']].to_dict(orient="records")
+    except Exception as e:
+        print(f"Historical OHLC API Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if con:
+            con.close()
