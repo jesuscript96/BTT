@@ -1,13 +1,27 @@
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from typing import List, Optional, Any
 from datetime import date
 from app.database import get_db_connection
 import pandas as pd
+import numpy as np
+
 
 router = APIRouter(
     prefix="/api/market",
     tags=["market"]
 )
+
+VALID_METRICS = {
+    "rth_open", "rth_high", "rth_low", "rth_close", "rth_volume",
+    "gap_at_open_pct", "rth_run_pct", "pm_high", "pm_volume",
+    "high_spike_pct", "low_spike_pct", "pmh_fade_to_open_pct",
+    "rth_fade_to_close_pct", "open_lt_vwap", "pm_high_break",
+    "m15_return_pct", "m30_return_pct", "m60_return_pct",
+    "close_lt_m15", "close_lt_m30", "close_lt_m60",
+    "hod_time", "lod_time", "close_direction"
+}
 
 @router.get("/screener")
 def screen_market(
@@ -28,9 +42,9 @@ def screen_market(
     - records: List of filtered tickers (paginated/limited)
     - stats: Aggregate statistics for the ENTIRE filtered dataset
     """
-    con = get_db_connection(read_only=True)
-    
+    con = None
     try:
+        con = get_db_connection(read_only=True)
         # Get all query parameters
         query_params = dict(request.query_params)
         
@@ -47,6 +61,8 @@ def screen_market(
             # Handle min_* parameters (>=)
             if param_name.startswith('min_'):
                 column_name = param_name[4:]  # Remove 'min_' prefix
+                if column_name not in VALID_METRICS:
+                    continue
                 try:
                     value = float(param_value)
                     where_clauses.append(f"{column_name} >= ?")
@@ -57,6 +73,8 @@ def screen_market(
             # Handle max_* parameters (<=)
             elif param_name.startswith('max_'):
                 column_name = param_name[4:]  # Remove 'max_' prefix
+                if column_name not in VALID_METRICS:
+                    continue
                 try:
                     value = float(param_value)
                     where_clauses.append(f"{column_name} <= ?")
@@ -67,6 +85,8 @@ def screen_market(
             # Handle exact_* parameters (=)
             elif param_name.startswith('exact_'):
                 column_name = param_name[6:]  # Remove 'exact_' prefix
+                if column_name not in VALID_METRICS:
+                    continue
                 try:
                     value = float(param_value)
                     where_clauses.append(f"{column_name} = ?")
@@ -120,6 +140,11 @@ def screen_market(
         if not df_records.empty:
             df_records['date'] = df_records['date'].astype(str)
             records = df_records.to_dict(orient="records")
+            # Robust sanitization of list of dicts
+            for record in records:
+                for k, v in record.items():
+                    if isinstance(v, float) and (pd.isna(v) or v == float('inf') or v == float('-inf')):
+                        record[k] = None
             
         # 3. Calculate Stats (On Full Filtered Set - No Limit)
         # We calculate the precise averages needed for the Dashboard
@@ -147,16 +172,16 @@ def screen_market(
                 AVG(pm_high) as avg_pmh_price,
                 AVG(rth_open) as avg_open_price,
                 AVG(rth_close) as avg_close_price,
-                AVG(pmh_fade_to_open_pct) as pmh_fade_to_open_pct,
+                AVG(pmh_fade_to_open_pct) as pmh_fade_to_open_pct_1,
                 AVG(high_spike_pct) as high_spike_pct,
                 AVG(low_spike_pct) as low_spike_pct,
-                AVG(rth_fade_to_close_pct) as rth_fade_to_close_pct,
+                AVG(rth_fade_to_close_pct) as rth_fade_to_close_pct_1,
                 AVG(m15_return_pct) as m15_return_pct,
                 AVG(m30_return_pct) as m30_return_pct,
                 AVG(m60_return_pct) as m60_return_pct,
                 -- Booleans (DuckDB computes AVG of boolean as 0-1 float)
-                AVG(CAST(open_lt_vwap AS INT)) * 100 as open_lt_vwap,
-                AVG(CAST(pm_high_break AS INT)) * 100 as pm_high_break,
+                AVG(CAST(open_lt_vwap AS INT)) * 100 as open_lt_vwap_1,
+                AVG(CAST(pm_high_break AS INT)) * 100 as pm_high_break_1,
                 AVG(CAST(close_lt_m15 AS INT)) * 100 as close_lt_m15,
                 AVG(CAST(close_lt_m30 AS INT)) * 100 as close_lt_m30,
                 AVG(CAST(close_lt_m60 AS INT)) * 100 as close_lt_m60
@@ -168,13 +193,16 @@ def screen_market(
         averages = {}
         count = 0
         if not df_stats.empty:
-            # Handle NaN values (which are not valid JSON)
-            # DuckDB returns NaN for AVG() on empty sets or filtered rows
-            df_stats = df_stats.where(pd.notnull(df_stats), None)
-            
             stats_dict = df_stats.iloc[0].to_dict()
             count = stats_dict.pop('count', 0)
-            averages = stats_dict
+            # Convert NaN and Inf to None for JSON serialization
+            processed_stats = {}
+            for k, v in stats_dict.items():
+                if pd.isna(v) or v == np.inf or v == -np.inf:
+                    processed_stats[k] = None
+                else:
+                    processed_stats[k] = v
+            averages = processed_stats
             
         # 4. Calculate Distributions (HOD/LOD Time)
         # Using approximated histograms or simple groupby for major buckets
@@ -188,7 +216,9 @@ def screen_market(
             LIMIT 10
         """
         df_hod = con.execute(dist_query, params).fetch_df()
-        hod_dist = dict(zip(df_hod['hod_time'], df_hod['c'])) if not df_hod.empty else {}
+        hod_dist = {}
+        if not df_hod.empty:
+            hod_dist = dict(zip(df_hod['hod_time'], df_hod['c'].astype(float)))
 
         dist_query_lod = f"""
             SELECT 
@@ -200,7 +230,9 @@ def screen_market(
             LIMIT 10
         """
         df_lod = con.execute(dist_query_lod, params).fetch_df()
-        lod_dist = dict(zip(df_lod['lod_time'], df_lod['c'])) if not df_lod.empty else {}
+        lod_dist = {}
+        if not df_lod.empty:
+             lod_dist = dict(zip(df_lod['lod_time'], df_lod['c'].astype(float)))
 
         return {
             "records": records,
@@ -213,7 +245,7 @@ def screen_market(
                 }
             }
         }
-
+        
     except Exception as e:
         import traceback
         with open("error.log", "w") as f:
@@ -221,7 +253,8 @@ def screen_market(
         print(f"Screener Error details: {e}")
         raise HTTPException(status_code=500, detail=f"Screener Error: {str(e)}")
     finally:
-        con.close()
+        if con:
+            con.close()
 
 @router.get("/ticker/{ticker}/intraday")
 def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
@@ -229,9 +262,9 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
     Get 1-minute candles for a specific ticker and date.
     Used for the Market Analysis Chart.
     """
-    con = get_db_connection(read_only=True)
-    
+    con = None
     try:
+        con = get_db_connection(read_only=True)
         if not trade_date:
              # Find latest date for this ticker
             latest = con.execute("SELECT MAX(CAST(timestamp AS DATE)) FROM historical_data WHERE ticker = ?", [ticker]).fetchone()
@@ -262,19 +295,28 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Intraday Error: {str(e)}")
     finally:
-        con.close()
+        if con:
+            con.close()
 
 @router.get("/latest-date")
 def get_latest_market_date():
     """Returns the most recent date available in the dataset."""
-    con = get_db_connection(read_only=True)
+    con = None
     try:
+        con = get_db_connection(read_only=True)
         latest = con.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
         if latest and latest[0]:
             return {"date": str(latest[0])}
         return {"date": None}
+    except Exception as e:
+        import traceback
+        with open("error.log", "w") as f:
+            f.write(traceback.format_exc())
+        print(f"Latest Date Error details: {e}")
+        raise HTTPException(status_code=500, detail=f"Latest Date Error: {str(e)}")
     finally:
-        con.close()
+        if con:
+            con.close()
 @router.get("/aggregate/intraday")
 def get_aggregate_intraday(
     request: Request,
@@ -290,8 +332,9 @@ def get_aggregate_intraday(
     """
     Get Aggregate (Average & Median) Intraday % Change for the filtered dataset.
     """
-    con = get_db_connection(read_only=True)
+    con = None
     try:
+        con = get_db_connection(read_only=True)
         # Get all query parameters
         query_params = dict(request.query_params)
         
@@ -308,6 +351,8 @@ def get_aggregate_intraday(
             # Handle min_* parameters (>=)
             if param_name.startswith('min_'):
                 column_name = param_name[4:]  # Remove 'min_' prefix
+                if column_name not in VALID_METRICS:
+                    continue
                 try:
                     value = float(param_value)
                     where_clauses.append(f"d.{column_name} >= ?")
@@ -318,6 +363,8 @@ def get_aggregate_intraday(
             # Handle max_* parameters (<=)
             elif param_name.startswith('max_'):
                 column_name = param_name[4:]  # Remove 'max_' prefix
+                if column_name not in VALID_METRICS:
+                    continue
                 try:
                     value = float(param_value)
                     where_clauses.append(f"d.{column_name} <= ?")
@@ -328,6 +375,8 @@ def get_aggregate_intraday(
             # Handle exact_* parameters (=)
             elif param_name.startswith('exact_'):
                 column_name = param_name[6:]  # Remove 'exact_' prefix
+                if column_name not in VALID_METRICS:
+                    continue
                 try:
                     value = float(param_value)
                     where_clauses.append(f"d.{column_name} = ?")
@@ -391,11 +440,14 @@ def get_aggregate_intraday(
         
         if df.empty:
             return []
-            
-        return df[['time', 'avg_change', 'median_change']].to_dict(orient="records")
+        
+        # Replace NaN with None for JSON serialization
+        df_clean = df[['time', 'avg_change', 'median_change']].where(pd.notna(df[['time', 'avg_change', 'median_change']]), None)
+        return df_clean.to_dict(orient="records")
         
     except Exception as e:
         print(f"Aggregate Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        con.close()
+        if con:
+            con.close()

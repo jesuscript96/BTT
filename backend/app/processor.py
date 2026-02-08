@@ -67,10 +67,56 @@ def process_daily_metrics(df):
                 price_at = snapshot.iloc[-1]['close']
                 return float(((price_at - rth_open) / rth_open) * 100), price_at
             return 0.0, rth_open
-
+        
+        # Get prices and returns at specific times
+        m1_ret, m1_price = get_return_at(1)
+        m5_ret, m5_price = get_return_at(5)
         m15_ret, m15_price = get_return_at(15)
         m30_ret, m30_price = get_return_at(30)
         m60_ret, m60_price = get_return_at(60)
+        m180_ret, m180_price = get_return_at(180)
+        
+        # TIER 1: Simple calculations
+        # prev_close is already tracked in the loop
+        pmh_gap_pct = ((pm_high - prev_close) / prev_close) * 100 if prev_close and prev_close > 0 and pm_high > 0 else 0.0
+        rth_range_pct = ((rth_high - rth_low) / rth_low) * 100 if rth_low > 0 else 0.0
+        day_return_pct = ((rth_close - rth_open) / rth_open) * 100 if rth_open > 0 else 0.0
+        
+        # PM High Time
+        pm_high_time = pm_session.loc[pm_session['high'].idxmax()]['timestamp'].strftime("%H:%M") if not pm_session.empty and len(pm_session) > 0 else "00:00"
+        
+        # TIER 2: M(x) High/Low Spikes
+        def get_spike_at(minutes, spike_type='high'):
+            """Get max high or min low in first X minutes after open"""
+            limit_time = (pd.Timestamp(f"{date} 09:30") + pd.Timedelta(minutes=minutes)).time()
+            snapshot = rth_session[rth_session['timestamp'].dt.time <= limit_time]
+            if not snapshot.empty:
+                if spike_type == 'high':
+                    spike_price = snapshot['high'].max()
+                    return float(((spike_price - rth_open) / rth_open) * 100)
+                else:  # 'low'
+                    spike_price = snapshot['low'].min()
+                    return float(((spike_price - rth_open) / rth_open) * 100)
+            return 0.0
+        
+        m1_high_spike = get_spike_at(1, 'high')
+        m5_high_spike = get_spike_at(5, 'high')
+        m15_high_spike = get_spike_at(15, 'high')
+        m30_high_spike = get_spike_at(30, 'high')
+        m60_high_spike = get_spike_at(60, 'high')
+        m180_high_spike = get_spike_at(180, 'high')
+        
+        m1_low_spike = get_spike_at(1, 'low')
+        m5_low_spike = get_spike_at(5, 'low')
+        m15_low_spike = get_spike_at(15, 'low')
+        m30_low_spike = get_spike_at(30, 'low')
+        m60_low_spike = get_spike_at(60, 'low')
+        m180_low_spike = get_spike_at(180, 'low')
+        
+        # TIER 3: Return from M(x) to Close
+        return_m15_to_close = ((rth_close - m15_price) / m15_price) * 100 if m15_price > 0 else 0.0
+        return_m30_to_close = ((rth_close - m30_price) / m30_price) * 100 if m30_price > 0 else 0.0
+        return_m60_to_close = ((rth_close - m60_price) / m60_price) * 100 if m60_price > 0 else 0.0
 
         metric = {
             'ticker': group.iloc[0]['ticker'],
@@ -98,7 +144,35 @@ def process_daily_metrics(df):
             'close_lt_m60': bool(rth_close < m60_price),
             'hod_time': rth_session.loc[rth_session['high'].idxmax()]['timestamp'].strftime("%H:%M"),
             'lod_time': rth_session.loc[rth_session['low'].idxmin()]['timestamp'].strftime("%H:%M"),
-            'close_direction': 'green' if rth_close > rth_open else 'red'
+            'close_direction': 'green' if rth_close > rth_open else 'red',
+            
+            # NEW TIER 1 METRICS
+            'prev_close': float(prev_close) if prev_close else None,
+            'pmh_gap_pct': float(pmh_gap_pct),
+            'rth_range_pct': float(rth_range_pct),
+            'day_return_pct': float(day_return_pct),
+            'pm_high_time': pm_high_time,
+            
+            # NEW TIER 2 METRICS - M(x) High Spikes
+            'm1_high_spike_pct': float(m1_high_spike),
+            'm5_high_spike_pct': float(m5_high_spike),
+            'm15_high_spike_pct': float(m15_high_spike),
+            'm30_high_spike_pct': float(m30_high_spike),
+            'm60_high_spike_pct': float(m60_high_spike),
+            'm180_high_spike_pct': float(m180_high_spike),
+            
+            # NEW TIER 2 METRICS - M(x) Low Spikes
+            'm1_low_spike_pct': float(m1_low_spike),
+            'm5_low_spike_pct': float(m5_low_spike),
+            'm15_low_spike_pct': float(m15_low_spike),
+            'm30_low_spike_pct': float(m30_low_spike),
+            'm60_low_spike_pct': float(m60_low_spike),
+            'm180_low_spike_pct': float(m180_low_spike),
+            
+            # NEW TIER 3 METRICS - Return from M(x) to Close
+            'return_m15_to_close': float(return_m15_to_close),
+            'return_m30_to_close': float(return_m30_to_close),
+            'return_m60_to_close': float(return_m60_to_close)
         }
         
         daily_results.append(metric)

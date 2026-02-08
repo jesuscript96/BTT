@@ -44,6 +44,22 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Short Selling Backtester API", lifespan=lifespan)
 
+# CORS Configuration - MUST be added BEFORE routers
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 from app.routers import data, strategies, backtest, query, market, strategy_search
 from app.api import ingestion
 import logging
@@ -57,15 +73,6 @@ app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(market.router)
 app.include_router(ingestion.router)  # Deep history ingestion endpoint
-
-# CORS Configuration - Allow all origins for production
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (Vercel, localhost, etc.)
-    allow_credentials=False,  # Must be False when using allow_origins=["*"]
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.get("/health")
 def read_health():

@@ -53,6 +53,23 @@ METRIC_MAP = {
     "M15 Return %": "m15_return_pct",
     "M30 Return %": "m30_return_pct",
     "M60 Return %": "m60_return_pct",
+    # NEW TIER 1 METRICS
+    "Previous Close": "prev_close",
+    "PMH Gap %": "pmh_gap_pct",
+    "RTH Range %": "rth_range_pct",
+    "Day Return %": "day_return_pct",
+    # NEW TIER 2 - M(x) High Spikes
+    "M15 High Spike %": "m15_high_spike_pct",
+    "M30 High Spike %": "m30_high_spike_pct",
+    "M60 High Spike %": "m60_high_spike_pct",
+    # NEW TIER 2 - M(x) Low Spikes
+    "M15 Low Spike %": "m15_low_spike_pct",
+    "M30 Low Spike %": "m30_low_spike_pct",
+    "M60 Low Spike %": "m60_low_spike_pct",
+    # NEW TIER 3 - Returns
+    "Return M15 to Close %": "return_m15_to_close",
+    "Return M30 to Close %": "return_m30_to_close",
+    "Return M60 to Close %": "return_m60_to_close",
 }
 
 @router.post("/filter")

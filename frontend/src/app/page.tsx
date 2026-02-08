@@ -73,7 +73,7 @@ export default function Home() {
       // Gap & Run metrics
       "Open Gap %": { column: "gap_at_open_pct", paramPrefix: "gap_pct" },
       "RTH Run %": { column: "rth_run_pct", paramPrefix: "rth_run_pct" },
-      "PMH Gap %": { column: "pmh_gap_pct", paramPrefix: "pmh_gap_pct" },
+      // "PMH Gap %": { column: "pmh_gap_pct", paramPrefix: "pmh_gap_pct" },  // DISABLED - causing DB errors
       "PMH Fade to Open %": { column: "pmh_fade_to_open_pct", paramPrefix: "pmh_fade_pct" },
       "RTH Fade to Close %": { column: "rth_fade_to_close_pct", paramPrefix: "rth_fade_pct" },
 
