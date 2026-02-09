@@ -15,14 +15,27 @@ from app.processor import process_daily_metrics
 
 def recalculate_all():
     print("🚀 Starting MASS Metric Recalculation...")
+    sys.stdout.flush()
     con = get_db_connection()
+    print("✅ Connected to MotherDuck.")
+    sys.stdout.flush()
     
     # 1. Get list of tickers that have historical data
+    print("🔍 Fetching ticker list...")
+    sys.stdout.flush()
     tickers = con.execute("SELECT DISTINCT ticker FROM historical_data").fetch_df()['ticker'].tolist()
     print(f"📊 Found {len(tickers)} tickers to process.")
+    sys.stdout.flush()
+    
+    # 1.1 Get table schema to ensure correct column mapping
+    table_info = con.execute("DESCRIBE daily_metrics").fetch_df()
+    db_columns = table_info['column_name'].tolist()
+    print(f"📋 Table schema has {len(db_columns)} columns.")
+    sys.stdout.flush()
     
     for ticker in tickers:
         print(f"Processing {ticker}...")
+        sys.stdout.flush()
         try:
             # 2. Fetch all historical data for this ticker
             df = con.execute("SELECT * FROM historical_data WHERE ticker = ? ORDER BY timestamp ASC", [ticker]).fetch_df()
@@ -36,37 +49,43 @@ def recalculate_all():
             if metrics_df.empty:
                 continue
                 
-            # 4. Upsert using DELETE-THEN-INSERT for MotherDuck compatibility
-            for _, row in metrics_df.iterrows():
-                ticker_val = row['ticker']
-                date_val = row['date']
-                
-                # Delete existing
-                con.execute("DELETE FROM daily_metrics WHERE ticker = ? AND date = ?", [ticker_val, date_val])
-                
-                # Insert new
-                cols = list(row.index)
-                vals = [row[c] for c in cols]
-                placeholders = ", ".join(["?"] * len(cols))
-                col_names = ", ".join(cols)
-                
-                # Sanitize values (Numpy types to native Python, and Inf/NaN to None)
-                sanitized_vals = []
-                for v in vals:
-                    if pd.isna(v) or (isinstance(v, float) and (v == float('inf') or v == float('-inf'))):
-                        sanitized_vals.append(None)
-                    elif hasattr(v, 'item'):  # Handle numpy types (.item() returns native)
-                        val = v.item()
-                        # Final check for nan/inf on the unwrapped value if it's a float
-                        if isinstance(val, float) and (not np.isfinite(val)):
-                            sanitized_vals.append(None)
-                        else:
-                            sanitized_vals.append(val)
-                    else:
-                        sanitized_vals.append(v)
-                
-                con.execute(f"INSERT INTO daily_metrics ({col_names}) VALUES ({placeholders})", sanitized_vals)
-                
+            # 4. Enrich using UPDATE for MotherDuck compatibility
+            # We already have metrics_df. We want to UPDATE existing rows in daily_metrics
+            # with these new values, identifying them by (ticker, date).
+            
+            # Prepare data for DuckDB registration
+            # Only include columns that we want to update (all except join keys)
+            metrics_to_update = [c for c in db_columns if c in metrics_df.columns and c not in ['ticker', 'date']]
+            final_df = metrics_df[['ticker', 'date'] + metrics_to_update].copy()
+            
+            for col in final_df.columns:
+                if final_df[col].dtype == object:
+                    continue
+                if pd.api.types.is_float_dtype(final_df[col]):
+                    final_df[col] = final_df[col].replace([np.inf, -np.inf], np.nan)
+            
+            con.register('temp_metrics_chunk', final_df)
+            
+            # Build the UPDATE clause
+            # DuckDB supports: UPDATE tbl SET col = t.col FROM tmp t WHERE ...
+            set_clause = ", ".join([f"{c} = t.{c}" for c in metrics_to_update])
+            
+            con.execute("BEGIN TRANSACTION")
+            try:
+                con.execute(f"""
+                    UPDATE daily_metrics 
+                    SET {set_clause} 
+                    FROM temp_metrics_chunk t 
+                    WHERE daily_metrics.ticker = t.ticker 
+                    AND daily_metrics.date = t.date
+                """)
+                con.execute("COMMIT")
+                print(f"  ✨ Enriched {len(final_df)} days for {ticker}")
+            except Exception as e:
+                con.execute("ROLLBACK")
+                print(f"  ❌ Surgical Update error for {ticker}: {e}")
+            
+            sys.stdout.flush()
         except Exception as e:
             print(f"❌ Error processing {ticker}: {e}")
             continue

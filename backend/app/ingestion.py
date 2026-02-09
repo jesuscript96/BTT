@@ -259,7 +259,8 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None, sk
             
             target_columns = [
                 'ticker', 'timestamp', 'open', 'high', 'low', 'close', 
-                'volume', 'vwap', 'pm_high', 'pm_volume', 'gap_percent'
+                'volume', 'vwap', 'pm_high', 'pm_volume', 'gap_percent',
+                'transactions', 'pm_high_break', 'high_spike_pct'
             ]
             
             for col in target_columns:
@@ -288,56 +289,45 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None, sk
                 daily_metrics_df = process_daily_metrics(final_df)
                 
                 if not daily_metrics_df.empty:
-                    # Enforce strict column order matching database schema
-                    daily_metrics_columns = [
-                        'ticker', 'date', 'rth_open', 'rth_high', 'rth_low', 'rth_close', 'rth_volume', 
-                        'gap_at_open_pct', 'rth_run_pct', 'pm_high', 'pm_volume', 'high_spike_pct', 
-                        'low_spike_pct', 'pmh_fade_to_open_pct', 'rth_fade_to_close_pct', 'open_lt_vwap', 
-                        'pm_high_break', 'm15_return_pct', 'm30_return_pct', 'm60_return_pct', 
-                        'close_lt_m15', 'close_lt_m30', 'close_lt_m60', 'hod_time', 'lod_time', 'close_direction',
-                        'prev_close', 'pmh_gap_pct', 'rth_range_pct', 'day_return_pct', 'pm_high_time',
-                        'm1_high_spike_pct', 'm5_high_spike_pct', 'm15_high_spike_pct', 
-                        'm30_high_spike_pct', 'm60_high_spike_pct', 'm180_high_spike_pct',
-                        'm1_low_spike_pct', 'm5_low_spike_pct', 'm15_low_spike_pct',
-                        'm30_low_spike_pct', 'm60_low_spike_pct', 'm180_low_spike_pct',
-                        'return_m15_to_close', 'return_m30_to_close', 'return_m60_to_close'
-                    ]
+                    # TIER 2/3 ENRICHMENT: Use surgical UPDATE to avoid data loss
+                    # Identify columns to update (metrics only)
+                    con_info = local_con.execute("DESCRIBE daily_metrics").fetch_df()
+                    db_columns = con_info['column_name'].tolist()
                     
-                    # Align columns (fill missing with None/0 if needed, usually processor handles it)
-                    # Note: We added new columns in migration, need to ensure processor outputs them or we fill them.
-                    # The processor likely calculates them now? If not, we might fail again.
-                    # Assuming processor is updated or we handle missing safely.
-                    # For now, let's select intersection or known columns.
-                    # Actually, we should check what process_daily_metrics returns.
-                    # If process_daily_metrics doesn't return the new cols, this manual column list will fail.
+                    metrics_to_update = [c for c in db_columns if c in daily_metrics_df.columns and c not in ['ticker', 'date']]
                     
-                    # SAFEST APPROACH: Select only columns that exist in the DF
-                    available_cols = [c for c in daily_metrics_columns if c in daily_metrics_df.columns]
-                    daily_metrics_df = daily_metrics_df[available_cols]
+                    # Sanitize for DuckDB
+                    import numpy as np
+                    for col in daily_metrics_df.columns:
+                        if daily_metrics_df[col].dtype == object: continue
+                        if pd.api.types.is_float_dtype(daily_metrics_df[col]):
+                            daily_metrics_df[col] = daily_metrics_df[col].replace([np.inf, -np.inf], np.nan)
                     
-                    # We can't insert partial columns if we use SELECT * FROM.
-                    # We must use proper INSERT INTO tbl (cols) SELECT ...
-                    # DuckDB handles mismatched columns by name if creating table from DF? No, we are inserting.
-                    
-                    # Fix: Use explicit column list in INSERT if possible, or assume DataFrame matches.
-                    # Given the recent migration, let's assume the DF *should* match.
-                    # But if process_daily_metrics wasn't updated, we have a problem.
-                    # Let's check `processor.py` next. 
-                    
-                    # For now, apply the DELETE fix.
                     local_con.register('daily_chunk', daily_metrics_df)
                     
-                    min_date = daily_metrics_df['date'].min()
-                    max_date = daily_metrics_df['date'].max()
+                    # Build UPDATE clause
+                    set_clause = ", ".join([f"{c} = t.{c}" for c in metrics_to_update])
                     
-                    local_con.execute("""
-                        DELETE FROM daily_metrics 
-                        WHERE ticker = ? AND date >= ? AND date <= ?
-                    """, [ticker, min_date, max_date])
+                    # 1. Update existing rows (Enrichment)
+                    local_con.execute(f"""
+                        UPDATE daily_metrics 
+                        SET {set_clause} 
+                        FROM daily_chunk t 
+                        WHERE daily_metrics.ticker = t.ticker 
+                        AND daily_metrics.date = t.date
+                    """)
                     
-                    # Use INSERT BY NAME equivalent if possible, or just INSERT
-                    # "INSERT INTO table SELECT * FROM df" implies exact schema match.
-                    local_con.execute("INSERT INTO daily_metrics SELECT * FROM daily_chunk")
+                    # 2. Insert as NEW rows only for dates that don't exist yet
+                    # This handles new data from the scanner for today/yesterday
+                    cols_str = ", ".join(['ticker', 'date'] + metrics_to_update)
+                    local_con.execute(f"""
+                        INSERT INTO daily_metrics ({cols_str})
+                        SELECT {cols_str} FROM daily_chunk t
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM daily_metrics d 
+                            WHERE d.ticker = t.ticker AND d.date = t.date
+                        )
+                    """)
                     
                 print(f"      ✓ Saved {len(final_df)} bars")
             except Exception as e:

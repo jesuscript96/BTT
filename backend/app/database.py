@@ -9,6 +9,8 @@ _lock = Lock()
 def _establish_connection():
     """Establish connection to MotherDuck cloud database."""
     token = os.getenv("MOTHERDUCK_TOKEN")
+    if token:
+        token = token.strip()
     
     if not token:
         raise RuntimeError(
