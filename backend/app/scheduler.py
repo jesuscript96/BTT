@@ -39,8 +39,19 @@ def start_scheduler():
         id="night_pulse"
     )
     
+    # Daily Smart Scanner: Runs at 5:00 PM Mexico City (Market Close + 1h for data settlement)
+    from app.ingestion import run_daily_scan_job
+    scheduler.add_job(
+        func=run_daily_scan_job,
+        trigger="cron",
+        hour=17, # 5:00 PM
+        minute=0,
+        max_instances=1,
+        id="daily_scanner"
+    )
+    
     scheduler.start()
-    print("✅ Scheduler started: Night-Time Pulse (12am-8am CST, every 3min, 5 tickers, 30 days).")
+    print("✅ Scheduler started: Night-Time Pulse (12am-8am) & Daily Smart Scanner (5pm).")
     print("💤 Daytime: Pulse IDLE (8am-12am) - Free for backtests!")
     
     # Shut down the scheduler when exiting the app

@@ -74,7 +74,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
                         {/* Progress Bars Section */}
                         <div className="space-y-5">
-                            <StatProgress label="PM High Gap %" value={averages.gap_at_open_pct} color="#4ade80" />
+                            <StatProgress label="PM High Gap %" value={averages.pmh_gap_pct} color="#4ade80" />
                             <StatProgress label="PM Fade To Open %" value={averages.pmh_fade_to_open_pct} color="#f87171" />
                             <StatProgress label="Gap at Open %" value={averages.gap_at_open_pct} color="#22c55e" />
                             <StatProgress label="RTH Fade To Close %" value={averages.rth_fade_to_close_pct} color="#ef4444" />
@@ -96,16 +96,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 
                             <div className="space-y-3 pt-2">
                                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Price</p>
-                                <MetricRow label="PMH Price" value={averages.avg_pmh_price?.toFixed(2)} />
-                                <MetricRow label="Open Price" value={averages.avg_open_price?.toFixed(2)} />
-                                <MetricRow label="Close Price" value={averages.avg_close_price?.toFixed(2)} />
+                                <MetricRow label="PMH Price" value={averages.avg_pmh_price?.toFixed(2) || "0.00"} />
+                                <MetricRow label="Open Price" value={averages.avg_open_price?.toFixed(2) || "0.00"} />
+                                <MetricRow label="Close Price" value={averages.avg_close_price?.toFixed(2) || "0.00"} />
                             </div>
 
                             <div className="space-y-3 pt-2">
                                 <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Return</p>
-                                <MetricRow label="M15 Return %" value={`${averages.m15_return_pct?.toFixed(2)}%`} />
-                                <MetricRow label="M30 Return %" value={`${averages.m30_return_pct?.toFixed(2)}%`} />
-                                <MetricRow label="M60 Return %" value={`${averages.m60_return_pct?.toFixed(2)}%`} />
+                                <MetricRow label="M15 Return %" value={`${averages.m15_return_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="M30 Return %" value={`${averages.m30_return_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="M60 Return %" value={`${averages.m60_return_pct?.toFixed(2) || "0.00"}%`} />
                             </div>
 
                             <div className="pt-4 space-y-4">
@@ -125,13 +125,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
                 <HorizontalDistributionCard
                     title="HIGH SPIKE AVERAGE"
-                    value={`${stats.averages.high_spike_pct?.toFixed(2)}%`}
+                    value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`}
                     data={rangeDistribution}
                     icon={<Info className="w-3 h-3" />}
                 />
                 <HorizontalDistributionCard
                     title="LOW SPIKE AVERAGE"
-                    value={`${stats.averages.low_spike_pct?.toFixed(2)}%`}
+                    value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`}
                     data={lowSpikeDistribution}
                     icon={<Info className="w-3 h-3" />}
                 />
@@ -149,7 +149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                 />
                 <HorizontalDistributionCard
                     title="RETURN AVERAGE"
-                    value={`${stats.averages.rth_run_pct?.toFixed(2)}%`}
+                    value={`${averages.day_return_pct?.toFixed(2) || "0.00"}%`}
                     data={returnDistribution}
                     icon={<Info className="w-3 h-3" />}
                 />

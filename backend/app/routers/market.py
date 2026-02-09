@@ -21,7 +21,16 @@ VALID_METRICS = {
     "rth_fade_to_close_pct", "open_lt_vwap", "pm_high_break",
     "m15_return_pct", "m30_return_pct", "m60_return_pct",
     "close_lt_m15", "close_lt_m30", "close_lt_m60",
-    "hod_time", "lod_time", "close_direction"
+    "hod_time", "lod_time", "close_direction",
+    # TIER 1
+    "prev_close", "pmh_gap_pct", "rth_range_pct", "day_return_pct", "pm_high_time",
+    # TIER 2
+    "m1_high_spike_pct", "m5_high_spike_pct", "m15_high_spike_pct", 
+    "m30_high_spike_pct", "m60_high_spike_pct", "m180_high_spike_pct",
+    "m1_low_spike_pct", "m5_low_spike_pct", "m15_low_spike_pct",
+    "m30_low_spike_pct", "m60_low_spike_pct", "m180_low_spike_pct",
+    # TIER 3
+    "return_m15_to_close", "return_m30_to_close", "return_m60_to_close"
 }
 
 @router.get("/screener")
@@ -127,38 +136,11 @@ def screen_market(
             
         where_sql = " AND ".join(where_clauses)
         
-        # --- CTE for Calculated Columns ---
-        # Defines the "Virtual Schema" extending existing columns
-        base_cte = """
-            WITH base_data AS (
-                SELECT *,
-                    -- Derived Calcs
-                    CASE WHEN pm_high > 0 THEN (pm_high - rth_open)/pm_high*100 ELSE 0 END as pmh_fade_to_open_pct,
-                    CASE WHEN rth_high > 0 THEN (rth_high - rth_close)/rth_high*100 ELSE 0 END as rth_fade_to_close_pct,
-                    
-                    -- Missing / Hard to Calc (Nulls)
-                    NULL::DOUBLE as low_spike_pct,
-                    NULL::DOUBLE as m15_return_pct,
-                    NULL::DOUBLE as m30_return_pct,
-                    NULL::DOUBLE as m60_return_pct,
-                    NULL::BOOLEAN as open_lt_vwap,
-                    NULL::BOOLEAN as close_lt_m15,
-                    NULL::BOOLEAN as close_lt_m30,
-                    NULL::BOOLEAN as close_lt_m60,
-                    NULL::VARCHAR as hod_time,
-                    NULL::VARCHAR as lod_time,
-                    
-                    -- Helpers
-                    CASE WHEN rth_close < rth_open THEN 1 ELSE 0 END as close_direction_red
-                FROM daily_metrics
-            )
-        """
 
         # 2. Get Records (Limited for Table)
         records_query = f"""
-            {base_cte}
             SELECT * 
-            FROM base_data 
+            FROM daily_metrics 
             WHERE {where_sql}
             ORDER BY date DESC, rth_volume DESC
             LIMIT ?
@@ -177,20 +159,21 @@ def screen_market(
             
         # 3. Calculate Stats (On Full Filtered Set - No Limit)
         stats_query = f"""
-            {base_cte}
             SELECT 
                 COUNT(*) as count,
                 
                 -- Main Progress Bars
                 AVG(gap_at_open_pct) as gap_at_open_pct,
+                AVG(pmh_gap_pct) as pmh_gap_pct,
                 AVG(pmh_fade_to_open_pct) as pmh_fade_to_open_pct,
                 AVG(rth_run_pct) as rth_run_pct,
+                AVG(day_return_pct) as day_return_pct,
                 AVG(rth_fade_to_close_pct) as rth_fade_to_close_pct,
                 
                 -- Secondary Progress Bars
                 AVG(CAST(open_lt_vwap AS INT)) * 100 as open_lt_vwap,
                 AVG(CAST(pm_high_break AS INT)) * 100 as pm_high_break,
-                AVG(close_direction_red) * 100 as close_direction_red,
+                AVG(CASE WHEN close_direction = 'red' THEN 1 ELSE 0 END) * 100 as close_direction_red,
                 
                 -- Volume Stats
                 AVG(rth_volume) as avg_volume,
@@ -202,21 +185,17 @@ def screen_market(
                 AVG(rth_close) as avg_close_price,
                 
                 -- Extended Stats
-                AVG(pmh_fade_to_open_pct) as pmh_fade_to_open_pct_1,
                 AVG(high_spike_pct) as high_spike_pct,
                 AVG(low_spike_pct) as low_spike_pct,
-                AVG(rth_fade_to_close_pct) as rth_fade_to_close_pct_1,
                 AVG(m15_return_pct) as m15_return_pct,
                 AVG(m30_return_pct) as m30_return_pct,
                 AVG(m60_return_pct) as m60_return_pct,
                 
                 -- Booleans
-                AVG(CAST(open_lt_vwap AS INT)) * 100 as open_lt_vwap_1,
-                AVG(CAST(pm_high_break AS INT)) * 100 as pm_high_break_1,
                 AVG(CAST(close_lt_m15 AS INT)) * 100 as close_lt_m15,
                 AVG(CAST(close_lt_m30 AS INT)) * 100 as close_lt_m30,
                 AVG(CAST(close_lt_m60 AS INT)) * 100 as close_lt_m60
-            FROM base_data
+            FROM daily_metrics
             WHERE {where_sql}
         """
         df_stats = con.execute(stats_query, params).fetch_df()
@@ -235,13 +214,11 @@ def screen_market(
                     processed_stats[k] = v
             averages = processed_stats
             
-        # 4. Calculate Distributions (HOD/LOD Time)
         dist_query = f"""
-            {base_cte}
             SELECT 
                 hod_time, COUNT(*) as c 
-            FROM base_data 
-            WHERE {where_sql} 
+            FROM daily_metrics 
+            WHERE {where_sql} AND hod_time IS NOT NULL
             GROUP BY hod_time 
             ORDER BY c DESC 
             LIMIT 10
@@ -252,11 +229,10 @@ def screen_market(
             hod_dist = dict(zip(df_hod['hod_time'], df_hod['c'].astype(float)))
 
         dist_query_lod = f"""
-            {base_cte}
             SELECT 
                 lod_time, COUNT(*) as c 
-            FROM base_data 
-            WHERE {where_sql} 
+            FROM daily_metrics 
+            WHERE {where_sql} AND lod_time IS NOT NULL
             GROUP BY lod_time 
             ORDER BY c DESC 
             LIMIT 10
