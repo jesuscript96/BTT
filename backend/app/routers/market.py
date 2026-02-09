@@ -1,3 +1,4 @@
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -126,10 +127,38 @@ def screen_market(
             
         where_sql = " AND ".join(where_clauses)
         
+        # --- CTE for Calculated Columns ---
+        # Defines the "Virtual Schema" extending existing columns
+        base_cte = """
+            WITH base_data AS (
+                SELECT *,
+                    -- Derived Calcs
+                    CASE WHEN pm_high > 0 THEN (pm_high - rth_open)/pm_high*100 ELSE 0 END as pmh_fade_to_open_pct,
+                    CASE WHEN rth_high > 0 THEN (rth_high - rth_close)/rth_high*100 ELSE 0 END as rth_fade_to_close_pct,
+                    
+                    -- Missing / Hard to Calc (Nulls)
+                    NULL::DOUBLE as low_spike_pct,
+                    NULL::DOUBLE as m15_return_pct,
+                    NULL::DOUBLE as m30_return_pct,
+                    NULL::DOUBLE as m60_return_pct,
+                    NULL::BOOLEAN as open_lt_vwap,
+                    NULL::BOOLEAN as close_lt_m15,
+                    NULL::BOOLEAN as close_lt_m30,
+                    NULL::BOOLEAN as close_lt_m60,
+                    NULL::VARCHAR as hod_time,
+                    NULL::VARCHAR as lod_time,
+                    
+                    -- Helpers
+                    CASE WHEN rth_close < rth_open THEN 1 ELSE 0 END as close_direction_red
+                FROM daily_metrics
+            )
+        """
+
         # 2. Get Records (Limited for Table)
         records_query = f"""
+            {base_cte}
             SELECT * 
-            FROM daily_metrics 
+            FROM base_data 
             WHERE {where_sql}
             ORDER BY date DESC, rth_volume DESC
             LIMIT ?
@@ -147,8 +176,8 @@ def screen_market(
                         record[k] = None
             
         # 3. Calculate Stats (On Full Filtered Set - No Limit)
-        # We calculate the precise averages needed for the Dashboard
         stats_query = f"""
+            {base_cte}
             SELECT 
                 COUNT(*) as count,
                 
@@ -158,11 +187,10 @@ def screen_market(
                 AVG(rth_run_pct) as rth_run_pct,
                 AVG(rth_fade_to_close_pct) as rth_fade_to_close_pct,
                 
-                -- Secondary Progress Bars (Booleans converted to %)
+                -- Secondary Progress Bars
                 AVG(CAST(open_lt_vwap AS INT)) * 100 as open_lt_vwap,
                 AVG(CAST(pm_high_break AS INT)) * 100 as pm_high_break,
-                -- 'Close Red' means close < open. 
-                AVG(CASE WHEN rth_close < rth_open THEN 1 ELSE 0 END) * 100 as close_direction_red,
+                AVG(close_direction_red) * 100 as close_direction_red,
                 
                 -- Volume Stats
                 AVG(rth_volume) as avg_volume,
@@ -172,6 +200,8 @@ def screen_market(
                 AVG(pm_high) as avg_pmh_price,
                 AVG(rth_open) as avg_open_price,
                 AVG(rth_close) as avg_close_price,
+                
+                -- Extended Stats
                 AVG(pmh_fade_to_open_pct) as pmh_fade_to_open_pct_1,
                 AVG(high_spike_pct) as high_spike_pct,
                 AVG(low_spike_pct) as low_spike_pct,
@@ -179,13 +209,14 @@ def screen_market(
                 AVG(m15_return_pct) as m15_return_pct,
                 AVG(m30_return_pct) as m30_return_pct,
                 AVG(m60_return_pct) as m60_return_pct,
-                -- Booleans (DuckDB computes AVG of boolean as 0-1 float)
+                
+                -- Booleans
                 AVG(CAST(open_lt_vwap AS INT)) * 100 as open_lt_vwap_1,
                 AVG(CAST(pm_high_break AS INT)) * 100 as pm_high_break_1,
                 AVG(CAST(close_lt_m15 AS INT)) * 100 as close_lt_m15,
                 AVG(CAST(close_lt_m30 AS INT)) * 100 as close_lt_m30,
                 AVG(CAST(close_lt_m60 AS INT)) * 100 as close_lt_m60
-            FROM daily_metrics
+            FROM base_data
             WHERE {where_sql}
         """
         df_stats = con.execute(stats_query, params).fetch_df()
@@ -205,11 +236,11 @@ def screen_market(
             averages = processed_stats
             
         # 4. Calculate Distributions (HOD/LOD Time)
-        # Using approximated histograms or simple groupby for major buckets
         dist_query = f"""
+            {base_cte}
             SELECT 
                 hod_time, COUNT(*) as c 
-            FROM daily_metrics 
+            FROM base_data 
             WHERE {where_sql} 
             GROUP BY hod_time 
             ORDER BY c DESC 
@@ -221,9 +252,10 @@ def screen_market(
             hod_dist = dict(zip(df_hod['hod_time'], df_hod['c'].astype(float)))
 
         dist_query_lod = f"""
+            {base_cte}
             SELECT 
                 lod_time, COUNT(*) as c 
-            FROM daily_metrics 
+            FROM base_data 
             WHERE {where_sql} 
             GROUP BY lod_time 
             ORDER BY c DESC 
@@ -317,6 +349,7 @@ def get_latest_market_date():
     finally:
         if con:
             con.close()
+
 @router.get("/aggregate/intraday")
 def get_aggregate_intraday(
     request: Request,
