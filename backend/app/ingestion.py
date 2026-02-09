@@ -284,9 +284,9 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None, sk
                 
                 local_con.execute("INSERT INTO historical_data SELECT * FROM candles_chunk")
                 
-                # 2. Daily Metrics
+                # 2. Daily Metrics (pass connection for prev_close lookup)
                 from .processor import process_daily_metrics
-                daily_metrics_df = process_daily_metrics(final_df)
+                daily_metrics_df = process_daily_metrics(final_df, con=local_con)
                 
                 if not daily_metrics_df.empty:
                     # TIER 2/3 ENRICHMENT: Use surgical UPDATE to avoid data loss

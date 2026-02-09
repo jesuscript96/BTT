@@ -1,0 +1,220 @@
+Massive (y cualquier API profesional) NO te da el "Gap %" ni el "Pre-Market High" calculados. Te da la materia prima (velas de minuto) y tú tienes que cocinar el dato.
+Los Datos "Base" (Lo que nos da la MASSIVE)
+Massive nos da las velas de 1 minuto. Cada vela tiene:
+Hora: 09:30, 09:31...
+OHLCV: Open, High, Low, Close, Volume.
+A partir de aquí, nosotros construimos todo.
+
+
+Vocabulario necesario
+RTH (Regular Trading Hours): Es la "sesión normal" de bolsa.
+Horario: 09:30:00 a 16:00:00 (Hora Nueva York).
+Importancia: La mayoría de cálculos (HOD, LOD, Volume) se hacen solo dentro de este horario.
+
+Pre-Market (PM): Es la sesión "antes de abrir".
+Horario: 04:00:00 a 09:29:59.
+Importancia: Aquí buscamos euforia temprana.
+
+After-Hours: Sesión después del cierre (16:00 a 20:00). Generalmente la ignoramos.
+
+OHLC: Son las 4 columnas básicas de cualquier vela (barra de tiempo).
+Open (Apertura): Precio al inicio del minuto.
+High (Máximo): Precio más alto tocado en ese minuto.
+Low (Mínimo): Precio más bajo tocado en ese minuto.
+Close (Cierre): Precio al final del minuto.
+
+PrevClose (Previous Day Close): El precio de Cierre del día de trading anterior.
+Nota: Es el punto de referencia base (0%). Sin esto, no podemos calcular Gaps.
+
+HOD (High of Day): El precio más alto alcanzado SOLO durante RTH (09:30 - 16:00).
+Lógica: Max(High) filtrando por horario RTH.
+
+LOD (Low of Day): El precio más bajo alcanzado SOLO durante RTH.
+Lógica: Min(Low) filtrando por horario RTH.
+
+PMH (Pre-Market High): El precio más alto alcanzado SOLO antes de la apertura.
+Lógica: Max(High) entre las 04:00 y las 09:30.
+
+Tipos de Movimiento (Jerga)
+Gap: El salto de precio que ocurre mientras el mercado está cerrado (de ayer a hoy).
+Spike: Una subida rápida y fuerte del precio. Cuando decimos "High Spike", nos referimos al punto máximo de esa subida.
+Fade: Lo contrario a subir. Es cuando el precio "se desinfla" o cae lentamente después de haber subido.
+Fade to Close: Caída desde el máximo hasta el cierre.
+Run: Una carrera alcista. Cuánto corre el precio hacia arriba desde un punto de partida (normalmente la apertura).
+Indicadores Avanzados
+VWAP (Volume Weighted Average Price):
+Qué es: No es un promedio normal. Es el precio promedio ponderado por cuánto dinero real se ha movido.
+Para el Dev: Massive lo da por minuto (vw), pero nosotros necesitamos el Acumulado.
+Fórmula: Suma(Precio * Volumen) / Suma(Volumen). Se reinicia cada día a las 09:30.
+Abreviaturas de Tiempo
+M1, M5, M15...: Se refiere al minuto exacto después de la apertura (09:30).
+M1: 09:31 am.
+M5: 09:35 am.
+M60: 10:30 am.
+
+EOD (End of Day): Se refiere al cierre del mercado (16:00). "EOD Volume" es el volumen total del día.
+
+
+
+Las API Calls Necesarias
+
+Dataset A (Intradía Hoy): Velas de 1 minuto desde las 04:00:00 hasta las 16:00:00 (o hasta ahora si es en vivo).
+Dataset B (Ayer): La vela diaria del día anterior (necesaria para el Gap).
+Dataset C (Histórico): Velas diarias de los últimos 2 años (para los retornos a largo plazo).
+Sección PRECIOS
+
+Definiciones base: Open = 09:30, Close = 16:00
+Botón en Imagen
+Definición Exacta / Fórmula
+Open Price
+Precio Open de la vela de las 09:30:00.
+Close Price
+Precio Close de la vela de las 16:00:00 (o la última disponible, cierra a las 16h siempre).
+Previous Day Close
+Precio Close del Dataset B (Día de trading anterior).
+Pre-Market High (PMH)
+Buscamos el valor máximo de High en las velas entre 04:00:00 y 09:29:59.
+High Spike Price (HOD)
+Valor máximo de High en las velas entre 09:30:00 y 16:00:00.
+Low Spike Price (LOD)
+Valor mínimo de Low en las velas entre 09:30:00 y 16:00:00.
+M1 Price
+Precio Close de la vela 09:31:00.
+M5 Price
+Precio Close de la vela 09:35:00.
+M15... M180 Price
+Precio Close de la vela correspondiente (09:45, 10:00, etc.).
+
+
+
+Volumen
+
+
+Botón en Imagen
+Fórmula
+EOD Volume
+Suma total de la columna Volume desde 09:30 hasta 16:00.
+Premarket Volume
+Suma total de la columna Volume desde 04:00 hasta 09:29.
+
+
+
+Gap & Run
+
+
+Botón en Imagen
+Fórmula Matemática
+Interpretación
+Open Gap %
+((Open - PrevClose) / PrevClose) * 100
+¿Cuánto saltó por la noche?
+PMH Gap %
+((PMH - PrevClose) / PrevClose) * 100
+El punto máximo de euforia antes de abrir.
+RTH Run %
+((HOD - Open) / Open) * 100
+Cuánto subió después de sonar la campana.
+PMH Fade to Open %
+((Open - PMH) / PMH) * 100
+Si es negativo, la acción ya se estaba desinflando antes de abrir.
+RTH Fade to Close %
+((Close - HOD) / HOD) * 100
+Vital: Cuánto cayó desde el máximo hasta el cierre.
+
+
+Volatility
+
+
+Botón en Imagen
+Fórmula
+Explicación
+RTH Range %
+((HOD - LOD) / LOD) * 100
+Rango total de movimiento del día.
+High Spike %
+((HOD - Open) / Open) * 100
+Máxima subida porcentual del día.
+Low Spike %
+((LOD - Open) / Open) * 100
+Muestra la caída máxima porcentual desde la apertura hasta el punto más bajo.
+M(x) High Spike %
+((MaxHigh_X_min - Open) / Open) * 100
+¿Cuánto subió en los primeros 5, 15, 30 mins?
+M(x) Low Spike %
+((MinLow_X_min - Open) / Open) * 100
+¿Cuánto bajó en los primeros 5, 15, 30 mins?
+
+
+Intraday return
+
+
+Métrica (Botón)
+Fórmula
+Interpretación
+Day Return %
+((Close - Open) / Open) * 100
+Muestra el resultado final de la sesión (si la vela diaria terminó verde o roja).
+M(x) Return %
+((Precio_Mx - Open) / Open) * 100
+Muestra cuánto ganabas o perdías exactamente en el minuto X (ej: a las 9:35).
+Return % From M(x) to Close
+((Close - Precio_Mx) / Precio_Mx) * 100
+Importante: Muestra la rentabilidad de haber entrado en el minuto X y aguantar hasta el cierre (16:00).
+
+
+
+
+
+Historical Return
+
+
+Botón en Imagen
+Fórmula
+Disponibilidad (Tu Plan)
+1 Month Return
+(Close Hoy - Close hace 21 días) / Close hace 21 días
+✅
+3 Months Return
+(Close Hoy - Close hace 63 días) / Close hace 63 días
+✅
+1 Year Return
+(Close Hoy - Close hace 252 días) / Close hace 252 días
+✅
+2 Year Return
+(Close Hoy - Close hace 504 días) / Close hace 504 días
+✅ (Al límite)
+3 Year Return
+... hace 756 días ...
+❌ Requiere Plan Starter ($29)
+
+
+Intraday VWAP
+
+El VWAP no es una media simple. Es una media acumulativa ponderada por volumen.
+Paso 1: Calcular para cada minuto: PV = (High + Low + Close) / 3 * Volumen
+Paso 2: Calcular acumulados minuto a minuto: Cum_PV y Cum_Vol.
+Paso 3: VWAP_Actual = Cum_PV / Cum_Vol
+Botón en Imagen
+Definición
+VWAP at Open
+El VWAP del primer minuto (09:30).
+VWAP at M5
+El valor del VWAP acumulado a las 09:35.
+VWAP at M(x)
+El valor del VWAP acumulado en el minuto X.
+
+
+
+Time
+
+
+Botón en Imagen
+Definición
+HOD Time
+La hora exacta (HH:MM) donde ocurrió el HOD.
+LOD Time
+La hora exacta (HH:MM) donde ocurrió el LOD.
+PM High Time
+La hora exacta (HH:MM) donde ocurrió el máximo del Pre-Market.
+
+

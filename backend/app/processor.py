@@ -2,10 +2,14 @@ import pandas as pd
 import numpy as np
 from app.database import get_db_connection
 
-def process_daily_metrics(df):
+def process_daily_metrics(df, con=None):
     """
     Takes a DataFrame of 1-minute bars for a single ticker and calculates 
     daily metrics based on Notion definitions.
+    
+    Args:
+        df: DataFrame with 1-minute bars
+        con: Database connection to query prev_close from daily_metrics
     """
     if df.empty:
         return pd.DataFrame()
@@ -14,10 +18,7 @@ def process_daily_metrics(df):
     df['date'] = df['timestamp'].dt.date
     
     daily_results = []
-    
-    # We need the previous day's close for Gap %
-    # Since we process in batches, we'll try to get it from the group or previous group
-    prev_close = None
+    ticker = df.iloc[0]['ticker'] if not df.empty else None
     
     for date, group in df.groupby('date'):
         # Identify Sessions (Eastern Time assumed or consistent with data)
@@ -39,9 +40,22 @@ def process_daily_metrics(df):
         rth_low = float(rth_session['low'].min())
         rth_volume = float(rth_session['volume'].sum())
         
-        # Calculation Logic
+        # Calculation Logic - Get prev_close from daily_metrics
         gap_pct = 0.0
-        if prev_close is not None:
+        prev_close = None
+        if con and ticker:
+            prev_date = date - pd.Timedelta(days=1)
+            try:
+                result = con.execute("""
+                    SELECT rth_close FROM daily_metrics 
+                    WHERE ticker = ? AND date = ?
+                """, [ticker, prev_date]).fetchone()
+                if result:
+                    prev_close = result[0]
+            except:
+                pass  # If query fails, prev_close stays None
+        
+        if prev_close is not None and prev_close > 0:
             gap_pct = ((rth_open - prev_close) / prev_close) * 100
             
         # PM High & Fade
@@ -130,7 +144,7 @@ def process_daily_metrics(df):
             'pm_high': float(pm_high),
             'pm_volume': float(pm_volume),
             'pmh_fade_to_open_pct': float(pm_fade),
-            'rth_run_pct': float(((rth_close - rth_open) / rth_open) * 100),
+            'rth_run_pct': float(((rth_high - rth_open) / rth_open) * 100),
             'high_spike_pct': float(((rth_high - rth_open) / rth_open) * 100),
             'low_spike_pct': float(((rth_low - rth_open) / rth_open) * 100),
             'rth_fade_to_close_pct': float(((rth_close - rth_high) / rth_high) * 100) if rth_high > 0 else 0.0,
@@ -176,7 +190,6 @@ def process_daily_metrics(df):
         }
         
         daily_results.append(metric)
-        prev_close = rth_close # Update for next iteration
         
     return pd.DataFrame(daily_results)
 

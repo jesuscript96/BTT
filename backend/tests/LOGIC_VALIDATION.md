@@ -4,6 +4,257 @@
 
 ---
 
+## Data Processing: Daily Metrics Calculation
+
+Esta sección documenta cómo se CALCULAN las métricas diarias a partir de datos de 1 minuto en `processor.py`.
+
+### Proceso General
+
+**Input**: DataFrame de barras de 1 minuto para un ticker
+**Output**: Un row por día con métricas agregadas
+
+**Sesiones de Trading**:
+- **Premarket (PM)**: 04:00 - 09:30 ET
+- **Regular Trading Hours (RTH)**: 09:30 - 16:00 ET
+
+---
+
+### Cálculo: Gap at Open %
+
+**Columna**: `gap_at_open_pct`
+
+**Fórmula**: `((rth_open - prev_close) / prev_close) * 100`
+
+**Lógica**:
+```python
+# Obtener el close del día anterior
+prev_close = rth_close_del_dia_anterior
+
+# Calcular gap
+gap_pct = ((rth_open - prev_close) / prev_close) * 100
+```
+
+**Ejemplo**:
+- Prev Close: $95
+- RTH Open: $100
+- Gap: `((100 - 95) / 95) * 100 = 5.26%`
+
+---
+
+### Cálculo: RTH Run %
+
+**Columna**: `rth_run_pct`
+
+**Fórmula**: `((rth_high - rth_open) / rth_open) * 100`
+
+**Lógica**:
+```python
+rth_open = rth_session.iloc[0]['open']
+rth_high = rth_session['high'].max()
+rth_run_pct = ((rth_high - rth_open) / rth_open) * 100
+```
+
+**Ejemplo**:
+- RTH Open: $100
+- RTH High (HOD): $115
+- RTH Close: $110
+- RTH Run: `((115 - 100) / 100) * 100 = 15%`
+
+**Nota**: Es el movimiento desde open hasta **HOD (High of Day)**, NO hasta close. Esto mide la máxima extensión alcista del día.
+
+**Diferencia con Day Return**:
+- **RTH Run**: Mide cuánto subió (open → HOD)
+- **Day Return**: Mide el resultado final (open → close)
+- En el ejemplo: RTH Run = 15%, Day Return = 10%
+
+---
+
+### Cálculo: High Spike %
+
+**Columna**: `high_spike_pct`
+
+**Fórmula**: `((rth_high - rth_open) / rth_open) * 100`
+
+**Lógica**:
+```python
+rth_high = rth_session['high'].max()
+high_spike_pct = ((rth_high - rth_open) / rth_open) * 100
+```
+
+**Ejemplo**:
+- RTH Open: $100
+- RTH High: $115
+- High Spike: `((115 - 100) / 100) * 100 = 15%`
+
+---
+
+### Cálculo: Low Spike %
+
+**Columna**: `low_spike_pct`
+
+**Fórmula**: `((rth_low - rth_open) / rth_open) * 100`
+
+**Lógica**:
+```python
+rth_low = rth_session['low'].min()
+low_spike_pct = ((rth_low - rth_open) / rth_open) * 100
+```
+
+**Ejemplo**:
+- RTH Open: $100
+- RTH Low: $92
+- Low Spike: `((92 - 100) / 100) * 100 = -8%`
+
+---
+
+### Cálculo: PM High Fade to Open %
+
+**Columna**: `pmh_fade_to_open_pct`
+
+**Fórmula**: `((rth_open - pm_high) / pm_high) * 100`
+
+**Lógica**:
+```python
+pm_high = pm_session['high'].max()
+pm_fade = ((rth_open - pm_high) / pm_high) * 100
+```
+
+**Ejemplo**:
+- PM High: $105
+- RTH Open: $100
+- PM Fade: `((100 - 105) / 105) * 100 = -4.76%`
+
+---
+
+### Cálculo: RTH Fade to Close %
+
+**Columna**: `rth_fade_to_close_pct`
+
+**Fórmula**: `((rth_close - rth_high) / rth_high) * 100`
+
+**Lógica**:
+```python
+rth_fade_to_close_pct = ((rth_close - rth_high) / rth_high) * 100
+```
+
+**Ejemplo**:
+- RTH High: $115
+- RTH Close: $110
+- RTH Fade: `((110 - 115) / 115) * 100 = -4.35%`
+
+---
+
+### Cálculo: M(x) Return %
+
+**Columnas**: `m15_return_pct`, `m30_return_pct`, `m60_return_pct`, etc.
+
+**Fórmula**: `((price_at_Mx - rth_open) / rth_open) * 100`
+
+**Lógica**:
+```python
+def get_return_at(minutes):
+    limit_time = (09:30 + minutes).time()
+    snapshot = rth_session[timestamp <= limit_time]
+    price_at = snapshot.iloc[-1]['close']
+    return ((price_at - rth_open) / rth_open) * 100
+```
+
+**Ejemplo M15**:
+- RTH Open: $100
+- Price at 09:45: $103
+- M15 Return: `((103 - 100) / 100) * 100 = 3%`
+
+---
+
+### Cálculo: M(x) High/Low Spikes
+
+**Columnas**: `m15_high_spike_pct`, `m15_low_spike_pct`, etc.
+
+**Fórmula High**: `((max_high_in_Mx - rth_open) / rth_open) * 100`
+**Fórmula Low**: `((min_low_in_Mx - rth_open) / rth_open) * 100`
+
+**Lógica**:
+```python
+def get_spike_at(minutes, spike_type='high'):
+    limit_time = (09:30 + minutes).time()
+    snapshot = rth_session[timestamp <= limit_time]
+    if spike_type == 'high':
+        spike_price = snapshot['high'].max()
+    else:
+        spike_price = snapshot['low'].min()
+    return ((spike_price - rth_open) / rth_open) * 100
+```
+
+---
+
+### Cálculo: Return from M(x) to Close
+
+**Columnas**: `return_m15_to_close`, `return_m30_to_close`, `return_m60_to_close`
+
+**Fórmula**: `((rth_close - price_at_Mx) / price_at_Mx) * 100`
+
+**Lógica**:
+```python
+m15_price = get_price_at(15)  # Price at 09:45
+return_m15_to_close = ((rth_close - m15_price) / m15_price) * 100
+```
+
+**Ejemplo**:
+- M15 Price: $103
+- RTH Close: $110
+- Return M15→Close: `((110 - 103) / 103) * 100 = 6.8%`
+
+---
+
+### Cálculo: Booleanos
+
+**Columnas**: `open_lt_vwap`, `pm_high_break`, `close_lt_m15`, etc.
+
+**Lógica**:
+```python
+# Open < VWAP
+open_vwap = rth_session.iloc[0]['vwap']
+open_lt_vwap = rth_open < open_vwap
+
+# PM High Break
+pm_high_break = rth_high > pm_high
+
+# Close < M15
+close_lt_m15 = rth_close < m15_price
+```
+
+---
+
+### Cálculo: Time of Day
+
+**Columnas**: `hod_time`, `lod_time`, `pm_high_time`
+
+**Lógica**:
+```python
+# HOD Time
+hod_time = rth_session.loc[rth_session['high'].idxmax()]['timestamp'].strftime("%H:%M")
+
+# LOD Time
+lod_time = rth_session.loc[rth_session['low'].idxmin()]['timestamp'].strftime("%H:%M")
+
+# PM High Time
+pm_high_time = pm_session.loc[pm_session['high'].idxmax()]['timestamp'].strftime("%H:%M")
+```
+
+---
+
+### Cálculo: Volúmenes
+
+**Columnas**: `pm_volume`, `rth_volume`
+
+**Lógica**:
+```python
+pm_volume = pm_session['volume'].sum()
+rth_volume = rth_session['volume'].sum()
+```
+
+---
+
 ## Market Analysis: Basic Filters
 
 ### Test: Filtro de Premarket Volume
@@ -54,7 +305,9 @@ SELECT * FROM daily_metrics WHERE gap_at_open_pct <= ?
 
 ### Test: Filtros de RTH Run
 
-**Columna Afectada**: `rth_run_pct` (RTH run desde open hasta high/low en %)
+**Columna Afectada**: `rth_run_pct` (RTH run desde open hasta close en %)
+
+**Fórmula de Cálculo**: `((rth_close - rth_open) / rth_open) * 100`
 
 **Comparadores**: `>=` (min), `<=` (max)
 
@@ -64,7 +317,7 @@ SELECT * FROM daily_metrics WHERE rth_run_pct >= ?
 SELECT * FROM daily_metrics WHERE rth_run_pct <= ?
 ```
 
-**Lógica**: Filtrar días por el porcentaje de movimiento intradiario (RTH run).
+**Lógica**: Filtrar días por el porcentaje de movimiento desde open hasta close (NO hasta high/low).
 
 ---
 
@@ -353,13 +606,13 @@ TODAS deben ser TRUE para generar señal.
 
 ## Backtester: R-Multiple Calculation
 
-**Fórmula**: `R = (entry - exit) / (entry - stop_loss)`
+**Fórmula**: `R = (entry - exit) / abs(entry - stop_loss)`
 
 **Para Short**:
 - Entry: $100
 - Exit: $97.50
 - Stop Loss: $105
-- Risk: `100 - 105 = -5` → `abs(-5) = 5`
+- Risk: `abs(100 - 105) = 5`
 - Profit: `100 - 97.50 = 2.50`
 - R-Multiple: `2.50 / 5 = 0.5R`
 
@@ -378,7 +631,7 @@ TODAS deben ser TRUE para generar señal.
 - Allocated Capital: $10,000
 - Entry: $100
 - Stop Loss: $105
-- Risk per Share: `105 - 100 = $5`
+- Risk per Share: `abs(105 - 100) = $5`
 - Position Size: `10000 / 5 = 2000 shares`
 
 **Validación**: Confirmar que el riesgo total = allocated capital (si SL golpea, pierdes 2000 shares * $5/share = $10,000)
@@ -407,7 +660,7 @@ TODAS deben ser TRUE para generar señal.
 **Ejemplo**:
 - R-Multiples: [1.0, 0.5, -1.0, -0.5, 0.8]
 - Gross Wins: `1.0 + 0.5 + 0.8 = 2.3`
-- Gross Losses: `1.0 + 0.5 = 1.5`
+- Gross Losses: `abs(-1.0) + abs(-0.5) = 1.5`
 - Profit Factor: `2.3 / 1.5 = 1.53`
 
 ---
@@ -459,8 +712,7 @@ SELECT d.*, h.*
 FROM daily_metrics d
 JOIN historical_data h 
   ON d.ticker = h.ticker 
-  AND CAST(d.date AS TIMESTAMP) <= h.timestamp
-  AND h.timestamp < CAST(d.date AS TIMESTAMP) + INTERVAL 1 DAY
+  AND CAST(h.timestamp AS DATE) = d.date
 ```
 
 **Lógica**:
