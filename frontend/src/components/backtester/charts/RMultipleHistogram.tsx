@@ -31,34 +31,43 @@ export function RMultipleHistogram({ distribution }: RMultipleHistogramProps) {
     const totalTrades = data.reduce((sum, item) => sum + item.count, 0);
 
     return (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="bg-card rounded-xl border border-border p-6 transition-colors shadow-sm">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">R-Multiple Distribution</h2>
-                <p className="text-sm text-gray-500">
+                <h2 className="text-xl font-black text-foreground mb-1">R-Multiple Distribution</h2>
+                <p className="text-sm text-muted-foreground">
                     Frequency of trades by R-multiple outcome
                 </p>
             </div>
 
             <ResponsiveContainer width="100%" height={350}>
                 <BarChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(156, 163, 175, 0.1)" vertical={false} />
                     <XAxis
                         dataKey="bucket"
-                        stroke="#6b7280"
-                        tick={{ fill: '#6b7280', fontSize: 12 }}
+                        stroke="rgba(156, 163, 175, 0.5)"
+                        tick={{ fill: 'rgba(156, 163, 175, 0.8)', fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
                     />
                     <YAxis
-                        stroke="#6b7280"
-                        tick={{ fill: '#6b7280', fontSize: 12 }}
-                        label={{ value: 'Number of Trades', angle: -90, position: 'insideLeft', fill: '#6b7280' }}
+                        stroke="rgba(156, 163, 175, 0.5)"
+                        tick={{ fill: 'rgba(156, 163, 175, 0.8)', fontSize: 10, fontWeight: 700 }}
+                        axisLine={false}
+                        tickLine={false}
+                        label={{ value: 'Trades', angle: -90, position: 'insideLeft', fill: 'rgba(156, 163, 175, 0.5)', fontSize: 10, fontWeight: 900, offset: 0 }}
                     />
                     <Tooltip
                         contentStyle={{
-                            backgroundColor: '#fff',
-                            border: '1px solid #e5e7eb',
-                            borderRadius: '8px',
-                            color: '#000'
+                            backgroundColor: 'var(--card)',
+                            border: '1px solid var(--border)',
+                            borderRadius: '12px',
+                            color: 'var(--foreground)',
+                            fontSize: '11px',
+                            fontWeight: 'bold',
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                            backdropFilter: 'blur(8px)'
                         }}
+                        itemStyle={{ color: 'var(--foreground)' }}
                         formatter={(value: number | undefined) => {
                             if (value === undefined) return [0, 'Trades'];
                             return [value, 'Trades'];

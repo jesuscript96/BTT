@@ -86,20 +86,20 @@ export default function ResultsPanel({
     }
 
     return (
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col transition-colors duration-300">
             {/* Header */}
-            <div className="p-6 border-b border-gray-200">
+            <div className="p-6 border-b border-border bg-card/30">
                 <div className="flex items-center justify-between">
                     <div>
-                        <h2 className="text-lg font-semibold text-gray-900">Featured Strategies</h2>
-                        <p className="text-sm text-gray-500 mt-1">
+                        <h2 className="text-lg font-semibold text-foreground">Featured Strategies</h2>
+                        <p className="text-sm text-muted-foreground mt-1">
                             {strategies.length} strategies match your criteria
                         </p>
                     </div>
                     <button
                         onClick={handleExport}
                         disabled={strategies.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors"
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground text-white rounded-lg text-sm font-medium transition-colors shadow-md"
                     >
                         <Download className="w-4 h-4" />
                         Export
@@ -108,7 +108,7 @@ export default function ResultsPanel({
             </div>
 
             {/* Pass Criteria Filters */}
-            <div className="p-6 bg-gray-50 border-b border-gray-200">
+            <div className="p-6 bg-muted/30 border-b border-border">
                 <PassCriteriaFilters
                     criteria={passCriteria}
                     onChange={onPassCriteriaChange}

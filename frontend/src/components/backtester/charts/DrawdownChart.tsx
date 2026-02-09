@@ -27,21 +27,21 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
         const chart = createChart(chartContainerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: 'transparent' },
-                textColor: '#6b7280',
+                textColor: 'rgba(156, 163, 175, 0.8)',
             },
             grid: {
-                vertLines: { color: '#f3f4f6' },
-                horzLines: { color: '#f3f4f6' },
+                vertLines: { color: 'rgba(156, 163, 175, 0.1)' },
+                horzLines: { color: 'rgba(156, 163, 175, 0.1)' },
             },
             width: chartContainerRef.current.clientWidth,
             height: 400,
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
-                borderColor: '#e5e7eb',
+                borderColor: 'rgba(156, 163, 175, 0.2)',
             },
             rightPriceScale: {
-                borderColor: '#e5e7eb',
+                borderColor: 'rgba(156, 163, 175, 0.2)',
             },
             crosshair: {
                 mode: 0,
@@ -98,10 +98,10 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
     }, [result.drawdown_series]);
 
     return (
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+        <div className="bg-card rounded-xl border border-border p-6 shadow-sm transition-colors">
             <div className="mb-6">
-                <h2 className="text-xl font-bold text-gray-900 mb-1">Drawdown & Stagnation</h2>
-                <p className="text-sm text-gray-500">
+                <h2 className="text-xl font-black text-foreground mb-1">Drawdown & Stagnation</h2>
+                <p className="text-sm text-muted-foreground">
                     Portfolio depth from all-time highs
                 </p>
             </div>
@@ -110,22 +110,22 @@ export function DrawdownChart({ result }: DrawdownChartProps) {
                 {/* Chart renders here */}
             </div>
 
-            <div className="grid grid-cols-3 gap-4 mt-8 pt-6 border-t border-gray-100">
-                <div className="p-3 rounded-xl bg-rose-50/50">
-                    <div className="text-[10px] font-bold text-rose-500 uppercase mb-1">Max Drawdown</div>
-                    <div className="text-lg font-bold text-rose-600">
+            <div className="grid grid-cols-3 gap-4 mt-8 pt-6 border-t border-border">
+                <div className="p-3 rounded-xl bg-red-500/5">
+                    <div className="text-[9px] font-black text-red-500 uppercase tracking-widest mb-1">Max Drawdown</div>
+                    <div className="text-lg font-black text-red-500 tabular-nums">
                         -{result.max_drawdown_pct.toFixed(2)}%
                     </div>
                 </div>
-                <div className="p-3 rounded-xl bg-gray-50/50">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Max DD Value</div>
-                    <div className="text-lg font-bold text-gray-900">
+                <div className="p-3 rounded-xl bg-muted/30">
+                    <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-1">Max DD Value</div>
+                    <div className="text-lg font-black text-foreground tabular-nums">
                         -${result.max_drawdown_value.toLocaleString()}
                     </div>
                 </div>
-                <div className="p-3 rounded-xl bg-orange-50/50">
-                    <div className="text-[10px] font-bold text-orange-500 uppercase mb-1">Recovery status</div>
-                    <div className="text-sm font-bold text-orange-700">
+                <div className="p-3 rounded-xl bg-orange-500/5">
+                    <div className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">Recovery status</div>
+                    <div className="text-sm font-black text-orange-500 uppercase tracking-tight">
                         {result.drawdown_series[result.drawdown_series.length - 1]?.drawdown_pct === 0
                             ? "At Peak"
                             : "Recovering"}

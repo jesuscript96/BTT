@@ -47,7 +47,7 @@ interface DashboardProps {
 
 export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data }) => {
     if (!stats || !stats.averages) return (
-        <div className="p-20 text-center text-zinc-500 bg-[#F9F9F8] min-h-screen">
+        <div className="p-20 text-center text-muted-foreground bg-background min-h-screen">
             Apply filters to see performance analysis
         </div>
     );
@@ -55,19 +55,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
     const averages = stats.averages;
 
     return (
-        <div className="p-6 bg-[#F9F9F8] space-y-6 min-h-screen font-sans">
+        <div className="p-6 bg-background space-y-6 min-h-screen font-sans transition-colors duration-300">
             {/* Top Row: Metrics & Main Chart */}
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
 
                 {/* Left Column: Metric Groups (Stats, Volume, Price, Return) */}
-                <div className="xl:col-span-5 bg-white border border-zinc-200 text-zinc-900 p-6 rounded-xl shadow-sm space-y-8">
-                    <div className="flex items-center justify-between border-b border-zinc-100 pb-4">
-                        <h2 className="text-xl font-black uppercase tracking-tight text-zinc-900">{stats.count} RECORDS</h2>
+                <div className="xl:col-span-5 bg-card border border-border text-foreground p-6 rounded-xl shadow-sm space-y-8">
+                    <div className="flex items-center justify-between border-b border-border/50 pb-4">
+                        <h2 className="text-xl font-black uppercase tracking-tight text-foreground">{stats.count} RECORDS</h2>
                         <div className="flex gap-3 text-[10px] font-bold uppercase tracking-wider items-center">
-                            <span className="px-2 py-0.5 bg-zinc-100 text-zinc-900 rounded">Average</span>
-                            <span className="text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">25th</span>
-                            <span className="text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">Median</span>
-                            <span className="text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors">75th</span>
+                            <span className="px-2 py-0.5 bg-muted text-foreground rounded">Average</span>
+                            <span className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors">25th</span>
+                            <span className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors">Median</span>
+                            <span className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors">75th</span>
                         </div>
                     </div>
 
@@ -89,20 +89,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                         {/* List Stats Section */}
                         <div className="space-y-8">
                             <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Volume</p>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volume</p>
                                 <MetricRow label="Premarket Volume" value={formatLargeNumber(averages.avg_pm_volume)} />
                                 <MetricRow label="Volume" value={formatLargeNumber(averages.avg_volume)} />
                             </div>
 
                             <div className="space-y-3 pt-2">
-                                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Price</p>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Price</p>
                                 <MetricRow label="PMH Price" value={averages.avg_pmh_price?.toFixed(2) || "0.00"} />
                                 <MetricRow label="Open Price" value={averages.avg_open_price?.toFixed(2) || "0.00"} />
                                 <MetricRow label="Close Price" value={averages.avg_close_price?.toFixed(2) || "0.00"} />
                             </div>
 
                             <div className="space-y-3 pt-2">
-                                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Return</p>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Return</p>
                                 <MetricRow label="M15 Return %" value={`${averages.m15_return_pct?.toFixed(2) || "0.00"}%`} />
                                 <MetricRow label="M30 Return %" value={`${averages.m30_return_pct?.toFixed(2) || "0.00"}%`} />
                                 <MetricRow label="M60 Return %" value={`${averages.m60_return_pct?.toFixed(2) || "0.00"}%`} />
@@ -163,12 +163,12 @@ const StatProgress = ({ label, value, color }: { label: string; value: number | 
     return (
         <div className="space-y-1.5">
             <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wide">
-                <span className="text-zinc-500">{label}</span>
+                <span className="text-muted-foreground">{label}</span>
                 <span style={{ color: safeValue < 0 ? '#ef4444' : color }} className="font-black">
                     {safeValue >= 0 ? `${safeValue.toFixed(2)}%` : `${safeValue.toFixed(2)}%`}
                 </span>
             </div>
-            <div className="h-1.5 w-full bg-zinc-100 rounded-full overflow-hidden border border-zinc-200/50">
+            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden border border-border/30">
                 <div
                     className="h-full transition-all duration-700 ease-out"
                     style={{
@@ -203,27 +203,27 @@ const getDefaultHOD = (dist: Record<string, number> | undefined) => {
 
 const MetricRow = ({ label, value }: { label: string; value: string | undefined }) => (
     <div className="flex justify-between items-center text-[11px]">
-        <span className="text-zinc-400 font-medium">{label}</span>
-        <span className="text-zinc-900 font-bold">{value}</span>
+        <span className="text-muted-foreground font-medium">{label}</span>
+        <span className="text-foreground font-bold">{value}</span>
     </div>
 );
 
 const HorizontalDistributionCard = ({ title, value, data, icon }: { title: string; value: string; data: DistributionItem[]; icon: React.ReactNode }) => (
-    <div className="bg-white border border-zinc-200 p-5 rounded-xl space-y-5 shadow-sm hover:shadow-md transition-all">
+    <div className="bg-card border border-border p-5 rounded-xl space-y-5 shadow-sm hover:shadow-md transition-all">
         <div className="flex justify-between items-start">
             <div className="space-y-1">
-                <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-[0.1em]">{title}</p>
-                <p className="text-2xl font-black text-zinc-900 tracking-tighter">{value}</p>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-[0.1em]">{title}</p>
+                <p className="text-2xl font-black text-foreground tracking-tighter">{value}</p>
             </div>
-            <div className="text-zinc-300 bg-zinc-50 p-1.5 rounded-full">{icon}</div>
+            <div className="text-muted-foreground bg-muted p-1.5 rounded-full">{icon}</div>
         </div>
         <div className="space-y-1 mt-2">
-            <p className="text-[9px] font-black text-zinc-400 uppercase tracking-widest mb-2">Distribution</p>
+            <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2">Distribution</p>
             <div className="h-40 overflow-y-auto pr-2 custom-scrollbar">
                 {data.map((item, idx) => (
                     <div key={idx} className="flex items-center gap-3 mb-1.5">
-                        <span className="text-[9px] text-zinc-400 font-bold w-16 truncate">{item.label}</span>
-                        <div className="flex-1 h-2 bg-zinc-50 rounded-full overflow-hidden">
+                        <span className="text-[9px] text-muted-foreground font-bold w-16 truncate">{item.label}</span>
+                        <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                             <div
                                 className="h-full bg-blue-500/60 rounded-full"
                                 style={{ width: `${Math.min(item.value, 100)}%` }}
@@ -323,14 +323,14 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
     if (!isAggregate && !activeTicker) {
         return (
-            <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm flex items-center justify-center text-zinc-400 text-sm">
+            <div className="xl:col-span-7 bg-card border border-border p-8 rounded-xl shadow-sm flex items-center justify-center text-muted-foreground text-sm">
                 No data selected for charting.
             </div>
         );
     }
 
     // Min/Max for domain
-    let minPrice, maxPrice;
+    let minPrice: number, maxPrice: number;
     if (isAggregate) {
         // Find min/max of avg_change and median_change
         const vals = chartData.flatMap(d => [d.avg_change, d.median_change].filter(v => v !== undefined));
@@ -350,22 +350,22 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
     const pmHigh = !isAggregate && chartData.length > 0 ? chartData[0].pm_high : 0;
 
     return (
-        <div className="xl:col-span-7 bg-white border border-zinc-200 p-8 rounded-xl shadow-sm space-y-6">
+        <div className="xl:col-span-7 bg-card border border-border p-8 rounded-xl shadow-sm space-y-6">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                     {isAggregate ? (
                         <>
-                            <h3 className="text-lg font-black text-zinc-900 tracking-tight">CHANGE VS. OPEN PRICE</h3>
-                            <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
+                            <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
                         </>
                     ) : (
                         <>
-                            <h3 className="text-lg font-black text-zinc-900 tracking-tight">{activeTicker}</h3>
-                            <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">INTRADAY ACTION</span>
+                            <h3 className="text-lg font-black text-foreground tracking-tight">{activeTicker}</h3>
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">INTRADAY ACTION</span>
                         </>
                     )}
                 </div>
-                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-zinc-400">
+                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-muted-foreground">
                     {isAggregate ? (
                         <>
                             <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> AVERAGE</div>
@@ -383,21 +383,23 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
             <div className="h-[400px] relative">
                 {loading ? (
-                    <div className="flex h-full items-center justify-center text-zinc-400 text-xs uppercase font-bold tracking-widest animate-pulse">Loading Chart...</div>
+                    <div className="flex h-full items-center justify-center text-muted-foreground text-xs uppercase font-bold tracking-widest animate-pulse">Loading Chart...</div>
                 ) : (
                     <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={chartData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" vertical={false} />
                             <XAxis
                                 dataKey={isAggregate ? "time" : "timeShort"}
-                                stroke="#94a3b8"
+                                stroke="currentColor"
+                                className="text-muted-foreground"
                                 fontSize={10}
                                 tickLine={false}
                                 axisLine={false}
                                 minTickGap={40}
                             />
                             <YAxis
-                                stroke="#94a3b8"
+                                stroke="currentColor"
+                                className="text-muted-foreground"
                                 fontSize={10}
                                 tickLine={false}
                                 axisLine={false}
@@ -406,11 +408,18 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                                 orientation="right"
                             />
                             <Tooltip
-                                contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', fontSize: '11px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                                contentStyle={{
+                                    backgroundColor: 'var(--card)',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: '8px',
+                                    fontSize: '11px',
+                                    color: 'var(--foreground)'
+                                }}
+                                itemStyle={{ color: 'var(--foreground)' }}
                                 formatter={(value: any) => [value.toFixed(2) + (isAggregate ? "%" : ""), ""]}
                             />
                             {/* Pre-Market / RTH Separator Line (09:30) */}
-                            {isAggregate && <ReferenceLine x="09:30" stroke="#cbd5e1" strokeDasharray="3 3" label={{ position: 'insideTopLeft', value: 'Market Open', fill: '#cbd5e1', fontSize: 10 }} />}
+                            {isAggregate && <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" label={{ position: 'insideTopLeft', value: 'Market Open', fill: 'currentColor', fontSize: 10 }} />}
 
                             {isAggregate ? (
                                 <>

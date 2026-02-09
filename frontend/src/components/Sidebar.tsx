@@ -2,40 +2,39 @@
 
 import React, { useState } from "react";
 import { LayoutDashboard, Database, ChevronDown, ChevronRight, Play, Plus, LineChart } from "lucide-react";
-import Link from "next/link"; // Assuming Next.js based on file structure
+import Link from "next/link";
+import { ThemeToggle } from "./ThemeToggle";
 
 export const Sidebar = () => {
     // State to toggle the "My Strategies" group
     const [isStrategiesOpen, setIsStrategiesOpen] = useState(true);
 
     return (
-        <aside className="w-64 bg-[#F2F0ED] h-screen fixed left-0 top-0 flex flex-col font-sans">
+        <aside className="w-64 bg-sidebar border-r border-border h-screen fixed left-0 top-0 flex flex-col font-sans transition-colors duration-300 z-50">
             {/* Header */}
-            <div className="px-5 py-4 flex items-center gap-2">
-                <div className="w-6 h-6 bg-zinc-900 rounded-sm flex items-center justify-center text-white font-bold text-xs">
-                    B
+            <div className="px-5 py-4 flex items-center justify-between gap-2 border-b border-border/50">
+                <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 bg-foreground text-background rounded-sm flex items-center justify-center font-bold text-xs transition-colors">
+                        B
+                    </div>
+                    <h1 className="text-foreground font-semibold text-sm tracking-tight transition-colors">
+                        BTT Console
+                    </h1>
                 </div>
-                <h1 className="text-zinc-900 font-semibold text-sm tracking-tight">
-                    BTT Console
-                </h1>
+                <ThemeToggle />
             </div>
 
             {/* Navigation */}
             <nav className="flex-1 px-3 py-2 space-y-1">
-                {/* BUILD Section Header - mimicking Claude's "BUILD" etc if needed, 
-                    but user asked for specific Main items. 
-                    We will treat "Market Analysis" and "Backtester" as main items. 
-                */}
-
-                <div className="text-[11px] font-medium text-zinc-500 px-2 py-2">
+                <div className="text-[11px] font-black text-muted-foreground/60 px-2 py-2 uppercase tracking-widest">
                     MENU
                 </div>
 
                 <Link
                     href="/"
-                    className="flex items-center gap-2.5 px-2 py-1.5 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 rounded-md transition-colors group"
+                    className="flex items-center gap-2.5 px-2 py-1.5 text-sidebar-foreground/80 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all group"
                 >
-                    <LayoutDashboard className="h-4 w-4 text-zinc-500 group-hover:text-zinc-900" />
+                    <LayoutDashboard className="h-4 w-4 text-sidebar-foreground/50 group-hover:text-foreground transition-colors" />
                     <span className="text-sm font-medium">Market Analysis</span>
                 </Link>
 
@@ -43,31 +42,31 @@ export const Sidebar = () => {
                 <div className="space-y-0.5">
                     <button
                         onClick={() => setIsStrategiesOpen(!isStrategiesOpen)}
-                        className="w-full flex items-center justify-between px-2 py-1.5 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 rounded-md transition-colors group text-left"
+                        className="w-full flex items-center justify-between px-2 py-1.5 text-sidebar-foreground/80 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all group text-left"
                     >
                         <div className="flex items-center gap-2.5">
-                            <LineChart className="h-4 w-4 text-zinc-500 group-hover:text-zinc-900" />
+                            <LineChart className="h-4 w-4 text-sidebar-foreground/50 group-hover:text-foreground transition-colors" />
                             <span className="text-sm font-medium">My Strategies</span>
                         </div>
                         {isStrategiesOpen ? (
-                            <ChevronDown className="h-3 w-3 text-zinc-400" />
+                            <ChevronDown className="h-3 w-3 opacity-50" />
                         ) : (
-                            <ChevronRight className="h-3 w-3 text-zinc-400" />
+                            <ChevronRight className="h-3 w-3 opacity-50" />
                         )}
                     </button>
 
                     {/* Nested Items */}
                     {isStrategiesOpen && (
-                        <div className="pl-9 space-y-0.5 mt-0.5">
+                        <div className="pl-9 space-y-0.5 mt-0.5 border-l border-border/50 ml-4">
                             <Link
                                 href="/strategies/new"
-                                className="flex items-center gap-2.5 py-1.5 px-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 rounded-md transition-colors"
+                                className="flex items-center gap-2.5 py-1.5 px-2 text-sidebar-foreground/60 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all"
                             >
                                 <span className="text-sm">New Strategy</span>
                             </Link>
                             <Link
                                 href="/database"
-                                className="flex items-center gap-2.5 py-1.5 px-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 rounded-md transition-colors"
+                                className="flex items-center gap-2.5 py-1.5 px-2 text-sidebar-foreground/60 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all"
                             >
                                 <span className="text-sm">Database</span>
                             </Link>
@@ -77,19 +76,20 @@ export const Sidebar = () => {
 
                 <Link
                     href="/backtester"
-                    className="flex items-center gap-2.5 px-2 py-1.5 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 rounded-md transition-colors group"
+                    className="flex items-center gap-2.5 px-2 py-1.5 text-sidebar-foreground/80 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all group"
                 >
-                    <Play className="h-4 w-4 text-zinc-500 group-hover:text-zinc-900" />
+                    <Play className="h-4 w-4 text-sidebar-foreground/50 group-hover:text-foreground transition-colors" />
                     <span className="text-sm font-medium">Backtester</span>
                 </Link>
             </nav>
 
             {/* Bottom Section similar to Claude's User Profile/Settings */}
-            <div className="p-3 mt-auto">
-                <div className="flex items-center gap-3 px-2 py-2 hover:bg-zinc-200/50 rounded-md cursor-pointer transition-colors">
-                    <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-orange-400 to-red-500"></div>
+            <div className="p-3 mt-auto border-t border-border/50 bg-sidebar/50">
+                <div className="flex items-center gap-3 px-2 py-2 hover:bg-sidebar-hover rounded-md cursor-pointer transition-all">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-orange-400 to-red-500 shadow-sm flex-shrink-0"></div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-zinc-900 truncate">User Account</p>
+                        <p className="text-sm font-bold text-foreground truncate">User Account</p>
+                        <p className="text-[10px] font-medium text-muted-foreground truncate uppercase tracking-tighter">Pro Trader</p>
                     </div>
                 </div>
             </div>

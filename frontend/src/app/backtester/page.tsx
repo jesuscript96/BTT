@@ -19,7 +19,7 @@ export default function BacktesterPage() {
     };
 
     return (
-        <div className="flex h-screen bg-gray-50">
+        <div className="flex h-screen bg-background transition-colors duration-300">
             {/* Execution Panel - Sidebar */}
             <ExecutionPanel
                 onBacktestStart={handleBacktestStart}
@@ -28,18 +28,21 @@ export default function BacktesterPage() {
             />
 
             {/* Main Dashboard */}
-            <main className="flex-1 overflow-auto">
+            <main className="flex-1 overflow-auto bg-background/50">
                 {currentResult ? (
                     <BacktestDashboard result={currentResult} />
                 ) : (
                     <div className="flex items-center justify-center h-full">
-                        <div className="text-center">
-                            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+                        <div className="text-center p-8">
+                            <h2 className="text-3xl font-black text-foreground mb-4 uppercase tracking-tighter">
                                 Backtester Pro
                             </h2>
-                            <p className="text-gray-500">
-                                Configure your backtest in the panel and click "Run Backtest" to begin
+                            <p className="text-muted-foreground max-w-sm mx-auto">
+                                Configure your backtest in the panel and click "Run Backtest" to begin your quantitative analysis
                             </p>
+                            <div className="mt-8 p-6 bg-card border border-border rounded-2xl border-dashed">
+                                <p className="text-xs text-muted-foreground uppercase font-bold tracking-widest">Ready for deployment</p>
+                            </div>
                         </div>
                     </div>
                 )}

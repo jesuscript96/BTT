@@ -183,20 +183,20 @@ export default function Home() {
       />
 
       {/* Active Filters Bar */}
-      <div className="bg-[#F2F0ED] px-6 py-2 border-b border-zinc-200 flex items-center gap-4 shadow-sm z-10 transition-colors">
+      <div className="bg-muted/50 px-6 py-2 border-b border-border flex items-center gap-4 shadow-sm z-10 transition-colors">
         <button
           onClick={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-black uppercase tracking-tighter transition-all shadow-md active:scale-95"
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-black uppercase tracking-tighter transition-all shadow-md active:scale-95 shrink-0"
         >
           <div className="w-1.5 h-1.5 rounded-full bg-white" />
           FILTROS
         </button>
 
-        <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar border-l border-zinc-300 pl-4">
-          <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mr-2 whitespace-nowrap">Advanced Rules:</span>
+        <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar border-l border-border pl-4">
+          <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mr-2 whitespace-nowrap">Advanced Rules:</span>
           {activeRules.map(rule => (
-            <div key={rule.id} className="bg-white border border-zinc-200 px-3 py-1 rounded-full flex items-center gap-2 group hover:border-blue-400 transition-all cursor-default shadow-sm shrink-0">
-              <span className="text-[10px] font-bold text-zinc-700">{rule.metric} {rule.operator} {rule.value}</span>
+            <div key={rule.id} className="bg-card border border-border px-3 py-1 rounded-full flex items-center gap-2 group hover:border-blue-400 transition-all cursor-default shadow-sm shrink-0">
+              <span className="text-[10px] font-bold text-foreground/80">{rule.metric} {rule.operator} {rule.value}</span>
               <button
                 onClick={() => setActiveRules(prev => prev.filter(r => r.id !== rule.id))}
                 className="opacity-40 group-hover:opacity-100 hover:text-red-500 transition-opacity"
@@ -205,11 +205,11 @@ export default function Home() {
               </button>
             </div>
           ))}
-          {activeRules.length === 0 && <span className="text-[10px] italic text-zinc-400">No active advanced rules</span>}
+          {activeRules.length === 0 && <span className="text-[10px] italic text-muted-foreground/60">No active advanced rules</span>}
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto bg-[#F9F9F8] scrollbar-thin scrollbar-track-zinc-100 scrollbar-thumb-zinc-300 relative">
+      <div className="flex-1 overflow-auto bg-background scrollbar-thin scrollbar-track-muted/50 scrollbar-thumb-muted relative transition-colors duration-300">
         <FilterBuilder
           isOpen={isFilterBuilderOpen}
           onClose={() => setIsFilterBuilderOpen(false)}
@@ -233,7 +233,7 @@ export default function Home() {
         />
         <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
         <div className="px-6 pb-20">
-          <div className="border border-zinc-200 rounded-xl overflow-hidden shadow-sm bg-white">
+          <div className="border border-border rounded-xl overflow-hidden shadow-sm bg-card">
             <DataGrid data={data} isLoading={isLoading} />
           </div>
         </div>

@@ -59,14 +59,14 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
     return (
         <div className="overflow-x-auto">
             <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                <thead className="bg-muted border-b border-border sticky top-0 z-10">
                     <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-foreground/70">
                             Strategy ID
                         </th>
                         <th
                             onClick={() => handleSort('total_return_pct')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-gray-700 cursor-pointer hover:bg-gray-100"
+                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
                         >
                             <div className="flex items-center gap-1">
                                 Total Return (%)
@@ -75,7 +75,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                         </th>
                         <th
                             onClick={() => handleSort('profit_factor')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-gray-700 cursor-pointer hover:bg-gray-100"
+                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
                         >
                             <div className="flex items-center gap-1">
                                 Profit Factor
@@ -84,7 +84,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                         </th>
                         <th
                             onClick={() => handleSort('win_rate')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-gray-700 cursor-pointer hover:bg-gray-100"
+                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
                         >
                             <div className="flex items-center gap-1">
                                 Win Rate (%)
@@ -93,7 +93,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                         </th>
                         <th
                             onClick={() => handleSort('max_drawdown_pct')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-gray-700 cursor-pointer hover:bg-gray-100"
+                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
                         >
                             <div className="flex items-center gap-1">
                                 Max DD (%)
@@ -102,42 +102,42 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                         </th>
                         <th
                             onClick={() => handleSort('total_trades')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-gray-700 cursor-pointer hover:bg-gray-100"
+                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
                         >
                             <div className="flex items-center gap-1">
                                 Trades
                                 <SortIcon field="total_trades" />
                             </div>
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-foreground/70">
                             Actions
                         </th>
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-border">
                     {sortedStrategies.map((strategy) => (
                         <tr
                             key={strategy.id}
-                            className="hover:bg-gray-50 cursor-pointer transition-colors"
+                            className="hover:bg-muted/50 cursor-pointer transition-colors"
                             onClick={() => router.push(`/backtester/${strategy.id}`)}
                         >
-                            <td className="px-4 py-3 text-sm text-gray-900 font-mono">
+                            <td className="px-4 py-3 text-sm text-foreground/80 font-mono">
                                 {strategy.id.slice(0, 8)}...
                             </td>
-                            <td className={`px-4 py-3 text-sm font-semibold ${strategy.total_return_pct > 0 ? 'text-green-600' : 'text-red-600'
+                            <td className={`px-4 py-3 text-sm font-semibold ${strategy.total_return_pct > 0 ? 'text-green-500' : 'text-red-500'
                                 }`}>
                                 {strategy.total_return_pct?.toFixed(2)}%
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-900 font-semibold">
+                            <td className="px-4 py-3 text-sm text-foreground font-semibold">
                                 {strategy.profit_factor?.toFixed(2)}
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-900">
+                            <td className="px-4 py-3 text-sm text-foreground/80">
                                 {strategy.win_rate?.toFixed(1)}%
                             </td>
-                            <td className="px-4 py-3 text-sm text-red-600">
+                            <td className="px-4 py-3 text-sm text-red-500">
                                 -{strategy.max_drawdown_pct?.toFixed(2)}%
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-900">
+                            <td className="px-4 py-3 text-sm text-foreground/80">
                                 {strategy.total_trades}
                             </td>
                             <td className="px-4 py-3">
@@ -146,7 +146,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                                         e.stopPropagation()
                                         router.push(`/backtester/${strategy.id}`)
                                     }}
-                                    className="text-blue-600 hover:text-blue-700"
+                                    className="text-blue-500 hover:text-blue-600 transition-colors"
                                 >
                                     <ExternalLink className="w-4 h-4" />
                                 </button>

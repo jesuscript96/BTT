@@ -77,7 +77,7 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
 
                 <button
                     onClick={addGroup}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 hover:border-green-300 rounded-lg text-xs font-bold uppercase tracking-wide transition-all"
+                    className="flex items-center gap-2 px-3 py-1.5 bg-green-500/10 text-green-500 border border-green-500/20 hover:bg-green-500/20 hover:border-green-500/30 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-sm shadow-green-900/10"
                 >
                     <Plus className="w-3 h-3" />
                     Add Logic Block
@@ -85,23 +85,23 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
             </div>
 
             {groups.map((group, index) => (
-                <div key={group.id} className="bg-zinc-50/50 border border-zinc-200 rounded-xl p-5 relative group/card transition-all hover:bg-zinc-50 hover:shadow-sm">
-                    <div className="flex items-center justify-between mb-4 border-b border-zinc-200 pb-3">
+                <div key={group.id} className="bg-muted/30 border border-border rounded-xl p-5 relative group/card transition-all hover:bg-muted/40 hover:shadow-sm">
+                    <div className="flex items-center justify-between mb-4 border-b border-border/50 pb-3">
                         <div className="flex items-center gap-3">
-                            <span className="bg-zinc-200 text-zinc-700 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">Group {index + 1}</span>
-                            <span className="text-zinc-400 text-[10px] font-bold tracking-widest">ALL CONDITIONS (AND)</span>
+                            <span className="bg-muted text-muted-foreground text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border border-border/50">Group {index + 1}</span>
+                            <span className="text-muted-foreground/40 text-[10px] font-black tracking-widest">ALL CONDITIONS (AND)</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => addCondition(group.id)}
-                                className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded transition-colors"
+                                className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-2.5 py-1.5 rounded-lg border border-blue-500/20 transition-all"
                             >
                                 <Plus className="w-3 h-3" />
                                 Add Condition
                             </button>
                             <button
                                 onClick={() => removeGroup(group.id)}
-                                className="text-zinc-400 hover:text-red-500 transition-colors p-1"
+                                className="text-muted-foreground/30 hover:text-red-500 transition-colors p-1"
                             >
                                 <Trash2 className="w-4 h-4" />
                             </button>
@@ -110,17 +110,17 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
 
                     <div className="space-y-3">
                         {group.conditions.length === 0 && (
-                            <div className="text-center py-8 text-zinc-400 text-xs font-medium border-2 border-dashed border-zinc-200 rounded-lg bg-white">
+                            <div className="text-center py-8 text-muted-foreground/40 text-[10px] font-black uppercase tracking-widest border-2 border-dashed border-border rounded-lg bg-background/50">
                                 No conditions defined. Add a market trigger.
                             </div>
                         )}
 
                         {group.conditions.map((condition) => (
-                            <div key={condition.id} className="flex flex-col md:flex-row items-center gap-3 bg-white border border-zinc-200 rounded-lg p-3 shadow-sm hover:border-blue-300 transition-colors">
+                            <div key={condition.id} className="flex flex-col md:flex-row items-center gap-3 bg-background/50 border border-border rounded-xl p-3 shadow-sm hover:border-blue-500/50 transition-all">
                                 {/* Indicator Select */}
                                 <div className="w-full md:w-1/3">
                                     <select
-                                        className="w-full bg-zinc-50 border border-zinc-200 rounded-md px-3 py-2 text-zinc-900 text-sm font-semibold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
+                                        className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-foreground text-sm font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none transition-all"
                                         value={condition.indicator}
                                         onChange={(e) => updateCondition(group.id, condition.id, 'indicator', e.target.value)}
                                     >
@@ -133,7 +133,7 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
                                 {/* Operator Select */}
                                 <div className="w-full md:w-auto">
                                     <select
-                                        className="w-full md:w-20 bg-zinc-50 border border-zinc-200 rounded-md px-2 py-2 text-zinc-900 text-sm font-mono font-bold text-center focus:outline-none"
+                                        className="w-full md:w-20 bg-muted/50 border border-border rounded-lg px-2 py-2 text-foreground text-sm font-black tabular-nums text-center focus:outline-none transition-all"
                                         value={condition.operator}
                                         onChange={(e) => updateCondition(group.id, condition.id, 'operator', e.target.value)}
                                     >
@@ -149,7 +149,7 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
                                     <div className="relative flex-1">
                                         <input
                                             type={condition.indicator === IndicatorType.TIME_OF_DAY ? "time" : "text"}
-                                            className="w-full bg-zinc-50 border border-zinc-200 rounded-md px-3 py-2 text-zinc-900 text-sm font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none"
+                                            className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-foreground text-sm font-bold tabular-nums focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none placeholder:text-muted-foreground/30 transition-all [color-scheme:dark]"
                                             placeholder={
                                                 condition.indicator === IndicatorType.EXTENSION ? "Threshold % (e.g. 15)" :
                                                     condition.indicator === IndicatorType.RVOL ? "Multiplier (e.g. 3)" :
@@ -159,7 +159,7 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
                                             onChange={(e) => updateCondition(group.id, condition.id, 'value', e.target.value)}
                                         />
                                         {condition.indicator === IndicatorType.TIME_OF_DAY && (
-                                            <Clock className="w-4 h-4 text-zinc-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                                            <Clock className="w-4 h-4 text-muted-foreground/50 absolute right-3 top-1/2 -translate-y-1/2" />
                                         )}
                                     </div>
 
@@ -167,7 +167,7 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
                                     {(condition.indicator === IndicatorType.EXTENSION) && (
                                         <div className="w-1/2">
                                             <select
-                                                className="w-full bg-zinc-50 border border-zinc-200 rounded-md px-3 py-2 text-zinc-600 text-xs font-semibold focus:outline-none"
+                                                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-muted-foreground text-xs font-black uppercase tracking-widest focus:outline-none"
                                                 value={condition.compare_to || "EMA9"}
                                                 onChange={(e) => updateCondition(group.id, condition.id, 'compare_to', e.target.value)}
                                             >
@@ -182,7 +182,7 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
 
                                 <button
                                     onClick={() => removeCondition(group.id, condition.id)}
-                                    className="p-2 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                                    className="p-2 text-muted-foreground/30 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
                                 >
                                     <Trash2 className="w-4 h-4" />
                                 </button>

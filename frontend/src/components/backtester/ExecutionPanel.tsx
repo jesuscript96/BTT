@@ -201,46 +201,46 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
     const totalWeight = selectedStrategies.reduce((sum, s) => sum + s.weight, 0);
 
     return (
-        <aside className="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <aside className="w-80 bg-sidebar border-r border-border flex flex-col transition-colors duration-300">
             {/* Header */}
-            <div className="p-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold text-gray-900">Execution Panel</h2>
+            <div className="p-4 border-b border-border bg-sidebar/50">
+                <h2 className="text-lg font-black uppercase tracking-tight text-foreground">Execution Panel</h2>
             </div>
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6">
                 {/* Strategies Section */}
                 <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-3">Strategies</h3>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Strategies</h3>
 
                     {/* Selected Strategies */}
-                    <div className="space-y-2 mb-3">
+                    <div className="space-y-3 mb-4">
                         {selectedStrategies.map(selection => (
                             <div
                                 key={selection.strategy_id}
-                                className="bg-white rounded-lg p-3 border border-gray-200 shadow-sm"
+                                className="bg-card rounded-xl p-3 border border-border shadow-sm transition-all hover:border-blue-500/30"
                             >
                                 <div className="flex items-center justify-between mb-2">
-                                    <span className="text-sm text-gray-900 font-medium truncate flex-1">
+                                    <span className="text-sm text-foreground font-semibold truncate flex-1">
                                         {selection.name}
                                     </span>
                                     <button
                                         onClick={() => removeStrategy(selection.strategy_id)}
-                                        className="text-red-500 hover:text-red-700 ml-2"
+                                        className="text-muted-foreground hover:text-red-500 transition-colors ml-2"
                                     >
                                         <Trash2 className="w-4 h-4" />
                                     </button>
                                 </div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-3">
                                     <input
                                         type="range"
                                         min="0"
                                         max="100"
                                         value={selection.weight}
                                         onChange={(e) => updateWeight(selection.strategy_id, Number(e.target.value))}
-                                        className="flex-1"
+                                        className="flex-1 h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-blue-500"
                                     />
-                                    <span className="text-xs text-gray-500 w-12 text-right">
+                                    <span className="text-[10px] font-bold text-muted-foreground w-10 text-right tabular-nums">
                                         {selection.weight.toFixed(0)}%
                                     </span>
                                 </div>
@@ -256,7 +256,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
                                 e.target.value = '';
                             }
                         }}
-                        className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
                         disabled={isLoading}
                     >
                         <option value="">+ Add Strategy</option>
@@ -271,9 +271,9 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
 
                     {/* Weight Total */}
                     {selectedStrategies.length > 0 && (
-                        <div className="mt-2 flex items-center justify-between text-xs">
-                            <span className="text-gray-500">Total Weight:</span>
-                            <span className={totalWeight === 100 ? 'text-green-600 font-medium' : 'text-yellow-600 font-medium'}>
+                        <div className="mt-3 flex items-center justify-between text-[10px] uppercase font-bold tracking-tighter">
+                            <span className="text-muted-foreground">Total Weight:</span>
+                            <span className={totalWeight === 100 ? 'text-green-500' : 'text-yellow-500'}>
                                 {totalWeight.toFixed(0)}%
                             </span>
                         </div>
@@ -282,12 +282,12 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
 
                 {/* Dataset Section */}
                 <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-3">Dataset</h3>
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Dataset</h3>
                     <div className="space-y-3">
                         <select
                             value={selectedDatasetId}
                             onChange={(e) => setSelectedDatasetId(e.target.value)}
-                            className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
                             disabled={isLoading}
                         >
                             <option value="">Default (Global Data)</option>
@@ -298,9 +298,9 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
                             ))}
                         </select>
 
-                        <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                            <p className="text-[10px] text-gray-500 mb-1 uppercase font-bold">Base Filters</p>
-                            <p className="text-xs text-blue-600 font-medium">
+                        <div className="bg-muted border border-border rounded-lg p-3">
+                            <p className="text-[9px] text-muted-foreground mb-1 uppercase font-black tracking-widest">Base Filters</p>
+                            <p className="text-[11px] text-blue-500 font-bold leading-tight">
                                 {selectedDatasetId
                                     ? `Using filters from "${savedDatasets.find(d => d.id === selectedDatasetId)?.name}"`
                                     : "Using historical data (Full Universe)"}
@@ -310,28 +310,28 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
                 </div>
 
                 {/* Execution Settings */}
-                <div>
-                    <h3 className="text-sm font-medium text-gray-500 mb-3">Settings</h3>
+                <div className="pb-4">
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Settings</h3>
 
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         {/* Commission */}
                         <div>
-                            <label className="text-xs text-gray-500 block mb-1">
-                                Commission per Trade ($)
+                            <label className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
+                                Commission / Trade ($)
                             </label>
                             <input
                                 type="number"
                                 value={commission}
                                 onChange={(e) => setCommission(Number(e.target.value))}
                                 step="0.1"
-                                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
                                 disabled={isLoading}
                             />
                         </div>
 
                         {/* Initial Capital */}
                         <div>
-                            <label className="text-xs text-gray-500 block mb-1">
+                            <label className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
                                 Initial Capital ($)
                             </label>
                             <input
@@ -339,20 +339,20 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
                                 value={initialCapital}
                                 onChange={(e) => setInitialCapital(Number(e.target.value))}
                                 step="1000"
-                                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
                                 disabled={isLoading}
                             />
                         </div>
 
                         {/* Max Holding Period */}
                         <div>
-                            <label className="text-xs text-gray-500 block mb-1">
+                            <label className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
                                 Max Holding Period
                             </label>
                             <select
                                 value={maxHoldingMinutes}
                                 onChange={(e) => setMaxHoldingMinutes(Number(e.target.value))}
-                                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
                                 disabled={isLoading}
                             >
                                 <option value={30}>30 minutes</option>
@@ -366,28 +366,28 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
             </div>
 
             {/* Run Button */}
-            <div className="p-4 border-t border-gray-200">
+            <div className="p-4 border-t border-border bg-sidebar/50">
                 <button
                     onClick={runBacktest}
                     disabled={isLoading || selectedStrategies.length === 0}
-                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-sm"
+                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-500/10 active:scale-[0.98]"
                 >
                     {isLoading ? (
-                        <div className="flex flex-col items-center">
-                            <div className="flex items-center gap-2 mb-1">
-                                <Loader2 className="w-5 h-5 animate-spin" />
-                                <span>
-                                    {loadingPhase === 1 && "Connecting to MotherDuck..."}
-                                    {loadingPhase === 2 && "Fetching Market Data..."}
-                                    {loadingPhase === 3 && "Running Engine..."}
-                                    {loadingPhase === 4 && "Finalizing Results..."}
-                                    {loadingPhase === 0 && "Initializing..."}
+                        <div className="flex flex-col items-center w-full">
+                            <div className="flex items-center gap-2 mb-2">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span className="text-xs font-bold uppercase tracking-widest">
+                                    {loadingPhase === 1 && "Connecting..."}
+                                    {loadingPhase === 2 && "Fetching Data..."}
+                                    {loadingPhase === 3 && "Processing..."}
+                                    {loadingPhase === 4 && "Finalizing..."}
+                                    {loadingPhase === 0 && "Wait..."}
                                 </span>
                             </div>
                             {loadingPhase > 0 && (
-                                <div className="w-full h-1 bg-blue-800 rounded-full overflow-hidden">
+                                <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
                                     <div
-                                        className="h-full bg-white/50 transition-all duration-500"
+                                        className="h-full bg-white transition-all duration-700 ease-out"
                                         style={{ width: `${(loadingPhase / 4) * 100}%` }}
                                     />
                                 </div>
@@ -395,8 +395,8 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
                         </div>
                     ) : (
                         <>
-                            <Play className="w-5 h-5" />
-                            Run Backtest
+                            <Play className="w-5 h-5 fill-current" />
+                            <span className="uppercase tracking-widest text-xs font-black">Run Backtest</span>
                         </>
                     )}
                 </button>

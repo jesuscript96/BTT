@@ -24,8 +24,8 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
     const dates = Object.keys(tradesByDate).sort();
     if (dates.length === 0) {
         return (
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-                <p className="text-gray-500">No trade data available</p>
+            <div className="bg-card rounded-xl border border-border p-6 transition-colors">
+                <p className="text-muted-foreground">No trade data available</p>
             </div>
         );
     }
@@ -48,20 +48,20 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
     }
 
     const getColorIntensity = (totalR: number) => {
-        if (totalR > 5) return 'bg-green-600';
-        if (totalR > 2) return 'bg-green-500';
-        if (totalR > 0) return 'bg-green-400';
-        if (totalR === 0) return 'bg-gray-700';
-        if (totalR > -2) return 'bg-red-400';
-        if (totalR > -5) return 'bg-red-500';
-        return 'bg-red-600';
+        if (totalR > 5) return 'bg-green-500';
+        if (totalR > 2) return 'bg-green-500/80';
+        if (totalR > 0) return 'bg-green-500/40';
+        if (totalR === 0) return 'bg-muted';
+        if (totalR > -2) return 'bg-red-500/40';
+        if (totalR > -5) return 'bg-red-500/80';
+        return 'bg-red-500';
     };
 
     return (
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="bg-card rounded-xl border border-border p-6 transition-colors shadow-sm">
             <div className="mb-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">Calendar Heatmap</h2>
-                <p className="text-sm text-gray-500">
+                <h2 className="text-xl font-bold text-foreground mb-2">Calendar Heatmap</h2>
+                <p className="text-sm text-muted-foreground">
                     Daily P&L visualization
                 </p>
             </div>
@@ -72,7 +72,7 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
                     <div className="flex mb-2">
                         <div className="w-12"></div>
                         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                            <div key={day} className="w-10 text-xs text-gray-500 text-center">
+                            <div key={day} className="w-10 text-[10px] uppercase font-black tracking-widest text-muted-foreground text-center">
                                 {day}
                             </div>
                         ))}
@@ -82,7 +82,7 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
                     {weeks.map((week, weekIndex) => (
                         <div key={weekIndex} className="flex mb-1">
                             {/* Week number */}
-                            <div className="w-12 text-xs text-gray-500 flex items-center">
+                            <div className="w-12 text-[10px] uppercase font-black tracking-widest text-muted-foreground flex items-center">
                                 {weekIndex === 0 || week[0].getDate() <= 7 ? week[0].toLocaleDateString('en-US', { month: 'short' }) : ''}
                             </div>
 
@@ -97,12 +97,12 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
                                         className="relative group"
                                     >
                                         <div
-                                            className={`w-9 h-9 m-0.5 rounded ${dayData
+                                            className={`w-9 h-9 m-0.5 rounded-md transition-all ${dayData
                                                 ? getColorIntensity(dayData.totalR)
                                                 : isInRange
-                                                    ? 'bg-gray-100'
+                                                    ? 'bg-muted/30'
                                                     : 'bg-transparent'
-                                                } ${dayData ? 'cursor-pointer' : ''}`}
+                                                } ${dayData ? 'cursor-pointer hover:ring-2 hover:ring-foreground/20' : ''}`}
                                             title={dayData ? `${dateStr}: ${dayData.trades} trades, ${dayData.totalR.toFixed(2)}R` : ''}
                                         />
 
@@ -127,14 +127,17 @@ export function CalendarHeatmap({ result }: CalendarHeatmapProps) {
             </div>
 
             {/* Legend */}
-            <div className="flex items-center gap-2 mt-6 pt-6 border-t border-gray-200">
-                <span className="text-xs text-gray-500">Less</span>
-                <div className="w-4 h-4 bg-gray-100 rounded"></div>
-                <div className="w-4 h-4 bg-red-600 rounded"></div>
-                <div className="w-4 h-4 bg-red-400 rounded"></div>
-                <div className="w-4 h-4 bg-green-400 rounded"></div>
-                <div className="w-4 h-4 bg-green-600 rounded"></div>
-                <span className="text-xs text-gray-500">More</span>
+            <div className="flex items-center gap-2 mt-6 pt-6 border-t border-border">
+                <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground mr-2">Returns Intensity:</span>
+                <span className="text-[10px] text-muted-foreground">Loss</span>
+                <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
+                <div className="w-3 h-3 bg-red-500/80 rounded-sm"></div>
+                <div className="w-3 h-3 bg-red-500/40 rounded-sm"></div>
+                <div className="w-3 h-3 bg-muted rounded-sm"></div>
+                <div className="w-3 h-3 bg-green-500/40 rounded-sm"></div>
+                <div className="w-3 h-3 bg-green-500/80 rounded-sm"></div>
+                <div className="w-3 h-3 bg-green-500 rounded-sm"></div>
+                <span className="text-[10px] text-muted-foreground ml-1">Profit</span>
             </div>
         </div>
     );

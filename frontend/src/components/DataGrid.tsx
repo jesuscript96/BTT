@@ -26,22 +26,22 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading }) => {
     const columns = Object.keys(data[0]);
 
     return (
-        <div className="overflow-x-auto w-full bg-white transition-colors">
-            <table className="w-full text-left text-sm text-zinc-600">
-                <thead className="bg-[#F2F0ED] text-[10px] uppercase font-black text-zinc-400 sticky top-0 tracking-widest z-10">
+        <div className="overflow-x-auto w-full bg-background transition-colors duration-300">
+            <table className="w-full text-left text-sm text-foreground/80">
+                <thead className="bg-muted text-[10px] uppercase font-black text-muted-foreground sticky top-0 tracking-widest z-10">
                     <tr>
                         {columns.map((col) => (
-                            <th key={col} className="px-4 py-3 whitespace-nowrap border-b border-zinc-200">
+                            <th key={col} className="px-4 py-3 whitespace-nowrap border-b border-border">
                                 {col.replace(/_/g, " ")}
                             </th>
                         ))}
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody className="divide-y divide-border/50">
                     {data.map((row, i) => (
-                        <tr key={i} className="hover:bg-blue-50/30 transition-colors">
+                        <tr key={i} className="hover:bg-accent/50 transition-colors">
                             {columns.map((col) => (
-                                <td key={`${i}-${col}`} className="px-4 py-3 whitespace-nowrap text-zinc-700 font-medium">
+                                <td key={`${i}-${col}`} className="px-4 py-3 whitespace-nowrap text-foreground/90 font-medium">
                                     {typeof row[col] === 'number'
                                         ? row[col].toLocaleString(undefined, { maximumFractionDigits: 2 })
                                         : row[col]

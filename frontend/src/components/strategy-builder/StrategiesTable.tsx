@@ -56,7 +56,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
 
     if (error) {
         return (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-500 text-sm font-bold">
                 Error loading strategies: {error}
             </div>
         );
@@ -64,55 +64,55 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
 
     if (strategies.length === 0) {
         return (
-            <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-8 text-center">
-                <p className="text-zinc-500 text-sm font-medium">No strategies created yet. Create your first one above!</p>
+            <div className="bg-muted/30 border border-border rounded-xl p-8 text-center transition-all">
+                <p className="text-muted-foreground/60 text-[10px] font-black uppercase tracking-widest">No strategies created yet. Create your first one above!</p>
             </div>
         );
     }
 
     return (
-        <div className="bg-white border border-zinc-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-zinc-200">
-                <h3 className="text-sm font-black text-zinc-900 uppercase tracking-widest">Saved Strategies</h3>
-                <p className="text-xs text-zinc-500 mt-1">{strategies.length} strateg{strategies.length === 1 ? 'y' : 'ies'} found</p>
+        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden transition-all">
+            <div className="px-6 py-5 border-b border-border/50">
+                <h3 className="text-[10px] font-black text-foreground uppercase tracking-widest">Saved Strategies</h3>
+                <p className="text-[10px] text-muted-foreground/50 font-black uppercase tracking-widest mt-1.5">{strategies.length} strateg{strategies.length === 1 ? 'y' : 'ies'} found</p>
             </div>
 
             <div className="overflow-x-auto">
                 <table className="w-full">
-                    <thead className="bg-zinc-50 border-b border-zinc-200">
+                    <thead className="bg-muted/30 border-b border-border/50">
                         <tr>
-                            <th className="px-6 py-3 text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest">Name</th>
-                            <th className="px-6 py-3 text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest">Description</th>
-                            <th className="px-6 py-3 text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest">Entry Groups</th>
-                            <th className="px-6 py-3 text-left text-[10px] font-black text-zinc-500 uppercase tracking-widest">Created</th>
-                            <th className="px-6 py-3 text-right text-[10px] font-black text-zinc-500 uppercase tracking-widest">Actions</th>
+                            <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Name</th>
+                            <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Description</th>
+                            <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Entry Groups</th>
+                            <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Created</th>
+                            <th className="px-6 py-3 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-100">
+                    <tbody className="divide-y divide-border/30">
                         {strategies.map((strategy) => (
-                            <tr key={strategy.id} className="hover:bg-zinc-50 transition-colors">
+                            <tr key={strategy.id} className="hover:bg-muted/20 transition-colors group">
                                 <td className="px-6 py-4">
-                                    <div className="text-sm font-bold text-zinc-900">{strategy.name}</div>
+                                    <div className="text-sm font-bold text-foreground">{strategy.name}</div>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <div className="text-sm text-zinc-600 max-w-md truncate">
-                                        {strategy.description || <span className="text-zinc-400 italic">No description</span>}
+                                    <div className="text-sm text-muted-foreground font-medium max-w-md truncate opacity-80">
+                                        {strategy.description || <span className="text-muted-foreground/30 italic">No description</span>}
                                     </div>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <div className="text-sm text-zinc-600">
+                                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">
                                         {strategy.entry_logic?.length || 0} group{strategy.entry_logic?.length !== 1 ? 's' : ''}
                                     </div>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <div className="text-sm text-zinc-600">
+                                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">
                                         {strategy.created_at ? new Date(strategy.created_at).toLocaleDateString() : 'N/A'}
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <button
                                         onClick={() => strategy.id && handleDelete(strategy.id)}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black text-red-500/60 uppercase tracking-widest hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                                     >
                                         <Trash2 className="w-3 h-3" />
                                         Delete

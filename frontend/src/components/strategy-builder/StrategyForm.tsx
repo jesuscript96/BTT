@@ -90,24 +90,24 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     };
 
     return (
-        <div className="w-full px-2 py-4 font-sans text-zinc-900">
+        <div className="w-full px-2 py-4 font-sans text-foreground">
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
                 <div>
-                    <h1 className="text-2xl font-black text-zinc-900 tracking-tight mb-2">NEW STRATEGY</h1>
-                    <p className="text-sm text-zinc-500 font-medium">Define algorithmic rules for the Short-Bias engine.</p>
+                    <h1 className="text-2xl font-black text-foreground tracking-tight mb-2 uppercase">New Strategy</h1>
+                    <p className="text-sm text-muted-foreground font-medium">Define algorithmic rules for the Short-Bias engine.</p>
                 </div>
                 <div className="flex gap-3">
                     <button
                         onClick={() => {/* verify logic */ }}
-                        className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-zinc-500 bg-white border border-zinc-200 rounded-lg hover:bg-zinc-50 transition-all hover:shadow-sm"
+                        className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground bg-card border border-border rounded-lg hover:bg-muted transition-all hover:shadow-sm"
                     >
                         Validate Logic
                     </button>
                     <button
                         onClick={handleSave}
                         disabled={isSubmitting}
-                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium shadow-lg shadow-blue-900/20 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-900/40 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {isSubmitting ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -125,31 +125,31 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                 {/* 1. SETUP & FILTERS (Left - 3/12) */}
                 <div className="col-span-12 lg:col-span-3 space-y-6">
                     {/* Metadata Card */}
-                    <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
+                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm transition-colors">
                         <div className="flex items-center gap-2 mb-4">
-                            <div className="h-5 w-1 bg-blue-600 rounded-full" />
-                            <h2 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Identity</h2>
+                            <div className="h-5 w-1 bg-blue-500 rounded-full" />
+                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Identity</h2>
                         </div>
 
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 lead">Strategy Name</label>
+                                <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1.5 opacity-70">Strategy Name</label>
                                 <input
                                     type="text"
                                     value={name}
                                     onChange={(e) => setName(e.target.value)}
-                                    className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2 text-sm font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-zinc-400"
+                                    className="w-full bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-muted-foreground/30"
                                     placeholder="e.g. Parabolic Short v1"
                                 />
                             </div>
 
                             <div>
-                                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">Description</label>
+                                <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1.5 opacity-70">Description</label>
                                 <textarea
                                     value={description}
                                     onChange={(e) => setDescription(e.target.value)}
                                     rows={3}
-                                    className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2 text-sm font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-zinc-400 resize-none"
+                                    className="w-full bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-muted-foreground/30 resize-none"
                                     placeholder="Describe the mechanic..."
                                 />
                             </div>
@@ -157,10 +157,10 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     </div>
 
                     {/* Filters Card */}
-                    <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
+                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm transition-colors">
                         <div className="flex items-center gap-2 mb-4">
-                            <div className="h-5 w-1 bg-zinc-900 rounded-full" />
-                            <h2 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Universe Filters</h2>
+                            <div className="h-5 w-1 bg-foreground rounded-full" />
+                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Universe Filters</h2>
                         </div>
                         <FilterSection filters={filters} onChange={setFilters} />
                     </div>
@@ -168,12 +168,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
                 {/* 2. ENTRY LOGIC (Center - 5/12) */}
                 <div className="col-span-12 lg:col-span-5 space-y-6">
-                    <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm h-full">
+                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm h-full transition-colors">
                         <div className="flex items-center gap-2 mb-2">
                             <div className="h-5 w-1 bg-green-500 rounded-full" />
-                            <h2 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Entry Logic</h2>
+                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Entry Logic</h2>
                         </div>
-                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mb-6 ml-3">Trigger Conditions (AND/OR Logic)</p>
+                        <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-6 ml-3 opacity-60">Trigger Conditions (AND/OR Logic)</p>
 
                         <ConditionBuilder groups={groups} onChange={setGroups} />
                     </div>
@@ -181,12 +181,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
                 {/* 3. RISK MANAGEMENT (Right - 4/12) */}
                 <div className="col-span-12 lg:col-span-4 space-y-6">
-                    <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm h-full">
+                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm h-full transition-colors">
                         <div className="flex items-center gap-2 mb-2">
                             <div className="h-5 w-1 bg-red-500 rounded-full" />
-                            <h2 className="text-xs font-black text-zinc-900 uppercase tracking-widest">Risk Management</h2>
+                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Risk Management</h2>
                         </div>
-                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wide mb-6 ml-3">Stops, Targets & Dilution</p>
+                        <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-6 ml-3 opacity-60">Stops, Targets & Dilution</p>
 
                         <RiskSection exitLogic={exitLogic} onChange={setExitLogic} />
                     </div>

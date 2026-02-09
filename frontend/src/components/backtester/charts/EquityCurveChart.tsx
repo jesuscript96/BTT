@@ -27,21 +27,21 @@ export function EquityCurveChart({ result }: EquityCurveChartProps) {
         const chart = createChart(chartContainerRef.current, {
             layout: {
                 background: { type: ColorType.Solid, color: 'transparent' },
-                textColor: '#6b7280',
+                textColor: 'rgba(156, 163, 175, 0.8)', // text-muted-foreground approximate
             },
             grid: {
-                vertLines: { color: '#f3f4f6' },
-                horzLines: { color: '#f3f4f6' },
+                vertLines: { color: 'rgba(156, 163, 175, 0.1)' },
+                horzLines: { color: 'rgba(156, 163, 175, 0.1)' },
             },
             width: chartContainerRef.current.clientWidth,
             height: 400,
             timeScale: {
                 timeVisible: true,
                 secondsVisible: false,
-                borderColor: '#e5e7eb',
+                borderColor: 'rgba(156, 163, 175, 0.2)',
             },
             rightPriceScale: {
-                borderColor: '#e5e7eb',
+                borderColor: 'rgba(156, 163, 175, 0.2)',
                 scaleMargins: {
                     top: 0.1,
                     bottom: 0.1,
@@ -103,11 +103,11 @@ export function EquityCurveChart({ result }: EquityCurveChartProps) {
     }, [result.equity_curve]);
 
     return (
-        <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm">
+        <div className="bg-card rounded-xl border border-border p-6 shadow-sm transition-colors">
             <div className="mb-6 flex justify-between items-end">
                 <div>
-                    <h2 className="text-xl font-bold text-gray-900 mb-1">Portfolio Equity Curve</h2>
-                    <p className="text-sm text-gray-500">
+                    <h2 className="text-xl font-black text-foreground mb-1">Portfolio Equity Curve</h2>
+                    <p className="text-sm text-muted-foreground">
                         High-precision performance visualization
                     </p>
                 </div>
@@ -124,28 +124,28 @@ export function EquityCurveChart({ result }: EquityCurveChartProps) {
             </div>
 
             {/* Performance KPIs Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 pt-6 border-t border-gray-100">
-                <div className="p-3 rounded-xl bg-gray-50/50">
-                    <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Starting Capital</div>
-                    <div className="text-lg font-bold text-gray-900">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8 pt-6 border-t border-border">
+                <div className="p-3 rounded-xl bg-muted/30">
+                    <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-1">Starting Capital</div>
+                    <div className="text-lg font-black text-foreground tabular-nums">
                         ${result.initial_capital.toLocaleString()}
                     </div>
                 </div>
-                <div className="p-3 rounded-xl bg-teal-50/50">
-                    <div className="text-[10px] font-bold text-teal-500 uppercase mb-1">Total Return</div>
-                    <div className={`text-lg font-bold ${result.total_return_pct >= 0 ? 'text-teal-600' : 'text-rose-600'}`}>
+                <div className="p-3 rounded-xl bg-green-500/5">
+                    <div className="text-[9px] font-black text-green-500 uppercase tracking-widest mb-1">Total Return</div>
+                    <div className={`text-lg font-black tabular-nums ${result.total_return_pct >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                         {result.total_return_pct >= 0 ? '+' : ''}{result.total_return_pct.toFixed(2)}%
                     </div>
                 </div>
-                <div className="p-3 rounded-xl bg-blue-50/50">
-                    <div className="text-[10px] font-bold text-blue-500 uppercase mb-1">Return in R</div>
-                    <div className="text-lg font-bold text-blue-700">
+                <div className="p-3 rounded-xl bg-blue-500/5">
+                    <div className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1">Return in R</div>
+                    <div className="text-lg font-black text-blue-500 tabular-nums">
                         {result.total_return_r >= 0 ? '+' : ''}{result.total_return_r.toFixed(2)}R
                     </div>
                 </div>
-                <div className="p-3 rounded-xl bg-purple-50/50">
-                    <div className="text-[10px] font-bold text-purple-500 uppercase mb-1">Sharpe Ratio</div>
-                    <div className="text-lg font-bold text-purple-700">
+                <div className="p-3 rounded-xl bg-purple-500/5">
+                    <div className="text-[9px] font-black text-purple-500 uppercase tracking-widest mb-1">Sharpe Ratio</div>
+                    <div className="text-lg font-black text-purple-500 tabular-nums">
                         {result.sharpe_ratio.toFixed(2)}
                     </div>
                 </div>

@@ -35,9 +35,9 @@ export default function DatabasePage() {
     })
 
     return (
-        <div className="flex h-screen bg-white overflow-hidden">
+        <div className="flex h-screen bg-background overflow-hidden transition-colors duration-300">
             {/* Left Panel - Configuration */}
-            <div className="w-80 border-r border-gray-200 flex-shrink-0 overflow-y-auto">
+            <div className="w-80 border-r border-border flex-shrink-0 overflow-y-auto bg-sidebar/30">
                 <ConfigurationPanel
                     config={searchConfig}
                     onChange={setSearchConfig}
@@ -45,7 +45,7 @@ export default function DatabasePage() {
             </div>
 
             {/* Center Panel - Results */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto bg-background/50">
                 <ResultsPanel
                     searchConfig={searchConfig}
                     passCriteria={passCriteria}
@@ -54,7 +54,7 @@ export default function DatabasePage() {
             </div>
 
             {/* Right Panel - Risk Management */}
-            <div className="w-80 border-l border-gray-200 flex-shrink-0 overflow-y-auto">
+            <div className="w-80 border-l border-border flex-shrink-0 overflow-y-auto bg-sidebar/30">
                 <RiskManagementPanel
                     config={riskConfig}
                     onChange={setRiskConfig}

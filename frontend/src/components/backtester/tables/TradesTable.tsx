@@ -70,7 +70,7 @@ export function TradesTable({ trades }: TradesTableProps) {
                 <div className="relative">
                     <button
                         onClick={() => setSelectedTrade(null)}
-                        className="absolute top-4 right-4 z-10 p-2 bg-white rounded-full shadow-md border border-gray-200 hover:bg-gray-50 text-gray-500"
+                        className="absolute top-4 right-4 z-10 p-2 bg-card rounded-full shadow-lg border border-border hover:bg-muted text-muted-foreground transition-all"
                         title="Close Chart"
                     >
                         <X className="w-5 h-5" />
@@ -84,11 +84,11 @@ export function TradesTable({ trades }: TradesTableProps) {
                 </div>
             )}
 
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-white">
+            <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden transition-colors">
+                <div className="p-6 border-b border-border flex justify-between items-center bg-card/50 backdrop-blur-sm">
                     <div>
-                        <h2 className="text-xl font-bold text-gray-900 mb-1">Trades Log</h2>
-                        <p className="text-sm text-gray-500">
+                        <h2 className="text-xl font-bold text-foreground mb-1">Trades Log</h2>
+                        <p className="text-sm text-muted-foreground">
                             Detailed record of {trades.length} trades. Click 📈 to view chart.
                         </p>
                     </div>
@@ -96,64 +96,64 @@ export function TradesTable({ trades }: TradesTableProps) {
 
                 <div className="overflow-x-auto">
                     <table className="w-full">
-                        <thead className="bg-gray-50 border-b border-gray-200">
+                        <thead className="bg-muted/50 border-b border-border">
                             <tr>
-                                <th className="px-4 py-3 text-center text-xs font-bold text-gray-400 uppercase tracking-wider w-10">
+                                <th className="px-4 py-3 text-center text-[10px] font-black text-muted-foreground uppercase tracking-widest w-10">
                                     #
                                 </th>
-                                <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                <th className="px-4 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                                     <button
                                         onClick={() => handleSort('entry_time')}
-                                        className="flex items-center gap-1 hover:text-gray-900"
+                                        className="flex items-center gap-1 hover:text-foreground transition-colors"
                                     >
                                         Date/Time
                                         <ArrowUpDown className="w-3 h-3" />
                                     </button>
                                 </th>
-                                <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                <th className="px-4 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                                     <button
                                         onClick={() => handleSort('ticker')}
-                                        className="flex items-center gap-1 hover:text-gray-900"
+                                        className="flex items-center gap-1 hover:text-foreground transition-colors"
                                     >
                                         Ticker
                                         <ArrowUpDown className="w-3 h-3" />
                                     </button>
                                 </th>
-                                <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                <th className="px-4 py-3 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                                     Entry
                                 </th>
-                                <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                <th className="px-4 py-3 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                                     Exit
                                 </th>
-                                <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                <th className="px-4 py-3 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                                     <button
                                         onClick={() => handleSort('r_multiple')}
-                                        className="flex items-center gap-1 hover:text-gray-900 ml-auto"
+                                        className="flex items-center gap-1 hover:text-foreground transition-colors ml-auto"
                                     >
                                         R-Multiple
                                         <ArrowUpDown className="w-3 h-3" />
                                     </button>
                                 </th>
-                                <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                <th className="px-4 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                                     Reason
                                 </th>
-                                <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                    Chart
+                                <th className="px-4 py-3 text-center text-[10px] font-black text-muted-foreground uppercase tracking-widest w-16">
+                                    Graph
                                 </th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-100 italic-rows">
+                        <tbody className="divide-y divide-border/50">
                             {paginatedTrades.map((trade, index) => (
                                 <tr
                                     key={trade.id}
-                                    className={`hover:bg-blue-50/30 transition-colors group ${selectedTrade?.id === trade.id ? 'bg-blue-50 ring-1 ring-inset ring-blue-100' :
-                                            index % 2 === 0 ? 'bg-gray-50/30' : 'bg-white'
+                                    className={`hover:bg-blue-500/5 transition-colors group ${selectedTrade?.id === trade.id ? 'bg-blue-500/10 ring-1 ring-inset ring-blue-500/20' :
+                                        index % 2 === 0 ? 'bg-muted/10' : 'bg-transparent'
                                         }`}
                                 >
-                                    <td className="px-4 py-3 text-[10px] font-mono text-gray-300 text-center">
+                                    <td className="px-4 py-3 text-[10px] font-mono text-muted-foreground/30 text-center">
                                         {startIndex + index + 1}
                                     </td>
-                                    <td className="px-4 py-3 text-sm text-gray-600 font-medium whitespace-nowrap">
+                                    <td className="px-4 py-3 text-xs text-muted-foreground font-medium whitespace-nowrap">
                                         {new Date(trade.entry_time).toLocaleString('en-US', {
                                             month: 'short',
                                             day: 'numeric',
@@ -161,31 +161,31 @@ export function TradesTable({ trades }: TradesTableProps) {
                                             minute: '2-digit'
                                         })}
                                     </td>
-                                    <td className="px-4 py-3 text-sm font-bold text-gray-900">
+                                    <td className="px-4 py-3 text-sm font-black text-foreground">
                                         {trade.ticker}
                                     </td>
-                                    <td className="px-4 py-3 text-sm text-right text-gray-700 font-mono">
+                                    <td className="px-4 py-3 text-sm text-right text-foreground font-mono">
                                         ${trade.entry_price.toFixed(2)}
                                     </td>
-                                    <td className="px-4 py-3 text-sm text-right text-gray-700 font-mono">
+                                    <td className="px-4 py-3 text-sm text-right text-foreground font-mono">
                                         ${trade.exit_price?.toFixed(2) || '-'}
                                     </td>
-                                    <td className="px-4 py-3 text-sm text-right font-black">
+                                    <td className="px-4 py-3 text-sm text-right font-black tabular-nums">
                                         <span className={
                                             trade.r_multiple && trade.r_multiple > 0
-                                                ? 'text-teal-600'
+                                                ? 'text-green-500'
                                                 : trade.r_multiple && trade.r_multiple < 0
-                                                    ? 'text-rose-600'
-                                                    : 'text-gray-400'
+                                                    ? 'text-red-500'
+                                                    : 'text-muted-foreground/50'
                                         }>
                                             {trade.r_multiple ? `${trade.r_multiple > 0 ? '+' : ''}${trade.r_multiple.toFixed(2)}R` : '-'}
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-sm">
-                                        <span className={`inline-flex px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-tighter ${trade.exit_reason === 'TP' ? 'bg-teal-100 text-teal-700' :
-                                                trade.exit_reason === 'SL' ? 'bg-rose-100 text-rose-700' :
-                                                    trade.exit_reason === 'TIME' ? 'bg-amber-100 text-amber-700' :
-                                                        'bg-gray-100 text-gray-600'
+                                        <span className={`inline-flex px-2 py-0.5 text-[9px] font-black rounded uppercase tracking-widest ${trade.exit_reason === 'TP' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                                            trade.exit_reason === 'SL' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
+                                                trade.exit_reason === 'TIME' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' :
+                                                    'bg-muted text-muted-foreground border border-border'
                                             }`}>
                                             {trade.exit_reason || '-'}
                                         </span>
@@ -194,8 +194,8 @@ export function TradesTable({ trades }: TradesTableProps) {
                                         <button
                                             onClick={() => setSelectedTrade(trade)}
                                             className={`p-1.5 rounded-lg transition-all ${selectedTrade?.id === trade.id
-                                                    ? 'bg-blue-600 text-white shadow-sm'
-                                                    : 'text-gray-400 hover:bg-white hover:text-blue-600 hover:shadow-sm border border-transparent hover:border-gray-200'
+                                                ? 'bg-blue-600 text-white shadow-sm'
+                                                : 'text-gray-400 hover:bg-white hover:text-blue-600 hover:shadow-sm border border-transparent hover:border-gray-200'
                                                 }`}
                                         >
                                             <ChartIcon className="w-4 h-4" />
@@ -208,28 +208,26 @@ export function TradesTable({ trades }: TradesTableProps) {
                 </div>
 
                 {/* Pagination */}
-                <div className="p-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
-                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-                        Showing {startIndex + 1} - {Math.min(startIndex + tradesPerPage, trades.length)} of {trades.length}
+                <div className="p-4 border-t border-border flex items-center justify-between bg-muted/30">
+                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
+                        Showing {startIndex + 1}-{Math.min(startIndex + tradesPerPage, trades.length)} of {trades.length}
                     </div>
                     <div className="flex gap-2 items-center">
                         <button
                             onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                             disabled={currentPage === 1}
-                            className="p-2 transition-all bg-white border border-gray-200 rounded-lg text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed hover:border-blue-300 hover:text-blue-600 shadow-sm"
+                            className="p-2 transition-all bg-background border border-border rounded-lg text-muted-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:border-blue-500 hover:text-blue-500 shadow-sm"
                         >
-                            <X className="w-4 h-4 rotate-180" /> {/* Using X as a placeholder for arrow if lucide not available but it is */}
-                            {/* Actually I'll use text if unsure but Lucide is there */}
                             <span className="sr-only">Previous</span>
                             &larr;
                         </button>
-                        <span className="px-4 text-sm font-bold text-gray-700">
+                        <span className="px-4 text-[11px] font-black text-foreground tabular-nums">
                             {currentPage} / {totalPages}
                         </span>
                         <button
                             onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                             disabled={currentPage === totalPages}
-                            className="p-2 transition-all bg-white border border-gray-200 rounded-lg text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed hover:border-blue-300 hover:text-blue-600 shadow-sm"
+                            className="p-2 transition-all bg-background border border-border rounded-lg text-muted-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:border-blue-500 hover:text-blue-500 shadow-sm"
                         >
                             <span className="sr-only">Next</span>
                             &rarr;
