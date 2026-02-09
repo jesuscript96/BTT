@@ -60,6 +60,14 @@ def run_all_migrations():
     
     migrate_backtest_results_add_missing_columns()
     
+    # Add new metrics to daily_metrics
+    try:
+        from app.migrate_add_metrics import migrate_add_new_metrics
+        migrate_add_new_metrics()
+    except Exception as e:
+        print(f"⚠️  Error running metrics migration: {e}")
+
+    
     print("\n" + "="*50)
     print("ALL MIGRATIONS COMPLETED")
     print("="*50 + "\n")
