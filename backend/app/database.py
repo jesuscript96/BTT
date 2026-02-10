@@ -30,7 +30,7 @@ def _establish_connection():
     
     # Production Stability: Limits for Render Free Tier (512MB)
     con.execute("SET search_path = 'main'")
-    con.execute("PRAGMA memory_limit='400MB'")
+    con.execute("PRAGMA memory_limit='128MB'")
     con.execute("PRAGMA threads=1")
     
     # Diagnostic: List tables

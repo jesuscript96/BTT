@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
 from contextlib import asynccontextmanager
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 from app.scheduler import start_scheduler
 from app.database import get_db_connection
@@ -67,6 +69,20 @@ app.include_router(ingestion.router)  # Deep history ingestion endpoint
 @app.get("/health")
 def read_health():
     return {"status": "ok"}
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print(f"GLOBAL ERROR: {exc}")
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "message": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": "https://www.mystrategybuilder.fun",
+            "Access-Control-Allow-Credentials": "true"
+        }
+    )
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

@@ -347,14 +347,20 @@ def screen_market(
         stats_payload = { "count": len(filtered_df), "avg": {}, "p25": {}, "p50": {}, "p75": {}, "distributions": distributions }
         
         if not filtered_df.empty:
-            p_stats = get_percentile_stats(filtered_df)
-            times_data = p_stats.pop('times', {"hod": "--", "lod": "--"})
-            stats_payload.update(p_stats)
-            
-            # Populate distributions with the mode times found (Convert keys to string for JSON)
-            distributions['hod_time'] = { str(times_data['hod']): 1.0 }
-            distributions['lod_time'] = { str(times_data['lod']): 1.0 }
-            stats_payload['distributions'] = distributions
+            try:
+                p_stats = get_percentile_stats(filtered_df)
+                if p_stats:
+                    times_data = p_stats.pop('times', {"hod": "--", "lod": "--"})
+                    stats_payload.update(p_stats)
+                    
+                    # Populate distributions with the mode times found (Convert keys to string for JSON)
+                    distributions['hod_time'] = { str(times_data['hod']): 1.0 }
+                    distributions['lod_time'] = { str(times_data['lod']): 1.0 }
+                    stats_payload['distributions'] = distributions
+            except Exception as e:
+                print(f"CRITICAL: Stats calculation failed: {e}")
+                import traceback
+                traceback.print_exc()
 
         # 6. Pagination and Return
         limited_df = filtered_df.head(limit)
