@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-import pandas as pd
+# import pandas as pd
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from .database import get_db_connection
@@ -231,6 +231,7 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None, sk
     Args:
         skip_sleep: If True, skips the rate limit sleep (use for small date ranges)
     """
+    import pandas as pd
     start_dt = datetime.strptime(from_date, "%Y-%m-%d")
     end_dt = datetime.strptime(to_date, "%Y-%m-%d")
     
@@ -352,6 +353,7 @@ FALLBACK_TICKERS = [
 
 def ingest_ticker_snapshot():
     """Update Tickers master list"""
+    import pandas as pd
     client = MassiveClient()
     tickers_data = client.get_tickers()
     

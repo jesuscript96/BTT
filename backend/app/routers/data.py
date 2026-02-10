@@ -2,9 +2,10 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List
 from pydantic import BaseModel
 from app.database import get_db_connection
-from app.ingestion import ingest_history
-from app.processor import get_dashboard_stats, get_aggregate_time_series
-import pandas as pd
+# Lazy imports for memory optimization
+# from app.ingestion import ingest_history
+# from app.processor import get_dashboard_stats, get_aggregate_time_series
+# import pandas as pd
 
 router = APIRouter()
 
@@ -77,6 +78,10 @@ def filter_daily_metrics(filters: FilterRequest):
     """
     Filter daily metrics records with support for dynamic rules.
     """
+    # Lazy imports (Pandas ~50MB RAM)
+    import pandas as pd
+    from app.processor import get_dashboard_stats, get_aggregate_time_series
+    
     con = None
     try:
         con = get_db_connection(read_only=True)
@@ -197,6 +202,7 @@ def filter_daily_metrics(filters: FilterRequest):
 
 @router.get("/tickers")
 def get_tickers():
+    import pandas as pd
     con = None
     try:
         con = get_db_connection(read_only=True)
@@ -213,6 +219,7 @@ def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
     """
     Fetch intraday OHLC data for a specific ticker and range.
     """
+    import pandas as pd
     con = None
     try:
         con = get_db_connection(read_only=True)

@@ -12,13 +12,7 @@ import time
 from app.database import get_db_connection
 from app.schemas.strategy import Strategy
 from app.routers.data import FilterRequest
-from app.backtester.engine import BacktestEngine
-from app.backtester.portfolio import (
-    monte_carlo_simulation,
-    calculate_correlation_matrix,
-    calculate_drawdown_series,
-    calculate_strategy_equity_curves
-)
+# Imports moved inside router function for lazy loading to save memory
 
 router = APIRouter()
 
@@ -76,6 +70,15 @@ def run_backtest(request: BacktestRequest):
     """
     Execute a backtest with given strategies and dataset
     """
+    # Lazy imports to save memory on startup (Numba/Pandas ~100MB RAM)
+    from app.backtester.engine import BacktestEngine
+    from app.backtester.portfolio import (
+        monte_carlo_simulation,
+        calculate_correlation_matrix,
+        calculate_drawdown_series,
+        calculate_strategy_equity_curves
+    )
+
     print("\n" + "="*50)
     print("BACKTEST EXECUTION STARTED")
     print("="*50)
