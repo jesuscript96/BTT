@@ -2,12 +2,20 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from typing import List, Optional, Any
 from datetime import date
+from typing import List, Optional, Any
 from app.database import get_db_connection
 import pandas as pd
 import numpy as np
 
+def safe_float(v):
+    if v is None: return 0.0
+    try:
+        fv = float(v)
+        if np.isnan(fv) or np.isinf(fv): return 0.0
+        return fv
+    except:
+        return 0.0
 
 router = APIRouter(
     prefix="/api/market",
@@ -274,26 +282,26 @@ def screen_market(
             
             def row_to_stats(series, gap_val, vol_val):
                 return {
-                    "pm_high_gap_pct": float(series['pmh_gap_pct']),
-                    "pmh_fade_to_open_pct": float(series['pmh_fade_pct']),
-                    "rth_fade_to_close_pct": float(series['rth_fade_pct']),
-                    "rth_range_pct": float(series['rth_range_pct']),
-                    "open_lt_vwap": float(series['open_lt_vwap_flag']),
-                    "pm_high_break": float(series['pm_high_break_flag']),
-                    "close_red": float(series['close_red_flag']),
-                    "low_spike_lt_prev_close": float(series['low_spike_lt_pc_flag']),
-                    "avg_pm_volume": float(series['pm_volume']),
-                    "avg_pmh_price": float(series['pmh_price']),
-                    "avg_open_price": float(series['open_price']),
-                    "avg_close_price": float(series['close_price']),
-                    "m15_return_pct": float(series['m15_ret']),
-                    "m60_return_pct": float(series['m60_ret']),
-                    "m180_return_pct": float(series['m180_ret']),
-                    "return_close_pct": float(series['close_ret']),
-                    "high_spike_pct": float(series['high_spike_pct']),
-                    "low_spike_pct": float(series['low_spike_pct']),
-                    "gap_at_open_pct": float(gap_val),
-                    "avg_volume": float(vol_val)
+                    "pm_high_gap_pct": safe_float(series.get('pmh_gap_pct', 0)),
+                    "pmh_fade_to_open_pct": safe_float(series.get('pmh_fade_pct', 0)),
+                    "rth_fade_to_close_pct": safe_float(series.get('rth_fade_pct', 0)),
+                    "rth_range_pct": safe_float(series.get('rth_range_pct', 0)),
+                    "open_lt_vwap": safe_float(series.get('open_lt_vwap_flag', 0)),
+                    "pm_high_break": safe_float(series.get('pm_high_break_flag', 0)),
+                    "close_red": safe_float(series.get('close_red_flag', 0)),
+                    "low_spike_lt_prev_close": safe_float(series.get('low_spike_lt_pc_flag', 0)),
+                    "avg_pm_volume": safe_float(series.get('pm_volume', 0)),
+                    "avg_pmh_price": safe_float(series.get('pmh_price', 0)),
+                    "avg_open_price": safe_float(series.get('open_price', 0)),
+                    "avg_close_price": safe_float(series.get('close_price', 0)),
+                    "m15_return_pct": safe_float(series.get('m15_ret', 0)),
+                    "m60_return_pct": safe_float(series.get('m60_ret', 0)),
+                    "m180_return_pct": safe_float(series.get('m180_ret', 0)),
+                    "return_close_pct": safe_float(series.get('close_ret', 0)),
+                    "high_spike_pct": safe_float(series.get('high_spike_pct', 0)),
+                    "low_spike_pct": safe_float(series.get('low_spike_pct', 0)),
+                    "gap_at_open_pct": safe_float(gap_val),
+                    "avg_volume": safe_float(vol_val)
                 }
 
             # Calculate means and quantiles for records from intraday
@@ -349,16 +357,19 @@ def screen_market(
         records = []
         for _, row in limited_df.iterrows():
             records.append({
-                "ticker": row['ticker'], "date": str(row['date']),
-                "open": float(row['open']), "high": float(row['high']),
-                "low": float(row['low']), "close": float(row['close']),
-                "volume": float(row['volume']),
-                "gap_at_open_pct": float(row['gap_at_open_pct']),
-                "rth_run_pct": float(row['rth_run_pct']),
-                "day_return_pct": float(row['day_return_pct']),
-                "pmh_gap_pct": float(row.get('pmh_gap_pct', 0)),
-                "pmh_fade_pct": float(row.get('pmh_fade_to_open_pct', 0)),
-                "rth_fade_pct": float(row.get('rth_fade_to_close_pct', 0))
+                "ticker": row.get('ticker', '--'),
+                "date": str(row.get('date', '')),
+                "open": safe_float(row.get('open', 0)),
+                "high": safe_float(row.get('high', 0)),
+                "low": safe_float(row.get('low', 0)),
+                "close": safe_float(row.get('close', 0)),
+                "volume": safe_float(row.get('volume', 0)),
+                "gap_at_open_pct": safe_float(row.get('gap_at_open_pct', 0)),
+                "rth_run_pct": safe_float(row.get('rth_run_pct', 0)),
+                "day_return_pct": safe_float(row.get('day_return_pct', 0)),
+                "pmh_gap_pct": safe_float(row.get('pmh_gap_pct', 0)),
+                "pmh_fade_pct": safe_float(row.get('pmh_fade_to_open_pct', 0)),
+                "rth_fade_pct": safe_float(row.get('rth_fade_to_close_pct', 0))
             })
             
         return {

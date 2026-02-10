@@ -129,6 +129,33 @@ def calculate_day_return(daily_df: pd.DataFrame) -> pd.DataFrame:
     return daily_df
 
 
+def calculate_fades(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate PM High Fade % and RTH Fade %.
+    
+    Formulas:
+        pmh_fade_to_open_pct: ((open - pm_high) / pm_high) * 100
+        rth_fade_to_close_pct: ((close - high) / high) * 100
+    """
+    # PM High Fade %
+    if 'pm_high' in daily_df.columns:
+        daily_df['pmh_fade_to_open_pct'] = np.where(
+            (daily_df['pm_high'] > 0),
+            ((daily_df['open'] - daily_df['pm_high']) / daily_df['pm_high'] * 100),
+            0.0
+        )
+    else:
+        daily_df['pmh_fade_to_open_pct'] = 0.0
+        
+    # RTH Fade %
+    daily_df['rth_fade_to_close_pct'] = np.where(
+        (daily_df['high'] > 0),
+        ((daily_df['close'] - daily_df['high']) / daily_df['high'] * 100),
+        0.0
+    )
+    return daily_df
+
+
 def calculate_daily_metrics(daily_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculate all daily metrics at once.
@@ -136,6 +163,7 @@ def calculate_daily_metrics(daily_df: pd.DataFrame) -> pd.DataFrame:
     daily_df = calculate_gap(daily_df)
     daily_df = calculate_volatility(daily_df)
     daily_df = calculate_day_return(daily_df)
+    daily_df = calculate_fades(daily_df)
     return daily_df
 
 
