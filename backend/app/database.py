@@ -27,7 +27,11 @@ def _establish_connection():
     # Step 2: Connect directly to JAUME database
     print("Connected to MotherDuck catalog: JAUME")
     con = duckdb.connect(f"md:JAUME?motherduck_token={token}")
+    
+    # Production Stability: Limits for Render Free Tier (512MB)
     con.execute("SET search_path = 'main'")
+    con.execute("PRAGMA memory_limit='400MB'")
+    con.execute("PRAGMA threads=1")
     
     # Diagnostic: List tables
     tables = con.execute("SHOW TABLES").fetchall()

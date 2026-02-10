@@ -7,6 +7,7 @@ from typing import List, Optional, Any
 from app.database import get_db_connection
 import pandas as pd
 import numpy as np
+import uuid
 
 def safe_float(v):
     if v is None: return 0.0
@@ -187,7 +188,9 @@ def screen_market(
         
         # Support specifically min_pm_volume and other named filters
         if 'min_pm_volume' in query_params:
-            filtered_df = filtered_df[filtered_df['pm_volume'] >= float(query_params['min_pm_volume'])]
+            try:
+                filtered_df = filtered_df[filtered_df['pm_volume'] >= float(query_params['min_pm_volume'])]
+            except: pass
         if 'hod_after' in query_params:
             filtered_df = filtered_df[filtered_df['hod_time'] >= query_params['hod_after']]
         if 'lod_before' in query_params:
@@ -217,17 +220,18 @@ def screen_market(
         def get_percentile_stats(df_set: pd.DataFrame):
             if df_set.empty: return {}
             
-            # Register scope for query
+            # Register scope for query with unique name for thread safety
+            reg_name = f"subset_{uuid.uuid4().hex}"
             scope = df_set[['ticker', 'date', 'open', 'high', 'low', 'close', 'pm_high', 'prev_close', 'volume']].copy()
             scope['date'] = pd.to_datetime(scope['date']).dt.date
-            con.register('filtered_subset', scope)
+            con.register(reg_name, scope)
             
             # Intraday stats aggregation with refined timing and volume logic
-            stats_query = """
+            stats_query = f"""
                 WITH dedup_intraday AS (
                     SELECT h.ticker, h.timestamp, h.open, h.high, h.low, h.close, h.volume, h.vwap
                     FROM intraday_1m h
-                    JOIN filtered_subset fs ON h.ticker = fs.ticker AND CAST(h.timestamp AS DATE) = fs.date
+                    JOIN {reg_name} fs ON h.ticker = fs.ticker AND CAST(h.timestamp AS DATE) = fs.date
                     GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
                 ),
                 day_metrics_rth AS (
@@ -247,7 +251,7 @@ def screen_market(
                         ARGMAX(strftime(h.timestamp, '%H:%M'), CASE WHEN strftime(h.timestamp, '%H:%M') >= '09:30' AND strftime(h.timestamp, '%H:%M') < '16:00' THEN h.high END) as hod_t,
                         ARGMIN(strftime(h.timestamp, '%H:%M'), CASE WHEN strftime(h.timestamp, '%H:%M') >= '09:30' AND strftime(h.timestamp, '%H:%M') < '16:00' THEN h.low END) as lod_t
                     FROM dedup_intraday h
-                    JOIN filtered_subset f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
+                    JOIN {reg_name} f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
                     GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
                 )
                 SELECT
@@ -333,8 +337,8 @@ def screen_market(
                 "p50": row_to_stats(p50_row, g_p50, v_p50),
                 "p75": row_to_stats(p75_row, g_p75, v_p75),
                 "times": {
-                    "hod": hods.index[0] if not hods.empty else "--",
-                    "lod": lods.index[0] if not lods.empty else "--"
+                    "hod": str(hods.index[0]) if not hods.empty else "--",
+                    "lod": str(lods.index[0]) if not lods.empty else "--"
                 }
             }
 
@@ -347,9 +351,9 @@ def screen_market(
             times_data = p_stats.pop('times', {"hod": "--", "lod": "--"})
             stats_payload.update(p_stats)
             
-            # Populate distributions with the mode times found
-            distributions['hod_time'] = { times_data['hod']: 1.0 }
-            distributions['lod_time'] = { times_data['lod']: 1.0 }
+            # Populate distributions with the mode times found (Convert keys to string for JSON)
+            distributions['hod_time'] = { str(times_data['hod']): 1.0 }
+            distributions['lod_time'] = { str(times_data['lod']): 1.0 }
             stats_payload['distributions'] = distributions
 
         # 6. Pagination and Return
@@ -520,17 +524,18 @@ def get_aggregate_intraday(
         
         if f_df.empty: return []
         
+        reg_name = f"scope_{uuid.uuid4().hex}"
         scope = f_df[['ticker', 'date', 'open']].rename(columns={'open': 'rth_open'})
         scope['date'] = pd.to_datetime(scope['date']).dt.date
-        con.register('filtered_scope', scope)
+        con.register(reg_name, scope)
         
-        agg_query = """
+        agg_query = f"""
             SELECT 
                 strftime(h.timestamp, '%H:%M') as time,
                 AVG( (h.close - f.rth_open) / f.rth_open * 100 ) as avg_change,
                 MEDIAN( (h.close - f.rth_open) / f.rth_open * 100 ) as median_change
             FROM intraday_1m h
-            JOIN filtered_scope f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
+            JOIN {reg_name} f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
             WHERE h.timestamp IS NOT NULL
             GROUP BY 1 ORDER BY 1 ASC
         """
