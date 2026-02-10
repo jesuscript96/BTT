@@ -197,7 +197,9 @@ def screen_market(
             filtered AS ( SELECT * FROM calculated WHERE {where_m} )
             SELECT * FROM filtered ORDER BY date DESC LIMIT {int(limit)}
         """
-        cur = con.execute(rec_query, sql_p)
+        # We use sql_p + sql_p because the query contains where_i AND where_d,
+        # and both use the same parameters (dates/ticker).
+        cur = con.execute(rec_query, sql_p + sql_p)
         cols, rows = [d[0] for d in cur.description], cur.fetchall()
         
         recs = []
@@ -212,7 +214,7 @@ def screen_market(
             })
         
         st_query = get_stats_sql_logic(where_d, where_i, where_m)
-        st_rows = con.execute(st_query, sql_p).fetchall()
+        st_rows = con.execute(st_query, sql_p + sql_p).fetchall()
         
         stats_payload = {"count": len(recs), "avg": {}, "p25": {}, "p50": {}, "p75": {}, "distributions": {"hod_time": {}, "lod_time": {}}}
         if st_rows:
