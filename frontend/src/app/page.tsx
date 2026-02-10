@@ -116,8 +116,8 @@ export default function Home() {
       }
     }
 
-    // Always add limit
-    queryParams.append("limit", "100");
+    // Always add limit (User requested more results, default was 100)
+    queryParams.append("limit", "5000");
 
     try {
       const [result, aggregateResult] = await Promise.all([

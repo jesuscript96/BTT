@@ -122,7 +122,7 @@ def screen_market(
     min_run: float = 0.0, min_volume: float = 0.0,
     trade_date: Optional[date] = None, start_date: Optional[date] = None,
     end_date: Optional[date] = None, ticker: Optional[str] = None,
-    limit: int = 100
+    limit: int = 5000
 ):
     con = None
     try:
