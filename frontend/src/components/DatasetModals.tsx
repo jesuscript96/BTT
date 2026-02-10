@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { X, Save, FolderOpen, Trash2 } from "lucide-react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { API_URL } from '@/config/constants';
 
 export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
     const [name, setName] = useState("");

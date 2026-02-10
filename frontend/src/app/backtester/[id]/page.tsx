@@ -5,8 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { BacktestDashboard } from '@/components/backtester/BacktestDashboard';
 import { BacktestResult } from '@/types/backtest';
 import { Loader2, ArrowLeft } from 'lucide-react';
+import { API_URL } from '@/config/constants';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export default function BacktestResultPage() {
     const { id } = useParams();

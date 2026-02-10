@@ -6,8 +6,9 @@ import { Dashboard } from "@/components/Dashboard";
 import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
+import { CandleChartModal } from "@/components/CandleChartModal";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { API_URL } from "@/config/constants";
 
 export default function Home() {
   const [data, setData] = useState<any[]>([]);
@@ -20,6 +21,10 @@ export default function Home() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0); // To force refresh panel UI
+
+  // Modal State for Candlestick View
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedRow, setSelectedRow] = useState<any>(null);
 
   const fetchData = async (filters: any = currentFilters, rules: any[] = activeRules) => {
     setIsLoading(true);
@@ -73,7 +78,7 @@ export default function Home() {
       // Gap & Run metrics
       "Open Gap %": { column: "gap_at_open_pct", paramPrefix: "gap_pct" },
       "RTH Run %": { column: "rth_run_pct", paramPrefix: "rth_run_pct" },
-      // "PMH Gap %": { column: "pmh_gap_pct", paramPrefix: "pmh_gap_pct" },  // DISABLED - causing DB errors
+      "PMH Gap %": { column: "pmh_gap_pct", paramPrefix: "pmh_gap_pct" },
       "PMH Fade to Open %": { column: "pmh_fade_to_open_pct", paramPrefix: "pmh_fade_pct" },
       "RTH Fade to Close %": { column: "rth_fade_to_close_pct", paramPrefix: "rth_fade_pct" },
 
@@ -85,10 +90,11 @@ export default function Home() {
       "M15 Low Spike %": { column: "m15_low_spike_pct", paramPrefix: "m15_low_spike_pct" },
 
       // Return metrics
-      "Day Return %": { column: "rth_run_pct", paramPrefix: "day_return_pct" },
+      "Day Return %": { column: "day_return_pct", paramPrefix: "day_return_pct" },
       "M15 Return %": { column: "m15_return_pct", paramPrefix: "m15_return_pct" },
       "M30 Return %": { column: "m30_return_pct", paramPrefix: "m30_return_pct" },
       "M60 Return %": { column: "m60_return_pct", paramPrefix: "m60_return_pct" },
+      "Return at Close %": { column: "return_close_pct", paramPrefix: "return_close_pct" },
     };
 
     // Process Advanced Rules
@@ -133,6 +139,11 @@ export default function Home() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleViewDay = (row: any) => {
+    setSelectedRow(row);
+    setIsModalOpen(true);
   };
 
   const handleExport = async () => {
@@ -234,10 +245,25 @@ export default function Home() {
         <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
         <div className="px-6 pb-20">
           <div className="border border-border rounded-xl overflow-hidden shadow-sm bg-card">
-            <DataGrid data={data} isLoading={isLoading} />
+            <DataGrid data={data} isLoading={isLoading} onViewDay={handleViewDay} />
           </div>
         </div>
       </div>
+
+      <CandleChartModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        ticker={selectedRow?.ticker || ""}
+        date={selectedRow?.date || ""}
+        metrics={{
+          pmh_gap_pct: selectedRow?.pmh_gap_pct || 0,
+          pmh_fade_pct: selectedRow?.pmh_fade_pct || 0,
+          gap_at_open_pct: selectedRow?.gap_at_open_pct || 0,
+          rth_fade_pct: selectedRow?.rth_fade_pct || 0,
+          volume: selectedRow?.volume || 0,
+          open: selectedRow?.open
+        }}
+      />
     </div>
   );
 }

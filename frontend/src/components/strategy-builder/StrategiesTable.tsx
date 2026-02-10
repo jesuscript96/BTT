@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Strategy } from '@/types/strategy';
 import { Loader2, Trash2 } from 'lucide-react';
+import { API_URL } from '@/config/constants';
 
 interface Props {
     refreshTrigger?: number;
@@ -17,7 +18,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch('http://localhost:8000/api/strategies/');
+            const response = await fetch(`${API_URL}/strategies/`);
             if (!response.ok) throw new Error('Failed to fetch strategies');
             const data = await response.json();
             setStrategies(data);
@@ -32,7 +33,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (!confirm('Are you sure you want to delete this strategy?')) return;
 
         try {
-            const response = await fetch(`http://localhost:8000/api/strategies/${id}`, {
+            const response = await fetch(`${API_URL}/strategies/${id}`, {
                 method: 'DELETE'
             });
             if (!response.ok) throw new Error('Failed to delete');

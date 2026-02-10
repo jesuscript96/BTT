@@ -22,6 +22,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
     const [minGap, setMinGap] = useState("");
     const [maxGap, setMaxGap] = useState("");
     const [minVol, setMinVol] = useState("");
+    const [minPmVol, setMinPmVol] = useState("");
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
     const [m15Ret, setM15Ret] = useState("");
@@ -31,6 +32,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
     const [hodAfter, setHodAfter] = useState("");
     const [lodBefore, setLodBefore] = useState("");
     const [openLtVwap, setOpenLtVwap] = useState(false);
+    const [closeGtVwap, setCloseGtVwap] = useState(false);
     const [isExpanded, setIsExpanded] = useState(true);
 
     const handleApply = () => {
@@ -39,6 +41,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
             min_gap_pct: minGap ? parseFloat(minGap) : undefined,
             max_gap_pct: maxGap ? parseFloat(maxGap) : undefined,
             min_rth_volume: minVol ? parseFloat(minVol) : undefined,
+            min_pm_volume: minPmVol ? parseFloat(minPmVol) : undefined,
             min_m15_ret_pct: m15Ret ? parseFloat(m15Ret) : undefined,
             min_rth_run_pct: dayRet ? parseFloat(dayRet) : undefined,
             min_high_spike_pct: highSpike ? parseFloat(highSpike) : undefined,
@@ -46,6 +49,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
             hod_after: hodAfter || undefined,
             lod_before: lodBefore || undefined,
             open_lt_vwap: openLtVwap || undefined,
+            close_gt_vwap: closeGtVwap || undefined,
             start_date: startDate || undefined,
             end_date: endDate || undefined
         });
@@ -89,7 +93,8 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                     <div className="flex gap-2">
                         <FilterInput label="Min Gap" value={minGap} onChange={setMinGap} />
                         <FilterInput label="Max Gap" value={maxGap} onChange={setMaxGap} />
-                        <FilterInput label="Min Vol" value={minVol} onChange={setMinVol} />
+                        <FilterInput label="RTH Vol" value={minVol} onChange={setMinVol} />
+                        <FilterInput label="PM Vol" value={minPmVol} onChange={setMinPmVol} />
                     </div>
                 </div>
 
@@ -148,7 +153,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                         <FilterInput label="LOD Before" value={lodBefore} onChange={setLodBefore} />
                     </CategoryGroup>
                     <CategoryGroup title="VWAP">
-                        <FilterInput label="Close > VWAP" value="" isCheck />
+                        <FilterInput label="Close > VWAP" checked={closeGtVwap} onChange={(v: any) => setCloseGtVwap(v)} isCheck />
                         <FilterInput label="Open < VWAP" checked={openLtVwap} onChange={(v: any) => setOpenLtVwap(v)} isCheck />
                     </CategoryGroup>
                 </div>

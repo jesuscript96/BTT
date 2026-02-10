@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Download } from 'lucide-react'
 import PassCriteriaFilters from './PassCriteriaFilters'
 import StrategiesTable from './StrategiesTable'
+import { API_URL } from '@/config/constants'
 
 interface ResultsPanelProps {
     searchConfig: any
@@ -37,7 +38,7 @@ export default function ResultsPanel({
     const fetchStrategies = async () => {
         setLoading(true)
         try {
-            const response = await fetch('http://localhost:8000/api/strategy-search/filter', {
+            const response = await fetch(`${API_URL}/strategy-search/filter`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -68,7 +69,7 @@ export default function ResultsPanel({
 
     const handleExport = async () => {
         const ids = strategies.map((s: any) => s.id)
-        const response = await fetch('http://localhost:8000/api/strategy-search/export', {
+        const response = await fetch(`${API_URL}/strategy-search/export`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(ids)

@@ -3,9 +3,10 @@
 import React from "react";
 import {
     XAxis, YAxis, Tooltip, ResponsiveContainer,
-    Area, CartesianGrid, ReferenceLine, ComposedChart, Line
+    Area, CartesianGrid, ReferenceLine, ComposedChart, Line, ReferenceArea
 } from "recharts";
 import { Info, Clock } from "lucide-react";
+import { API_URL } from "@/config/constants";
 
 interface DistributionItem {
     label: string;
@@ -29,14 +30,17 @@ interface StatsAverages {
 
 interface DashboardStats {
     count: number;
-    averages: StatsAverages;
+    avg: StatsAverages;
+    p25: StatsAverages;
+    p50: StatsAverages;
+    p75: StatsAverages;
     distributions: DistributionStats;
 }
 
 interface TimeSeriesItem {
     time: string;
-    value: number;
-    median?: number;
+    avg_change: number;
+    median_change?: number;
 }
 
 interface DashboardProps {
@@ -45,14 +49,18 @@ interface DashboardProps {
     aggregateSeries?: TimeSeriesItem[];
 }
 
+type StatMode = 'avg' | 'p25' | 'p50' | 'p75';
+
 export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data }) => {
-    if (!stats || !stats.averages) return (
+    const [mode, setMode] = React.useState<StatMode>('avg');
+
+    if (!stats || !stats.avg) return (
         <div className="p-20 text-center text-muted-foreground bg-background min-h-screen">
             Apply filters to see performance analysis
         </div>
     );
 
-    const averages = stats.averages;
+    const averages = stats[mode] || stats.avg;
 
     return (
         <div className="p-6 bg-background space-y-6 min-h-screen font-sans transition-colors duration-300">
@@ -64,17 +72,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                     <div className="flex items-center justify-between border-b border-border/50 pb-4">
                         <h2 className="text-xl font-black uppercase tracking-tight text-foreground">{stats.count} RECORDS</h2>
                         <div className="flex gap-3 text-[10px] font-bold uppercase tracking-wider items-center">
-                            <span className="px-2 py-0.5 bg-muted text-foreground rounded">Average</span>
-                            <span className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors">25th</span>
-                            <span className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors">Median</span>
-                            <span className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors">75th</span>
+                            <span
+                                onClick={() => setMode('avg')}
+                                className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${mode === 'avg' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground hover:bg-muted/80'}`}
+                            >
+                                Average
+                            </span>
+                            <span
+                                onClick={() => setMode('p25')}
+                                className={`cursor-pointer transition-colors ${mode === 'p25' ? 'text-blue-500 font-black' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                25th
+                            </span>
+                            <span
+                                onClick={() => setMode('p50')}
+                                className={`cursor-pointer transition-colors ${mode === 'p50' ? 'text-blue-500 font-black' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                Median
+                            </span>
+                            <span
+                                onClick={() => setMode('p75')}
+                                className={`cursor-pointer transition-colors ${mode === 'p75' ? 'text-blue-500 font-black' : 'text-muted-foreground hover:text-foreground'}`}
+                            >
+                                75th
+                            </span>
                         </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
                         {/* Progress Bars Section */}
                         <div className="space-y-5">
-                            <StatProgress label="PM High Gap %" value={averages.pmh_gap_pct} color="#4ade80" />
+                            <StatProgress label="PM High Gap %" value={averages.pm_high_gap_pct} color="#4ade80" />
                             <StatProgress label="PM Fade To Open %" value={averages.pmh_fade_to_open_pct} color="#f87171" />
                             <StatProgress label="Gap at Open %" value={averages.gap_at_open_pct} color="#22c55e" />
                             <StatProgress label="RTH Fade To Close %" value={averages.rth_fade_to_close_pct} color="#ef4444" />
@@ -82,36 +110,46 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                             <div className="pt-4 space-y-4">
                                 <StatProgress label="Open < VWAP" value={averages.open_lt_vwap} color="#f59e0b" />
                                 <StatProgress label="PM High Break" value={averages.pm_high_break} color="#3b82f6" />
-                                <StatProgress label="Close Red" value={averages.close_direction_red} color="#ef4444" />
+                                <StatProgress label="Close Red" value={averages.close_red} color="#ef4444" />
+                                <StatProgress label="Low Spike < Prev. Close" value={averages.low_spike_lt_prev_close} color="#9ca3af" />
                             </div>
                         </div>
 
                         {/* List Stats Section */}
-                        <div className="space-y-8">
+                        <div className="space-y-6">
                             <div className="space-y-3">
                                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volume</p>
                                 <MetricRow label="Premarket Volume" value={formatLargeNumber(averages.avg_pm_volume)} />
                                 <MetricRow label="Volume" value={formatLargeNumber(averages.avg_volume)} />
                             </div>
 
-                            <div className="space-y-3 pt-2">
+                            <div className="space-y-3">
                                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Price</p>
                                 <MetricRow label="PMH Price" value={averages.avg_pmh_price?.toFixed(2) || "0.00"} />
                                 <MetricRow label="Open Price" value={averages.avg_open_price?.toFixed(2) || "0.00"} />
                                 <MetricRow label="Close Price" value={averages.avg_close_price?.toFixed(2) || "0.00"} />
                             </div>
 
-                            <div className="space-y-3 pt-2">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Return</p>
-                                <MetricRow label="M15 Return %" value={`${averages.m15_return_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="M30 Return %" value={`${averages.m30_return_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="M60 Return %" value={`${averages.m60_return_pct?.toFixed(2) || "0.00"}%`} />
+                            <div className="space-y-3">
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volatility</p>
+                                <MetricRow label="High Spike %" value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Low Spike %" value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Range %" value={`${averages.rth_range_pct?.toFixed(2) || "0.00"}%`} />
                             </div>
 
-                            <div className="pt-4 space-y-4">
-                                <StatProgress label="Close < M15 Price" value={averages.close_lt_m15} color="#f97316" />
-                                <StatProgress label="Close < M30 Price" value={averages.close_lt_m30} color="#06b6d4" />
-                                <StatProgress label="Close < M60 Price" value={averages.close_lt_m60} color="#8b5cf6" />
+                            <div className="space-y-3">
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Time</p>
+                                <MetricRow label="PM High Time" value="--" /> {/* Placeholder if not in avg yet */}
+                                <MetricRow label="HOD Time" value={getDefaultHOD(stats.distributions?.hod_time)} />
+                                <MetricRow label="LOD Time" value={getDefaultHOD(stats.distributions?.lod_time)} />
+                            </div>
+
+                            <div className="space-y-3">
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Return</p>
+                                <MetricRow label="Return at 15min %" value={`${averages.m15_return_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Return at 60min %" value={`${averages.m60_return_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Return at 180min %" value={`${averages.m180_return_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Return at Close %" value={`${averages.return_close_pct?.toFixed(2) || "0.00"}%`} />
                             </div>
                         </div>
                     </div>
@@ -303,7 +341,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
         if (!activeTicker) return;
         setLoading(true);
-        let url = `http://localhost:8000/api/market/ticker/${activeTicker}/intraday`;
+        let url = `${API_URL}/market/ticker/${activeTicker}/intraday`;
         if (data && data[0] && data[0].date) {
             url += `?trade_date=${data[0].date}`;
         }
@@ -418,8 +456,19 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                                 itemStyle={{ color: 'var(--foreground)' }}
                                 formatter={(value: any) => [value.toFixed(2) + (isAggregate ? "%" : ""), ""]}
                             />
-                            {/* Pre-Market / RTH Separator Line (09:30) */}
-                            {isAggregate && <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" label={{ position: 'insideTopLeft', value: 'Market Open', fill: 'currentColor', fontSize: 10 }} />}
+                            {/* Pre-Market / RTH Sessions visual markers */}
+                            {isAggregate && (
+                                <>
+                                    <ReferenceArea
+                                        x1="04:00"
+                                        x2="09:30"
+                                        fill="currentColor"
+                                        fillOpacity={0.03}
+                                        className="text-muted-foreground"
+                                    />
+                                    <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" label={{ position: 'insideTopLeft', value: 'Pre-Market', fill: 'currentColor', fontSize: 9, fontWeight: 'bold' }} />
+                                </>
+                            )}
 
                             {isAggregate ? (
                                 <>
@@ -429,6 +478,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                             ) : (
                                 <>
                                     {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
+                                    <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" />
                                     <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} />
                                     <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} />
                                 </>

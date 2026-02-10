@@ -6,6 +6,7 @@ import { FilterSection } from './FilterSection';
 import { ConditionBuilder } from './ConditionBuilder';
 import { RiskSection } from './RiskSection';
 import { Save, Loader2 } from 'lucide-react';
+import { API_URL } from '@/config/constants';
 
 interface Props {
     onStrategySaved?: () => void;
@@ -39,7 +40,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                 exit_logic: exitLogic
             };
 
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+            const apiUrl = API_URL;
             const response = await fetch(`${apiUrl}/strategies/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

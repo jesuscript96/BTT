@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Play, Loader2, Plus, Trash2 } from 'lucide-react';
 import { Strategy } from '@/types/strategy';
 import { StrategySelection, BacktestRequest, BacktestResponse } from '@/types/backtest';
+import { API_URL } from '@/config/constants';
 
 interface ExecutionPanelProps {
     onBacktestStart: () => void;
@@ -46,7 +47,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
     }, []);
 
     const fetchStrategies = async () => {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+        const apiUrl = API_URL;
         try {
             const response = await fetch(`${apiUrl}/strategies/`); // Added trailing slash
             const data = await response.json();
@@ -62,7 +63,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
     };
 
     const fetchSavedDatasets = async () => {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+        const apiUrl = API_URL;
         try {
             const response = await fetch(`${apiUrl}/queries/`);
             const data = await response.json();
@@ -141,7 +142,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
 
         onBacktestStart();
 
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+        const apiUrl = API_URL;
 
         try {
             const weights: Record<string, number> = {};
