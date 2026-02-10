@@ -1,746 +1,151 @@
-# Logic Validation Document
+# Logic Validation Document (JAUME Architecture - REVISED)
 
-**Purpose**: This document explains the LOGIC behind each test category - which columns are used, what comparisons are made, and what SQL queries are executed. This is for validating the correctness of the LOGIC, not specific test results.
-
----
-
-## Data Processing: Daily Metrics Calculation
-
-Esta sección documenta cómo se CALCULAN las métricas diarias a partir de datos de 1 minuto en `processor.py`.
-
-### Proceso General
-
-**Input**: DataFrame de barras de 1 minuto para un ticker
-**Output**: Un row por día con métricas agregadas
-
-**Sesiones de Trading**:
-- **Premarket (PM)**: 04:00 - 09:30 ET
-- **Regular Trading Hours (RTH)**: 09:30 - 16:00 ET
+**Purpose**: This document explains the LOGIC behind each metric calculation and filtering process in the new JAUME architecture. Metrics are now calculated **on-the-fly** from raw OHLCV data instead of being stored pre-calculated.
 
 ---
 
-### Cálculo: Gap at Open %
+## Data Architecture: Raw Tables
 
-**Columna**: `gap_at_open_pct`
+The database (MotherDuck - JAUME) stores only raw trading data. No metrics are stored in the database.
 
-**Fórmula**: `((rth_open - prev_close) / prev_close) * 100`
+### 1. `daily_metrics` Table
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock symbol |
+| date | DATE | Trading date |
+| open | DOUBLE | RTH Open price |
+| high | DOUBLE | RTH High price |
+| low | DOUBLE | RTH Low price |
+| close | DOUBLE | RTH Close price |
+| volume | DOUBLE | Total daily volume |
+| vwap | DOUBLE | Daily VWAP |
+
+### 2. `intraday_1m` Table
+| Column | Type | Description |
+|--------|------|-------------|
+| ticker | VARCHAR | Stock symbol |
+| timestamp | TIMESTAMP| 1-minute interval start |
+| open | DOUBLE | Minute Open |
+| high | DOUBLE | Minute High |
+| low | DOUBLE | Minute Low |
+| close | DOUBLE | Minute Close |
+| volume | DOUBLE | Minute Volume |
+| vwap | DOUBLE | Minute VWAP |
+
+---
+
+## Metric Calculations (On-the-Fly)
+
+These calculations are performed in the backend (`app/calculations.py`) or via specific SQL queries.
+
+### 1. Gap at Open %
+**Formula**: `((rth_open - prev_close) / prev_close) * 100`
+
+**Lógica (Python)**:
+1. Recupera `open` y `close` de `daily_metrics`.
+2. Ordena por ticker y fecha.
+3. Obtiene `prev_close` usando `shift(1)` sobre la columna `close`.
+4. Calcula el porcentaje.
+
+---
+
+### 2. RTH Run % (Extension to High)
+**Formula**: `((rth_high - rth_open) / rth_open) * 100`
+
+**Lógica**: Mide la extensión máxima desde el open hasta el HOD (High of Day).
+- **RTH Open**: Primer precio de `daily_metrics` o primera barra de `intraday_1m` a las 09:30.
+- **RTH High**: Valor `high` de `daily_metrics`.
+
+---
+
+### 3. Day Return %
+**Formula**: `((rth_close - rth_open) / rth_open) * 100`
+
+**Lógica**: Mide el rendimiento neto del día (Open vs Close).
+
+---
+
+### 4. PM High Fade to Open %
+**Formula**: `((rth_open - pm_high) / pm_high) * 100`
+
+**Lógica (SQL Aggregation)**:
+1. Filtra `intraday_1m` para `timestamp < 09:30`.
+2. Obtiene `MAX(high)` como `pm_high`.
+3. Calcula la diferencia relativa con el `open` de RTH.
+
+---
+
+### 5. M(x) Metrics (M15, M30, M60)
+**Formula**: `((price_at_Mx - rth_open) / rth_open) * 100`
 
 **Lógica**:
-```python
-# Obtener el close del día anterior
-prev_close = rth_close_del_dia_anterior
+- **Price at Mx**: Se busca la barra de las 09:45 (M15), 10:00 (M30), etc., en `intraday_1m`.
+- Si no existe la barra exacta, se usa la última disponible antes de ese tiempo.
 
-# Calcular gap
-gap_pct = ((rth_open - prev_close) / prev_close) * 100
-```
+### 6. Premarket Volume (Individual Records)
+**Fórmula**: `SUM(volume)` para barras de 1m donde `timestamp < 09:30`.
 
-**Ejemplo**:
-- Prev Close: $95
-- RTH Open: $100
-- Gap: `((100 - 95) / 95) * 100 = 5.26%`
+**Lógica de Implementación**:
+1. El screener realiza una agregación (CTE) de `intraday_1m` para cada `(ticker, date)` candidato.
+2. Calcula la suma de volumen en el intervalo Premarket.
+3. Unifica este dato con `daily_metrics` para permitir el filtrado.
 
 ---
 
-### Cálculo: RTH Run %
+## Filter Implementation: Screener Logic
 
-**Columna**: `rth_run_pct`
+El Screener (`/api/market/screener`) procesa los filtros en dos etapas:
 
-**Fórmula**: `((rth_high - rth_open) / rth_open) * 100`
-
-**Lógica**:
-```python
-rth_open = rth_session.iloc[0]['open']
-rth_high = rth_session['high'].max()
-rth_run_pct = ((rth_high - rth_open) / rth_open) * 100
-```
-
-**Ejemplo**:
-- RTH Open: $100
-- RTH High (HOD): $115
-- RTH Close: $110
-- RTH Run: `((115 - 100) / 100) * 100 = 15%`
-
-**Nota**: Es el movimiento desde open hasta **HOD (High of Day)**, NO hasta close. Esto mide la máxima extensión alcista del día.
-
-**Diferencia con Day Return**:
-- **RTH Run**: Mide cuánto subió (open → HOD)
-- **Day Return**: Mide el resultado final (open → close)
-- En el ejemplo: RTH Run = 15%, Day Return = 10%
-
----
-
-### Cálculo: High Spike %
-
-**Columna**: `high_spike_pct`
-
-**Fórmula**: `((rth_high - rth_open) / rth_open) * 100`
-
-**Lógica**:
-```python
-rth_high = rth_session['high'].max()
-high_spike_pct = ((rth_high - rth_open) / rth_open) * 100
-```
-
-**Ejemplo**:
-- RTH Open: $100
-- RTH High: $115
-- High Spike: `((115 - 100) / 100) * 100 = 15%`
-
----
-
-### Cálculo: Low Spike %
-
-**Columna**: `low_spike_pct`
-
-**Fórmula**: `((rth_low - rth_open) / rth_open) * 100`
-
-**Lógica**:
-```python
-rth_low = rth_session['low'].min()
-low_spike_pct = ((rth_low - rth_open) / rth_open) * 100
-```
-
-**Ejemplo**:
-- RTH Open: $100
-- RTH Low: $92
-- Low Spike: `((92 - 100) / 100) * 100 = -8%`
-
----
-
-### Cálculo: PM High Fade to Open %
-
-**Columna**: `pmh_fade_to_open_pct`
-
-**Fórmula**: `((rth_open - pm_high) / pm_high) * 100`
-
-**Lógica**:
-```python
-pm_high = pm_session['high'].max()
-pm_fade = ((rth_open - pm_high) / pm_high) * 100
-```
-
-**Ejemplo**:
-- PM High: $105
-- RTH Open: $100
-- PM Fade: `((100 - 105) / 105) * 100 = -4.76%`
-
----
-
-### Cálculo: RTH Fade to Close %
-
-**Columna**: `rth_fade_to_close_pct`
-
-**Fórmula**: `((rth_close - rth_high) / rth_high) * 100`
-
-**Lógica**:
-```python
-rth_fade_to_close_pct = ((rth_close - rth_high) / rth_high) * 100
-```
-
-**Ejemplo**:
-- RTH High: $115
-- RTH Close: $110
-- RTH Fade: `((110 - 115) / 115) * 100 = -4.35%`
-
----
-
-### Cálculo: M(x) Return %
-
-**Columnas**: `m15_return_pct`, `m30_return_pct`, `m60_return_pct`, etc.
-
-**Fórmula**: `((price_at_Mx - rth_open) / rth_open) * 100`
-
-**Lógica**:
-```python
-def get_return_at(minutes):
-    limit_time = (09:30 + minutes).time()
-    snapshot = rth_session[timestamp <= limit_time]
-    price_at = snapshot.iloc[-1]['close']
-    return ((price_at - rth_open) / rth_open) * 100
-```
-
-**Ejemplo M15**:
-- RTH Open: $100
-- Price at 09:45: $103
-- M15 Return: `((103 - 100) / 100) * 100 = 3%`
-
----
-
-### Cálculo: M(x) High/Low Spikes
-
-**Columnas**: `m15_high_spike_pct`, `m15_low_spike_pct`, etc.
-
-**Fórmula High**: `((max_high_in_Mx - rth_open) / rth_open) * 100`
-**Fórmula Low**: `((min_low_in_Mx - rth_open) / rth_open) * 100`
-
-**Lógica**:
-```python
-def get_spike_at(minutes, spike_type='high'):
-    limit_time = (09:30 + minutes).time()
-    snapshot = rth_session[timestamp <= limit_time]
-    if spike_type == 'high':
-        spike_price = snapshot['high'].max()
-    else:
-        spike_price = snapshot['low'].min()
-    return ((spike_price - rth_open) / rth_open) * 100
-```
-
----
-
-### Cálculo: Return from M(x) to Close
-
-**Columnas**: `return_m15_to_close`, `return_m30_to_close`, `return_m60_to_close`
-
-**Fórmula**: `((rth_close - price_at_Mx) / price_at_Mx) * 100`
-
-**Lógica**:
-```python
-m15_price = get_price_at(15)  # Price at 09:45
-return_m15_to_close = ((rth_close - m15_price) / m15_price) * 100
-```
-
-**Ejemplo**:
-- M15 Price: $103
-- RTH Close: $110
-- Return M15→Close: `((110 - 103) / 103) * 100 = 6.8%`
-
----
-
-### Cálculo: Booleanos
-
-**Columnas**: `open_lt_vwap`, `pm_high_break`, `close_lt_m15`, etc.
-
-**Lógica**:
-```python
-# Open < VWAP
-open_vwap = rth_session.iloc[0]['vwap']
-open_lt_vwap = rth_open < open_vwap
-
-# PM High Break
-pm_high_break = rth_high > pm_high
-
-# Close < M15
-close_lt_m15 = rth_close < m15_price
-```
-
----
-
-### Cálculo: Time of Day
-
-**Columnas**: `hod_time`, `lod_time`, `pm_high_time`
-
-**Lógica**:
-```python
-# HOD Time
-hod_time = rth_session.loc[rth_session['high'].idxmax()]['timestamp'].strftime("%H:%M")
-
-# LOD Time
-lod_time = rth_session.loc[rth_session['low'].idxmin()]['timestamp'].strftime("%H:%M")
-
-# PM High Time
-pm_high_time = pm_session.loc[pm_session['high'].idxmax()]['timestamp'].strftime("%H:%M")
-```
-
----
-
-### Cálculo: Volúmenes
-
-**Columnas**: `pm_volume`, `rth_volume`
-
-**Lógica**:
-```python
-pm_volume = pm_session['volume'].sum()
-rth_volume = rth_session['volume'].sum()
-```
-
----
-
-## Market Analysis: Basic Filters
-
-### Test: Filtro de Premarket Volume
-
-**Columna Afectada**: `pm_volume` (Premarket Volume en número de acciones)
-
-**Comparadores**: `>=` (mayor o igual)
-
-**Query SQL**:
+### Etapa 1: Filtro de Base (SQL)
+Se filtran las fechas y tickers en la base de datos para reducir el volumen de datos.
 ```sql
-SELECT * FROM daily_metrics 
-WHERE pm_volume >= ?
+SELECT * FROM daily_metrics WHERE date BETWEEN ? AND ?
 ```
 
-**Lógica de Aplicación**:
-1. Usuario define `min_pm_volume = 500000`
-2. Backend construye query con `WHERE pm_volume >= 500000`
-3. DuckDB ejecuta comparación numérica
-4. Solo retorna filas donde el volumen premarket es 500K o más
-
-**Validación del Test**:
-- Ejecutar query con valor conocido
-- Verificar que TODOS los resultados cumplen `pm_volume >= valor`
-
----
-
-### Test: Filtro de Gap at Open Percentage
-
-**Columnas Afectadas**: `gap_at_open_pct`
-
-**Comparadores**: `>=` (min), `<=` (max)
-
-**Queries SQL**:
+### Etapa 2: Agregación Intraday (SQL CTE)
+Para los candidatos, se extraen métricas intradía que no están en la tabla diaria.
 ```sql
--- Minimum gap
-SELECT * FROM daily_metrics WHERE gap_at_open_pct >= ?
-
--- Maximum gap
-SELECT * FROM daily_metrics WHERE gap_at_open_pct <= ?
+WITH intraday_stats AS (
+    SELECT ticker, CAST(timestamp AS DATE) as d,
+           SUM(CASE WHEN strftime(timestamp, '%H:%M') < '09:30' THEN volume END) as pm_volume,
+           MAX(CASE WHEN strftime(timestamp, '%H:%M') < '09:30' THEN high END) as pm_high
+    FROM intraday_1m
+    GROUP BY 1, 2
+)
 ```
 
-**Lógica de Aplicación**:
-1. Usuario define rango: `min_gap = 5.0`, `max_gap = 10.0`
-2. Backend construye: `WHERE gap_at_open_pct >= 5.0 AND gap_at_open_pct <= 10.0`
-3. Solo retorna días con gap entre 5% y 10%
+### Etapa 3: Filtro Dinámico (Python)
+Una vez calculadas las métricas (`gap`, `pm_volume`, `m15_return`, etc.) en un DataFrame, se aplican los filtros del usuario:
+- **`min_{metric}`**: `df[df[metric] >= value]`
+- **`max_{metric}`**: `df[df[metric] <= value]`
+- **Especiales**: `min_pm_volume`, `hod_after`, `lod_before`.
 
 ---
 
-### Test: Filtros de RTH Run
+## Statistical Aggregation Logic
 
-**Columna Afectada**: `rth_run_pct` (RTH run desde open hasta close en %)
+Para el Dashboard, el backend realiza agregaciones complejas uniendo `daily_metrics` (subset filtrado) con `intraday_1m`.
 
-**Fórmula de Cálculo**: `((rth_close - rth_open) / rth_open) * 100`
-
-**Comparadores**: `>=` (min), `<=` (max)
-
-**Queries SQL**:
+### Promedio de Spikes y Fades
 ```sql
-SELECT * FROM daily_metrics WHERE rth_run_pct >= ?
-SELECT * FROM daily_metrics WHERE rth_run_pct <= ?
+SELECT 
+    AVG((h.high - f.rth_open) / f.rth_open * 100) as avg_high_spike,
+    AVG((f.rth_open - pm_h) / pm_h * 100) as avg_pmh_fade
+FROM intraday_1m h
+JOIN filtered_subset f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
 ```
 
-**Lógica**: Filtrar días por el porcentaje de movimiento desde open hasta close (NO hasta high/low).
-
----
-
-### Test: Filtros de Time of Day (HOD/LOD)
-
-**Columnas Afectadas**: `hod_time`, `lod_time`
-
-**Comparadores**: `>=` (after), `<=` (before)
-
-**Queries SQL**:
+### Distribuciones HOD/LOD
+Se utiliza la función `ARGMAX` y `ARGMIN` de DuckDB para encontrar la hora exacta del High/Low de forma eficiente:
 ```sql
--- HOD after 10:00
-SELECT * FROM daily_metrics WHERE hod_time >= '10:00'
-
--- LOD before 14:00
-SELECT * FROM daily_metrics WHERE lod_time <= '14:00'
-```
-
-**Lógica**: Filtrar por la hora en que ocurrió el high/low del día.
-
----
-
-### Test: Filtros Booleanos
-
-**Columnas Afectadas**: `open_lt_vwap`, `pm_high_break`, `close_lt_m15`, `close_lt_m30`, `close_lt_m60`
-
-**Comparador**: `= true`
-
-**Query SQL Example**:
-```sql
-SELECT * FROM daily_metrics WHERE open_lt_vwap = true
-```
-
-**Lógica**: Filtrar días donde condición booleana es TRUE (ej: apertura bajo VWAP).
-
----
-
-## Market Analysis: Advanced Filters (Dynamic Rules)
-
-### Test: Comparación Estática con Valor
-
-**Columna**: Cualquier métrica del METRIC_MAP
-
-**Operadores**: `=`, `!=`, `>`, `>=`, `<`, `<=`
-
-**Query SQL Example**:
-```sql
-SELECT * FROM daily_metrics WHERE rth_run_pct > 10.0
-SELECT * FROM daily_metrics WHERE gap_at_open_pct >= 5.0
-```
-
-**Lógica**: Comparar columna con valor estático usando operador definido.
-
----
-
-### Test: Comparación Variable (Columna vs Columna)
-
-**Columnas**: Dos métricas cualesquiera
-
-**Operadores**: `>`, `>=`, `<`, `<=`, `=`, `!=`
-
-**Query SQL Example**:
-```sql
--- RTH close < RTH open (red candle)
-SELECT * FROM daily_metrics WHERE rth_close < rth_open
-
--- PM volume > RTH volume
-SELECT * FROM daily_metrics WHERE pm_volume > rth_volume
-```
-
-**Lógica**: Comparar valores de dos columnas entre sí.
-
----
-
-### Test: Lógica Combinada AND
-
-**Query SQL Example**:
-```sql
-SELECT * FROM daily_metrics 
-WHERE gap_at_open_pct >= 5.0
-AND rth_volume >= 1000000
-AND rth_run_pct >= 10.0
-```
-
-**Lógica**: TODAS las condiciones deben cumplirse. Si una falla, la fila se excluye.
-
----
-
-### Test: Lógica Combinada OR
-
-**Query SQL Example**:
-```sql
-SELECT * FROM daily_metrics 
-WHERE gap_at_open_pct >= 20.0
-OR rth_run_pct >= 50.0
-```
-
-**Lógica**: AL MENOS una condición debe cumplirse. Si alguna es TRUE, la fila se incluye.
-
----
-
-## Market Analysis: Statistical Calculations
-
-### Test: Promedio de Gap
-
-**Función**: `AVG(gap_at_open_pct)`
-
-**Query SQL**:
-```sql
-SELECT AVG(gap_at_open_pct) as avg_gap FROM daily_metrics
-```
-
-**Lógica**: Calcula el promedio aritmético de todos los gaps. `SUM(gap_at_open_pct) / COUNT(*)`
-
-**Validación**: Comparar resultado SQL con cálculo Python `df["gap_at_open_pct"].mean()`
-
----
-
-### Test: Conversión Booleano a Porcentaje
-
-**Función**: `AVG(CAST(open_lt_vwap AS INT)) * 100`
-
-**Query SQL**:
-```sql
-SELECT AVG(CAST(open_lt_vwap AS INT)) * 100 as pct 
-FROM daily_metrics
-```
-
-**Lógica**:
-1. `CAST(open_lt_vwap AS INT)` convierte TRUE=1, FALSE=0
-2. `AVG(...)` calcula promedio (ej: 0.65 si 65% son TRUE)
-3. `* 100` convierte a porcentaje (65.0)
-
-**Validación**: Comparar con `df["open_lt_vwap"].astype(int).mean() * 100`
-
----
-
-### Test: Distribución de HOD Time
-
-**Función**: `GROUP BY hod_time` con `COUNT(*)`
-
-**Query SQL**:
-```sql
-SELECT hod_time, COUNT(*) as count
-FROM daily_metrics
-GROUP BY hod_time
-ORDER BY count DESC
-```
-
-**Lógica**: Agrupa filas por hora del high del día, cuenta cuántas veces ocurrió cada hora.
-
-**Validación**: Comparar con `df["hod_time"].value_counts()`
-
----
-
-### Test: Cálculos Agregados Intraday
-
-**Función**: `AVG((close - rth_open) / rth_open * 100)` con JOIN
-
-**Query SQL**:
-```sql
-SELECT AVG((h.close - d.rth_open) / d.rth_open * 100) as avg_change
-FROM historical_data h
-JOIN daily_metrics d 
-  ON h.ticker = d.ticker 
-  AND CAST(h.timestamp AS DATE) = d.date
-```
-
-**Lógica**: 
-1. JOIN entre datos intraday y daily metrics
-2. Para cada barra intraday, calcula % de cambio desde RTH open
-3. Promedia todos los cambios
-
----
-
-## Backtester: Entry Signal Generation
-
-### Test: Señal Basada en Precio
-
-**Condición**: `close > 100`
-
-**Lógica**:
-1. Engine evalúa condición para cada row del DataFrame
-2. Genera Series booleana: `df["close"] > 100`
-3. Solo genera señal de entrada donde TRUE
-
-**Validación**: Verificar que señales solo ocurren cuando `close > valor`
-
----
-
-### Test: Señal Basada en VWAP
-
-**Condición**: `close < vwap`
-
-**Lógica**:
-1. Compara precio de cierre con VWAP en cada barra
-2. Señal TRUE cuando `df["close"] < df["vwap"]`
-
-**Validación**: Confirmar que NO hay señales cuando `close >= vwap`
-
----
-
-### Test: Múltiples Condiciones AND
-
-**Condiciones**: 
-- `close > 100`
-- `time >= "10:00"`
-- `extension > 2%`
-
-**Lógica**:
-```python
-signal = (df["close"] > 100) & (df["time"] >= "10:00") & (df["extension"] > 2)
-```
-TODAS deben ser TRUE para generar señal.
-
----
-
-## Backtester: Stop Loss Calculations
-
-### Test: SL Percent para Short
-
-**Tipo**: `PERCENT`
-
-**Fórmula**: `SL = entry * (1 + percent/100)`
-
-**Ejemplo**:
-- Entry: $100
-- SL Percent: 5%
-- Cálculo: `100 * (1 + 5/100) = 100 * 1.05 = $105`
-
-**Validación**: Confirmar que SL = $105 cuando entry=$100 y sl_pct=5%
-
----
-
-### Test: SL Fixed para Short
-
-**Tipo**: `FIXED`
-
-**Fórmula**: `SL = entry + fixed_value`
-
-**Ejemplo**:
-- Entry: $100
-- SL Fixed: $2.50
-- Cálculo: `100 + 2.50 = $102.50`
-
----
-
-### Test: SL ATR para Short
-
-**Tipo**: `ATR`
-
-**Fórmula**: `SL = entry + (atr * multiplier)`
-
-**Ejemplo**:
-- Entry: $100
-- ATR: $1.50
-- Multiplier: 2.0
-- Cálculo: `100 + (1.50 * 2.0) = $103`
-
----
-
-## Backtester: Take Profit Calculations
-
-### Test: TP Percent para Short
-
-**Tipo**: `PERCENT`
-
-**Fórmula**: `TP = entry * (1 - percent/100)`
-
-**Ejemplo**:
-- Entry: $100
-- TP Percent: 5%
-- Cálculo: `100 * (1 - 5/100) = 100 * 0.95 = $95`
-
----
-
-### Test: TP Structure para Short
-
-**Tipo**: `STRUCTURE`
-
-**Fórmula**: `TP = vwap` (o cualquier nivel estructural definido)
-
-**Lógica**: TP se fija en un nivel de precio estructural (VWAP, PM Low, etc.)
-
----
-
-## Backtester: R-Multiple Calculation
-
-**Fórmula**: `R = (entry - exit) / abs(entry - stop_loss)`
-
-**Para Short**:
-- Entry: $100
-- Exit: $97.50
-- Stop Loss: $105
-- Risk: `abs(100 - 105) = 5`
-- Profit: `100 - 97.50 = 2.50`
-- R-Multiple: `2.50 / 5 = 0.5R`
-
-**Validación**:
-- Winning trade: R > 0
-- Losing trade: R < 0
-- Breakeven: R ≈ 0
-
----
-
-## Backtester: Position Sizing
-
-**Fórmula**: `position_size = allocated_capital / risk_per_share`
-
-**Ejemplo**:
-- Allocated Capital: $10,000
-- Entry: $100
-- Stop Loss: $105
-- Risk per Share: `abs(105 - 100) = $5`
-- Position Size: `10000 / 5 = 2000 shares`
-
-**Validación**: Confirmar que el riesgo total = allocated capital (si SL golpea, pierdes 2000 shares * $5/share = $10,000)
-
----
-
-## Backtester: Portfolio Metrics
-
-### Test: Win Rate
-
-**Fórmula**: `win_rate = (winning_trades / total_trades) * 100`
-
-**Ejemplo**:
-- Total Trades: 10
-- Winning Trades: 6
-- Win Rate: `(6 / 10) * 100 = 60%`
-
-**Validación**: Verificar que trades con R > 0 se cuentan como winners
-
----
-
-### Test: Profit Factor
-
-**Fórmula**: `profit_factor = gross_wins / gross_losses`
-
-**Ejemplo**:
-- R-Multiples: [1.0, 0.5, -1.0, -0.5, 0.8]
-- Gross Wins: `1.0 + 0.5 + 0.8 = 2.3`
-- Gross Losses: `abs(-1.0) + abs(-0.5) = 1.5`
-- Profit Factor: `2.3 / 1.5 = 1.53`
-
----
-
-### Test: Max Drawdown %
-
-**Fórmula**: `max_dd = max((peak - balance) / peak * 100)`
-
-**Lógica**:
-1. Track running peak balance
-2. Para cada punto, calcula drawdown desde peak
-3. Retorna el máximo drawdown %
-
----
-
-### Test: Sharpe Ratio
-
-**Fórmula** (simplificada): `sharpe = mean(R) / std_dev(R)`
-
-**Lógica**: Mide retorno ajustado por riesgo. Mayor Sharpe = mejor consistencia.
-
----
-
-## Backtester: SQL Queries
-
-### Test: Reconstrucción de Query Guardada
-
-**Lógica**: Cuando se guarda una estrategia, los filtros se serializan. Al ejecutar backtest, se reconstruyen.
-
-**Ejemplo**:
-```json
-{"min_gap_pct": 5.0, "min_rth_volume": 1000000}
-```
-
-**Reconstrucción**:
-```sql
-SELECT * FROM daily_metrics 
-WHERE gap_at_open_pct >= 5.0 
-AND rth_volume >= 1000000
+SELECT ARGMAX(high, strftime(timestamp, '%H:%M')) as hod_time
+FROM intraday_1m
+GROUP BY ticker, CAST(timestamp AS DATE)
 ```
 
 ---
 
-### Test: JOIN entre Daily y Historical
-
-**Query**:
-```sql
-SELECT d.*, h.*
-FROM daily_metrics d
-JOIN historical_data h 
-  ON d.ticker = h.ticker 
-  AND CAST(h.timestamp AS DATE) = d.date
-```
-
-**Lógica**:
-1. Une daily metrics (un row por día) con historical data (390+ rows/día)
-2. Asegura que timestamps de historical caen dentro del día correcto
-3. Permite acceder a datos intraday filtrados por condiciones diarias
-
----
-
-### Test: Date Filtering
-
-**Query**:
-```sql
-SELECT * FROM historical_data
-WHERE timestamp >= CAST('2024-01-01' AS TIMESTAMP)
-AND timestamp <= CAST('2024-12-31' AS TIMESTAMP)
-```
-
-**Lógica**: Limita datos a un rango de fechas específico para optimizar performance.
-
----
-
-## Resumen de Cobertura
-
-- **Filtros Básicos**: 30+ tests (numeric, time, boolean, date)
-- **Filtros Avanzados**: 15+ tests (all operators, variable comparisons, logic combinations)
-- **Cálculos Estadísticos**: 25+ tests (averages, percentages, distributions)
-- **Backtester Engine**: 20+ tests (signals, SL/TP, R-multiples, metrics)
-- **SQL Queries**: 15+ tests (joins, reconstruction, filtering)
-
-**Total**: ~100+ test cases cubriendo toda la lógica de negocio
+## Resumen de Cambios vs Arquitectura Antigua
+1. **Eliminación de `historical_data`**: Reemplazada por `intraday_1m`.
+2. **Fin de Pre-cálculos**: No existen columnas como `gap_at_open_pct` en la base de datos; se generan al vuelo.
+3. **Filtros Flexibles**: Cualquier columna calculada en Python es filtrable automáticamente mediante los prefijos `min_` y `max_`.

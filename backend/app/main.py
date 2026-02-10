@@ -5,36 +5,24 @@ import os
 from contextlib import asynccontextmanager
 
 from app.scheduler import start_scheduler
-from app.database import init_db, get_db_connection
+from app.database import get_db_connection
 from app.ingestion import ingest_ticker_snapshot
 
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize data, scheduler etc.
-    print("Startup: Initializing Application...")
-    init_db()
+    # Startup: Initialize Application
+    print("Startup: Connecting to JAUME database...")
     
-    # Run migrations to fix schema mismatches
-    try:
-        from app.migrations import run_all_migrations
-        run_all_migrations()
-    except Exception as e:
-        print(f"⚠️  Migration error (non-fatal): {e}")
-    
-    # Check if we need to fetch initial tickers
+    # Verify database connection
     try:
         con = get_db_connection()
-        ticker_count = con.execute("SELECT COUNT(*) FROM tickers").fetchone()[0]
+        tables = con.execute("SHOW TABLES").fetchall()
+        print(f"✅ Connected to JAUME. Tables: {[t[0] for t in tables]}")
         con.close()
-        
-        if ticker_count == 0:
-            print("No tickers found in database. Triggering initial ingestion...")
-            ingest_ticker_snapshot()
-        else:
-            print(f"Found {ticker_count} tickers in database.")
     except Exception as e:
-        print(f"Error checking/seeding tickers on startup: {e}")
+        print(f"❌ Error connecting to JAUME: {e}")
+        raise
         
     start_scheduler()
     yield
