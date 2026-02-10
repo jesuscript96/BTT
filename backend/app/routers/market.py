@@ -405,6 +405,10 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
         """
         df = con.execute(query, [ticker, trade_date]).fetch_df()
         if df.empty: return []
+        
+        # JSON Safety: Replace NaN/Inf
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+        
         df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
         return df.to_dict(orient="records")
     except Exception as e:
@@ -531,6 +535,8 @@ def get_aggregate_intraday(
             GROUP BY 1 ORDER BY 1 ASC
         """
         df_agg = con.execute(agg_query).fetch_df()
+        # JSON Safety: Handle Inf and NaN for standard JSON compliance
+        df_agg = df_agg.replace([np.inf, -np.inf], np.nan)
         return df_agg.where(pd.notna(df_agg), None).to_dict(orient="records")
     except Exception as e:
         import traceback
