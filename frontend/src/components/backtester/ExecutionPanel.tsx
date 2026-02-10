@@ -176,18 +176,8 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
 
             const data: BacktestResponse = await response.json();
 
-            if (data.status === 'success') {
-                // Fetch full results
-                const resultsResponse = await fetch(
-                    `${apiUrl}/backtest/results/${data.run_id}`
-                );
-
-                if (!resultsResponse.ok) {
-                    throw new Error(`Failed to fetch results: ${resultsResponse.statusText}`);
-                }
-
-                const results = await resultsResponse.json();
-                onBacktestComplete(results);
+            if (data.status === 'success' && data.results) {
+                onBacktestComplete(data.results);
             } else {
                 throw new Error(data.message || 'Backtest failed');
             }

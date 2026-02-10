@@ -28,13 +28,6 @@ class BacktestRequest(BaseModel):
     max_holding_minutes: int = 390  # Full RTH session
 
 
-class BacktestResponse(BaseModel):
-    """Backtest execution response"""
-    run_id: str
-    status: str
-    message: str
-
-
 class BacktestResultResponse(BaseModel):
     """Full backtest results"""
     run_id: str
@@ -60,9 +53,17 @@ class BacktestResultResponse(BaseModel):
     ev_by_time: Dict[str, float]
     ev_by_day: Dict[str, float]
     monthly_returns: Dict[str, float]
-    correlation_matrix: Optional[Dict[str, Dict[str, float]]]
-    monte_carlo: Optional[Dict]
+    correlation_matrix: Optional[Dict[str, Dict[str, float]]] = None
+    monte_carlo: Optional[Dict] = None
     executed_at: str
+
+
+class BacktestResponse(BaseModel):
+    """Backtest execution response"""
+    run_id: str
+    status: str
+    message: str
+    results: Optional[BacktestResultResponse] = None
 
 
 @router.post("/run", response_model=BacktestResponse)
@@ -113,116 +114,52 @@ def run_backtest(request: BacktestRequest):
         t1 = time.time()
         print("\n[2/5] Fetching market data...")
         
-        # ... (query construction remains same) ...
-        # (Assuming the query construction logic is unchanged above this block)
-        if request.query_id:
-            # ... (saved query logic) ...
-            sq_row = con.execute("SELECT filters FROM saved_queries WHERE id = ?", (request.query_id,)).fetchone()
-            # ... (parsing filters logic) ...
-            # FOR BREVITY, I AM ASSUMING THE QUERY CONSTRUCTION IS PRESERVED IN CODE CONTEXT
-            # I will just inject the timing around the EXECUTE call, which requires updating the query build block.
-            # To simply wrap the execution:
-            pass 
-
-        # RE-INJECTING QUERY LOGIC TO WRAP IT CORRECTLY
-        # Base query depends on whether we have a saved dataset (query_id)
+        req_filters = {}
         if request.query_id:
             logger_prefix = f"  - Using Saved Dataset: {request.query_id}"
             print(logger_prefix)
             sq_row = con.execute("SELECT filters FROM saved_queries WHERE id = ?", (request.query_id,)).fetchone()
             if not sq_row:
                 raise HTTPException(status_code=404, detail=f"Saved dataset {request.query_id} not found")
-            
-            saved_filters_dict = json.loads(sq_row[0])
-            from app.routers.data import METRIC_MAP
-            
-            sub_query = "SELECT ticker, date FROM daily_metrics WHERE 1=1"
-            sub_params = []
-            f = saved_filters_dict
-            
-            if f.get('min_gap_pct') is not None:
-                sub_query += " AND gap_at_open_pct >= ?"
-                sub_params.append(f['min_gap_pct'])
-            if f.get('max_gap_pct') is not None:
-                sub_query += " AND gap_at_open_pct <= ?"
-                sub_params.append(f['max_gap_pct'])
-            if f.get('min_rth_volume') is not None:
-                sub_query += " AND rth_volume >= ?"
-                sub_params.append(f['min_rth_volume'])
-            
-            rules = f.get('rules', [])
-            for rule_dict in rules:
-                col = METRIC_MAP.get(rule_dict.get('metric'))
-                op = rule_dict.get('operator')
-                val = rule_dict.get('value')
-                v_type = rule_dict.get('valueType')
-                
-                if col and op in ["=", "!=", ">", ">=", "<", "<="] and val:
-                    if v_type == "static":
-                        try:
-                            val_float = float(val)
-                            sub_query += f" AND {col} {op} ?"
-                            sub_params.append(val_float)
-                        except ValueError:
-                            sub_query += f" AND {col} {op} ?"
-                            sub_params.append(val)
-                    elif v_type == "variable":
-                        target_col = METRIC_MAP.get(val)
-                        if target_col:
-                            sub_query += f" AND {col} {op} {target_col}"
-
-            query = f"""
-                SELECT h.* 
-                FROM historical_data h
-                INNER JOIN ({sub_query}) d 
-                ON h.ticker = d.ticker 
-                AND h.timestamp >= CAST(d.date AS TIMESTAMP)
-                AND h.timestamp < CAST(d.date AS TIMESTAMP) + INTERVAL 1 DAY
-                WHERE 1=1
-            """
-            params = sub_params
+            req_filters = json.loads(sq_row[0])
         else:
-            query = "SELECT * FROM historical_data h WHERE 1=1"
-            params = []
+            req_filters = request.dataset_filters.dict() if hasattr(request.dataset_filters, 'dict') else request.dataset_filters
+            
+        print(f"  - Building query for universe selection...")
+        from app.services.query_service import build_screener_query
         
-        if request.dataset_filters.date_from:
-            query += " AND h.timestamp >= CAST(? AS TIMESTAMP)"
-            params.append(request.dataset_filters.date_from)
+        # Get universe of (Ticker, Date) using shared logic
+        rec_query, sql_p, where_d, where_i, where_m = build_screener_query(req_filters, limit=100000)
         
-        if request.dataset_filters.date_to:
-            query += " AND h.timestamp <= CAST(? AS TIMESTAMP)"
-            params.append(request.dataset_filters.date_to)
+        # Construct INTRADAY fetch query for universe
+        final_query = f"""
+            WITH universe AS (
+                {rec_query}
+            )
+            SELECT 
+                i.timestamp, i.open, i.high, i.low, i.close, i.volume, 
+                i.ticker, i.vwap
+            FROM intraday_1m i
+            JOIN universe u ON i.ticker = u.ticker AND CAST(i.timestamp AS DATE) = u.date
+            ORDER BY i.timestamp ASC
+        """
         
-        if request.dataset_filters.ticker:
-            query += " AND h.ticker = ?"
-            params.append(request.dataset_filters.ticker.upper())
-        
-        query += " ORDER BY h.timestamp ASC"
-        
-        # CRITICAL MEMORY OPTIMIZATION:
-        # Render free tier has 512MB RAM. Loading 8.3M rows = ~500MB-1GB just for the DataFrame.
-        # We MUST limit the query to prevent OOM errors.
-        # Strategy: Limit to ~500K rows max (enough for comprehensive backtests, ~60MB in memory)
+        # Memory limit
         MAX_ROWS = 500000
-        
-        # If user didn't specify date range, apply default 30-day window
-        if not request.dataset_filters.date_from and not request.dataset_filters.date_to:
-            print(f"  ⚠️  No date range specified. Applying default 30-day window to prevent memory exhaustion.")
-            query += " LIMIT ?"
-            params.append(MAX_ROWS)
-        else:
-            # User specified dates - still apply safety limit but warn if it might truncate
-            query += " LIMIT ?"
-            params.append(MAX_ROWS)
+        final_query += f" LIMIT {MAX_ROWS}"
         
         t_exec = time.time()
         print(f"  - Executing query (max {MAX_ROWS:,} rows)...")
-        market_data = con.execute(query, params).fetch_df()
+        
+        import pandas as pd
+        # We pass sql_p twice because rec_query (embedded in CTE) uses it twice
+        # build_screener_query already returns sql_p doubled (where_d + where_i params)
+        # So we just pass it as is.
+        market_data = con.execute(final_query, sql_p).fetchdf()
         duration_fetch = time.time() - t_exec
         
         if len(market_data) >= MAX_ROWS:
             print(f"  ⚠️  WARNING: Hit row limit ({MAX_ROWS:,}). Results may be truncated.")
-            print(f"  💡 TIP: Narrow your date range or ticker selection for complete results.")
         
         print(f"  ✓ Fetched {len(market_data):,} rows in {duration_fetch:.2f}s")
         
@@ -246,7 +183,15 @@ def run_backtest(request: BacktestRequest):
         
         # 4. Calculate additional metrics
         t3 = time.time()
-        # ... (Metrics calculation is fast) ...
+        
+        # Lazy imports for heavy libs
+        from app.backtester.portfolio import (
+            monte_carlo_simulation, 
+            calculate_drawdown_series,
+            calculate_strategy_equity_curves,
+            calculate_correlation_matrix
+        )
+        
         monte_carlo_result = monte_carlo_simulation(result.trades, request.initial_capital, 1000)
         
         correlation_matrix = None
@@ -257,8 +202,7 @@ def run_backtest(request: BacktestRequest):
         
         drawdown_series = calculate_drawdown_series(result.equity_curve)
         
-        # 5. Store results
-        # ... (JSON construction) ...
+        # 5. Prepare Result Object
         run_id = str(uuid4())
         now = datetime.now()
         total_return_pct = ((result.final_balance - request.initial_capital) / request.initial_capital * 100)
@@ -307,46 +251,15 @@ def run_backtest(request: BacktestRequest):
              },
              "executed_at": now.isoformat()
         }
-
-        con.execute(
-            """
-            INSERT INTO backtest_results (
-                id, strategy_ids, weights, dataset_summary,
-                commission_per_trade, initial_capital, final_balance,
-                total_trades, win_rate, avg_r_multiple,
-                max_drawdown_pct, sharpe_ratio, profit_factor,
-                total_return_pct, total_return_r,
-                results_json, executed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                json.dumps(request.strategy_ids),
-                json.dumps(request.weights),
-                f"{len(market_data)} bars, {market_data['ticker'].nunique()} tickers",
-                request.commission_per_trade,
-                request.initial_capital,
-                result.final_balance,
-                result.total_trades,
-                result.win_rate,
-                result.avg_r_multiple,
-                result.max_drawdown_pct,
-                result.sharpe_ratio,
-                profit_factor,
-                total_return_pct,
-                total_return_r,
-                json.dumps(results_json),
-                now
-            )
-        )
         
-        print(f"  ✓ Results saved in {time.time() - t3:.2f}s")
+        print(f"  ✓ Metrics calculated in {time.time() - t3:.2f}s")
         print(f"✓ Total Request Time: {time.time() - start_total:.2f}s")
         
         return BacktestResponse(
             run_id=run_id,
             status="success",
-            message=f"Backtest completed: {result.total_trades} trades, {result.win_rate:.1f}% win rate"
+            message=f"Backtest completed: {result.total_trades} trades, {result.win_rate:.1f}% win rate",
+            results=BacktestResultResponse(**results_json)
         )
         
     except Exception as e:

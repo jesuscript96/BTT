@@ -13,6 +13,7 @@ export interface BacktestResponse {
     run_id: string;
     status: string;
     message: string;
+    results?: BacktestResult;
 }
 
 export interface BacktestResult {
