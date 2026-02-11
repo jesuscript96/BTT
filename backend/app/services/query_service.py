@@ -12,7 +12,6 @@ def safe_float(v):
         return 0.0
 
 def map_stats_row(row):
-    # Mapping based on market.py structure
     return {
         "gap_at_open_pct": safe_float(row[1]),
         "pm_high_gap_pct": safe_float(row[2]),
@@ -33,6 +32,10 @@ def map_stats_row(row):
         "rth_range_pct": safe_float(row[17]),
         "pm_high_break": safe_float(row[18]),
         "close_red": safe_float(row[19]),
+        "open_lt_vwap": safe_float(row[20]) if len(row) > 20 else 0.0,
+        "pm_high_time": str(row[21]) if len(row) > 21 else "--",
+        "hod_time": str(row[22]) if len(row) > 22 else "--",
+        "lod_time": str(row[23]) if len(row) > 23 else "--",
         "return_close_pct": safe_float(row[4])
     }
 
@@ -44,37 +47,60 @@ def get_stats_sql_logic(where_d, where_i, where_m):
                 LAG(close) OVER (PARTITION BY ticker ORDER BY date) as prev_c
             FROM daily_metrics
         ),
+        intraday_clean AS (
+            SELECT ticker, CAST(timestamp AS DATE) as d, timestamp as ts, open, high, low, close, volume, vwap,
+                LAG(volume) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_v,
+                LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_c
+            FROM (SELECT DISTINCT * FROM intraday_1m WHERE {where_i})
+        ),
         intraday_raw AS (
             SELECT 
-                ticker, CAST(timestamp AS DATE) as d,
-                SUM(CASE WHEN strftime(timestamp, '%H:%M') < '09:30' THEN volume END) as pm_v,
-                MAX(CASE WHEN strftime(timestamp, '%H:%M') < '09:30' THEN high END) as pm_h,
-                MAX(CASE WHEN strftime(timestamp, '%H:%M') = '09:45' THEN close END) as p_m15,
-                MAX(CASE WHEN strftime(timestamp, '%H:%M') = '10:30' THEN close END) as p_m60,
-                MAX(CASE WHEN strftime(timestamp, '%H:%M') = '12:30' THEN close END) as p_m180,
-                ARGMAX(strftime(timestamp, '%H:%M'), CASE WHEN strftime(timestamp, '%H:%M') >= '09:30' AND strftime(timestamp, '%H:%M') < '16:00' THEN high END) as hod_t,
-                ARGMIN(strftime(timestamp, '%H:%M'), CASE WHEN strftime(timestamp, '%H:%M') >= '09:30' AND strftime(timestamp, '%H:%M') < '16:00' THEN low END) as lod_t
-            FROM intraday_1m
-            WHERE {where_i}
+                ticker, d,
+                -- Premarket (03:00 to 08:30 Mexico Time)
+                SUM(CASE WHEN strftime(ts, '%H:%M') >= '03:00' AND strftime(ts, '%H:%M') < '08:30' 
+                         AND (prev_v IS NULL OR volume != prev_v OR close != prev_c) THEN volume END) as pm_v,
+                MAX(CASE WHEN strftime(ts, '%H:%M') >= '03:00' AND strftime(ts, '%H:%M') < '08:30' THEN high END) as pm_h,
+                
+                -- RTH (08:30 to 15:00 Mexico Time)
+                SUM(CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' 
+                         AND (prev_v IS NULL OR volume != prev_v OR close != prev_c) THEN volume END) as rth_v,
+                
+                -- Timed Prices (relative markers)
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '08:30' THEN open END) as rth_o,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as p_open_930,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:45' THEN close END) as p_m15,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '10:30' THEN close END) as p_m60,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '12:30' THEN close END) as p_m180,
+                MAX(CASE WHEN strftime(ts, '%H:%M') >= '14:50' AND strftime(ts, '%H:%M') < '15:00' THEN vwap END) as v_close,
+                MAX(CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN vwap END) as v_max_rth,
+                
+                -- Time markers in minutes since midnight
+                ARGMAX(extract('hour' from ts) * 60 + extract('minute' from ts), CASE WHEN strftime(ts, '%H:%M') >= '03:00' AND strftime(ts, '%H:%M') < '08:30' THEN high END) as pm_h_m,
+                ARGMAX(extract('hour' from ts) * 60 + extract('minute' from ts), CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN high END) as hod_m,
+                ARGMIN(extract('hour' from ts) * 60 + extract('minute' from ts), CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN low END) as lod_m
+            FROM intraday_clean
             GROUP BY 1, 2
         ),
         full_metrics AS (
             SELECT 
-                d.*, i.pm_v, i.pm_h, i.p_m15, i.p_m60, i.p_m180, i.hod_t, i.lod_t,
-                ((d.open - d.prev_c) / d.prev_c * 100) as gap_pct,
-                ((i.pm_h - d.prev_c) / d.prev_c * 100) as pmh_gap,
-                ((d.high - d.open) / d.open * 100) as rth_run,
-                ((d.close - d.open) / d.open * 100) as day_ret,
-                ((d.open - i.pm_h) / i.pm_h * 100) as pmh_fade,
-                ((d.close - d.high) / d.high * 100) as rth_fade,
-                ((i.p_m15 - d.open) / d.open * 100) as m15_ret,
-                ((i.p_m60 - d.open) / d.open * 100) as m60_ret,
-                ((i.p_m180 - d.open) / d.open * 100) as m180_ret,
-                ((d.high - d.open) / d.open * 100) as h_spike_pct,
-                ((d.low - d.open) / d.open * 100) as l_spike_pct,
+                d.ticker, d.date, d.open, d.high, d.low, d.close, d.prev_c,
+                d.volume as volume, 
+                i.pm_v, i.pm_h, i.p_m15, i.p_m60, i.p_m180, i.pm_h_m, i.hod_m, i.lod_m,
+                ((d.open - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as gap_pct,
+                ((i.pm_h - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as pmh_gap,
+                ((d.high - d.open) / NULLIF(d.open, 0) * 100) as rth_run,
+                ((d.close - d.open) / NULLIF(d.open, 0) * 100) as day_ret,
+                ((d.open - i.pm_h) / NULLIF(i.pm_h, 0) * 100) as pmh_fade,
+                ((d.close - d.high) / NULLIF(d.high, 0) * 100) as rth_fade,
+                ((i.p_m15 - i.p_open_930) / NULLIF(i.p_open_930, 0) * 100) as m15_ret,
+                ((i.p_m60 - d.open) / NULLIF(d.open, 0) * 100) as m60_ret,
+                ((i.p_m180 - d.open) / NULLIF(d.open, 0) * 100) as m180_ret,
+                ((d.high - d.open) / NULLIF(d.open, 0) * 100) as h_spike_pct,
+                ((d.low - d.open) / NULLIF(d.open, 0) * 100) as l_spike_pct,
                 (CASE WHEN d.high > i.pm_h THEN 100 ELSE 0 END) as pmh_b,
                 (CASE WHEN d.close < d.open THEN 100 ELSE 0 END) as c_red,
-                ((d.high - d.low) / d.low * 100) as r_range
+                ((d.high - d.low) / d.low * 100) as r_range,
+                (CASE WHEN i.rth_o < i.v_max_rth THEN 100 ELSE 0 END) as o_vw_h
             FROM daily_base d
             JOIN intraday_raw i ON d.ticker = i.ticker AND d.date = i.d
             WHERE {where_d}
@@ -84,28 +110,32 @@ def get_stats_sql_logic(where_d, where_i, where_m):
             SELECT 'avg' as type, AVG(gap_pct), AVG(pmh_gap), AVG(rth_run), AVG(day_ret), AVG(pmh_fade), AVG(rth_fade), 
                    AVG(m15_ret), AVG(m60_ret), AVG(m180_ret), AVG(volume), AVG(pm_v), 
                    AVG(pm_h), AVG(open), AVG(close), AVG(h_spike_pct), AVG(l_spike_pct), AVG(r_range), 
-                   AVG(pmh_b), AVG(c_red), MODE(hod_t), MODE(lod_t) FROM pool
+                   AVG(pmh_b), AVG(c_red), AVG(o_vw_h),
+                   printf('%02d:%02d', (CAST(AVG(pm_h_m) AS INT) / 60)::INT, (CAST(AVG(pm_h_m) AS INT) % 60)::INT) as pm_h_t,
+                   printf('%02d:%02d', (CAST(AVG(hod_m) AS INT) / 60)::INT, (CAST(AVG(hod_m) AS INT) % 60)::INT) as hod_t,
+                   printf('%02d:%02d', (CAST(AVG(lod_m) AS INT) / 60)::INT, (CAST(AVG(lod_m) AS INT) % 60)::INT) as lod_t
+            FROM pool
             UNION ALL
             SELECT 'p25', QUANTILE_CONT(gap_pct, 0.25), QUANTILE_CONT(pmh_gap, 0.25), QUANTILE_CONT(rth_run, 0.25), QUANTILE_CONT(day_ret, 0.25), 
                    QUANTILE_CONT(pmh_fade, 0.25), QUANTILE_CONT(rth_fade, 0.25), QUANTILE_CONT(m15_ret, 0.25), QUANTILE_CONT(m60_ret, 0.25), 
                    QUANTILE_CONT(m180_ret, 0.25), QUANTILE_CONT(volume, 0.25), QUANTILE_CONT(pm_v, 0.25),
                    QUANTILE_CONT(pm_h, 0.25), QUANTILE_CONT(open, 0.25), QUANTILE_CONT(close, 0.25), QUANTILE_CONT(h_spike_pct, 0.25), 
                    QUANTILE_CONT(l_spike_pct, 0.25), QUANTILE_CONT(r_range, 0.25), 
-                   0, 0, '--', '--' FROM pool
+                   0, 0, 0, '--', '--', '--' FROM pool
             UNION ALL
             SELECT 'p50', QUANTILE_CONT(gap_pct, 0.5), QUANTILE_CONT(pmh_gap, 0.5), QUANTILE_CONT(rth_run, 0.5), QUANTILE_CONT(day_ret, 0.5), 
                    QUANTILE_CONT(pmh_fade, 0.5), QUANTILE_CONT(rth_fade, 0.5), QUANTILE_CONT(m15_ret, 0.5), QUANTILE_CONT(m60_ret, 0.5), 
                    QUANTILE_CONT(m180_ret, 0.5), QUANTILE_CONT(volume, 0.5), QUANTILE_CONT(pm_v, 0.5),
                    QUANTILE_CONT(pm_h, 0.5), QUANTILE_CONT(open, 0.5), QUANTILE_CONT(close, 0.5), QUANTILE_CONT(h_spike_pct, 0.5), 
                    QUANTILE_CONT(l_spike_pct, 0.5), QUANTILE_CONT(r_range, 0.5), 
-                   0, 0, '--', '--' FROM pool
+                   0, 0, 0, '--', '--', '--' FROM pool
             UNION ALL
             SELECT 'p75', QUANTILE_CONT(gap_pct, 0.75), QUANTILE_CONT(pmh_gap, 0.75), QUANTILE_CONT(rth_run, 0.75), QUANTILE_CONT(day_ret, 0.75), 
                    QUANTILE_CONT(pmh_fade, 0.75), QUANTILE_CONT(rth_fade, 0.75), QUANTILE_CONT(m15_ret, 0.75), QUANTILE_CONT(m60_ret, 0.75), 
                    QUANTILE_CONT(m180_ret, 0.75), QUANTILE_CONT(volume, 0.75), QUANTILE_CONT(pm_v, 0.75),
                    QUANTILE_CONT(pm_h, 0.75), QUANTILE_CONT(open, 0.75), QUANTILE_CONT(close, 0.75), QUANTILE_CONT(h_spike_pct, 0.75), 
                    QUANTILE_CONT(l_spike_pct, 0.75), QUANTILE_CONT(r_range, 0.75), 
-                   0, 0, '--', '--' FROM pool
+                   0, 0, 0, '--', '--', '--' FROM pool
         )
     """
 
@@ -177,23 +207,43 @@ def build_screener_query(
                 LAG(close) OVER (PARTITION BY ticker ORDER BY date) as prev_c
             FROM daily_metrics
         ),
+        intraday_clean AS (
+            SELECT ticker, CAST(timestamp AS DATE) as d, timestamp as ts, open, high, low, close, volume, vwap,
+                LAG(volume) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_v,
+                LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_c
+            FROM (SELECT DISTINCT * FROM intraday_1m WHERE {where_i})
+        ),
         intraday_raw AS (
-            SELECT ticker, CAST(timestamp AS DATE) as d,
-                SUM(CASE WHEN strftime(timestamp, '%H:%M') < '09:30' THEN volume END) as pm_v,
-                MAX(CASE WHEN strftime(timestamp, '%H:%M') < '09:30' THEN high END) as pm_h,
-                MAX(CASE WHEN strftime(timestamp, '%H:%M') = '09:45' THEN close END) as p_m15,
-                ARGMAX(strftime(timestamp, '%H:%M'), CASE WHEN strftime(timestamp, '%H:%M') >= '09:30' AND strftime(timestamp, '%H:%M') < '16:00' THEN high END) as hod_t,
-                ARGMIN(strftime(timestamp, '%H:%M'), CASE WHEN strftime(timestamp, '%H:%M') >= '09:30' AND strftime(timestamp, '%H:%M') < '16:00' THEN low END) as lod_t
-            FROM intraday_1m WHERE {where_i} GROUP BY 1, 2
+            SELECT ticker, d,
+                SUM(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' 
+                         AND (prev_v IS NULL OR volume != prev_v OR close != prev_c) THEN volume END) as pm_v,
+                MAX(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN high END) as pm_h,
+                SUM(CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' 
+                         AND (prev_v IS NULL OR volume != prev_v OR close != prev_c) THEN volume END) as rth_v,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as p_open_930,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:45' THEN close END) as p_m15,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '10:30' THEN close END) as p_m60,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '12:30' THEN close END) as p_m180,
+                MAX(CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN vwap END) as v_max_rth,
+                ARGMAX(strftime(ts, '%H:%M'), CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN high END) as hod_t,
+                ARGMIN(strftime(ts, '%H:%M'), CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN low END) as lod_t
+            FROM intraday_clean GROUP BY 1, 2
         ),
         calculated AS (
-            SELECT d.*, i.pm_v, i.pm_h, i.p_m15, i.hod_t, i.lod_t,
-                ((d.open - d.prev_c) / d.prev_c * 100) as gap_pct,
-                ((i.pm_h - d.prev_c) / d.prev_c * 100) as pmh_gap,
-                ((d.high - d.open) / d.open * 100) as rth_run,
-                ((d.close - d.open) / d.open * 100) as day_ret,
-                ((d.open - i.pm_h) / i.pm_h * 100) as pmh_fade,
-                ((d.close - d.high) / d.high * 100) as rth_fade
+            SELECT d.ticker, d.date, d.open, d.high, d.low, d.close, d.prev_c,
+                d.volume as volume, 
+                i.pm_v, i.pm_h, i.p_m15, i.p_m60, i.p_m180, i.hod_t, i.lod_t,
+                ((d.open - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as gap_pct,
+                ((i.pm_h - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as pmh_gap,
+                ((d.high - d.open) / NULLIF(d.open, 0) * 100) as rth_run,
+                ((d.close - d.open) / NULLIF(d.open, 0) * 100) as day_ret,
+                ((d.open - i.pm_h) / NULLIF(i.pm_h, 0) * 100) as pmh_fade,
+                ((d.close - d.high) / NULLIF(d.high, 0) * 100) as rth_fade,
+                ((i.p_m15 - i.p_open_930) / NULLIF(i.p_open_930, 0) * 100) as m15_ret,
+                ((i.p_m60 - d.open) / NULLIF(d.open, 0) * 100) as m60_ret,
+                ((i.p_m60 - d.open) / NULLIF(d.open, 0) * 100) as m60_ret,
+                ((i.p_m180 - d.open) / NULLIF(d.open, 0) * 100) as m180_ret,
+                (CASE WHEN i.p_open_930 < i.v_max_rth THEN 100 ELSE 0 END) as o_vw_h
             FROM daily_base d JOIN intraday_raw i ON d.ticker = i.ticker AND d.date = i.d
             WHERE {where_d}
         ),

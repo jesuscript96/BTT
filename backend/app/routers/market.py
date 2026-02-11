@@ -71,7 +71,7 @@ def screen_market(
                     stats_payload['avg'] = map_stats_row(s_row)
                     # For distributions, we need more than just MODE to look good. 
                     # But for now, returning MODE as the primary key.
-                    stats_payload['distributions'] = {"hod_time": {str(s_row[20]): 1.0}, "lod_time": {str(s_row[21]): 1.0}}
+                    stats_payload['distributions'] = {"hod_time": {str(s_row[22]): 1.0}, "lod_time": {str(s_row[23]): 1.0}}
                 elif s_key in ['p25', 'p50', 'p75']:
                     stats_payload[s_key] = map_stats_row(s_row)
 

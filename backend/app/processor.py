@@ -22,23 +22,28 @@ def process_daily_metrics(df, con=None):
     
     for date, group in df.groupby('date'):
         # Identify Sessions (Eastern Time assumed or consistent with data)
-        # 04:00 - 09:30 (PM)
+        # 03:00 - 08:30 (PM)
         # 09:30 - 16:00 (RTH)
-        times = group['timestamp'].dt.time
-        pm_session = group[(times >= pd.Timestamp("04:00").time()) & (times < pd.Timestamp("09:30").time())]
-        rth_session = group[(times >= pd.Timestamp("09:30").time()) & (times < pd.Timestamp("16:00").time())]
+        # Clean group for summation: remove exact duplicates and identify resampled fillers
+        clean_group = group.drop_duplicates(subset=['timestamp']).sort_values('timestamp')
+        clean_group['is_resampled'] = (clean_group['volume'] == clean_group['volume'].shift(1)) & \
+                                     (clean_group['close'] == clean_group['close'].shift(1))
+        
+        c_times = clean_group['timestamp'].dt.time
+        pm_session = clean_group[(c_times >= pd.Timestamp("03:00").time()) & (c_times < pd.Timestamp("08:30").time())]
+        rth_session = clean_group[(c_times >= pd.Timestamp("08:30").time()) & (c_times < pd.Timestamp("16:00").time())]
         
         if rth_session.empty:
             # Still update prev_close for next day if RTH exists but this day is missing it
-            if not group.empty:
-                prev_close = group.iloc[-1]['close']
+            if not clean_group.empty:
+                prev_close = clean_group.iloc[-1]['close']
             continue
             
         rth_open = float(rth_session.iloc[0]['open'])
         rth_close = float(rth_session.iloc[-1]['close'])
         rth_high = float(rth_session['high'].max())
         rth_low = float(rth_session['low'].min())
-        rth_volume = float(rth_session['volume'].sum())
+        rth_volume = float(rth_session[~rth_session['is_resampled']]['volume'].sum())
         
         # Calculation Logic - Get prev_close from daily_metrics
         gap_pct = 0.0
@@ -58,9 +63,9 @@ def process_daily_metrics(df, con=None):
         if prev_close is not None and prev_close > 0:
             gap_pct = ((rth_open - prev_close) / prev_close) * 100
             
-        # PM High & Fade
+        # PM High & Volume
         pm_high = pm_session['high'].max() if not pm_session.empty else 0.0
-        pm_volume = pm_session['volume'].sum() if not pm_session.empty else 0.0
+        pm_volume = float(pm_session[~pm_session['is_resampled']]['volume'].sum()) if not pm_session.empty else 0.0
         pm_fade = 0.0
         if pm_high > 0:
             pm_fade = ((rth_open - pm_high) / pm_high) * 100

@@ -131,15 +131,29 @@ def run_backtest(request: BacktestRequest):
         # Get universe of (Ticker, Date) using shared logic
         rec_query, sql_p, where_d, where_i, where_m = build_screener_query(req_filters, limit=100000)
         
-        # Construct INTRADAY fetch query for universe
+        # Construct INTRADAY fetch query for universe with deduplication and filler removal
         final_query = f"""
             WITH universe AS (
                 {rec_query}
+            ),
+            intraday_dedup AS (
+                SELECT DISTINCT * FROM intraday_1m 
+                WHERE ticker IN (SELECT ticker FROM universe)
+                  AND CAST(timestamp AS DATE) IN (SELECT date FROM universe)
+            ),
+            intraday_clean AS (
+                SELECT 
+                    *,
+                    LAG(volume) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_v,
+                    LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_c
+                FROM intraday_dedup
             )
             SELECT 
-                i.timestamp, i.open, i.high, i.low, i.close, i.volume, 
-                i.ticker, i.vwap
-            FROM intraday_1m i
+                i.timestamp, i.open, i.high, i.low, i.close, 
+                CASE WHEN (i.prev_v IS NULL OR i.volume != i.prev_v OR i.close != i.prev_c) THEN i.volume ELSE 0 END as volume,
+                i.ticker, i.vwap, u.pm_h as pm_high, u.pm_v as pm_volume,
+                u.gap_pct, u.day_ret, u.rth_run
+            FROM intraday_clean i
             JOIN universe u ON i.ticker = u.ticker AND CAST(i.timestamp AS DATE) = u.date
             ORDER BY i.timestamp ASC
         """
