@@ -19,7 +19,7 @@ import TickerAnalysis from "@/components/TickerAnalysis";
 import { API_URL } from "@/config/constants";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression'>('screener');
+  const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression' | 'ticker'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [aggregateSeries, setAggregateSeries] = useState<any[]>([]);
