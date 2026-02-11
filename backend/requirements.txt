@@ -10,3 +10,7 @@ pydantic==2.9.2
 
 numpy>=1.26.4
 numba>=0.59.1
+
+yfinance>=0.2.36
+feedparser>=6.0.10
+lxml>=5.1.026.4
