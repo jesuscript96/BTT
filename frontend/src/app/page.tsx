@@ -1,6 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import {
+  LayoutDashboard,
+  LineChart,
+  ScatterChart,
+  Activity
+} from 'lucide-react';
 import { AdvancedFilterPanel } from "@/components/AdvancedFilterPanel";
 import { Dashboard } from "@/components/Dashboard";
 import { DataGrid } from "@/components/DataGrid";
@@ -8,6 +14,7 @@ import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
 import RollingAnalysisDashboard from "@/components/RollingAnalysisDashboard";
 import RegressionAnalysis from "@/components/RegressionAnalysis";
+import TickerAnalysis from "@/components/TickerAnalysis";
 
 import { API_URL } from "@/config/constants";
 
@@ -217,40 +224,53 @@ export default function Home() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="px-6 pt-4 border-b border-border flex gap-6">
+      <div className="px-6 pt-4 border-b border-border flex gap-6 overflow-x-auto">
         <button
           onClick={() => setActiveTab('screener')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'screener'
-            ? 'border-blue-500 text-foreground'
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'screener'
+            ? 'border-primary text-foreground'
             : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
         >
+          <LayoutDashboard className="w-4 h-4" />
           Screener & Summary
         </button>
         <button
           onClick={() => setActiveTab('rolling')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'rolling'
-            ? 'border-blue-500 text-foreground'
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'rolling'
+            ? 'border-primary text-foreground'
             : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
         >
+          <LineChart className="w-4 h-4" />
           Rolling Analysis
         </button>
         <button
           onClick={() => setActiveTab('regression')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'regression'
-            ? 'border-blue-500 text-foreground'
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'regression'
+            ? 'border-primary text-foreground'
             : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
         >
+          <ScatterChart className="w-4 h-4" />
           Regression Analysis
+        </button>
+        <button
+          onClick={() => setActiveTab('ticker')}
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'ticker'
+            ? 'border-primary text-foreground'
+            : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+        >
+          <Activity className="w-4 h-4" />
+          Ticker Analysis
         </button>
       </div>
 
       <div className="flex-1 overflow-auto bg-background scrollbar-thin scrollbar-track-muted/50 scrollbar-thumb-muted relative transition-colors duration-300">
 
         {activeTab === 'screener' && (
-          <>
+          <div className="flex flex-col gap-6 p-6 min-h-screen">
             <FilterBuilder
               isOpen={isFilterBuilderOpen}
               onClose={() => setIsFilterBuilderOpen(false)}
@@ -272,13 +292,17 @@ export default function Home() {
               onClose={() => setIsLoadModalOpen(false)}
               onLoad={handleLoadDataset}
             />
+
+            {/* Dashboard & DataGrid Stack */}
             <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
-            <div className="px-6 pb-20">
-              <div className="border border-border rounded-xl overflow-hidden shadow-sm bg-card">
-                <DataGrid data={data} isLoading={isLoading} />
-              </div>
+
+            <div className="flex-1 min-h-[500px] bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+              <DataGrid
+                data={data}
+                isLoading={isLoading}
+              />
             </div>
-          </>
+          </div>
         )}
 
         {activeTab === 'rolling' && (
@@ -303,6 +327,12 @@ export default function Home() {
           </div>
         )}
 
+        {activeTab === 'ticker' && (
+          <TickerAnalysis
+            ticker={currentFilters.ticker || (data.length > 0 ? data[0].ticker : undefined)}
+            availableTickers={Array.from(new Set(data.map(d => d.ticker)))}
+          />
+        )}
       </div>
     </div>
   );

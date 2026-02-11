@@ -53,7 +53,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.routers import data, strategies, backtest, query, market, strategy_search
+from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
 from app.api import ingestion
 import logging
 
@@ -64,6 +64,7 @@ app.include_router(strategies.router, prefix="/api/strategies", tags=["Strategie
 app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
 app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
+app.include_router(ticker_analysis.router)
 app.include_router(market.router)
 app.include_router(ingestion.router)  # Deep history ingestion endpoint
 
