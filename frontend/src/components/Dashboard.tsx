@@ -323,6 +323,14 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");
 
+    // Smoothing & Session state
+    const [smoothing, setSmoothing] = React.useState<number>(1);
+    const [sessions, setSessions] = React.useState({
+        pre: false,
+        market: true,
+        post: false
+    });
+
     const isAggregate = aggregateSeries && aggregateSeries.length > 0;
 
     // Effect to update ticker when data changes (Only if NOT aggregate mode)
@@ -334,8 +342,9 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
     React.useEffect(() => {
         if (isAggregate) {
-            // Use Aggregate Data
-            setChartData(aggregateSeries || []);
+            // Processing Aggregate Data
+            const processed = processData(aggregateSeries || []);
+            setChartData(processed);
             return;
         }
 
@@ -351,13 +360,50 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
             .then(resData => {
                 const parsed = resData.map((d: any) => ({
                     ...d,
+                    time: d.timestamp.split(' ')[1].substring(0, 5),
                     timeShort: d.timestamp.split(' ')[1].substring(0, 5)
                 }));
-                setChartData(parsed);
+                const processed = processData(parsed);
+                setChartData(processed);
             })
             .catch(e => console.error("Chart fetch error", e))
             .finally(() => setLoading(false));
-    }, [activeTicker, isAggregate, aggregateSeries]);
+    }, [activeTicker, isAggregate, aggregateSeries, sessions, smoothing]);
+
+    // Data Processing: Filter Sessions & Apply Smoothing
+    const processData = (raw: any[]) => {
+        if (!raw || raw.length === 0) return [];
+
+        // 1. Filter Sessions
+        const filtered = raw.filter(d => {
+            const time = d.time || d.timeShort;
+            if (!time) return true;
+
+            if (time >= "03:00" && time < "08:30") return sessions.pre;
+            if (time >= "08:30" && time < "15:00") return sessions.market;
+            if (time >= "15:00" && time < "16:15") return sessions.post; // extended a bit for postmarket
+            return false;
+        });
+
+        if (smoothing <= 1) return filtered;
+
+        // 2. Apply Smoothing (Simple Moving Average)
+        return filtered.map((d, i, arr) => {
+            const start = Math.max(0, i - Math.floor(smoothing / 2));
+            const end = Math.min(arr.length, i + Math.ceil(smoothing / 2));
+            const subset = arr.slice(start, end);
+
+            const smoothed: any = { ...d };
+            if (isAggregate) {
+                smoothed.avg_change = subset.reduce((acc, curr) => acc + curr.avg_change, 0) / subset.length;
+                smoothed.median_change = subset.reduce((acc, curr) => acc + (curr.median_change || 0), 0) / subset.length;
+            } else {
+                smoothed.close = subset.reduce((acc, curr) => acc + curr.close, 0) / subset.length;
+                smoothed.vwap = subset.reduce((acc, curr) => acc + (curr.vwap || 0), 0) / subset.length;
+            }
+            return smoothed;
+        });
+    };
 
     if (!isAggregate && !activeTicker) {
         return (
@@ -376,8 +422,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
         maxPrice = vals.length ? Math.max(...vals) : 1;
         // Add some padding
         const range = maxPrice - minPrice;
-        minPrice -= range * 0.1;
-        maxPrice += range * 0.1;
+        minPrice -= range * 0.1 || 0.1;
+        maxPrice += range * 0.1 || 0.1;
     } else {
         const prices = chartData.map(d => d.close);
         minPrice = prices.length ? Math.min(...prices) * 0.99 : 0;
@@ -389,33 +435,87 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
     return (
         <div className="xl:col-span-7 bg-card border border-border p-8 rounded-xl shadow-sm space-y-6">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    {isAggregate ? (
-                        <>
-                            <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
-                            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
-                        </>
-                    ) : (
-                        <>
-                            <h3 className="text-lg font-black text-foreground tracking-tight">{activeTicker}</h3>
-                            <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">INTRADAY ACTION</span>
-                        </>
-                    )}
+            <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        {isAggregate ? (
+                            <>
+                                <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
+                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
+                            </>
+                        ) : (
+                            <>
+                                <h3 className="text-lg font-black text-foreground tracking-tight">{activeTicker}</h3>
+                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">INTRADAY ACTION</span>
+                            </>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-muted-foreground">
+                        {isAggregate ? (
+                            <>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> AVERAGE</div>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-blue-400 border-dashed" /> MEDIAN</div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> VWAP</div>
+                                {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
+                            </>
+                        )}
+                    </div>
                 </div>
-                <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-muted-foreground">
-                    {isAggregate ? (
-                        <>
-                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> AVERAGE</div>
-                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-blue-400 border-dashed" /> MEDIAN</div>
-                        </>
-                    ) : (
-                        <>
-                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
-                            <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> VWAP</div>
-                            {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
-                        </>
-                    )}
+
+                {/* Session & Smoothing Controls */}
+                <div className="flex flex-wrap items-center gap-6 pb-2 border-b border-border/40">
+                    <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Sessions:</span>
+                        <div className="flex items-center gap-4">
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={sessions.pre}
+                                    onChange={(e) => setSessions(prev => ({ ...prev, pre: e.target.checked }))}
+                                    className="hidden"
+                                />
+                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.pre ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
+                                <span className={`text-[10px] font-bold uppercase ${sessions.pre ? 'text-foreground' : 'text-muted-foreground'}`}>Pre</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={sessions.market}
+                                    onChange={(e) => setSessions(prev => ({ ...prev, market: e.target.checked }))}
+                                    className="hidden"
+                                />
+                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.market ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
+                                <span className={`text-[10px] font-bold uppercase ${sessions.market ? 'text-foreground' : 'text-muted-foreground'}`}>Market</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={sessions.post}
+                                    onChange={(e) => setSessions(prev => ({ ...prev, post: e.target.checked }))}
+                                    className="hidden"
+                                />
+                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.post ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
+                                <span className={`text-[10px] font-bold uppercase ${sessions.post ? 'text-foreground' : 'text-muted-foreground'}`}>Post</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Smoothing:</span>
+                        <input
+                            type="range"
+                            min="1"
+                            max="20"
+                            value={smoothing}
+                            onChange={(e) => setSmoothing(parseInt(e.target.value))}
+                            className="w-24 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-blue-600"
+                        />
+                        <span className="text-[10px] font-bold text-foreground w-4">{smoothing}</span>
+                    </div>
                 </div>
             </div>
 
@@ -456,31 +556,29 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                                 itemStyle={{ color: 'var(--foreground)' }}
                                 formatter={(value: any) => [value.toFixed(2) + (isAggregate ? "%" : ""), ""]}
                             />
-                            {/* Pre-Market / RTH Sessions visual markers */}
-                            {isAggregate && (
-                                <>
-                                    <ReferenceArea
-                                        x1="04:00"
-                                        x2="09:30"
-                                        fill="currentColor"
-                                        fillOpacity={0.03}
-                                        className="text-muted-foreground"
-                                    />
-                                    <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" label={{ position: 'insideTopLeft', value: 'Pre-Market', fill: 'currentColor', fontSize: 9, fontWeight: 'bold' }} />
-                                </>
+
+                            {/* Session visual markers */}
+                            {sessions.pre && (
+                                <ReferenceArea x1="03:00" x2="08:30" fill="currentColor" fillOpacity={0.03} className="text-muted-foreground" />
+                            )}
+                            {sessions.market && (
+                                <ReferenceArea x1="08:30" x2="15:00" fill="currentColor" fillOpacity={0.01} className="text-blue-500" />
+                            )}
+                            {sessions.post && (
+                                <ReferenceArea x1="15:00" x2="16:00" fill="currentColor" fillOpacity={0.03} className="text-orange-500" />
                             )}
 
                             {isAggregate ? (
                                 <>
-                                    <Line type="monotone" dataKey="avg_change" stroke="#2563eb" strokeWidth={3} dot={false} name="Average" />
-                                    <Line type="monotone" dataKey="median_change" stroke="#60a5fa" strokeWidth={2} strokeDasharray="4 4" dot={false} name="Median" />
+                                    <Line type="monotone" dataKey="avg_change" stroke="#2563eb" strokeWidth={3} dot={false} name="Average" animationDuration={300} />
+                                    <Line type="monotone" dataKey="median_change" stroke="#60a5fa" strokeWidth={2} strokeDasharray="4 4" dot={false} name="Median" animationDuration={300} />
                                 </>
                             ) : (
                                 <>
                                     {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
-                                    <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" />
-                                    <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} />
-                                    <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} />
+                                    <ReferenceLine x="08:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" />
+                                    <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} animationDuration={300} />
+                                    <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} animationDuration={300} />
                                 </>
                             )}
                         </ComposedChart>

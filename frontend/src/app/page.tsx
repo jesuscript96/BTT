@@ -6,11 +6,13 @@ import { Dashboard } from "@/components/Dashboard";
 import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
-import { CandleChartModal } from "@/components/CandleChartModal";
+import RollingAnalysisDashboard from "@/components/RollingAnalysisDashboard";
+import RegressionAnalysis from "@/components/RegressionAnalysis";
 
 import { API_URL } from "@/config/constants";
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [aggregateSeries, setAggregateSeries] = useState<any[]>([]);
@@ -22,9 +24,7 @@ export default function Home() {
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0); // To force refresh panel UI
 
-  // Modal State for Candlestick View
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedRow, setSelectedRow] = useState<any>(null);
+
 
   const fetchData = async (filters: any = currentFilters, rules: any[] = activeRules) => {
     setIsLoading(true);
@@ -141,10 +141,6 @@ export default function Home() {
     }
   };
 
-  const handleViewDay = (row: any) => {
-    setSelectedRow(row);
-    setIsModalOpen(true);
-  };
 
   const handleExport = async () => {
     try {
@@ -220,50 +216,94 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto bg-background scrollbar-thin scrollbar-track-muted/50 scrollbar-thumb-muted relative transition-colors duration-300">
-        <FilterBuilder
-          isOpen={isFilterBuilderOpen}
-          onClose={() => setIsFilterBuilderOpen(false)}
-          onSave={(newRules) => {
-            setActiveRules(prev => [...prev, ...newRules]);
-            setIsFilterBuilderOpen(false);
-          }}
-        />
-
-        <SaveDatasetModal
-          isOpen={isSaveModalOpen}
-          onClose={() => setIsSaveModalOpen(false)}
-          filters={currentFilters}
-          rules={activeRules}
-        />
-
-        <LoadDatasetModal
-          isOpen={isLoadModalOpen}
-          onClose={() => setIsLoadModalOpen(false)}
-          onLoad={handleLoadDataset}
-        />
-        <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
-        <div className="px-6 pb-20">
-          <div className="border border-border rounded-xl overflow-hidden shadow-sm bg-card">
-            <DataGrid data={data} isLoading={isLoading} onViewDay={handleViewDay} />
-          </div>
-        </div>
+      {/* Tab Navigation */}
+      <div className="px-6 pt-4 border-b border-border flex gap-6">
+        <button
+          onClick={() => setActiveTab('screener')}
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'screener'
+            ? 'border-blue-500 text-foreground'
+            : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+        >
+          Screener & Summary
+        </button>
+        <button
+          onClick={() => setActiveTab('rolling')}
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'rolling'
+            ? 'border-blue-500 text-foreground'
+            : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+        >
+          Rolling Analysis
+        </button>
+        <button
+          onClick={() => setActiveTab('regression')}
+          className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'regression'
+            ? 'border-blue-500 text-foreground'
+            : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+        >
+          Regression Analysis
+        </button>
       </div>
 
-      <CandleChartModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        ticker={selectedRow?.ticker || ""}
-        date={selectedRow?.date || ""}
-        metrics={{
-          pmh_gap_pct: selectedRow?.pmh_gap_pct || 0,
-          pmh_fade_pct: selectedRow?.pmh_fade_pct || 0,
-          gap_at_open_pct: selectedRow?.gap_at_open_pct || 0,
-          rth_fade_pct: selectedRow?.rth_fade_pct || 0,
-          volume: selectedRow?.volume || 0,
-          open: selectedRow?.open
-        }}
-      />
+      <div className="flex-1 overflow-auto bg-background scrollbar-thin scrollbar-track-muted/50 scrollbar-thumb-muted relative transition-colors duration-300">
+
+        {activeTab === 'screener' && (
+          <>
+            <FilterBuilder
+              isOpen={isFilterBuilderOpen}
+              onClose={() => setIsFilterBuilderOpen(false)}
+              onSave={(newRules) => {
+                setActiveRules(prev => [...prev, ...newRules]);
+                setIsFilterBuilderOpen(false);
+              }}
+            />
+
+            <SaveDatasetModal
+              isOpen={isSaveModalOpen}
+              onClose={() => setIsSaveModalOpen(false)}
+              filters={currentFilters}
+              rules={activeRules}
+            />
+
+            <LoadDatasetModal
+              isOpen={isLoadModalOpen}
+              onClose={() => setIsLoadModalOpen(false)}
+              onLoad={handleLoadDataset}
+            />
+            <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
+            <div className="px-6 pb-20">
+              <div className="border border-border rounded-xl overflow-hidden shadow-sm bg-card">
+                <DataGrid data={data} isLoading={isLoading} />
+              </div>
+            </div>
+          </>
+        )}
+
+        {activeTab === 'rolling' && (
+          <div className="p-6 h-full">
+            {currentFilters.ticker ? (
+              <RollingAnalysisDashboard
+                ticker={currentFilters.ticker}
+                startDate={currentFilters.start_date}
+                endDate={currentFilters.end_date}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground border border-dashed border-border rounded-xl">
+                <p>Please select a Ticker in the Filter Panel to view Rolling Analysis.</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'regression' && (
+          <div className="p-6 h-full">
+            <RegressionAnalysis data={data} />
+          </div>
+        )}
+
+      </div>
     </div>
   );
 }

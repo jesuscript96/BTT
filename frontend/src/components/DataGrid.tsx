@@ -47,9 +47,12 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
                         <tr key={i} className="hover:bg-accent/50 transition-colors group">
                             <td className="px-4 py-3 sticky left-0 bg-background group-hover:bg-accent/50 z-10 border-r border-border/50 text-center">
                                 <button
-                                    onClick={() => onViewDay?.(row)}
+                                    onClick={() => {
+                                        const url = `/analysis/${row.ticker}/${row.date}`;
+                                        window.open(url, '_blank', 'noreferrer');
+                                    }}
                                     className="p-1.5 hover:bg-blue-500/10 rounded-lg text-blue-500 transition-colors flex items-center justify-center w-full"
-                                    title="View Intraday Chart"
+                                    title="View Intraday Chart in New Window"
                                 >
                                     <Eye className="w-4 h-4" />
                                 </button>
