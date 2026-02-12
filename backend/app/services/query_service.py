@@ -67,6 +67,7 @@ def get_stats_sql_logic(where_d, where_i, where_m):
                 
                 -- Timed Prices (relative markers)
                 MAX(CASE WHEN strftime(ts, '%H:%M') = '08:30' THEN open END) as rth_o,
+                MAX(CASE WHEN strftime(ts, '%H:%M') = '08:30' THEN vwap END) as rth_vwap,
                 MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as p_open_930,
                 MAX(CASE WHEN strftime(ts, '%H:%M') = '09:45' THEN close END) as p_m15,
                 MAX(CASE WHEN strftime(ts, '%H:%M') = '10:30' THEN close END) as p_m60,
@@ -100,7 +101,7 @@ def get_stats_sql_logic(where_d, where_i, where_m):
                 (CASE WHEN d.high > i.pm_h THEN 100 ELSE 0 END) as pmh_b,
                 (CASE WHEN d.close < d.open THEN 100 ELSE 0 END) as c_red,
                 ((d.high - d.low) / d.low * 100) as r_range,
-                (CASE WHEN i.rth_o < i.v_max_rth THEN 100 ELSE 0 END) as o_vw_h
+                (CASE WHEN i.rth_o < i.rth_vwap THEN 100 ELSE 0 END) as o_vw_h
             FROM daily_base d
             JOIN intraday_raw i ON d.ticker = i.ticker AND d.date = i.d
             WHERE {where_d}
