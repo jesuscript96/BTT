@@ -159,8 +159,10 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
             LEFT JOIN intraday_raw i ON d.ticker = i.ticker AND d.date = i.d
         ),
         pool AS ( 
-            SELECT * FROM full_metrics 
-            WHERE {where_m} AND (ticker, date) IN (SELECT ticker, date FROM daily_candidates)
+            SELECT m.* 
+            FROM full_metrics m
+            JOIN daily_candidates dc ON m.ticker = dc.ticker AND m.date = dc.date
+            WHERE {where_m}
             ORDER BY random() LIMIT 500 
         )
         SELECT * FROM (
