@@ -34,8 +34,6 @@ class FilterRequest(BaseModel):
     max_low_spike_pct: Optional[float] = None
     hod_after: Optional[str] = None
     lod_before: Optional[str] = None
-    close_gt_vwap: Optional[bool] = None
-    open_lt_vwap: Optional[bool] = None
     rules: Optional[List[FilterRule]] = []
 
 METRIC_MAP = {
@@ -85,7 +83,8 @@ def filter_daily_metrics(filters: FilterRequest):
     con = None
     try:
         con = get_db_connection(read_only=True)
-        query = "SELECT * FROM daily_metrics WHERE 1=1"
+        # Derive date from timestamp since daily_metrics has no date column
+        query = "SELECT *, CAST(timestamp AS VARCHAR)[:10] as date FROM daily_metrics WHERE 1=1"
         params = []
         
         # 1. Handle Basic Filters (legacy support)
@@ -106,11 +105,11 @@ def filter_daily_metrics(filters: FilterRequest):
             params.append(filters.min_rth_volume)
             
         if filters.date_from:
-            query += " AND date >= ?"
+            query += " AND CAST(timestamp AS VARCHAR)[:10] >= ?"
             params.append(filters.date_from)
             
         if filters.date_to:
-            query += " AND date <= ?"
+            query += " AND CAST(timestamp AS VARCHAR)[:10] <= ?"
             params.append(filters.date_to)
 
         # 1.1 Handle Extended Filters
@@ -144,9 +143,6 @@ def filter_daily_metrics(filters: FilterRequest):
         if filters.lod_before:
             query += " AND lod_time <= ?"
             params.append(filters.lod_before)
-        if filters.open_lt_vwap is not None:
-            query += " AND open_lt_vwap = ?"
-            params.append(filters.open_lt_vwap)
 
         # 2. Handle Dynamic Rules
         if filters.rules:
@@ -173,7 +169,7 @@ def filter_daily_metrics(filters: FilterRequest):
                     if target_col:
                         query += f" AND {col} {op} {target_col}"
             
-        query += " ORDER BY date DESC"
+        query += " ORDER BY CAST(timestamp AS VARCHAR)[:10] DESC"
         
         df = con.execute(query, params).fetch_df()
         
@@ -218,6 +214,7 @@ def get_tickers():
 def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
     """
     Fetch intraday OHLC data for a specific ticker and range.
+    Uses intraday_1m table (historical_data no longer exists).
     """
     import pandas as pd
     con = None
@@ -225,9 +222,9 @@ def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
         con = get_db_connection(read_only=True)
         query = """
             SELECT 
-                timestamp, open, high, low, close, volume, vwap 
-            FROM historical_data 
-            WHERE ticker = ? AND timestamp >= ? AND timestamp <= ?
+                timestamp, open, high, low, close, volume
+            FROM intraday_1m 
+            WHERE ticker = ? AND timestamp >= CAST(? AS TIMESTAMP) AND timestamp <= CAST(? AS TIMESTAMP)
             ORDER BY timestamp ASC
         """
         df = con.execute(query, [ticker.upper(), date_from, date_to]).fetch_df()
@@ -235,10 +232,9 @@ def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
         if df.empty:
             return []
             
-        # Convert timestamp to ISO format for JSON
-        df['time'] = df['timestamp'].view('int64') // 10**9 # Convert to unix timestamp for lightweight-charts
+        df['time'] = df['timestamp'].view('int64') // 10**9
         
-        return df[['time', 'open', 'high', 'low', 'close', 'volume', 'vwap']].to_dict(orient="records")
+        return df[['time', 'open', 'high', 'low', 'close', 'volume']].to_dict(orient="records")
     except Exception as e:
         print(f"Historical OHLC API Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

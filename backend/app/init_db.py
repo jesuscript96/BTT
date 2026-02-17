@@ -2,7 +2,7 @@ from app.database import get_db_connection
 
 def init_db():
     con = get_db_connection()
-    print("Checking and creating tables in JAUME...")
+    print("Checking and creating tables in massive...")
     
     # 1. Saved Queries (Datasets)
     # Stores filters as JSON.
@@ -33,7 +33,7 @@ def init_db():
     
     # Verify
     tables = con.execute("SHOW TABLES").fetchall()
-    print(f"Current tables in JAUME: {[t[0] for t in tables]}")
+    print(f"Current tables in massive: {[t[0] for t in tables]}")
 
 if __name__ == "__main__":
     init_db()

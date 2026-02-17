@@ -151,10 +151,10 @@ def run_backtest(request: BacktestRequest):
             SELECT 
                 i.timestamp, i.open, i.high, i.low, i.close, 
                 CASE WHEN (i.prev_v IS NULL OR i.volume != i.prev_v OR i.close != i.prev_c) THEN i.volume ELSE 0 END as volume,
-                i.ticker, i.vwap, u.pm_h as pm_high, u.pm_v as pm_volume,
+                i.ticker, u.pm_h as pm_high, u.pm_v as pm_volume,
                 u.gap_pct, u.day_ret, u.rth_run
             FROM intraday_clean i
-            JOIN universe u ON i.ticker = u.ticker AND CAST(i.timestamp AS DATE) = u.date
+            JOIN universe u ON i.ticker = u.ticker AND CAST(i.timestamp AS VARCHAR)[:10] = u.date
             ORDER BY i.timestamp ASC
         """
         

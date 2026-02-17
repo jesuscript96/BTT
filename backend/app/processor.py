@@ -30,8 +30,8 @@ def process_daily_metrics(df, con=None):
                                      (clean_group['close'] == clean_group['close'].shift(1))
         
         c_times = clean_group['timestamp'].dt.time
-        pm_session = clean_group[(c_times >= pd.Timestamp("03:00").time()) & (c_times < pd.Timestamp("08:30").time())]
-        rth_session = clean_group[(c_times >= pd.Timestamp("08:30").time()) & (c_times < pd.Timestamp("16:00").time())]
+        pm_session = clean_group[(c_times >= pd.Timestamp("04:00").time()) & (c_times < pd.Timestamp("09:30").time())]
+        rth_session = clean_group[(c_times >= pd.Timestamp("09:30").time()) & (c_times < pd.Timestamp("16:00").time())]
         
         if rth_session.empty:
             # Still update prev_close for next day if RTH exists but this day is missing it
@@ -66,8 +66,8 @@ def process_daily_metrics(df, con=None):
                 # Improved to get actual last trading day before current date
                 result = con.execute("""
                     SELECT rth_close, rth_high, rth_low FROM daily_metrics 
-                    WHERE ticker = ? AND date < ?
-                    ORDER BY date DESC LIMIT 1
+                    WHERE ticker = ? AND CAST(timestamp AS VARCHAR)[:10] < CAST(? AS VARCHAR)
+                    ORDER BY timestamp DESC LIMIT 1
                 """, [ticker, date]).fetchone()
                 if result:
                     prev_close = result[0]
@@ -89,9 +89,8 @@ def process_daily_metrics(df, con=None):
             pm_fade = ((rth_open - pm_high) / pm_high) * 100
             
         # New Metrics
-        # Open < VWAP
-        open_vwap = rth_session.iloc[0]['vwap']
-        open_lt_vwap = rth_open < open_vwap if not pd.isna(open_vwap) else False
+        # VWAP not available in massive DB
+        open_lt_vwap = False
         
         # PM High Break
         pm_high_break = rth_high > pm_high if pm_high > 0 else False
@@ -327,7 +326,7 @@ def get_dashboard_stats(filtered_df):
             'm15_return_pct': float(filtered_df['m15_return_pct'].mean()) if 'm15_return_pct' in filtered_df else 0,
             'm30_return_pct': float(filtered_df['m30_return_pct'].mean()) if 'm30_return_pct' in filtered_df else 0,
             'm60_return_pct': float(filtered_df['m60_return_pct'].mean()) if 'm60_return_pct' in filtered_df else 0,
-            'open_lt_vwap': float((filtered_df['open_lt_vwap'] == True).mean() * 100) if 'open_lt_vwap' in filtered_df else 0,
+            'open_lt_vwap': 0.0,  # VWAP not available in massive DB
             'pm_high_break': float((filtered_df['pm_high_break'] == True).mean() * 100) if 'pm_high_break' in filtered_df else 0,
             'close_direction_red': float((filtered_df['close_direction'] == 'red').mean() * 100) if 'close_direction' in filtered_df else 0,
             'close_lt_m15': float((filtered_df['close_lt_m15'] == True).mean() * 100) if 'close_lt_m15' in filtered_df else 0,
@@ -357,26 +356,21 @@ def get_aggregate_time_series(ticker_date_pairs):
         
     con = get_db_connection()
     
-    # Simple approach: fetch all data for these pairs and aggregate in pandas
-    # In a massive dataset, we would use a optimized SQL query.
-    
-    # ticker_date_pairs is a list of tuples or list of dicts from the filtered records
-    
     all_series = []
     
-    for item in ticker_date_pairs[:10]: # Limit to 10 for performance in this iteration
+    for item in ticker_date_pairs[:10]:
         ticker = item['ticker']
         date = item['date']
         
-        # Fetch 1m data for this day
-        df = con.execute("SELECT timestamp, open, close FROM historical_data WHERE ticker = ? AND CAST(timestamp AS DATE) = ?", 
+        # Use intraday_1m (historical_data no longer exists)
+        df = con.execute("SELECT timestamp, open, close FROM intraday_1m WHERE ticker = ? AND CAST(timestamp AS DATE) = CAST(? AS DATE)", 
                          [ticker, date]).fetch_df()
         
         if df.empty:
             continue
             
         df = df.sort_values('timestamp')
-        # Filter RTH
+        # Filter RTH (09:30 - 16:00 ET)
         rth = df[(df['timestamp'].dt.time >= pd.Timestamp("09:30").time()) & 
                  (df['timestamp'].dt.time < pd.Timestamp("16:00").time())]
         

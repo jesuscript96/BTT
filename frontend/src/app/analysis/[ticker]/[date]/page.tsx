@@ -36,8 +36,7 @@ export default function AnalysisPage() {
                     high: d.high,
                     low: d.low,
                     close: d.close,
-                    volume: d.volume,
-                    vwap: d.vwap
+                    volume: d.volume
                 })).sort((a: any, b: any) => a.time - b.time);
 
                 // Deduplicate
@@ -68,7 +67,6 @@ export default function AnalysisPage() {
             grid: isDark ? '#1e293b' : '#f1f5f9',
             candleUp: '#22c55e',
             candleDown: '#ef4444',
-            vwap: isDark ? '#ffffff' : '#3b82f6',
         };
 
         const chart = createChart(chartContainerRef.current, {
@@ -107,13 +105,6 @@ export default function AnalysisPage() {
             priceScaleId: '',
         });
 
-        const vwapSeries = chart.addSeries(LineSeries, {
-            color: themeColors.vwap,
-            lineWidth: 1,
-            lineStyle: 2,
-            title: 'VWAP',
-        });
-
         chart.priceScale('').applyOptions({
             scaleMargins: {
                 top: 0.8,
@@ -126,10 +117,6 @@ export default function AnalysisPage() {
             time: d.time,
             value: d.volume,
             color: d.close >= d.open ? themeColors.candleUp + '80' : themeColors.candleDown + '80'
-        })));
-        vwapSeries.setData(intradayData.map(d => ({
-            time: d.time,
-            value: d.vwap
         })));
 
         if (metrics?.open) {
@@ -233,7 +220,6 @@ export default function AnalysisPage() {
                 <div className="flex items-center gap-6 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                     <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-green-500" /> Candles</span>
                     <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded bg-blue-500/40" /> Volume</span>
-                    <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 border border-blue-400 border-dashed" /> VWAP</span>
                 </div>
                 <div className="flex items-center gap-4">
                     <span className="text-[10px] font-black text-slate-600 tracking-tighter uppercase mr-4">BTT Trading Console v2.0</span>

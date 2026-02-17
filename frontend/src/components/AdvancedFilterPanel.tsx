@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import { Search, Filter, RefreshCw, Download, ChevronDown, ChevronUp } from "lucide-react";
 
 interface AdvancedFilterPanelProps {
+    filters: any;
+    onFilterStateChange: (filters: any) => void;
     onFilter: (filters: any) => void;
     onExport: () => void;
     onSaveDataset: () => void;
@@ -12,47 +14,54 @@ interface AdvancedFilterPanelProps {
 }
 
 export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
+    filters,
+    onFilterStateChange,
     onFilter,
     onExport,
     onSaveDataset,
     onLoadDataset,
     isLoading
 }) => {
-    const [ticker, setTicker] = useState("");
-    const [minGap, setMinGap] = useState("");
-    const [maxGap, setMaxGap] = useState("");
-    const [minVol, setMinVol] = useState("");
-    const [minPmVol, setMinPmVol] = useState("");
-    const [startDate, setStartDate] = useState("");
-    const [endDate, setEndDate] = useState("");
-    const [m15Ret, setM15Ret] = useState("");
-    const [dayRet, setDayRet] = useState("");
-    const [highSpike, setHighSpike] = useState("");
-    const [lowSpike, setLowSpike] = useState("");
-    const [hodAfter, setHodAfter] = useState("");
-    const [lodBefore, setLodBefore] = useState("");
-    const [openLtVwap, setOpenLtVwap] = useState(false);
-    const [closeGtVwap, setCloseGtVwap] = useState(false);
-    const [isExpanded, setIsExpanded] = useState(true);
+    // Local state for UI responsiveness, synced with parent
+    const [ticker, setTicker] = React.useState(filters.ticker || "");
+    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "");
+    const [maxGap, setMaxGap] = React.useState(filters.max_gap_pct?.toString() || "");
+    const [minVol, setMinVol] = React.useState(filters.min_rth_volume?.toString() || "");
+    const [minPmVol, setMinPmVol] = React.useState(filters.min_pm_volume?.toString() || "5000000");
+    const [startDate, setStartDate] = React.useState(filters.start_date || "");
+    const [endDate, setEndDate] = React.useState(filters.end_date || "");
+    const [m15Ret, setM15Ret] = React.useState(filters.min_m15_ret_pct?.toString() || "");
+    const [dayRet, setDayRet] = React.useState(filters.min_rth_run_pct?.toString() || "");
+    const [highSpike, setHighSpike] = React.useState(filters.min_high_spike_pct?.toString() || "");
+    const [lowSpike, setLowSpike] = React.useState(filters.min_low_spike_pct?.toString() || "");
+    const [hodAfter, setHodAfter] = React.useState(filters.hod_after || "");
+    const [lodBefore, setLodBefore] = React.useState(filters.lod_before || "");
+    const [isExpanded, setIsExpanded] = React.useState(true);
+
+    // Sync from props (when loading datasets)
+    React.useEffect(() => {
+        setTicker(filters.ticker || "");
+        setMinGap(filters.min_gap_pct?.toString() || "");
+        setMaxGap(filters.max_gap_pct?.toString() || "");
+        setMinVol(filters.min_rth_volume?.toString() || "");
+        setMinPmVol(filters.min_pm_volume?.toString() || "");
+        setStartDate(filters.start_date || "");
+        setEndDate(filters.end_date || "");
+        setM15Ret(filters.min_m15_ret_pct?.toString() || "");
+        setDayRet(filters.min_rth_run_pct?.toString() || "");
+        setHighSpike(filters.min_high_spike_pct?.toString() || "");
+        setLowSpike(filters.min_low_spike_pct?.toString() || "");
+        setHodAfter(filters.hod_after || "");
+        setLodBefore(filters.lod_before || "");
+    }, [filters]);
+
+    // Report changes back to parent
+    const updateParent = (key: string, value: any) => {
+        onFilterStateChange({ ...filters, [key]: value });
+    };
 
     const handleApply = () => {
-        onFilter({
-            ticker: ticker || undefined,
-            min_gap_pct: minGap ? parseFloat(minGap) : undefined,
-            max_gap_pct: maxGap ? parseFloat(maxGap) : undefined,
-            min_rth_volume: minVol ? parseFloat(minVol) : undefined,
-            min_pm_volume: minPmVol ? parseFloat(minPmVol) : undefined,
-            min_m15_ret_pct: m15Ret ? parseFloat(m15Ret) : undefined,
-            min_rth_run_pct: dayRet ? parseFloat(dayRet) : undefined,
-            min_high_spike_pct: highSpike ? parseFloat(highSpike) : undefined,
-            min_low_spike_pct: lowSpike ? parseFloat(lowSpike) : undefined,
-            hod_after: hodAfter || undefined,
-            lod_before: lodBefore || undefined,
-            open_lt_vwap: openLtVwap || undefined,
-            close_gt_vwap: closeGtVwap || undefined,
-            start_date: startDate || undefined,
-            end_date: endDate || undefined
-        });
+        onFilter(filters);
     };
 
     return (
@@ -65,7 +74,11 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                             type="text"
                             placeholder="Ticker..."
                             value={ticker}
-                            onChange={(e) => setTicker(e.target.value)}
+                            onChange={(e) => {
+                                const val = e.target.value.toUpperCase();
+                                setTicker(val);
+                                updateParent('ticker', val);
+                            }}
                             className="bg-muted/50 border border-border text-foreground pl-8 pr-3 py-2 rounded-lg text-sm w-32 focus:border-blue-500 outline-none shadow-sm transition-all placeholder:text-muted-foreground/50"
                         />
                     </div>
@@ -74,7 +87,10 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                         <input
                             type="date"
                             value={startDate}
-                            onChange={(e) => setStartDate(e.target.value)}
+                            onChange={(e) => {
+                                setStartDate(e.target.value);
+                                updateParent('start_date', e.target.value);
+                            }}
                             title="Start Date"
                             className="bg-muted/50 border border-border text-foreground px-2 py-2 rounded-lg text-sm focus:border-blue-500 outline-none shadow-sm transition-all w-32 [color-scheme:dark]"
                         />
@@ -82,7 +98,10 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                         <input
                             type="date"
                             value={endDate}
-                            onChange={(e) => setEndDate(e.target.value)}
+                            onChange={(e) => {
+                                setEndDate(e.target.value);
+                                updateParent('end_date', e.target.value);
+                            }}
                             title="End Date"
                             className="bg-muted/50 border border-border text-foreground px-2 py-2 rounded-lg text-sm focus:border-blue-500 outline-none shadow-sm transition-all w-32 [color-scheme:dark]"
                         />
@@ -91,10 +110,22 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                     <div className="h-6 w-px bg-border" />
 
                     <div className="flex gap-2">
-                        <FilterInput label="Min Gap" value={minGap} onChange={setMinGap} />
-                        <FilterInput label="Max Gap" value={maxGap} onChange={setMaxGap} />
-                        <FilterInput label="RTH Vol" value={minVol} onChange={setMinVol} />
-                        <FilterInput label="PM Vol" value={minPmVol} onChange={setMinPmVol} />
+                        <FilterInput label="Min Gap" value={minGap} onChange={(v: string) => {
+                            setMinGap(v);
+                            updateParent('min_gap_pct', v ? parseFloat(v) : undefined);
+                        }} />
+                        <FilterInput label="Max Gap" value={maxGap} onChange={(v: string) => {
+                            setMaxGap(v);
+                            updateParent('max_gap_pct', v ? parseFloat(v) : undefined);
+                        }} />
+                        <FilterInput label="RTH Vol" value={minVol} onChange={(v: string) => {
+                            setMinVol(v);
+                            updateParent('min_rth_volume', v ? parseFloat(v) : undefined);
+                        }} />
+                        <FilterInput label="PM Vol" value={minPmVol} onChange={(v: string) => {
+                            setMinPmVol(v);
+                            updateParent('min_pm_volume', v ? parseFloat(v) : undefined);
+                        }} />
                     </div>
                 </div>
 
@@ -138,26 +169,40 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                 </div>
             </div>
 
-            {isExpanded && (
+            {/* {isExpanded && (
                 <div className="px-4 pb-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 border-t border-border pt-4">
                     <CategoryGroup title="Returns">
-                        <FilterInput label="M15 Ret %" value={m15Ret} onChange={setM15Ret} />
-                        <FilterInput label="Day Ret %" value={dayRet} onChange={setDayRet} />
+                        <FilterInput label="M15 Ret %" value={m15Ret} onChange={(v: string) => {
+                            setM15Ret(v);
+                            updateParent('min_m15_ret_pct', v ? parseFloat(v) : undefined);
+                        }} />
+                        <FilterInput label="Day Ret %" value={dayRet} onChange={(v: string) => {
+                            setDayRet(v);
+                            updateParent('min_rth_run_pct', v ? parseFloat(v) : undefined);
+                        }} />
                     </CategoryGroup>
                     <CategoryGroup title="Volatility">
-                        <FilterInput label="High Spike %" value={highSpike} onChange={setHighSpike} />
-                        <FilterInput label="Low Spike %" value={lowSpike} onChange={setLowSpike} />
+                        <FilterInput label="High Spike %" value={highSpike} onChange={(v: string) => {
+                            setHighSpike(v);
+                            updateParent('min_high_spike_pct', v ? parseFloat(v) : undefined);
+                        }} />
+                        <FilterInput label="Low Spike %" value={lowSpike} onChange={(v: string) => {
+                            setLowSpike(v);
+                            updateParent('min_low_spike_pct', v ? parseFloat(v) : undefined);
+                        }} />
                     </CategoryGroup>
                     <CategoryGroup title="Time">
-                        <FilterInput label="HOD After" value={hodAfter} onChange={setHodAfter} />
-                        <FilterInput label="LOD Before" value={lodBefore} onChange={setLodBefore} />
-                    </CategoryGroup>
-                    <CategoryGroup title="VWAP">
-                        <FilterInput label="Close > VWAP" checked={closeGtVwap} onChange={(v: any) => setCloseGtVwap(v)} isCheck />
-                        <FilterInput label="Open < VWAP" checked={openLtVwap} onChange={(v: any) => setOpenLtVwap(v)} isCheck />
+                        <FilterInput label="HOD After" value={hodAfter} onChange={(v: string) => {
+                            setHodAfter(v);
+                            updateParent('hod_after', v || undefined);
+                        }} />
+                        <FilterInput label="LOD Before" value={lodBefore} onChange={(v: string) => {
+                            setLodBefore(v);
+                            updateParent('lod_before', v || undefined);
+                        }} />
                     </CategoryGroup>
                 </div>
-            )}
+            )} */}
         </div>
     );
 };

@@ -8,22 +8,21 @@ from fastapi.responses import JSONResponse
 
 from app.scheduler import start_scheduler
 from app.database import get_db_connection
-from app.ingestion import ingest_ticker_snapshot
 
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize Application
-    print("Startup: Connecting to JAUME database...")
+    print("Startup: Connecting to massive database...")
     
     # Verify database connection
     try:
         con = get_db_connection()
         tables = con.execute("SHOW TABLES").fetchall()
-        print(f"✅ Connected to JAUME. Tables: {[t[0] for t in tables]}")
+        print(f"✅ Connected to massive. Tables: {[t[0] for t in tables]}")
         con.close()
     except Exception as e:
-        print(f"❌ Error connecting to JAUME: {e}")
+        print(f"❌ Error connecting to massive: {e}")
         raise
         
     start_scheduler()
@@ -54,7 +53,6 @@ app.add_middleware(
 )
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
-from app.api import ingestion
 import logging
 
 # ... (logging setup if needed)
@@ -66,7 +64,6 @@ app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)
 app.include_router(market.router)
-app.include_router(ingestion.router)  # Deep history ingestion endpoint
 
 @app.get("/health")
 def read_health():

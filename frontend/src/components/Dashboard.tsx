@@ -108,7 +108,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                             <StatProgress label="RTH Fade To Close %" value={averages.rth_fade_to_close_pct} color="#ef4444" />
 
                             <div className="pt-4 space-y-4">
-                                <StatProgress label="Open < VWAP" value={averages.open_lt_vwap} color="#f59e0b" />
                                 <StatProgress label="PM High Break" value={averages.pm_high_break} color="#3b82f6" />
                                 <StatProgress label="Close Red" value={averages.close_red} color="#ef4444" />
                                 <StatProgress label="Low Spike < Prev. Close" value={averages.low_spike_lt_prev_close} color="#9ca3af" />
@@ -379,9 +378,9 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
             const time = d.time || d.timeShort;
             if (!time) return true;
 
-            if (time >= "03:00" && time < "08:30") return sessions.pre;
-            if (time >= "08:30" && time < "15:00") return sessions.market;
-            if (time >= "15:00" && time < "16:15") return sessions.post; // extended a bit for postmarket
+            if (time >= "04:00" && time < "09:30") return sessions.pre;
+            if (time >= "09:30" && time < "16:00") return sessions.market;
+            if (time >= "16:00" && time < "20:00") return sessions.post;
             return false;
         });
 
@@ -399,7 +398,6 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                 smoothed.median_change = subset.reduce((acc, curr) => acc + (curr.median_change || 0), 0) / subset.length;
             } else {
                 smoothed.close = subset.reduce((acc, curr) => acc + curr.close, 0) / subset.length;
-                smoothed.vwap = subset.reduce((acc, curr) => acc + (curr.vwap || 0), 0) / subset.length;
             }
             return smoothed;
         });
@@ -459,7 +457,6 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                         ) : (
                             <>
                                 <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-400" /> VWAP</div>
                                 {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
                             </>
                         )}
@@ -559,13 +556,13 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
                             {/* Session visual markers */}
                             {sessions.pre && (
-                                <ReferenceArea x1="03:00" x2="08:30" fill="currentColor" fillOpacity={0.03} className="text-muted-foreground" />
+                                <ReferenceArea x1="04:00" x2="09:30" fill="currentColor" fillOpacity={0.03} className="text-muted-foreground" />
                             )}
                             {sessions.market && (
-                                <ReferenceArea x1="08:30" x2="15:00" fill="currentColor" fillOpacity={0.01} className="text-blue-500" />
+                                <ReferenceArea x1="09:30" x2="16:00" fill="currentColor" fillOpacity={0.01} className="text-blue-500" />
                             )}
                             {sessions.post && (
-                                <ReferenceArea x1="15:00" x2="16:00" fill="currentColor" fillOpacity={0.03} className="text-orange-500" />
+                                <ReferenceArea x1="16:00" x2="20:00" fill="currentColor" fillOpacity={0.03} className="text-orange-500" />
                             )}
 
                             {isAggregate ? (
@@ -576,9 +573,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
                             ) : (
                                 <>
                                     {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
-                                    <ReferenceLine x="08:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" />
+                                    <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" />
                                     <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} animationDuration={300} />
-                                    <Line type="monotone" dataKey="vwap" stroke="#fb923c" strokeWidth={2} dot={false} animationDuration={300} />
                                 </>
                             )}
                         </ComposedChart>

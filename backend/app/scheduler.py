@@ -1,58 +1,20 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-from app.ingestion import ingest_ticker_snapshot
 import atexit
 import os
 
-# v2.0 - Night-time pulse with timezone support
+# v3.0 - Scheduler stub (ingestion removed from this application)
 
 def start_scheduler():
     """
-    Start the background scheduler for data ingestion.
-    
-    NIGHT-TIME PULSE STRATEGY:
-    - Runs ONLY during off-peak hours (12am-8am Mexico CST/CDT)
-    - More aggressive loading during night (5 tickers, 30 days)
-    - Completely idle during the day (8am-12am) to allow backtests
-    - In production, can be disabled with ENABLE_PULSE=false
+    Scheduler placeholder.
+    Ingestion is now handled externally — not from this backend.
+    The scheduler is kept as a no-op to avoid breaking main.py imports.
     """
-    # Check if we're in production (Render sets this)
-    is_production = os.getenv("RENDER") == "true"
-    pulse_enabled = os.getenv("ENABLE_PULSE", "true").lower() == "true"  # Default TRUE now
+    pulse_enabled = os.getenv("ENABLE_PULSE", "false").lower() == "true"
     
-    if is_production and not pulse_enabled:
-        print("⚠️  Production mode: Pulse scheduler DISABLED via ENABLE_PULSE=false.")
-        print("💡 Use POST /api/ingestion/deep-history to trigger manual ingestion.")
-        return  # Don't start scheduler
+    if not pulse_enabled:
+        print("ℹ️  Scheduler disabled (ingestion handled externally).")
+        return
     
-    scheduler = BackgroundScheduler(timezone='America/Mexico_City')
-    
-    # Night-Time Aggressive Pulse: 5 tickers, last 30 days, every 3 minutes
-    # Runs ONLY between 12:00 AM and 8:00 AM Mexico time
-    from app.ingestion import night_pulse_cycle
-    scheduler.add_job(
-        func=night_pulse_cycle, 
-        trigger="cron",
-        hour='0-7',  # 12am to 7:59am (8am not included)
-        minute='*/3',  # Every 3 minutes
-        max_instances=1,  # Prevent overlaps
-        coalesce=True,    # Skip missed runs if one is already running
-        id="night_pulse"
-    )
-    
-    # Daily Smart Scanner: Runs at 5:00 PM Mexico City (Market Close + 1h for data settlement)
-    from app.ingestion import run_daily_scan_job
-    scheduler.add_job(
-        func=run_daily_scan_job,
-        trigger="cron",
-        hour=17, # 5:00 PM
-        minute=0,
-        max_instances=1,
-        id="daily_scanner"
-    )
-    
-    scheduler.start()
-    print("✅ Scheduler started: Night-Time Pulse (12am-8am) & Daily Smart Scanner (5pm).")
-    print("💤 Daytime: Pulse IDLE (8am-12am) - Free for backtests!")
-    
-    # Shut down the scheduler when exiting the app
-    atexit.register(lambda: scheduler.shutdown())
+    # If someone explicitly enables it, warn them
+    print("⚠️  ENABLE_PULSE=true but ingestion is no longer handled by this backend.")
+    print("💡  Data ingestion should be done through the external pipeline.")

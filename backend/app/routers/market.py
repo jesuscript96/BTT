@@ -42,7 +42,7 @@ def screen_market(
         })
 
         # Use shared query service
-        rec_query, sql_p, where_d, where_i, where_m = build_screener_query(filters, limit)
+        rec_query, sql_p, where_d, where_i, where_m, where_base = build_screener_query(filters, limit)
 
         # Execute
         cur = con.execute(rec_query, sql_p)
@@ -59,19 +59,16 @@ def screen_market(
                 "pmh_fade_pct": safe_float(rd['pmh_fade']), "rth_fade_pct": safe_float(rd['rth_fade'])
             })
         
-        st_query = get_stats_sql_logic(where_d, where_i, where_m)
+        st_query = get_stats_sql_logic(where_d, where_i, where_m, where_base)
         st_rows = con.execute(st_query, sql_p).fetchall()
         
         stats_payload = {"count": len(recs), "avg": {}, "p25": {}, "p50": {}, "p75": {}, "distributions": {"hod_time": {}, "lod_time": {}}}
         if st_rows:
-            # First row is 'avg', get distributions from it
             for s_row in st_rows:
                 s_key = s_row[0]
                 if s_key == 'avg':
                     stats_payload['avg'] = map_stats_row(s_row)
-                    # For distributions, we need more than just MODE to look good. 
-                    # But for now, returning MODE as the primary key.
-                    stats_payload['distributions'] = {"hod_time": {str(s_row[22]): 1.0}, "lod_time": {str(s_row[23]): 1.0}}
+                    stats_payload['distributions'] = {"hod_time": {str(s_row[21]): 1.0}, "lod_time": {str(s_row[22]): 1.0}}
                 elif s_key in ['p25', 'p50', 'p75']:
                     stats_payload[s_key] = map_stats_row(s_row)
 
@@ -93,9 +90,9 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
             else: return []
 
         query = """
-            SELECT timestamp, open, high, low, close, volume, vwap
+            SELECT timestamp, open, high, low, close, volume
             FROM intraday_1m WHERE ticker = ? AND CAST(timestamp AS DATE) = ?
-            GROUP BY 1, 2, 3, 4, 5, 6, 7 ORDER BY timestamp ASC
+            GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY timestamp ASC
         """
         cur = con.execute(query, [ticker, trade_date])
         cols, rows = [d[0] for d in cur.description], cur.fetchall()
@@ -106,7 +103,7 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
             recs.append({
                 "timestamp": str(ts.strftime('%Y-%m-%d %H:%M:%S') if hasattr(ts, 'strftime') else ts),
                 "open": safe_float(rd['open']), "high": safe_float(rd['high']), "low": safe_float(rd['low']),
-                "close": safe_float(rd['close']), "volume": safe_float(rd['volume']), "vwap": safe_float(rd['vwap'])
+                "close": safe_float(rd['close']), "volume": safe_float(rd['volume'])
             })
         return recs
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
@@ -117,15 +114,12 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
 def get_metrics_history(ticker: str, limit: int = 500):
     """
     Get historical daily metrics for rolling analysis.
-    Calculates metrics on-the-fly from intraday_1m to ensure full coverage 
-    (since daily_metrics table may not allow all derived columns).
+    Calculates metrics on-the-fly from intraday_1m to ensure full coverage.
     """
     con = None
     try:
         con = get_db_connection(read_only=True)
         
-        # We calculate daily stats from 1m data
-        # Logic adapted from query_service to be consistent
         query = """
             WITH intraday_clean AS (
                 SELECT CAST(timestamp AS DATE) as d, timestamp as ts, open, high, low, close, volume,
@@ -137,15 +131,15 @@ def get_metrics_history(ticker: str, limit: int = 500):
             daily_agg AS (
                 SELECT 
                     d,
-                    -- RTH Open/High/Low/Close (08:30 - 15:00 Mexico Time / Equivalent to 09:30 ET if offset)
-                    MAX(CASE WHEN strftime(ts, '%H:%M') = '08:30' THEN open END) as rth_open,
-                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN high END) as rth_high,
-                    MIN(CASE WHEN strftime(ts, '%H:%M') >= '08:30' AND strftime(ts, '%H:%M') < '15:00' THEN low END) as rth_low,
-                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '14:59' AND strftime(ts, '%H:%M') < '15:00' THEN close 
-                             ELSE NULL END) as rth_close_final,  -- Capture last minute close
+                    -- RTH Open/High/Low/Close (09:30 - 16:00 ET)
+                    MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as rth_open,
+                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN high END) as rth_high,
+                    MIN(CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN low END) as rth_low,
+                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '15:59' AND strftime(ts, '%H:%M') < '16:00' THEN close 
+                             ELSE NULL END) as rth_close_final,
                     
-                    -- PM High (03:00 - 08:30)
-                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '03:00' AND strftime(ts, '%H:%M') < '08:30' THEN high END) as pm_high
+                    -- PM High (04:00 - 09:30 ET)
+                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN high END) as pm_high
                     
                 FROM intraday_clean
                 GROUP BY 1
@@ -156,9 +150,6 @@ def get_metrics_history(ticker: str, limit: int = 500):
                     rth_open, 
                     COALESCE(rth_high, rth_open) as rth_high, 
                     COALESCE(rth_low, rth_open) as rth_low,
-                    -- If final close missing, take last available? 
-                    -- For robustness, let's use a simpler aggregation if needed, but strict is better for 'Close'.
-                    -- Let's assume data has 15:59 or we use the last RTH trade.
                     rth_close_final as rth_close,
                     pm_high,
                     LAG(rth_close_final) OVER (ORDER BY d) as prev_close,
@@ -167,13 +158,10 @@ def get_metrics_history(ticker: str, limit: int = 500):
                 FROM daily_agg
             )
             SELECT * FROM final_daily 
-            WHERE rth_open IS NOT NULL -- Only valid trading days
+            WHERE rth_open IS NOT NULL
             ORDER BY date DESC 
             LIMIT ?
         """
-        
-        # Note: SQLite/DuckDB window functions over full history might be slow.
-        # But filtering by ticker first helps.
         
         cur = con.execute(query, [ticker, limit])
         cols, rows = [d[0] for d in cur.description], cur.fetchall()
@@ -185,28 +173,22 @@ def get_metrics_history(ticker: str, limit: int = 500):
             d_open = safe_float(rd['rth_open'])
             d_high = safe_float(rd['rth_high'])
             d_low = safe_float(rd['rth_low'])
-            d_close = safe_float(rd['rth_close']) or d_open # Fallback
+            d_close = safe_float(rd['rth_close']) or d_open
             pm_high = safe_float(rd['pm_high'])
             prev_close = safe_float(rd['prev_close'])
             prev_high = safe_float(rd['prev_high'])
             prev_low = safe_float(rd['prev_low'])
             
-            # 1. RTH Range %
             rth_range_pct = ((d_high - d_low) / d_low * 100) if d_low > 0 else 0
-            # 2. Return Close vs Open
             return_close_open = ((d_close - d_open) / d_open * 100) if d_open > 0 else 0
-            # 3. High/Low Spikes
             high_spike = ((d_high - prev_high) / prev_high * 100) if prev_high > 0 else 0
             low_spike = ((d_low - prev_low) / prev_low * 100) if prev_low > 0 else 0
-            # 4. Gap Extension
             gap = d_open - prev_close
             gap_ext = 0
             if abs(gap) > 0:
                 gap_ext = (d_high - d_open) / abs(gap) * 100
-            # 5. Close Index
             den = d_high - d_low
             close_idx = ((d_close - d_low) / den * 100) if den > 0 else 0
-            # 6. PMH Gap
             pmh_gap = ((d_open - pm_high) / pm_high * 100) if pm_high > 0 else 0
             
             data.append({
@@ -233,7 +215,7 @@ def get_latest_market_date():
     con = None
     try:
         con = get_db_connection(read_only=True)
-        latest = con.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
+        latest = con.execute("SELECT MAX(CAST(timestamp AS VARCHAR)[:10]) FROM daily_metrics").fetchone()
         return {"date": str(latest[0])} if latest and latest[0] else {"date": None}
     finally:
         if con: con.close()
@@ -249,55 +231,52 @@ def get_aggregate_intraday(
     con = None
     try:
         con = get_db_connection(read_only=True)
-        d_f, i_f, sql_p = [], [], []
-        if start_date and end_date:
-            d_f.append("d.date BETWEEN ? AND ?")
-            i_f.append("CAST(h.timestamp AS DATE) BETWEEN ? AND ?")
-            sql_p.extend([start_date, end_date])
-        elif trade_date:
-            d_f.append("d.date = ?")
-            i_f.append("CAST(h.timestamp AS DATE) = ?")
-            sql_p.append(trade_date)
-        if ticker:
-            d_f.append("d.ticker = ?")
-            i_f.append("h.ticker = ?")
-            sql_p.append(ticker.upper())
+        # We reuse the optimized build_screener_query logic for consistency and performance
+        filters = dict(request.query_params)
+        filters.update({
+            'min_gap': min_gap, 'max_gap': max_gap,
+            'min_run': min_run, 'min_volume': min_volume,
+            'trade_date': trade_date, 'start_date': start_date,
+            'end_date': end_date, 'ticker': ticker
+        })
 
-        where_d, where_i = " AND ".join(d_f) if d_f else "1=1", " AND ".join(i_f) if i_f else "1=1"
-        q_p = dict(request.query_params)
-        m_f = []
-        if min_gap > 0: m_f.append(f"gap_pct >= {float(min_gap)}")
-        if max_gap is not None: m_f.append(f"gap_pct <= {float(max_gap)}")
-        if min_run > 0: m_f.append(f"rth_run >= {float(min_run)}")
-        if min_volume > 0: m_f.append(f"volume >= {float(min_volume)}")
-        where_m = " AND ".join(m_f) if m_f else "1=1"
+        _, sql_p, where_d, where_i, where_m, where_base = build_screener_query(filters, 500)
 
         agg_query = f"""
             WITH daily_base AS (
-                SELECT ticker, date, open as rth_open,
-                    LAG(close) OVER (PARTITION BY ticker ORDER BY date) as prev_c
-                FROM daily_metrics
+                SELECT ticker, CAST(timestamp AS DATE) as date, open, volume,
+                    LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_c
+                FROM (
+                    SELECT * FROM daily_metrics 
+                    WHERE {where_base}
+                    QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, CAST(timestamp AS DATE) ORDER BY timestamp DESC) = 1
+                )
             ),
-            intraday_pm AS (
-                SELECT h.ticker, CAST(h.timestamp AS DATE) as d, 
-                       SUM(CASE WHEN strftime(h.timestamp, '%H:%M') < '09:30' THEN h.volume END) as pm_v FROM intraday_1m h 
-                WHERE {where_i} GROUP BY 1, 2
-            ),
-            filtered_daily AS (
-                SELECT d.ticker, d.date, d.rth_open,
-                       ((d.rth_open - d.prev_c) / d.prev_c * 100) as gap_pct
-                FROM daily_base d LEFT JOIN intraday_pm i ON d.ticker = i.ticker AND d.date = i.d WHERE {where_d}
+            daily_filtered AS (
+                SELECT d.*, ((d.open - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as gap_pct
+                FROM daily_base d
+                LEFT JOIN (SELECT DISTINCT ticker, execution_date FROM splits) s ON d.ticker = s.ticker AND d.date = s.execution_date
+                LEFT JOIN (SELECT DISTINCT ticker FROM ETF) e ON d.ticker = e.ticker
+                WHERE {where_d} AND d.prev_c IS NOT NULL AND s.ticker IS NULL AND e.ticker IS NULL
             ),
             active_subset AS (
-                SELECT ticker, date, rth_open FROM (SELECT * FROM filtered_daily WHERE {where_m} ORDER BY random() LIMIT 500)
+                -- Identify a subset of tickers that pass final screener filters
+                SELECT ticker, date, open as rth_open FROM (
+                    SELECT * FROM daily_filtered WHERE {where_m} ORDER BY random() LIMIT 500
+                )
             )
             SELECT strftime(h.timestamp, '%H:%M') as time,
-                   AVG( (h.close - f.rth_open) / f.rth_open * 100 ) as avg_change,
-                   MEDIAN( (h.close - f.rth_open) / f.rth_open * 100 ) as median_change
-            FROM intraday_1m h JOIN active_subset f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
+                   AVG( (h.close - f.rth_open) / NULLIF(f.rth_open, 0) * 100 ) as avg_change,
+                   MEDIAN( (h.close - f.rth_open) / NULLIF(f.rth_open, 0) * 100 ) as median_change
+            FROM intraday_1m h 
+            JOIN active_subset f ON h.ticker = f.ticker AND CAST(h.timestamp AS DATE) = f.date
+            WHERE {where_i}
             GROUP BY 1 ORDER BY 1 ASC
         """
-        cur = con.execute(agg_query, sql_p + sql_p)
+        # sql_p contains [base_params, d_params, i_params]
+        # In this query we use: where_base(1), where_d(2), where_m(no params), where_i(3)
+        # So it aligns perfectly with build_screener_query's sql_p
+        cur = con.execute(agg_query, sql_p)
         cols, rows = [d[0] for d in cur.description], cur.fetchall()
         return [dict(zip(cols, [safe_float(x) if i > 0 else x for i, x in enumerate(r)])) for r in rows]
     except Exception as e:

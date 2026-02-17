@@ -40,7 +40,6 @@ const CATEGORIES = [
     { id: "intraday_return", label: "Intraday Return", icon: RefreshCcw },
     { id: "historical_return", label: "Historical Return", icon: BarChart2 },
     { id: "time", label: "Time", icon: Clock },
-    { id: "intraday_vwap", label: "Intraday VWAP", icon: Percent },
 ];
 
 const METRICS: Record<string, string[]> = {
@@ -74,10 +73,6 @@ const METRICS: Record<string, string[]> = {
     ],
     time: [
         "HOD Time", "LOD Time", "PM High Time"
-    ],
-    intraday_vwap: [
-        "VWAP at Open", "VWAP at M5", "VWAP at M15", "VWAP at M30",
-        "VWAP at M60", "VWAP at M90", "VWAP at M120", "VWAP at M180"
     ],
 };
 

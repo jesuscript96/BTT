@@ -1,6 +1,9 @@
 import duckdb
 import os
 from threading import Lock
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Global connection and lock for thread safety
 _con = None
@@ -18,24 +21,24 @@ def _establish_connection():
             "Please set it in your .env file."
         )
     
-    # Step 1: Ensure JAUME database exists
+    # Step 1: Ensure massive database exists
     print("Connecting to MotherDuck...")
     temp_con = duckdb.connect(f"md:?motherduck_token={token}")
-    temp_con.execute("CREATE DATABASE IF NOT EXISTS JAUME")
+    temp_con.execute("CREATE DATABASE IF NOT EXISTS massive")
     temp_con.close()
     
-    # Step 2: Connect directly to JAUME database
-    print("Connected to MotherDuck catalog: JAUME")
-    con = duckdb.connect(f"md:JAUME?motherduck_token={token}")
+    # Step 2: Connect directly to massive database
+    print("Connected to MotherDuck catalog: massive")
+    con = duckdb.connect(f"md:massive?motherduck_token={token}")
     
-    # Production Stability: Limits for Render Free Tier (512MB)
+    # Production Stability: Limits removed for local/high-performance use
     con.execute("SET search_path = 'main'")
-    con.execute("PRAGMA memory_limit='128MB'")
-    con.execute("PRAGMA threads=1")
+    # con.execute("PRAGMA memory_limit='128MB'")
+    # con.execute("PRAGMA threads=1")
     
     # Diagnostic: List tables
     tables = con.execute("SHOW TABLES").fetchall()
-    print(f"Tables in JAUME.main: {[t[0] for t in tables]}")
+    print(f"Tables in massive.main: {[t[0] for t in tables]}")
     
     return con
 

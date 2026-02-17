@@ -18,24 +18,46 @@ import TickerAnalysis from "@/components/TickerAnalysis";
 
 import { API_URL } from "@/config/constants";
 
+// Custom debounce hook
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = React.useState<T>(value);
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  return debouncedValue;
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression' | 'ticker'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [aggregateSeries, setAggregateSeries] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentFilters, setCurrentFilters] = useState<any>({});
+  // Initialize filters with defaults matching the panel UI
+  const [currentFilters, setCurrentFilters] = useState<any>({
+    min_gap_pct: 30,
+    max_gap_pct: 50,
+    min_pm_volume: 5000000,
+    start_date: new Date(new Date().setMonth(new Date().getMonth() - 4)).toISOString().split('T')[0],
+    end_date: new Date().toISOString().split('T')[0]
+  });
   const [isFilterBuilderOpen, setIsFilterBuilderOpen] = useState(false);
   const [activeRules, setActiveRules] = useState<any[]>([]);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
-  const [filterPanelKey, setFilterPanelKey] = useState(0); // To force refresh panel UI
+  const [filterPanelKey, setFilterPanelKey] = useState(0);
+
+  // Debounce filter updates to prevent excessive re-renders/fetches
+  const debouncedFilters = useDebounce(currentFilters, 400);
+  const abortControllerRef = React.useRef<AbortController | null>(null);
 
 
 
   const fetchData = async (filters: any = currentFilters, rules: any[] = activeRules) => {
     setIsLoading(true);
-    setCurrentFilters(filters);
 
     // Build query params from filters
     const queryParams = new URLSearchParams();
@@ -44,6 +66,7 @@ export default function Home() {
     if (filters.min_gap_pct !== undefined) queryParams.append("min_gap_at_open_pct", filters.min_gap_pct.toString());
     if (filters.max_gap_pct !== undefined) queryParams.append("max_gap_at_open_pct", filters.max_gap_pct.toString());
     if (filters.min_rth_volume !== undefined) queryParams.append("min_rth_volume", filters.min_rth_volume.toString());
+    if (filters.min_pm_volume !== undefined) queryParams.append("min_pm_volume", filters.min_pm_volume.toString());
 
     // Date filters
     if (filters.start_date) queryParams.append("start_date", filters.start_date);
@@ -57,16 +80,15 @@ export default function Home() {
     if (filters.min_low_spike_pct !== undefined) queryParams.append("min_low_spike_pct", filters.min_low_spike_pct.toString());
     if (filters.hod_after) queryParams.append("hod_after", filters.hod_after);
     if (filters.lod_before) queryParams.append("lod_before", filters.lod_before);
-    if (filters.open_lt_vwap !== undefined) queryParams.append("open_lt_vwap", filters.open_lt_vwap.toString());
 
     // Convert Advanced Rules to query parameters
     // Map metric names to database columns and parameter names
     const metricToParamMap: Record<string, { column: string, paramPrefix: string }> = {
       // Price metrics
-      "Open Price": { column: "rth_open", paramPrefix: "open_price" },
-      "Close Price": { column: "rth_close", paramPrefix: "close_price" },
-      "Previous Day Close Price": { column: "prev_close", paramPrefix: "prev_close" },
-      "Pre-Market High Price": { column: "pm_high", paramPrefix: "pm_high" },
+      "Open Price": { column: "open", paramPrefix: "open" },
+      "Close Price": { column: "close", paramPrefix: "close" },
+      "Previous Day Close Price": { column: "prev_c", paramPrefix: "prev_close" },
+      "Pre-Market High Price": { column: "pm_h", paramPrefix: "pm_high" },
       "High Spike Price": { column: "high_spike", paramPrefix: "high_spike_price" },
       "Low Spike Price": { column: "low_spike", paramPrefix: "low_spike_price" },
       "M1 Price": { column: "m1_price", paramPrefix: "m1_price" },
@@ -79,8 +101,8 @@ export default function Home() {
       "M180 Price": { column: "m180_price", paramPrefix: "m180_price" },
 
       // Volume metrics
-      "EOD Volume": { column: "rth_volume", paramPrefix: "eod_volume" },
-      "Premarket Volume": { column: "pm_volume", paramPrefix: "pm_volume" },
+      "EOD Volume": { column: "volume", paramPrefix: "volume" },
+      "Premarket Volume": { column: "pm_v", paramPrefix: "pm_volume" },
 
       // Gap & Run metrics
       "Open Gap %": { column: "gap_at_open_pct", paramPrefix: "gap_pct" },
@@ -90,9 +112,9 @@ export default function Home() {
       "RTH Fade to Close %": { column: "rth_fade_to_close_pct", paramPrefix: "rth_fade_pct" },
 
       // Volatility metrics
-      "RTH Range %": { column: "rth_range_pct", paramPrefix: "rth_range_pct" },
-      "High Spike %": { column: "high_spike_pct", paramPrefix: "high_spike_pct" },
-      "Low Spike %": { column: "low_spike_pct", paramPrefix: "low_spike_pct" },
+      "RTH Range %": { column: "r_range", paramPrefix: "rth_range_pct" },
+      "High Spike %": { column: "h_spike_pct", paramPrefix: "high_spike_pct" },
+      "Low Spike %": { column: "l_spike_pct", paramPrefix: "low_spike_pct" },
       "M15 High Spike %": { column: "m15_high_spike_pct", paramPrefix: "m15_high_spike_pct" },
       "M15 Low Spike %": { column: "m15_low_spike_pct", paramPrefix: "m15_low_spike_pct" },
 
@@ -126,10 +148,17 @@ export default function Home() {
     // Always add limit (User requested more results, default was 100)
     queryParams.append("limit", "5000");
 
+    // Cancel any previous pending request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const [result, aggregateResult] = await Promise.all([
-        fetch(`${API_URL}/market/screener?${queryParams.toString()}`).then(r => r.json()),
-        fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`).then(r => r.json())
+        fetch(`${API_URL}/market/screener?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json()),
+        fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json())
       ]);
 
       if (Array.isArray(result)) {
@@ -141,7 +170,8 @@ export default function Home() {
       }
 
       setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return;
       console.error("Error fetching data:", error);
     } finally {
       setIsLoading(false);
@@ -180,15 +210,19 @@ export default function Home() {
     setFilterPanelKey(prev => prev + 1); // Reset panel with new values
   };
 
-  // Initial load
+  // Fetch when rules change
   useEffect(() => {
-    fetchData();
+    if (activeRules.length > 0) {
+      fetchData(currentFilters, activeRules);
+    }
   }, [activeRules]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <AdvancedFilterPanel
         key={filterPanelKey}
+        filters={currentFilters}
+        onFilterStateChange={setCurrentFilters}
         onFilter={(newFilters) => fetchData(newFilters, activeRules)}
         onExport={handleExport}
         onSaveDataset={() => setIsSaveModalOpen(true)}

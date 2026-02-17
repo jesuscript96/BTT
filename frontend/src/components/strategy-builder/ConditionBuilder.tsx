@@ -173,7 +173,6 @@ export const ConditionBuilder: React.FC<Props> = ({ groups, onChange }) => {
                                             >
                                                 <option value="EMA9">vs EMA 9</option>
                                                 <option value="EMA20">vs EMA 20</option>
-                                                <option value="VWAP">vs VWAP</option>
                                                 <option value="HOD">vs HOD</option>
                                             </select>
                                         </div>
