@@ -101,7 +101,7 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
             rd = dict(zip(cols, r))
             ts = rd['timestamp']
             recs.append({
-                "timestamp": str(ts.strftime('%Y-%m-%d %H:%M:%S') if hasattr(ts, 'strftime') else ts),
+                "timestamp": str(ts), # Return explicit string from DB (Naive)
                 "open": safe_float(rd['open']), "high": safe_float(rd['high']), "low": safe_float(rd['low']),
                 "close": safe_float(rd['close']), "volume": safe_float(rd['volume'])
             })
@@ -132,14 +132,18 @@ def get_metrics_history(ticker: str, limit: int = 500):
                 SELECT 
                     d,
                     -- RTH Open/High/Low/Close (09:30 - 16:00 ET)
-                    MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as rth_open,
-                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN high END) as rth_high,
-                    MIN(CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN low END) as rth_low,
-                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '15:59' AND strftime(ts, '%H:%M') < '16:00' THEN close 
+                    MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '09:30' THEN open END) as rth_open,
+                    MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                             AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN high END) as rth_high,
+                    MIN(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                             AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN low END) as rth_low,
+                    MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '15:59' 
+                             AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN close 
                              ELSE NULL END) as rth_close_final,
                     
                     -- PM High (04:00 - 09:30 ET)
-                    MAX(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN high END) as pm_high
+                    MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                             AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' THEN high END) as pm_high
                     
                 FROM intraday_clean
                 GROUP BY 1
@@ -265,7 +269,7 @@ def get_aggregate_intraday(
                     SELECT * FROM daily_filtered WHERE {where_m} ORDER BY random() LIMIT 500
                 )
             )
-            SELECT strftime(h.timestamp, '%H:%M') as time,
+            SELECT SUBSTR(CAST(h.timestamp AS VARCHAR), 12, 5) as time,
                    AVG( (h.close - f.rth_open) / NULLIF(f.rth_open, 0) * 100 ) as avg_change,
                    MEDIAN( (h.close - f.rth_open) / NULLIF(f.rth_open, 0) * 100 ) as median_change
             FROM intraday_1m h 

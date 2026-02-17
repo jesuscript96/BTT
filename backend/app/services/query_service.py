@@ -53,12 +53,33 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                 )
             )
         ),
-        daily_filtered AS (
-            -- Identify valid candidates considering all manual and automatic exclusions
-            SELECT d.* FROM daily_base d
+        daily_candidates AS (
+            -- Identifying candidates with strict filters
+            SELECT d.ticker, d.date 
+            FROM daily_base d
             LEFT JOIN (SELECT DISTINCT ticker, execution_date FROM splits) s ON d.ticker = s.ticker AND d.date = s.execution_date
             LEFT JOIN (SELECT DISTINCT ticker FROM ETF) e ON d.ticker = e.ticker
             WHERE {where_d} AND d.prev_c IS NOT NULL AND s.ticker IS NULL AND e.ticker IS NULL
+        ),
+        daily_seq AS (
+             -- Get previous date sequence from daily_base (handle weekends/holidays)
+             SELECT ticker, date, LAG(date) OVER (PARTITION BY ticker ORDER BY date) as prev_date
+             FROM daily_base
+        ),
+        daily_scope AS (
+            -- Expand scope to include T-1
+            SELECT ticker, date FROM daily_candidates
+            UNION
+            SELECT ds.ticker, ds.prev_date as date 
+            FROM daily_seq ds
+            JOIN daily_candidates dc ON ds.ticker = dc.ticker AND ds.date = dc.date
+            WHERE ds.prev_date IS NOT NULL
+        ),
+        daily_filtered AS (
+            -- Fetch data for expanded scope
+            SELECT d.* 
+            FROM daily_base d
+            JOIN daily_scope s ON d.ticker = s.ticker AND d.date = s.date
         ),
         intraday_clean AS (
             -- Scan intraday data ONLY for confirmed candidates to trigger MotherDuck pruning
@@ -70,29 +91,49 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
             WHERE {where_i}
         ),
         intraday_raw AS (
-            SELECT 
-                ticker, d,
+            SELECT ticker, d,
+                -- Pre-Processing: Ensure timestamp is interpreted as ET (Naive)
+                -- We verify that the DB data is Naive ET (04:00 start, 16:00 close).
+                -- We use string casting to strict-match the visual time.
+                
                 -- Premarket (04:00 to 09:30 ET)
-                SUM(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' 
+                SUM(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                         AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' 
                          AND (prev_v IS NULL OR volume != prev_v OR close != prev_c) THEN volume END) as pm_v,
-                MAX(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN high END) as pm_h,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                         AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' THEN high END) as pm_h,
                 
                 -- RTH (09:30 to 16:00 ET)
-                SUM(CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' 
+                SUM(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                         AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' 
                          AND (prev_v IS NULL OR volume != prev_v OR close != prev_c) THEN volume END) as rth_v,
                 
                 -- Timed Prices (relative markers)
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as rth_o,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:45' THEN close END) as p_m15,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '10:30' THEN close END) as p_m60,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '12:30' THEN close END) as p_m180,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '09:30' THEN open END) as rth_o,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '09:45' THEN close END) as p_m15,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '10:30' THEN close END) as p_m60,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '12:30' THEN close END) as p_m180,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '15:59' THEN close END) as close_1559,
                 
-                -- Time markers in minutes since midnight
-                ARGMAX(extract('hour' from ts) * 60 + extract('minute' from ts), CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN high END) as pm_h_m,
-                ARGMAX(extract('hour' from ts) * 60 + extract('minute' from ts), CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN high END) as hod_m,
-                ARGMIN(extract('hour' from ts) * 60 + extract('minute' from ts), CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN low END) as lod_m
+                -- Capture the absolute last trade of the day (including Extended Hours)
+                ARG_MAX(close, ts) as last_close,
+                
+                -- Time markers in minutes since midnight (ET)
+                -- Extract Hour/Minute from Naive Timestamp using String Parsing to avoid any TZ ambiguity
+                ARGMAX(CAST(SUBSTR(CAST(ts AS VARCHAR), 12, 2) AS INT) * 60 + CAST(SUBSTR(CAST(ts AS VARCHAR), 15, 2) AS INT), 
+                       CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                            AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' THEN high END) as pm_h_m,
+                ARGMAX(CAST(SUBSTR(CAST(ts AS VARCHAR), 12, 2) AS INT) * 60 + CAST(SUBSTR(CAST(ts AS VARCHAR), 15, 2) AS INT), 
+                       CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                            AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN high END) as hod_m,
+                ARGMIN(CAST(SUBSTR(CAST(ts AS VARCHAR), 12, 2) AS INT) * 60 + CAST(SUBSTR(CAST(ts AS VARCHAR), 15, 2) AS INT), 
+                       CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                            AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN low END) as lod_m
             FROM intraday_clean
             GROUP BY 1, 2
+            -- Strict Data Quality Filter: Exclude tickers that "Open" after 10:15 ET.
+            -- This filters out data stored in UTC (Open 14:30) which would bias the averages by ~5 hours.
+            HAVING MIN(SUBSTR(CAST(ts AS VARCHAR), 12, 5)) < '10:15'
         ),
         full_metrics AS (
             SELECT 
@@ -100,9 +141,10 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                 d.volume as volume, 
                 i.pm_v, i.pm_h, i.p_m15, i.p_m60, i.p_m180, i.pm_h_m, i.hod_m, i.lod_m, i.rth_v as rth_volume,
                 ((d.open - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as gap_pct,
-                ((i.pm_h - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as pmh_gap,
+                ((i.pm_h - COALESCE(LAG(i.close_1559) OVER (PARTITION BY d.ticker ORDER BY d.date), d.prev_c)) / NULLIF(COALESCE(LAG(i.close_1559) OVER (PARTITION BY d.ticker ORDER BY d.date), d.prev_c), 0) * 100) as pmh_gap,
                 ((d.high - d.open) / NULLIF(d.open, 0) * 100) as rth_run,
-                ((d.close - d.open) / NULLIF(d.open, 0) * 100) as day_ret,
+                -- Use Intraday Last Close (Extended Hours) if available, falling back to Daily Close
+                ((COALESCE(i.last_close, d.close) - d.open) / NULLIF(d.open, 0) * 100) as day_ret,
                 ((d.open - i.pm_h) / NULLIF(i.pm_h, 0) * 100) as pmh_fade,
                 ((d.close - d.high) / NULLIF(d.high, 0) * 100) as rth_fade,
                 ((i.p_m15 - i.rth_o) / NULLIF(i.rth_o, 0) * 100) as m15_ret,
@@ -115,9 +157,12 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                 ((d.high - d.low) / d.low * 100) as r_range
             FROM daily_filtered d
             LEFT JOIN intraday_raw i ON d.ticker = i.ticker AND d.date = i.d
-            WHERE {where_m}
         ),
-        pool AS ( SELECT * FROM full_metrics ORDER BY random() LIMIT 500 )
+        pool AS ( 
+            SELECT * FROM full_metrics 
+            WHERE {where_m} AND (ticker, date) IN (SELECT ticker, date FROM daily_candidates)
+            ORDER BY random() LIMIT 500 
+        )
         SELECT * FROM (
             SELECT 'avg' as type, AVG(gap_pct), AVG(pmh_gap), AVG(rth_run), AVG(day_ret), AVG(pmh_fade), AVG(rth_fade), 
                    AVG(m15_ret), AVG(m60_ret), AVG(m180_ret), AVG(volume), AVG(pm_v), 
@@ -177,20 +222,34 @@ def build_screener_query(
         ed = end_date if isinstance(end_date, dt_date) else datetime.strptime(end_date, '%Y-%m-%d').date()
         
         buf_start = (sd - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Deep buffer for daily_base to ensure T-1 has a valid T-2 prev_c
+        deep_buf = (sd - timedelta(days=7)).strftime('%Y-%m-%d')
         
+        # Widen the main search scope to include the buffer day (for LAG calculations)
         d_f.append("d.date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
         i_f.append("CAST(h.timestamp AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
-        sql_p.extend([str(sd), str(ed)])
-        # Extra params for the daily_base subquery to ensure LAG has data
-        sql_p_base = [buf_start, str(ed)]
+        # Use buf_start for the fetch, effectively loading Prev Day + Target Range
+        sql_p.extend([buf_start, str(ed)])
+        
+        # SQL params for daily_base - Needs deeper history to avoid NULL prev_c on buf_start
+        sql_p_base = [deep_buf, str(ed)]
+        
+        # Enforce the USER'S requested start date in the final output filter
+        m_filters = [f"d.date >= CAST('{sd}' AS DATE)"] if 'm_filters' not in locals() else m_filters + [f"d.date >= CAST('{sd}' AS DATE)"]
     elif trade_date:
         from datetime import datetime, timedelta, date as dt_date
         td = trade_date if isinstance(trade_date, dt_date) else datetime.strptime(trade_date, '%Y-%m-%d').date()
         buf_start = (td - timedelta(days=1)).strftime('%Y-%m-%d')
-        d_f.append("d.date = CAST(? AS DATE)")
-        i_f.append("CAST(h.timestamp AS DATE) = CAST(? AS DATE)")
-        sql_p.append(str(td))
-        sql_p_base = [buf_start, str(td)]
+        deep_buf = (td - timedelta(days=7)).strftime('%Y-%m-%d')
+        
+        # Widen scope 
+        d_f.append("d.date BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
+        i_f.append("CAST(h.timestamp AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
+        sql_p.extend([buf_start, str(td)])
+        sql_p_base = [deep_buf, str(td)]
+        
+        # Final filter
+        m_filters = [f"d.date = CAST('{td}' AS DATE)"] if 'm_filters' not in locals() else m_filters + [f"d.date = CAST('{td}' AS DATE)"]
     else:
         # Default: last 7 days + 1 day buffer
         from datetime import datetime, timedelta
@@ -274,15 +333,37 @@ def build_screener_query(
                 )
             )
         ),
-        daily_filtered AS (
-            -- Identify candidates: Filter base by manual conditions and Split/ETF status
-            SELECT d.* FROM daily_base d
+        daily_candidates AS (
+            -- Step 1: Identify strict matches based on user filters (e.g. Vol > 150M)
+            SELECT d.ticker, d.date 
+            FROM daily_base d
             LEFT JOIN (SELECT DISTINCT ticker, execution_date FROM splits) s ON d.ticker = s.ticker AND d.date = s.execution_date
             LEFT JOIN (SELECT DISTINCT ticker FROM ETF) e ON d.ticker = e.ticker
             WHERE {where_d} AND d.prev_c IS NOT NULL AND s.ticker IS NULL AND e.ticker IS NULL
         ),
+        daily_seq AS (
+             -- Intermediate step: Get previous date for every row in daily_base (within buffer)
+             SELECT ticker, date, LAG(date) OVER (PARTITION BY ticker ORDER BY date) as prev_date
+             FROM daily_base
+        ),
+        daily_scope AS (
+            -- Step 2: Expand scope to include the ACTUAL Previous Trading Day (handling weekends)
+            SELECT dc.ticker, dc.date FROM daily_candidates dc
+            UNION
+            -- Include the previous trading day for each candidate
+            SELECT ds.ticker, ds.prev_date as date 
+            FROM daily_seq ds
+            JOIN daily_candidates dc ON ds.ticker = dc.ticker AND ds.date = dc.date
+            WHERE ds.prev_date IS NOT NULL
+        ),
+        daily_filtered AS (
+            -- Step 3: Fetch Daily Data for the Expanded Scope
+            SELECT d.* 
+            FROM daily_base d
+            JOIN daily_scope s ON d.ticker = s.ticker AND d.date = s.date
+        ),
         intraday_clean AS (
-            -- Scan intraday data ONLY for confirmed candidates to trigger MotherDuck pruning
+            -- Scan intraday data for Candidates AND their Context Days
             SELECT h.ticker, CAST(h.timestamp AS DATE) as d, h.timestamp as ts, h.open, h.high, h.low, h.close, h.volume,
                 LAG(h.volume) OVER (PARTITION BY h.ticker ORDER BY h.timestamp) as prev_v,
                 LAG(h.close) OVER (PARTITION BY h.ticker ORDER BY h.timestamp) as prev_c
@@ -292,25 +373,49 @@ def build_screener_query(
         ),
         intraday_raw AS (
             SELECT ticker, d,
-                SUM(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN volume END) as pm_v,
-                MAX(CASE WHEN strftime(ts, '%H:%M') >= '04:00' AND strftime(ts, '%H:%M') < '09:30' THEN high END) as pm_h,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:30' THEN open END) as p_open_930,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '09:45' THEN close END) as p_m15,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '10:30' THEN close END) as p_m60,
-                MAX(CASE WHEN strftime(ts, '%H:%M') = '12:30' THEN close END) as p_m180,
-                ARGMAX(strftime(ts, '%H:%M'), CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN high END) as hod_t,
-                ARGMIN(strftime(ts, '%H:%M'), CASE WHEN strftime(ts, '%H:%M') >= '09:30' AND strftime(ts, '%H:%M') < '16:00' THEN low END) as lod_t
-            FROM intraday_clean 
+                SUM(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                         AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' THEN volume END) as pm_v,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                         AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' THEN high END) as pm_h,
+                SUM(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                         AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN volume END) as rth_v,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '09:30' THEN open END) as p_open_930,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '09:45' THEN close END) as p_m15,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '10:30' THEN close END) as p_m60,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '12:30' THEN close END) as p_m180,
+                MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '15:59' THEN close END) as close_1559,
+                -- Capture the absolute last trade of the day (including Extended Hours)
+                ARG_MAX(close, ts) as last_close,
+                
+                -- Time markers in minutes since midnight (ET)
+                -- Extract Hour/Minute from Naive Timestamp using String Parsing to avoid any TZ ambiguity
+                ARGMAX(CAST(SUBSTR(CAST(ts AS VARCHAR), 12, 2) AS INT) * 60 + CAST(SUBSTR(CAST(ts AS VARCHAR), 15, 2) AS INT), 
+                       CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '04:00' 
+                            AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '09:30' THEN high END) as pm_h_m,
+                ARGMAX(CAST(SUBSTR(CAST(ts AS VARCHAR), 12, 2) AS INT) * 60 + CAST(SUBSTR(CAST(ts AS VARCHAR), 15, 2) AS INT), 
+                       CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                            AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN high END) as hod_m,
+                ARGMIN(CAST(SUBSTR(CAST(ts AS VARCHAR), 12, 2) AS INT) * 60 + CAST(SUBSTR(CAST(ts AS VARCHAR), 15, 2) AS INT), 
+                       CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) >= '09:30' 
+                            AND SUBSTR(CAST(ts AS VARCHAR), 12, 5) < '16:00' THEN low END) as lod_m
+            FROM intraday_clean
             GROUP BY 1, 2
+            -- Strict Data Quality Filter: Exclude tickers that "Open" after 10:15 ET.
+            -- This filters out data stored in UTC (Open 14:30) which would bias the averages by ~5 hours.
+            HAVING MIN(SUBSTR(CAST(ts AS VARCHAR), 12, 5)) < '10:15'
         ),
         calculated AS (
-            SELECT d.ticker, d.date, d.open, d.high, d.low, d.close, d.prev_c,
+            SELECT 
+                d.ticker, d.date, d.open, d.high, d.low, d.close, d.prev_c,
+                i.last_close,
                 d.volume as volume, 
-                i.pm_v, i.pm_h, i.p_m15, i.p_m60, i.p_m180, i.hod_t, i.lod_t,
+                i.pm_v, i.pm_h, i.p_m15, i.p_m60, i.p_m180, i.pm_h_m, i.hod_m, i.lod_m, i.rth_v as rth_volume,
+                LAG(i.close_1559) OVER (PARTITION BY d.ticker ORDER BY d.date) as prev_i_c,
                 ((d.open - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as gap_pct,
-                ((i.pm_h - d.prev_c) / NULLIF(d.prev_c, 0) * 100) as pmh_gap,
+                ((i.pm_h - COALESCE(LAG(i.close_1559) OVER (PARTITION BY d.ticker ORDER BY d.date), d.prev_c)) / NULLIF(COALESCE(LAG(i.close_1559) OVER (PARTITION BY d.ticker ORDER BY d.date), d.prev_c), 0) * 100) as pmh_gap,
                 ((d.high - d.open) / NULLIF(d.open, 0) * 100) as rth_run,
-                ((d.close - d.open) / NULLIF(d.open, 0) * 100) as day_ret,
+                -- Use Intraday Last Close (Extended Hours) if available, falling back to Daily Close
+                ((COALESCE(i.last_close, d.close) - d.open) / NULLIF(d.open, 0) * 100) as day_ret,
                 ((d.open - i.pm_h) / NULLIF(i.pm_h, 0) * 100) as pmh_fade,
                 ((d.close - d.high) / NULLIF(d.high, 0) * 100) as rth_fade,
                 ((i.p_m15 - i.p_open_930) / NULLIF(i.p_open_930, 0) * 100) as m15_ret,
@@ -319,7 +424,13 @@ def build_screener_query(
             FROM daily_filtered d 
             LEFT JOIN intraday_raw i ON d.ticker = i.ticker AND d.date = i.d
         ),
-        filtered AS ( SELECT * FROM calculated WHERE {where_m} )
+        filtered AS ( 
+            -- Final Step: Restrict output back to the original Strict Candidates
+            SELECT c.* 
+            FROM calculated c
+            JOIN daily_candidates dc ON c.ticker = dc.ticker AND c.date = dc.date
+            WHERE {where_m} 
+        )
         SELECT * FROM filtered ORDER BY date DESC, gap_pct DESC LIMIT {int(limit)}
     """
     
