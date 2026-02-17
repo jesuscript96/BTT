@@ -116,7 +116,7 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                 MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '15:59' THEN close END) as close_1559,
                 
                 -- Capture the absolute last trade of the day (including Extended Hours)
-                ARG_MAX(close, ts) as last_close,
+                arg_max(close, ts) as last_close,
                 
                 -- Time markers in minutes since midnight (ET)
                 -- Extract Hour/Minute from Naive Timestamp using String Parsing to avoid any TZ ambiguity
@@ -385,7 +385,7 @@ def build_screener_query(
                 MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '12:30' THEN close END) as p_m180,
                 MAX(CASE WHEN SUBSTR(CAST(ts AS VARCHAR), 12, 5) = '15:59' THEN close END) as close_1559,
                 -- Capture the absolute last trade of the day (including Extended Hours)
-                ARG_MAX(close, ts) as last_close,
+                arg_max(close, ts) as last_close,
                 
                 -- Time markers in minutes since midnight (ET)
                 -- Extract Hour/Minute from Naive Timestamp using String Parsing to avoid any TZ ambiguity
