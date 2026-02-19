@@ -25,6 +25,9 @@ interface StatsAverages {
     rth_run_pct: number;
     high_spike_pct: number;
     low_spike_pct: number;
+    close_red: number;
+    rth_range_pct: number;
+    low_spike_prev_close_pct: number;
     [key: string]: number;
 }
 
@@ -65,10 +68,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
     return (
         <div className="p-6 bg-background space-y-6 min-h-screen font-sans transition-colors duration-300">
             {/* Top Row: Metrics & Main Chart */}
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
 
                 {/* Left Column: Metric Groups (Stats, Volume, Price, Return) */}
-                <div className="xl:col-span-5 bg-card border border-border text-foreground p-6 rounded-xl shadow-sm space-y-8">
+                <div className="md:col-span-4 bg-card border border-border text-foreground p-6 rounded-xl shadow-sm space-y-8">
                     <div className="flex items-center justify-between border-b border-border/50 pb-4">
                         <h2 className="text-xl font-black uppercase tracking-tight text-foreground">{stats.count} RECORDS</h2>
                         <div className="flex gap-3 text-[10px] font-bold uppercase tracking-wider items-center">
@@ -105,92 +108,77 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                             <StatProgress label="PM High Gap %" value={averages.pm_high_gap_pct} color="#4ade80" />
                             <StatProgress label="PM Fade To Open %" value={averages.pmh_fade_to_open_pct} color="#f87171" />
                             <StatProgress label="Gap at Open %" value={averages.gap_at_open_pct} color="#22c55e" />
-                            <StatProgress label="RTH Fade To Close %" value={averages.rth_fade_to_close_pct} color="#ef4444" />
+                            <StatProgress label="RTH High Fade to Close %" value={averages.rth_fade_to_close_pct} color="#ef4444" />
+                            <StatProgress label="RTH High %" value={averages.rth_high_run_pct} color="#3b82f6" />
 
-                            <div className="pt-4 space-y-4">
-                                <StatProgress label="PM High Break" value={averages.pm_high_break} color="#3b82f6" />
-                                <StatProgress label="Close Red" value={averages.close_red} color="#ef4444" />
-                                <StatProgress label="Low Spike < Prev. Close" value={averages.low_spike_lt_prev_close} color="#9ca3af" />
-                            </div>
+                            <StatProgress label="PM High Break" value={averages.pm_high_break} color="#3b82f6" />
+                            <StatProgress label="Close Red" value={averages.close_red} color="#ef4444" />
+                            <StatProgress label="Low Spike %" value={averages.low_spike_pct} color="#9ca3af" />
+                            <StatProgress label="Range %" value={averages.rth_range_pct} color="#8b5cf6" />
+                            <StatProgress label="Low Spike vs prev. close %" value={averages.low_spike_prev_close_pct} color="#f59e0b" />
+                        </div>
+                    </div>
+
+                    {/* List Stats Section */}
+                    <div className="space-y-6">
+                        <div className="space-y-3">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volume</p>
+                            <MetricRow label="Premarket Volume" value={formatLargeNumber(averages.avg_pm_volume)} />
+                            <MetricRow label="Volume" value={formatLargeNumber(averages.avg_volume)} />
                         </div>
 
-                        {/* List Stats Section */}
-                        <div className="space-y-6">
-                            <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volume</p>
-                                <MetricRow label="Premarket Volume" value={formatLargeNumber(averages.avg_pm_volume)} />
-                                <MetricRow label="Volume" value={formatLargeNumber(averages.avg_volume)} />
-                            </div>
-
-                            <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Price</p>
-                                <MetricRow label="PMH Price" value={averages.avg_pmh_price?.toFixed(2) || "0.00"} />
-                                <MetricRow label="Open Price" value={averages.avg_open_price?.toFixed(2) || "0.00"} />
-                                <MetricRow label="Close Price" value={averages.avg_close_price?.toFixed(2) || "0.00"} />
-                            </div>
-
-                            <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volatility</p>
-                                <MetricRow label="High Spike %" value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="Low Spike %" value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="Range %" value={`${averages.rth_range_pct?.toFixed(2) || "0.00"}%`} />
-                            </div>
-
-                            <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Time</p>
-                                <MetricRow label="PM High Time" value="--" /> {/* Placeholder if not in avg yet */}
-                                <MetricRow label="HOD Time" value={getDefaultHOD(stats.distributions?.hod_time)} />
-                                <MetricRow label="LOD Time" value={getDefaultHOD(stats.distributions?.lod_time)} />
-                            </div>
-
-                            <div className="space-y-3">
-                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Return</p>
-                                <MetricRow label="Return at 15min %" value={`${averages.m15_return_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="Return at 60min %" value={`${averages.m60_return_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="Return at 180min %" value={`${averages.m180_return_pct?.toFixed(2) || "0.00"}%`} />
-                                <MetricRow label="Return at Close %" value={`${averages.return_close_pct?.toFixed(2) || "0.00"}%`} />
-                            </div>
+                        <div className="space-y-3">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volatility</p>
+                            <MetricRow label="High Spike %" value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`} />
+                            <MetricRow label="Low Spike %" value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`} />
+                            <MetricRow label="Range %" value={`${averages.rth_range_pct?.toFixed(2) || "0.00"}%`} />
                         </div>
                     </div>
                 </div>
 
                 {/* Right Column: Main Area Chart (Intraday for Top Ticker or Aggregate) */}
-                <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} />
+                <div className="md:col-span-8 h-[500px] bg-card border border-border p-6 rounded-xl shadow-sm">
+                    <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} />
+                </div>
             </div>
 
-            {/* Bottom Row: Distribution Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
-                <HorizontalDistributionCard
-                    title="HIGH SPIKE AVERAGE"
-                    value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`}
-                    data={rangeDistribution}
-                    icon={<Info className="w-3 h-3" />}
-                />
-                <HorizontalDistributionCard
-                    title="LOW SPIKE AVERAGE"
-                    value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`}
-                    data={lowSpikeDistribution}
-                    icon={<Info className="w-3 h-3" />}
-                />
-                <HorizontalDistributionCard
-                    title="HOD AVERAGE TIME"
-                    value={getDefaultHOD(stats.distributions.hod_time)}
-                    data={transformDist(stats.distributions.hod_time)}
-                    icon={<Clock className="w-3 h-3" />}
-                />
-                <HorizontalDistributionCard
-                    title="LOD AVERAGE TIME"
-                    value={getDefaultHOD(stats.distributions.lod_time)}
-                    data={transformDist(stats.distributions.lod_time)}
-                    icon={<Clock className="w-3 h-3" />}
-                />
-                <HorizontalDistributionCard
-                    title="RETURN AVERAGE"
-                    value={`${averages.day_return_pct?.toFixed(2) || "0.00"}%`}
-                    data={returnDistribution}
-                    icon={<Info className="w-3 h-3" />}
-                />
-            </div>
+            {/* Bottom Row: Distribution Cards - HIDDEN */}
+            {
+                false && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
+                        <HorizontalDistributionCard
+                            title="HIGH SPIKE AVERAGE"
+                            value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`}
+                            data={rangeDistribution}
+                            icon={<Info className="w-3 h-3" />}
+                        />
+                        <HorizontalDistributionCard
+                            title="LOW SPIKE AVERAGE"
+                            value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`}
+                            data={lowSpikeDistribution}
+                            icon={<Info className="w-3 h-3" />}
+                        />
+                        <HorizontalDistributionCard
+                            title="HOD AVERAGE TIME"
+                            value={getDefaultHOD(stats.distributions.hod_time)}
+                            data={transformDist(stats.distributions.hod_time)}
+                            icon={<Clock className="w-3 h-3" />}
+                        />
+                        <HorizontalDistributionCard
+                            title="LOD AVERAGE TIME"
+                            value={getDefaultHOD(stats.distributions.lod_time)}
+                            data={transformDist(stats.distributions.lod_time)}
+                            icon={<Clock className="w-3 h-3" />}
+                        />
+                        <HorizontalDistributionCard
+                            title="RETURN AVERAGE"
+                            value={`${averages.day_return_pct?.toFixed(2) || "0.00"}%`}
+                            data={returnDistribution}
+                            icon={<Info className="w-3 h-3" />}
+                        />
+                    </div>
+                )
+            }
         </div>
     );
 };

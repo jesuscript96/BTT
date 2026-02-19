@@ -170,6 +170,116 @@ def get_aggregate_intraday(
     trade_date: Optional[date] = None, start_date: Optional[date] = None,
     end_date: Optional[date] = None, ticker: Optional[str] = None
 ):
-    # Simplified aggregate placeholder to avoid CTE crashes
-    # Can implementation properly later. Return empty for now to fix crash.
-    return []
+    con = None
+    try:
+        from app.services.query_service import build_aggregate_query
+        
+        con = get_db_connection(read_only=True)
+        
+        # 1. Build Query to get tickers
+        filters = dict(request.query_params)
+        filters.update({
+            'min_gap': min_gap, 'max_gap': max_gap,
+            'min_run': min_run, 'min_volume': min_volume,
+            'trade_date': trade_date, 'start_date': start_date,
+            'end_date': end_date, 'ticker': ticker
+        })
+        
+        screener_query, sql_p = build_aggregate_query(filters)
+        
+        # Execute to get tickers
+        # Use CTE to just get tickers to avoid transferring all data
+        # wrapping screener query
+        ticker_query = f"WITH screen_res AS ({screener_query}) SELECT ticker, gap_pct, timestamp FROM screen_res"
+        
+        cur = con.execute(ticker_query, sql_p)
+        rows = cur.fetchall()
+        
+        if not rows:
+            return []
+            
+        # Get target date from the first result if not provided
+        target_date = trade_date
+        if not target_date and rows:
+            # rows[0][2] is timestamp
+            if rows[0][2]:
+                target_date = rows[0][2].date()
+        
+        if not target_date:
+            return []
+            
+        tickers = [r[0] for r in rows]
+        # De-duplicate just in case
+        tickers = list(set(tickers))
+        
+        if not tickers:
+            return []
+            
+        # 2. Query Intraday Data for these tickers and aggregate
+        # We want average close price change relative to open
+        
+        placeholders = ','.join(['?'] * len(tickers))
+        
+        # Logic:
+        # For each ticker, for each minute:
+        # Calculate (close - open_of_day) / open_of_day * 100
+        # Then Average and Median across all tickers for that minute
+        
+        # NEED: Open price for each ticker on that day to normalize.
+        # Intraday table might not be easy to join efficiently?
+        # Actually daily_metrics has open price.
+        # But let's rely on intraday first candle.
+        
+        # Better: (Close - Open) / Open * 100 for each minute bar? 
+        # No, dashboard shows "Change vs Open Price". 
+        # Usually this means % change from day open.
+        
+        agg_query = f"""
+            WITH daily_opens AS (
+                 SELECT ticker, open as day_open 
+                 FROM daily_metrics 
+                 WHERE CAST(timestamp AS DATE) = CAST(? AS DATE)
+                 AND ticker IN ({placeholders})
+            ),
+            joined_intraday AS (
+                SELECT 
+                    i.timestamp,
+                    i.ticker,
+                    i.close,
+                    d.day_open,
+                    ((i.close - d.day_open) / d.day_open * 100) as pct_change
+                FROM intraday_1m i
+                JOIN daily_opens d ON i.ticker = d.ticker
+                WHERE CAST(i.timestamp AS DATE) = CAST(? AS DATE)
+                AND i.ticker IN ({placeholders})
+            )
+            SELECT 
+                strftime(timestamp, '%H:%M') as minute,
+                AVG(pct_change) as avg_change,
+                QUANTILE_CONT(pct_change, 0.5) as median_change
+            FROM joined_intraday
+            GROUP BY 1
+            ORDER BY 1
+        """
+        
+        params = [target_date] + tickers + [target_date] + tickers
+        
+        agg_cur = con.execute(agg_query, params)
+        agg_rows = agg_cur.fetchall()
+        
+        result = []
+        for r in agg_rows:
+            result.append({
+                "time": r[0],
+                "avg_change": safe_float(r[1]),
+                "median_change": safe_float(r[2])
+            })
+            
+        return result
+
+    except Exception as e:
+        # print(f"Aggregate Error: {e}")
+        # Return empty list on error to not break frontend
+        return []
+    finally:
+        if con: con.close()

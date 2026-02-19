@@ -83,15 +83,16 @@ export default function Home() {
 
     // Convert Advanced Rules to query parameters
     // Map metric names to database columns and parameter names
+    // Map metric names to database columns and parameter names
     const metricToParamMap: Record<string, { column: string, paramPrefix: string }> = {
       // Price metrics
       "Open Price": { column: "open", paramPrefix: "open" },
       "Close Price": { column: "close", paramPrefix: "close" },
-      "Previous Day Close Price": { column: "prev_c", paramPrefix: "prev_close" },
-      "Pre-Market High Price": { column: "pm_h", paramPrefix: "pm_high" },
-      "High Spike Price": { column: "high_spike", paramPrefix: "high_spike_price" },
-      "Low Spike Price": { column: "low_spike", paramPrefix: "low_spike_price" },
-      "M1 Price": { column: "m1_price", paramPrefix: "m1_price" },
+      "Previous Day Close Price": { column: "prev_close", paramPrefix: "prev_close" },
+      "Pre-Market High Price": { column: "pm_high", paramPrefix: "pm_high" },
+      "High Spike Price": { column: "rth_high", paramPrefix: "high_spike_price" },
+      "Low Spike Price": { column: "rth_low", paramPrefix: "low_spike_price" },
+      "M1 Price": { column: "m1_price", paramPrefix: "m1_price" }, // Assuming these exist if not, revert to close
       "M5 Price": { column: "m5_price", paramPrefix: "m5_price" },
       "M15 Price": { column: "m15_price", paramPrefix: "m15_price" },
       "M30 Price": { column: "m30_price", paramPrefix: "m30_price" },
@@ -102,19 +103,19 @@ export default function Home() {
 
       // Volume metrics
       "EOD Volume": { column: "volume", paramPrefix: "volume" },
-      "Premarket Volume": { column: "pm_v", paramPrefix: "pm_volume" },
+      "Premarket Volume": { column: "pm_volume", paramPrefix: "pm_volume" },
 
       // Gap & Run metrics
-      "Open Gap %": { column: "gap_at_open_pct", paramPrefix: "gap_pct" },
+      "Open Gap %": { column: "gap_pct", paramPrefix: "gap_pct" },
       "RTH Run %": { column: "rth_run_pct", paramPrefix: "rth_run_pct" },
       "PMH Gap %": { column: "pmh_gap_pct", paramPrefix: "pmh_gap_pct" },
-      "PMH Fade to Open %": { column: "pmh_fade_to_open_pct", paramPrefix: "pmh_fade_pct" },
-      "RTH Fade to Close %": { column: "rth_fade_to_close_pct", paramPrefix: "rth_fade_pct" },
+      "PMH Fade to Open %": { column: "pmh_fade_pct", paramPrefix: "pmh_fade_pct" },
+      "RTH Fade to Close %": { column: "rth_fade_pct", paramPrefix: "rth_fade_pct" },
 
       // Volatility metrics
-      "RTH Range %": { column: "r_range", paramPrefix: "rth_range_pct" },
-      "High Spike %": { column: "h_spike_pct", paramPrefix: "high_spike_pct" },
-      "Low Spike %": { column: "l_spike_pct", paramPrefix: "low_spike_pct" },
+      "RTH Range %": { column: "rth_range_pct", paramPrefix: "rth_range_pct" },
+      "High Spike %": { column: "rth_run_pct", paramPrefix: "high_spike_pct" }, // Using rth_run_pct as proxy logic
+      "Low Spike %": { column: "rth_range_pct", paramPrefix: "low_spike_pct" }, // using rth_range_pct as proxy logic
       "M15 High Spike %": { column: "m15_high_spike_pct", paramPrefix: "m15_high_spike_pct" },
       "M15 Low Spike %": { column: "m15_low_spike_pct", paramPrefix: "m15_low_spike_pct" },
 
