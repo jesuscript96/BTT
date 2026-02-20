@@ -1,0 +1,148 @@
+[
+    {
+        "name": "SMA 20 Bullish Cross",
+        "description": "Long when Close crosses above SMA 20",
+        "bias": "long",
+        "entry_logic": {
+            "timeframe": "1m",
+            "root_condition": {
+                "type": "group",
+                "operator": "AND",
+                "conditions": [
+                    {
+                        "type": "indicator_comparison",
+                        "source": {
+                            "name": "Close"
+                        },
+                        "comparator": "CROSSES_ABOVE",
+                        "target": {
+                            "name": "SMA",
+                            "period": 20
+                        }
+                    }
+                ]
+            }
+        },
+        "risk_management": {
+            "hard_stop": {
+                "type": "Percentage",
+                "value": 2.0
+            },
+            "take_profit": {
+                "type": "Percentage",
+                "value": 6.0
+            },
+            "trailing_stop": {
+                "active": false,
+                "type": "EMA13",
+                "buffer_pct": 0.5
+            }
+        }
+    },
+    {
+        "name": "Exhaustion Red Streak",
+        "description": "Long after 3 consecutive red candles near PM Low",
+        "bias": "long",
+        "entry_logic": {
+            "timeframe": "1m",
+            "root_condition": {
+                "type": "group",
+                "operator": "AND",
+                "conditions": [
+                    {
+                        "type": "candle_pattern",
+                        "pattern": "RED_VOLUME",
+                        "lookback": 1,
+                        "consecutive_count": 3
+                    },
+                    {
+                        "type": "price_level_distance",
+                        "source": "Close",
+                        "level": "Pre-Market Low",
+                        "comparator": "DISTANCE_LT",
+                        "value_pct": 0.5
+                    }
+                ]
+            }
+        },
+        "risk_management": {
+            "hard_stop": {
+                "type": "Percentage",
+                "value": 1.5
+            },
+            "take_profit": {
+                "type": "Percentage",
+                "value": 5.0
+            },
+            "trailing_stop": {
+                "active": false,
+                "type": "EMA13",
+                "buffer_pct": 0.5
+            }
+        }
+    },
+    {
+        "name": "Mean Reversion AVWAP",
+        "description": "Short when Close > AVWAP by 5% with RSI > 70",
+        "bias": "short",
+        "entry_logic": {
+            "timeframe": "1m",
+            "root_condition": {
+                "type": "group",
+                "operator": "AND",
+                "conditions": [
+                    {
+                        "type": "price_level_distance",
+                        "source": "Close",
+                        "level": "AVWAP",
+                        "comparator": "DISTANCE_GT",
+                        "value_pct": 5.0
+                    },
+                    {
+                        "type": "indicator_comparison",
+                        "source": {
+                            "name": "RSI",
+                            "period": 14
+                        },
+                        "comparator": "GREATER_THAN",
+                        "target": 70
+                    }
+                ]
+            }
+        },
+        "exit_logic": {
+            "timeframe": "1m",
+            "root_condition": {
+                "type": "group",
+                "operator": "OR",
+                "conditions": [
+                    {
+                        "type": "indicator_comparison",
+                        "source": {
+                            "name": "Close"
+                        },
+                        "comparator": "CROSSES_BELOW",
+                        "target": {
+                            "name": "AVWAP"
+                        }
+                    }
+                ]
+            }
+        },
+        "risk_management": {
+            "hard_stop": {
+                "type": "Percentage",
+                "value": 3.0
+            },
+            "take_profit": {
+                "type": "Percentage",
+                "value": 10.0
+            },
+            "trailing_stop": {
+                "active": false,
+                "type": "EMA13",
+                "buffer_pct": 0.5
+            }
+        }
+    }
+]

@@ -12,6 +12,7 @@ class IndicatorType(str, Enum):
     WMA = "WMA"
     RVOL = "RVOL"
     VWAP = "VWAP"
+    AVWAP = "AVWAP"
     RSI = "RSI"
     MACD = "MACD"
     ATR = "ATR"

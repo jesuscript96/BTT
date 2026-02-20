@@ -63,18 +63,24 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
     }, []);
 
     // Handle prefill from strategy builder (preload only, NO auto-run)
+    // Validate that the prefilled strategy actually exists in the DB
     useEffect(() => {
-        if (prefillData) {
-            setSelectedStrategies([{
-                strategy_id: prefillData.strategy_id,
-                name: prefillData.strategy_name,
-                weight: 100
-            }]);
+        if (prefillData && strategies.length > 0) {
+            const exists = strategies.find(s => s.id === prefillData.strategy_id);
+            if (exists) {
+                setSelectedStrategies([{
+                    strategy_id: prefillData.strategy_id,
+                    name: prefillData.strategy_name,
+                    weight: 100
+                }]);
+            } else {
+                console.warn(`Prefilled strategy ${prefillData.strategy_id} not found in DB, skipping.`);
+            }
             if (prefillData.dataset_id) {
                 setSelectedDatasetId(prefillData.dataset_id);
             }
         }
-    }, [prefillData]);
+    }, [prefillData, strategies]);
 
     const fetchStrategies = async () => {
         try {
@@ -154,6 +160,19 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
         if (selectedStrategies.length === 0) {
             alert('Please select at least one strategy');
             return;
+        }
+
+        // Validate all selected strategies exist in DB
+        const validStrategies = selectedStrategies.filter(s =>
+            strategies.find(db => db.id === s.strategy_id)
+        );
+        if (validStrategies.length === 0) {
+            alert('Selected strategies no longer exist. Please re-select from the dropdown.');
+            setSelectedStrategies([]);
+            return;
+        }
+        if (validStrategies.length < selectedStrategies.length) {
+            setSelectedStrategies(validStrategies);
         }
 
         normalizeWeights();
