@@ -6,6 +6,7 @@ import {
     Area, CartesianGrid, ReferenceLine, ComposedChart, Line, ReferenceArea
 } from "recharts";
 import { API_URL } from "@/config/constants";
+import { NewsFeed } from "./NewsFeed";
 
 interface DistributionItem {
     label: string;
@@ -49,6 +50,7 @@ interface DashboardProps {
     stats: DashboardStats;
     data: unknown[];
     aggregateSeries?: TimeSeriesItem[];
+    isLoadingAggregate?: boolean;
 }
 
 type StatMode = 'avg' | 'p25' | 'p50' | 'p75';
@@ -85,16 +87,29 @@ const formatLargeNumber = (num: number) => {
 };
 
 // ─── Main Dashboard ───────────────────────────────────────────────────
-export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data, isLoadingAggregate }) => {
     const [mode, setMode] = React.useState<StatMode>('avg');
 
+    const averages = stats?.[mode] ?? stats?.avg;
+
+    // Empty State: Show News Feed
     if (!stats || !stats.avg) return (
-        <div className="p-20 text-center text-muted-foreground bg-background min-h-screen">
-            Apply filters to see performance analysis
+        <div className="p-6 bg-background min-h-screen font-sans transition-colors duration-300">
+            <div className="flex flex-col h-full gap-6">
+                <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                    <div className="flex flex-col gap-1">
+                        <h1 className="text-xl font-black tracking-tight text-foreground">MARKET INTELLIGENCE</h1>
+                        <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest">
+                            WAITING FOR DATA... WHILE YOU WAIT, READ THE LATEST
+                        </span>
+                    </div>
+                </div>
+                <div className="flex-1 overflow-hidden">
+                    <NewsFeed />
+                </div>
+            </div>
         </div>
     );
-
-    const averages = stats[mode] || stats.avg;
 
     return (
         <div className="p-6 bg-background min-h-screen font-sans transition-colors duration-300">
@@ -164,7 +179,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                 <div className="md:col-span-9 flex flex-col pl-6">
                     {/* Chart */}
                     <div className="h-[500px]">
-                        <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} />
+                        <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isLoadingAggregate} />
                     </div>
 
                     {/* Transparent cards below chart */}
@@ -231,7 +246,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 };
 
 // ─── Intraday Chart (unchanged logic) ─────────────────────────────────
-const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggregateSeries?: TimeSeriesItem[] }) => {
+const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[], isLoadingAggregate?: boolean }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");
@@ -335,8 +350,11 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
     const pmHigh = !isAggregate && chartData.length > 0 ? chartData[0].pm_high : 0;
 
+    // Combined loading state
+    const isChartLoading = loading || (isAggregate && isLoadingAggregate);
+
     return (
-        <div className="bg-transparent p-8 space-y-6 h-full flex flex-col">
+        <div className="bg-transparent p-8 space-y-6 h-full flex flex-col relative">
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
@@ -421,8 +439,13 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
             </div>
 
             <div className="flex-1 min-h-0 relative">
-                {loading ? (
-                    <div className="flex h-full items-center justify-center text-muted-foreground text-xs uppercase font-bold tracking-widest animate-pulse">Loading Chart...</div>
+                {isChartLoading ? (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-background/50 backdrop-blur-sm">
+                        <div className="w-8 h-8 border-4 border-blue-500 border-solid rounded-full border-t-transparent animate-spin mb-4"></div>
+                        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-widest">
+                            {isLoadingAggregate ? "Aggregating Intraday Data..." : "Loading Chart..."}
+                        </div>
+                    </div>
                 ) : (
                     <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={chartData}>

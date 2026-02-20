@@ -64,6 +64,8 @@ app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)
 app.include_router(market.router)
+from app.routers import news
+app.include_router(news.router, prefix="/api", tags=["News"])
 
 @app.get("/health")
 def read_health():

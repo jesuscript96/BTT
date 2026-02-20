@@ -56,8 +56,11 @@ export default function Home() {
 
 
 
+  const [isAggregateLoading, setIsAggregateLoading] = useState(false);
+
   const fetchData = async (filters: any = currentFilters, rules: any[] = activeRules) => {
     setIsLoading(true);
+    setAggregateSeries([]); // Reset aggregate data on new fetch
 
     // Build query params from filters
     const queryParams = new URLSearchParams();
@@ -157,10 +160,8 @@ export default function Home() {
     abortControllerRef.current = controller;
 
     try {
-      const [result, aggregateResult] = await Promise.all([
-        fetch(`${API_URL}/market/screener?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json()),
-        fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json())
-      ]);
+      // 1. FAST FETCH: Get Screener Data (Grid/Sidebar) - Critical Path
+      const result = await fetch(`${API_URL}/market/screener?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json());
 
       if (Array.isArray(result)) {
         setData(result);
@@ -169,12 +170,25 @@ export default function Home() {
         setData(result.records || []);
         setStats(result.stats || null);
       }
+      setIsLoading(false); // UI Interactive immediately
 
-      setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
+      // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
+      setIsAggregateLoading(true);
+      fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`, { signal: controller.signal })
+        .then(r => r.json())
+        .then(aggregateResult => {
+          setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
+        })
+        .catch(err => {
+          if (err.name !== 'AbortError') console.error("Error fetching aggregate data:", err);
+        })
+        .finally(() => {
+          setIsAggregateLoading(false);
+        });
+
     } catch (error: any) {
       if (error.name === 'AbortError') return;
       console.error("Error fetching data:", error);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -329,7 +343,7 @@ export default function Home() {
             />
 
             {/* Dashboard & DataGrid Stack */}
-            <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} />
+            <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
 
             <div className="flex-1 min-h-[500px] bg-card rounded-xl border border-border shadow-sm overflow-hidden">
               <DataGrid
