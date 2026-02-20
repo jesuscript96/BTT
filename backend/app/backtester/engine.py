@@ -11,7 +11,10 @@ import time as pytime # Rename to avoid conflict with datetime.time
 from numba import njit, int64, float64, int32, boolean
 from numba.typed import List as NumbaList
 
-from app.schemas.strategy import Strategy, Condition, ConditionGroup, RiskType, Operator, IndicatorType
+from app.schemas.strategy import (
+    Strategy, ConditionGroup, RiskType, Comparator, IndicatorType,
+    ComparisonCondition, PriceLevelCondition, CandleCondition
+)
 
 
 @dataclass
@@ -111,12 +114,6 @@ def _core_backtest_jit(
     active_strat_idx = NumbaList()
     active_ticker_id = NumbaList()
     active_metadata_idx = NumbaList() # Store original row index
-    
-    # Needs explicit typing hack for Numba empty list?
-    # Usually appending float makes it float list.
-    # To be safe we can initialize with dummy and clear, or trust inference.
-    # Inference is usually fine with append.
-    # But NumbaList() creates a typed list.
     
     # Results containers
     res_entry_idx = NumbaList()
@@ -328,15 +325,10 @@ class BacktestEngine:
         
     def generate_boolean_signals(self) -> np.ndarray:
         """Generate (n_rows, n_strats) boolean matrix"""
-        # We reuse the existing logic but ensure output is numpy array
-        # This part assumes vectorized pandas ops which are fast enough
         signals = []
         for strategy in self.strategies:
-            # We need to temporarily instantiate the old engine methods or just copy implementation?
-            # To simulate 'generate_signals' logic we need 'evaluate_condition_vectorized'.
-            # I will include `evaluate_condition_vectorized` method in this class as well.
             s_series = self._generate_signals_for_strategy(strategy, self.market_data)
-            signals.append(s_series.values) # Convert to numpy array
+            signals.append(s_series.values)
             
         if not signals:
             return np.zeros((len(self.market_data), 0), dtype=bool)
@@ -344,71 +336,132 @@ class BacktestEngine:
         return np.stack(signals, axis=1)
 
     def _generate_signals_for_strategy(self, strategy: Strategy, df: pd.DataFrame) -> pd.Series:
-        if not strategy.entry_logic:
+        # New Schema has entry_logic as EntryLogic object with root_condition
+        if not strategy.entry_logic or not strategy.entry_logic.root_condition:
             return pd.Series(False, index=df.index)
         
-        final_signal = pd.Series(True, index=df.index)
+        return self._evaluate_group(strategy.entry_logic.root_condition, df)
+
+    def _evaluate_group(self, group: ConditionGroup, df: pd.DataFrame) -> pd.Series:
+        if not group.conditions:
+            return pd.Series(True, index=df.index) if group.operator == "AND" else pd.Series(False, index=df.index)
         
-        for group in strategy.entry_logic:
-            if not group.conditions:
-                continue
+        # Initialize result with Identity element
+        # AND -> True, OR -> False
+        current_signal = pd.Series(True, index=df.index) if group.operator == "AND" else pd.Series(False, index=df.index)
+        
+        for condition in group.conditions:
+            cond_result = None
             
-            group_signal = pd.Series(True if group.logic == "AND" else False, index=df.index)
-            
-            for condition in group.conditions:
-                cond_result = self._evaluate_condition(condition, df)
-                if group.logic == "AND":
-                    group_signal = group_signal & cond_result
+            if isinstance(condition, ConditionGroup):
+                cond_result = self._evaluate_group(condition, df)
+            elif hasattr(condition, 'type'):
+                # Dispatch based on type
+                if condition.type == "indicator_comparison":
+                    cond_result = self._evaluate_comparison(condition, df)
+                elif condition.type == "price_level_distance":
+                    cond_result = self._evaluate_price_level(condition, df)
+                elif condition.type == "candle_pattern":
+                    cond_result = self._evaluate_candle_pattern(condition, df)
                 else:
-                    group_signal = group_signal | cond_result
-            
-            final_signal = final_signal & group_signal
-            
-        return final_signal
-
-    def _evaluate_condition(self, condition: Condition, df: pd.DataFrame) -> pd.Series:
-        # Copied from original, simplified
-        indicator = condition.indicator
-        operator = condition.operator
-        value = condition.value
-        
-        series = None
-        if indicator == IndicatorType.PRICE:
-            series = df['close']
-        elif indicator == IndicatorType.VWAP:
-            series = df['vwap'] if 'vwap' in df.columns else pd.Series(0, index=df.index)
-        elif indicator == IndicatorType.RVOL:
-            series = df['rvol'] if 'rvol' in df.columns else pd.Series(1.0, index=df.index)
-        elif indicator == IndicatorType.TIME_OF_DAY:
-            series = df['timestamp'].dt.time
-            try:
-                target_time = datetime.strptime(str(value), "%H:%M").time()
-                value = target_time
-            except:
-                return pd.Series(False, index=df.index)
-        elif indicator == IndicatorType.EXTENSION:
-            if condition.compare_to == "VWAP" and 'vwap' in df.columns:
-                series = ((df['close'] - df['vwap']) / df['vwap'] * 100)
+                    cond_result = pd.Series(False, index=df.index)
             else:
-                series = pd.Series(0, index=df.index)
-        else:
-             col_name = indicator.value.lower().replace(' ', '_')
-             series = df[col_name] if col_name in df.columns else pd.Series(False, index=df.index)
+                 cond_result = pd.Series(False, index=df.index)
+                 
+            if group.operator == "AND":
+                current_signal = current_signal & cond_result
+            else:
+                current_signal = current_signal | cond_result
         
-        try:
-            target_value = value
-            if isinstance(value, str) and not isinstance(series.iloc[0], (str, time)) and indicator != IndicatorType.TIME_OF_DAY:
-                 target_value = float(value)
+        return current_signal
 
-            if operator == Operator.GT: return series > target_value
-            elif operator == Operator.LT: return series < target_value
-            elif operator == Operator.GTE: return series >= target_value
-            elif operator == Operator.LTE: return series <= target_value
-            elif operator == Operator.EQ:
-                # Handle Time Comparison carefully
-                return series == target_value
-        except Exception:
+    def _resolve_indicator(self, config, df: pd.DataFrame) -> pd.Series:
+        """Resolve an IndicatorConfig or float to a Series"""
+        if isinstance(config, (float, int)):
+            return pd.Series(float(config), index=df.index)
+            
+        # It's an IndicatorConfig
+        name = config.name
+        
+        series = pd.Series(0.0, index=df.index)
+        
+        if name == IndicatorType.CLOSE: series = df['close']
+        elif name == IndicatorType.OPEN: series = df['open']
+        elif name == IndicatorType.HIGH: series = df['high']
+        elif name == IndicatorType.LOW: series = df['low']
+        elif name == IndicatorType.VWAP: 
+            series = df['vwap'] if 'vwap' in df.columns else df['close']
+        elif name == IndicatorType.RVOL:
+            series = df['rvol'] if 'rvol' in df.columns else pd.Series(1.0, index=df.index)
+        elif name == IndicatorType.PMH:
+            series = df['pm_high'] if 'pm_high' in df.columns else df['high']
+        elif name == IndicatorType.PML:
+             series = df['pm_low'] if 'pm_low' in df.columns else df['low']
+        # Add other indicators as needed (SMA, EMA etc via pandas_ta or manual calc if not in DF)
+        
+        # Apply offset if needed (shift)
+        if config.offset and config.offset > 0:
+            series = series.shift(config.offset)
+            
+        return series
+
+    def _evaluate_comparison(self, condition: ComparisonCondition, df: pd.DataFrame) -> pd.Series:
+        s1 = self._resolve_indicator(condition.source, df)
+        s2 = self._resolve_indicator(condition.target, df)
+        
+        comp = condition.comparator
+        if comp == Comparator.GT: return s1 > s2
+        elif comp == Comparator.LT: return s1 < s2
+        elif comp == Comparator.GTE: return s1 >= s2
+        elif comp == Comparator.LTE: return s1 <= s2
+        elif comp == Comparator.EQ: return s1 == s2
+        elif comp == Comparator.CROSSES_ABOVE:
+            return (s1 > s2) & (s1.shift(1) <= s2.shift(1))
+        elif comp == Comparator.CROSSES_BELOW:
+             return (s1 < s2) & (s1.shift(1) >= s2.shift(1))
+             
+        return pd.Series(False, index=df.index)
+
+    def _evaluate_price_level(self, condition: PriceLevelCondition, df: pd.DataFrame) -> pd.Series:
+        # source (Close/High/Low) vs level (PMH, etc) +/- value_pct
+        source = df[condition.source.lower()]
+        
+        level_map = {
+            IndicatorType.PMH: 'pm_high',
+            IndicatorType.PML: 'pm_low',
+            IndicatorType.Y_HIGH: 'prev_high', # Assuming this col exists or 0
+            IndicatorType.Y_LOW: 'prev_low',
+            IndicatorType.Y_CLOSE: 'prev_close'
+        }
+        
+        lvl_col = level_map.get(condition.level)
+        if not lvl_col or lvl_col not in df.columns:
             return pd.Series(False, index=df.index)
+            
+        level_val = df[lvl_col]
+        
+        # Distance % = (Source - Level) / Level * 100
+        dist = (source - level_val) / level_val * 100
+        
+        if condition.comparator == "DISTANCE_GT":
+            return dist > condition.value_pct
+        elif condition.comparator == "DISTANCE_LT":
+            return dist < condition.value_pct
+            
+        return pd.Series(False, index=df.index)
+
+    def _evaluate_candle_pattern(self, condition: CandleCondition, df: pd.DataFrame) -> pd.Series:
+        # Simple placeholder for patterns
+        pat = condition.pattern
+        
+        is_green = df['close'] > df['open']
+        is_red = df['close'] < df['open']
+        
+        if pat == "GREEN_VOLUME":
+            return is_green
+        elif pat == "RED_VOLUME":
+            return is_red
+            
         return pd.Series(False, index=df.index)
 
     def run(self) -> BacktestResult:
@@ -458,17 +511,24 @@ class BacktestEngine:
         
         risk_map = {
             RiskType.FIXED: RISK_FIXED,
-            RiskType.PERCENT: RISK_PERCENT,
+            RiskType.PERCENTAGE: RISK_PERCENT, # Fixed enum name mismatch
             RiskType.ATR: RISK_ATR,
-            RiskType.STRUCTURE: RISK_STRUCTURE
+            RiskType.MARKET_STRUCTURE: RISK_STRUCTURE # Fixed enum name mismatch
         }
         
         for s in self.strategies:
             strat_weights.append(self.weights.get(s.id, 0.0))
-            strat_sl_types.append(risk_map.get(s.exit_logic.stop_loss_type, RISK_PERCENT))
-            strat_sl_values.append(s.exit_logic.stop_loss_value)
-            strat_tp_types.append(risk_map.get(s.exit_logic.take_profit_type, RISK_PERCENT))
-            strat_tp_values.append(s.exit_logic.take_profit_value)
+            
+            # Use safe default or map
+            sl_val = s.risk_management.hard_stop.get('value', 2.0)
+            sl_type_str = s.risk_management.hard_stop.get('type', RiskType.PERCENTAGE)
+            strat_sl_types.append(risk_map.get(sl_type_str, RISK_PERCENT))
+            strat_sl_values.append(sl_val)
+            
+            tp_val = s.risk_management.take_profit.get('value', 6.0)
+            tp_type_str = s.risk_management.take_profit.get('type', RiskType.PERCENTAGE)
+            strat_tp_types.append(risk_map.get(tp_type_str, RISK_PERCENT))
+            strat_tp_values.append(tp_val)
             
         # 3. Call JIT Function
         print(f"JIT Warmup/Execution for {len(df)} rows...")
@@ -525,11 +585,8 @@ class BacktestEngine:
                 stop_loss=res_sl[k],
                 take_profit=res_tp[k],
                 position_size=res_qty[k],
-                allocated_capital=(res_qty[k] * abs(res_sl[k] - res_entry_px[k])), # Approx? No, alloc = risk * size? 
-                # Re-calc allocated from size? or just store it. 
-                # Optimization: We didn't store allocated in JIT to save memory. 
-                # allocated = size * risk per share
-                r_multiple=0.0, # Will be calc by _calculate_results logic or here?
+                allocated_capital=(res_qty[k] * abs(res_sl[k] - res_entry_px[k])), 
+                r_multiple=0.0, 
                 fees=self.commission,
                 exit_reason=reason_map.get(res_reason[k], "UNKNOWN"),
                 is_open=False

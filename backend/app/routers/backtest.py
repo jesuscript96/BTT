@@ -12,7 +12,6 @@ import time
 from app.database import get_db_connection
 from app.schemas.strategy import Strategy
 from app.routers.data import FilterRequest
-# Imports moved inside router function for lazy loading to save memory
 
 router = APIRouter()
 
@@ -100,13 +99,21 @@ def run_backtest(request: BacktestRequest):
         strategy_names = {}
         
         for strategy_id in request.strategy_ids:
-            # ... (strategy lookup code remains same) ...
-            row = con.execute("SELECT definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+            # Check if strategy exists
+            row = con.execute("SELECT definition, name FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
             if not row: raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
-            strategy_dict = json.loads(row[0])
-            strategy = Strategy(**strategy_dict)
-            strategies.append(strategy)
-            strategy_names[strategy_id] = strategy.name
+            try:
+                # Handle possible JSON/Dict format issues
+                strategy_data = row[0]
+                if isinstance(strategy_data, str):
+                    strategy_data = json.loads(strategy_data)
+                
+                strategy = Strategy(**strategy_data)
+                strategies.append(strategy)
+                strategy_names[strategy_id] = row[1]
+            except Exception as e:
+                print(f"Error parsing strategy {strategy_id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Invalid strategy format: {e}")
             
         print(f"  ✓ Loaded strategies in {time.time() - t0:.2f}s")
         
@@ -115,13 +122,18 @@ def run_backtest(request: BacktestRequest):
         print("\n[2/5] Fetching market data...")
         
         req_filters = {}
+        dataset_summary = "Custom Filters"
+        
         if request.query_id:
             logger_prefix = f"  - Using Saved Dataset: {request.query_id}"
             print(logger_prefix)
-            sq_row = con.execute("SELECT filters FROM saved_queries WHERE id = ?", (request.query_id,)).fetchone()
+            sq_row = con.execute("SELECT filters, name FROM saved_queries WHERE id = ?", (request.query_id,)).fetchone()
             if not sq_row:
-                raise HTTPException(status_code=404, detail=f"Saved dataset {request.query_id} not found")
-            req_filters = json.loads(sq_row[0])
+                req_filters = request.dataset_filters.dict() if hasattr(request.dataset_filters, 'dict') else request.dataset_filters
+                print(f"  ⚠️ Saved dataset {request.query_id} not found, using request filters.")
+            else:
+                req_filters = json.loads(sq_row[0])
+                dataset_summary = sq_row[1]
         else:
             req_filters = request.dataset_filters.dict() if hasattr(request.dataset_filters, 'dict') else request.dataset_filters
             
@@ -129,56 +141,61 @@ def run_backtest(request: BacktestRequest):
         from app.services.query_service import build_screener_query
         
         # Get universe of (Ticker, Date) using shared logic
-        rec_query, sql_p, where_d, where_i, where_m = build_screener_query(req_filters, limit=100000)
+        # We limit the universe to 3000 days/tickers to stay within memory limits for now
+        rec_query, sql_p, where_d, where_i, where_m, _ = build_screener_query(req_filters, limit=3000)
         
-        # Construct INTRADAY fetch query for universe with deduplication and filler removal
+        # OPTIMIZED FETCHING STRATEGY
+        # 1. Create a temporary table with the universe (Ticker, Date, Metrics)
+        print("  - Materializing universe to temporary table...")
+        try:
+            con.execute("CREATE OR REPLACE TEMPORARY TABLE temp_universe AS " + rec_query, sql_p)
+        except Exception as e:
+             # Fallback if params issue
+             print(f"Temp table creation failed: {e}")
+             raise
+        
+        # 2. Fetch Intraday 1m data by joining strictly on Ticker AND Date
+        
+        # Check if 'date' column exists in intraday_1m
+        has_date_col = False
+        try:
+             # DuckDB describe
+             cols = [c[0] for c in con.execute("DESCRIBE intraday_1m").fetchall()]
+             if 'date' in cols: has_date_col = True
+        except: pass
+        
+        join_condition = "i.ticker = u.ticker AND i.date = u.timestamp::DATE"
+        if not has_date_col:
+             join_condition = "i.ticker = u.ticker AND CAST(i.timestamp AS DATE) = CAST(u.timestamp AS DATE)"
+        
+        print(f"  - Fetching Intraday Data (Join optimize: {has_date_col})...")
+        
         final_query = f"""
-            WITH universe AS (
-                {rec_query}
-            ),
-            intraday_dedup AS (
-                SELECT DISTINCT * FROM intraday_1m 
-                WHERE ticker IN (SELECT ticker FROM universe)
-                  AND CAST(timestamp AS DATE) IN (SELECT date FROM universe)
-            ),
-            intraday_clean AS (
+            WITH intraday_clean AS (
                 SELECT 
-                    *,
-                    LAG(volume) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_v,
-                    LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) as prev_c
-                FROM intraday_dedup
+                    i.ticker,
+                    i.timestamp,
+                    i.open, i.high, i.low, i.close,
+                    i.volume,
+                    u.pm_high, u.pm_volume,
+                    u.gap_pct, u.day_return_pct as day_ret, u.rth_run_pct as rth_run
+                FROM intraday_1m i
+                INNER JOIN temp_universe u ON {join_condition}
             )
-            SELECT 
-                i.timestamp, i.open, i.high, i.low, i.close, 
-                CASE WHEN (i.prev_v IS NULL OR i.volume != i.prev_v OR i.close != i.prev_c) THEN i.volume ELSE 0 END as volume,
-                i.ticker, u.pm_h as pm_high, u.pm_v as pm_volume,
-                u.gap_pct, u.day_ret, u.rth_run
-            FROM intraday_clean i
-            JOIN universe u ON i.ticker = u.ticker AND CAST(i.timestamp AS VARCHAR)[:10] = u.date
-            ORDER BY i.timestamp ASC
+            SELECT * FROM intraday_clean
+            ORDER BY ticker, timestamp ASC
         """
         
-        # Memory limit
-        MAX_ROWS = 500000
-        final_query += f" LIMIT {MAX_ROWS}"
+        market_data = con.execute(final_query).fetchdf()
+        duration_fetch = time.time() - t1
         
-        t_exec = time.time()
-        print(f"  - Executing query (max {MAX_ROWS:,} rows)...")
-        
-        import pandas as pd
-        # We pass sql_p twice because rec_query (embedded in CTE) uses it twice
-        # build_screener_query already returns sql_p doubled (where_d + where_i params)
-        # So we just pass it as is.
-        market_data = con.execute(final_query, sql_p).fetchdf()
-        duration_fetch = time.time() - t_exec
-        
-        if len(market_data) >= MAX_ROWS:
-            print(f"  ⚠️  WARNING: Hit row limit ({MAX_ROWS:,}). Results may be truncated.")
-        
-        print(f"  ✓ Fetched {len(market_data):,} rows in {duration_fetch:.2f}s")
+        con.execute("DROP TABLE IF EXISTS temp_universe")
         
         if market_data.empty:
-            raise HTTPException(status_code=400, detail="No market data found for given filters")
+             raise HTTPException(status_code=400, detail="No market data found for given filters")
+             
+        
+        print(f"  ✓ Fetched {len(market_data):,} rows in {duration_fetch:.2f}s")
         
         # 3. Run backtest
         t2 = time.time()
@@ -198,14 +215,6 @@ def run_backtest(request: BacktestRequest):
         # 4. Calculate additional metrics
         t3 = time.time()
         
-        # Lazy imports for heavy libs
-        from app.backtester.portfolio import (
-            monte_carlo_simulation, 
-            calculate_drawdown_series,
-            calculate_strategy_equity_curves,
-            calculate_correlation_matrix
-        )
-        
         monte_carlo_result = monte_carlo_simulation(result.trades, request.initial_capital, 1000)
         
         correlation_matrix = None
@@ -221,11 +230,6 @@ def run_backtest(request: BacktestRequest):
         now = datetime.now()
         total_return_pct = ((result.final_balance - request.initial_capital) / request.initial_capital * 100)
         total_return_r = sum(t.get('r_multiple', 0) for t in result.trades if t.get('r_multiple') is not None)
-        
-        # Calculate Profit Factor
-        winning_pnl = sum(t.get('r_multiple', 0) for t in result.trades if t.get('r_multiple', 0) > 0)
-        losing_pnl = abs(sum(t.get('r_multiple', 0) for t in result.trades if t.get('r_multiple', 0) < 0))
-        profit_factor = winning_pnl / losing_pnl if losing_pnl > 0 else (winning_pnl if winning_pnl > 0 else 0)
         
         results_json = {
              "run_id": run_id,
@@ -266,6 +270,27 @@ def run_backtest(request: BacktestRequest):
              "executed_at": now.isoformat()
         }
         
+        # 6. SAVE RESULTS TO DATABASE
+        print("\n[5/5] Saving results to database...")
+        con.execute("""
+            INSERT INTO backtest_results (
+                id, strategy_ids, dataset_summary, total_trades, win_rate, 
+                final_balance, max_drawdown_pct, executed_at, results_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run_id,
+            json.dumps(request.strategy_ids),
+            dataset_summary,
+            result.total_trades,
+            result.win_rate,
+            result.final_balance,
+            result.max_drawdown_pct,
+            now,
+            json.dumps(results_json)
+        ))
+        
+        print(f"  ✓ Validated and saved run {run_id}")
+        
         print(f"  ✓ Metrics calculated in {time.time() - t3:.2f}s")
         print(f"✓ Total Request Time: {time.time() - start_total:.2f}s")
         
@@ -278,6 +303,7 @@ def run_backtest(request: BacktestRequest):
         
     except Exception as e:
         print(f"Backtest execution error: {e}")
+        # traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -332,7 +358,8 @@ def get_backtest_history():
         for row in rows:
             history.append({
                 "run_id": row[0],
-                "strategy_ids": json.loads(row[1]),
+                # strategy_ids might be stored as string if json encoding used
+                "strategy_ids": json.loads(row[1]) if isinstance(row[1], str) else row[1],
                 "dataset_summary": row[2],
                 "total_trades": row[3],
                 "win_rate": row[4],
