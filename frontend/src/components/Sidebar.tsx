@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState } from "react";
-import { LayoutDashboard, Database, ChevronDown, ChevronRight, Play, Plus, LineChart } from "lucide-react";
+import { LayoutDashboard, Database, ChevronDown, ChevronRight, Play, Plus, LineChart, BookOpen } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "./ThemeToggle";
 
 export const Sidebar = () => {
     // State to toggle the "My Strategies" group
     const [isStrategiesOpen, setIsStrategiesOpen] = useState(true);
+    const [isTutorialsOpen, setIsTutorialsOpen] = useState(true);
 
     return (
         <aside className="w-64 bg-sidebar border-r border-border h-screen fixed left-0 top-0 flex flex-col font-sans transition-colors duration-300 z-50">
@@ -81,6 +82,35 @@ export const Sidebar = () => {
                     <Play className="h-4 w-4 text-sidebar-foreground/50 group-hover:text-foreground transition-colors" />
                     <span className="text-sm font-medium">Backtester</span>
                 </Link>
+
+                {/* Tutorials Group */}
+                <div className="space-y-0.5">
+                    <button
+                        onClick={() => setIsTutorialsOpen(!isTutorialsOpen)}
+                        className="w-full flex items-center justify-between px-2 py-1.5 text-sidebar-foreground/80 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all group text-left"
+                    >
+                        <div className="flex items-center gap-2.5">
+                            <BookOpen className="h-4 w-4 text-sidebar-foreground/50 group-hover:text-foreground transition-colors" />
+                            <span className="text-sm font-medium">Tutoriales</span>
+                        </div>
+                        {isTutorialsOpen ? (
+                            <ChevronDown className="h-3 w-3 opacity-50" />
+                        ) : (
+                            <ChevronRight className="h-3 w-3 opacity-50" />
+                        )}
+                    </button>
+
+                    {isTutorialsOpen && (
+                        <div className="pl-9 space-y-0.5 mt-0.5 border-l border-border/50 ml-4">
+                            <Link
+                                href="/tutorials"
+                                className="flex items-center gap-2.5 py-1.5 px-2 text-sidebar-foreground/60 hover:text-foreground hover:bg-sidebar-hover rounded-md transition-all"
+                            >
+                                <span className="text-sm">Crea tu estrategia</span>
+                            </Link>
+                        </div>
+                    )}
+                </div>
             </nav>
 
             {/* Bottom Section similar to Claude's User Profile/Settings */}
