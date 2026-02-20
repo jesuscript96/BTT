@@ -111,6 +111,10 @@ class EntryLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
 
+class ExitLogic(BaseModel):
+    timeframe: Timeframe = Timeframe.M1
+    root_condition: ConditionGroup
+
 class RiskManagement(BaseModel):
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
@@ -122,6 +126,7 @@ class StrategyCreate(BaseModel):
     description: Optional[str] = None
     universe_filters: UniverseFilters
     entry_logic: EntryLogic
+    exit_logic: Optional[ExitLogic] = None
     risk_management: RiskManagement
 
 class Strategy(StrategyCreate):

@@ -1,13 +1,36 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { ExecutionPanel } from '@/components/backtester/ExecutionPanel';
 import { BacktestDashboard } from '@/components/backtester/BacktestDashboard';
 import { BacktestResult } from '@/types/backtest';
 
+interface PrefillData {
+    strategy_id: string;
+    strategy_name: string;
+    dataset_id: string | null;
+}
+
 export default function BacktesterPage() {
+    const searchParams = useSearchParams();
     const [currentResult, setCurrentResult] = useState<BacktestResult | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [prefillData, setPrefillData] = useState<PrefillData | null>(null);
+
+    useEffect(() => {
+        if (searchParams.get('prefill') === 'true') {
+            try {
+                const raw = sessionStorage.getItem('backtester_prefill');
+                if (raw) {
+                    setPrefillData(JSON.parse(raw));
+                    sessionStorage.removeItem('backtester_prefill');
+                }
+            } catch (e) {
+                console.error('Failed to read prefill data:', e);
+            }
+        }
+    }, [searchParams]);
 
     const handleBacktestComplete = (result: BacktestResult) => {
         setCurrentResult(result);
@@ -25,6 +48,7 @@ export default function BacktesterPage() {
                 onBacktestStart={handleBacktestStart}
                 onBacktestComplete={handleBacktestComplete}
                 isLoading={isLoading}
+                prefillData={prefillData}
             />
 
             {/* Main Dashboard */}
@@ -38,7 +62,7 @@ export default function BacktesterPage() {
                                 Backtester
                             </h2>
                             <p className="text-muted-foreground max-w-sm mx-auto">
-                                Configure your backtest in the panel and click "Run Backtest" to begin your quantitative analysis
+                                Configure your backtest in the panel and click &quot;Run Backtest&quot; to begin your quantitative analysis
                             </p>
                             <div className="mt-8 p-6 bg-card border border-border rounded-2xl border-dashed">
                                 <p className="text-xs text-muted-foreground uppercase font-bold tracking-widest">Ready for deployment</p>

@@ -117,6 +117,11 @@ export interface EntryLogic {
     root_condition: ConditionGroup;
 }
 
+export interface ExitLogic {
+    timeframe: Timeframe;
+    root_condition: ConditionGroup;
+}
+
 export interface RiskSettings {
     type: RiskType;
     value: number;
@@ -141,6 +146,7 @@ export interface Strategy {
     description?: string;
     universe_filters: UniverseFilters;
     entry_logic: EntryLogic;
+    exit_logic?: ExitLogic;
     risk_management: RiskManagement;
     created_at?: string;
     updated_at?: string;
@@ -166,4 +172,13 @@ export const initialRiskManagement: RiskManagement = {
     hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
     take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
     trailing_stop: { active: false, type: "EMA13", buffer_pct: 0.5 }
+};
+
+export const initialExitLogic: ExitLogic = {
+    timeframe: Timeframe.M1,
+    root_condition: {
+        type: "group",
+        operator: "AND",
+        conditions: []
+    }
 };

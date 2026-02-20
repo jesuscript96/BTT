@@ -1,18 +1,18 @@
 
 import React from 'react';
-import { EntryLogic, Timeframe } from '@/types/strategy';
+import { ExitLogic, Timeframe } from '@/types/strategy';
 import { GroupDisplay } from './ConditionBuilder';
 
 interface Props {
-    logic: EntryLogic;
-    onChange: (logic: EntryLogic) => void;
+    logic: ExitLogic;
+    onChange: (logic: ExitLogic) => void;
 }
 
-export const EntryLogicBuilder = ({ logic, onChange }: Props) => {
+export const ExitLogicBuilder = ({ logic, onChange }: Props) => {
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
-                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Global Timeframe</label>
+                <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Exit Timeframe</label>
                 <select
                     value={logic.timeframe}
                     onChange={(e) => onChange({ ...logic, timeframe: e.target.value as Timeframe })}
@@ -28,7 +28,7 @@ export const EntryLogicBuilder = ({ logic, onChange }: Props) => {
                 <GroupDisplay
                     group={logic.root_condition}
                     onChange={(g) => onChange({ ...logic, root_condition: g })}
-                    accentColor="blue"
+                    accentColor="rose"
                 />
             </div>
         </div>

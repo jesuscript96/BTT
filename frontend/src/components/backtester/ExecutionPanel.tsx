@@ -6,13 +6,21 @@ import { Strategy } from '@/types/strategy';
 import { StrategySelection, BacktestRequest, BacktestResponse } from '@/types/backtest';
 import { API_URL } from '@/config/constants';
 
+interface PrefillData {
+    strategy_id: string;
+    strategy_name: string;
+    dataset_id: string | null;
+    autoRun?: boolean;
+}
+
 interface ExecutionPanelProps {
     onBacktestStart: () => void;
     onBacktestComplete: (result: any) => void;
     isLoading: boolean;
+    prefillData?: PrefillData | null;
 }
 
-export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading }: ExecutionPanelProps) {
+export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading, prefillData }: ExecutionPanelProps) {
     const [strategies, setStrategies] = useState<Strategy[]>([]);
     const [selectedStrategies, setSelectedStrategies] = useState<StrategySelection[]>([]);
     const [commission, setCommission] = useState(1.0);
@@ -45,6 +53,30 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
         fetchStrategies();
         fetchSavedDatasets();
     }, []);
+
+    // Handle prefill from strategy builder
+    const hasAutoRun = React.useRef(false);
+    useEffect(() => {
+        if (prefillData) {
+            setSelectedStrategies([{
+                strategy_id: prefillData.strategy_id,
+                name: prefillData.strategy_name,
+                weight: 100
+            }]);
+            if (prefillData.dataset_id) {
+                setSelectedDatasetId(prefillData.dataset_id);
+            }
+            hasAutoRun.current = false;
+        }
+    }, [prefillData]);
+
+    // Auto-run backtest when prefilled
+    useEffect(() => {
+        if (prefillData?.autoRun && selectedStrategies.length > 0 && !hasAutoRun.current && !isLoading) {
+            hasAutoRun.current = true;
+            runBacktest();
+        }
+    }, [prefillData, selectedStrategies]);
 
     const fetchStrategies = async () => {
         const apiUrl = API_URL;
@@ -196,6 +228,9 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading 
             {/* Header */}
             <div className="p-4 border-b border-border bg-sidebar/50">
                 <h2 className="text-lg font-black uppercase tracking-tight text-foreground">Execution Panel</h2>
+                {prefillData && (
+                    <p className="text-[10px] text-amber-500 font-bold uppercase tracking-widest mt-1">⚡ Pre-loaded from Strategy Builder</p>
+                )}
             </div>
 
             {/* Content */}
