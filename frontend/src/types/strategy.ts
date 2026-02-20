@@ -1,87 +1,169 @@
-// Enum definitions matching Backend
+
+// Enums
 export enum IndicatorType {
+    SMA = "SMA",
+    EMA = "EMA",
+    WMA = "WMA",
     RVOL = "RVOL",
-    EXTENSION = "Parabolic Extension",
-    FFT = "Failed Follow Through",
-    SPREAD = "Spread Expansion",
-    IMBALANCE = "Large Order Imbalance",
-    RED_BARS = "Consecutive Red Bars",
-    TIME_OF_DAY = "Time of Day",
-    RELATIVE_STRENGTH = "Relative Strength",
-    PRICE = "Price",
     VWAP = "VWAP",
+    RSI = "RSI",
+    MACD = "MACD",
+    ATR = "ATR",
+    CLOSE = "Close",
+    OPEN = "Open",
+    HIGH = "High",
+    LOW = "Low",
+    PMH = "Pre-Market High",
+    PML = "Pre-Market Low",
+    HOD = "High of Day",
+    LOD = "Low of Day",
+    Y_HIGH = "Yesterday High",
+    Y_LOW = "Yesterday Low",
+    Y_CLOSE = "Yesterday Close",
     CUSTOM = "Custom"
 }
 
-export enum Operator {
-    GT = ">",
-    LT = "<",
-    EQ = "==",
-    GTE = ">=",
-    LTE = "<="
+export enum Comparator {
+    GT = "GREATER_THAN",
+    LT = "LESS_THAN",
+    GTE = "GREATER_THAN_OR_EQUAL",
+    LTE = "LESS_THAN_OR_EQUAL",
+    EQ = "EQUAL",
+    CROSSES_ABOVE = "CROSSES_ABOVE",
+    CROSSES_BELOW = "CROSSES_BELOW",
+    DISTANCE_GT = "DISTANCE_GREATER_THAN",
+    DISTANCE_LT = "DISTANCE_LESS_THAN"
+}
+
+export enum CandlePattern {
+    RV = "RED_VOLUME",
+    RV_PLUS = "RED_VOLUME_PLUS",
+    GV = "GREEN_VOLUME",
+    GV_PLUS = "GREEN_VOLUME_PLUS",
+    DOJI = "DOJI",
+    HAMMER = "HAMMER",
+    SHOOTING_STAR = "SHOOTING_STAR"
+}
+
+export enum Timeframe {
+    M1 = "1m",
+    M5 = "5m",
+    M15 = "15m",
+    M30 = "30m",
+    H1 = "1h",
+    D1 = "1d"
 }
 
 export enum RiskType {
-    FIXED = "Fixed Price",
-    PERCENT = "Percent",
+    FIXED = "Fixed Amount",
+    PERCENTAGE = "Percentage",
     ATR = "ATR Multiplier",
-    STRUCTURE = "Market Structure"
+    MARKET_STRUCTURE = "Market Structure (HOD/LOD)"
 }
 
-// Interfaces
-export interface FilterSettings {
+// Component Interfaces
+export interface UniverseFilters {
     min_market_cap?: number;
     max_market_cap?: number;
+    min_price?: number;
+    max_price?: number;
+    min_volume?: number;
     max_shares_float?: number;
     require_shortable: boolean;
     exclude_dilution: boolean;
+    whitelist_sectors: string[];
 }
 
-export interface Condition {
-    id: string;
-    indicator: IndicatorType;
-    operator: Operator;
-    value: number | string;
-    compare_to?: string;
+export interface IndicatorConfig {
+    name: IndicatorType;
+    period?: number;
+    multiplier?: number;
+    offset?: number;
 }
 
+export interface ComparisonCondition {
+    type: "indicator_comparison";
+    source: IndicatorConfig;
+    comparator: Comparator;
+    target: IndicatorConfig | number;
+}
+
+export interface PriceLevelCondition {
+    type: "price_level_distance";
+    source: "Close" | "High" | "Low";
+    level: IndicatorType;
+    comparator: "DISTANCE_GT" | "DISTANCE_LT";
+    value_pct: number;
+}
+
+export interface CandleCondition {
+    type: "candle_pattern";
+    pattern: CandlePattern;
+    lookback: number;
+    consecutive_count: number;
+}
+
+export type AnyCondition = ComparisonCondition | PriceLevelCondition | CandleCondition;
+
+// Recursive Logical Group
 export interface ConditionGroup {
-    id: string;
-    conditions: Condition[];
-    logic: "AND" | "OR";
+    type: "group";
+    operator: "AND" | "OR";
+    conditions: (ConditionGroup | AnyCondition)[];
 }
 
-export interface ExitLogic {
-    stop_loss_type: RiskType;
-    stop_loss_value: number;
-    take_profit_type: RiskType;
-    take_profit_value: number;
-    trailing_stop_active: boolean;
-    trailing_stop_type?: string;
-    dilution_profit_boost: boolean;
+export interface EntryLogic {
+    timeframe: Timeframe;
+    root_condition: ConditionGroup;
+}
+
+export interface RiskSettings {
+    type: RiskType;
+    value: number;
+}
+
+export interface TrailingStopSettings {
+    active: boolean;
+    type: string;
+    buffer_pct: number;
+}
+
+export interface RiskManagement {
+    hard_stop: RiskSettings;
+    take_profit: RiskSettings;
+    trailing_stop: TrailingStopSettings;
+    max_drawdown_daily?: number;
 }
 
 export interface Strategy {
     id?: string;
     name: string;
     description?: string;
-    filters: FilterSettings;
-    entry_logic: ConditionGroup[];
-    exit_logic: ExitLogic;
+    universe_filters: UniverseFilters;
+    entry_logic: EntryLogic;
+    risk_management: RiskManagement;
     created_at?: string;
+    updated_at?: string;
 }
 
 // Default Initial State
-export const initialFilterSettings: FilterSettings = {
+export const initialUniverseFilters: UniverseFilters = {
     require_shortable: true,
-    exclude_dilution: true
+    exclude_dilution: true,
+    whitelist_sectors: []
 };
 
-export const initialExitLogic: ExitLogic = {
-    stop_loss_type: RiskType.PERCENT,
-    stop_loss_value: 5,
-    take_profit_type: RiskType.PERCENT,
-    take_profit_value: 15,
-    trailing_stop_active: false,
-    dilution_profit_boost: false
+export const initialEntryLogic: EntryLogic = {
+    timeframe: Timeframe.M1,
+    root_condition: {
+        type: "group",
+        operator: "AND",
+        conditions: []
+    }
+};
+
+export const initialRiskManagement: RiskManagement = {
+    hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
+    take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
+    trailing_stop: { active: false, type: "EMA13", buffer_pct: 0.5 }
 };

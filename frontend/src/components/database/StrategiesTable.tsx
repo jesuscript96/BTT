@@ -57,96 +57,106 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
     }
 
     return (
-        <div className="overflow-x-auto">
-            <table className="w-full">
-                <thead className="bg-muted border-b border-border sticky top-0 z-10">
-                    <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-foreground/70">
-                            Strategy ID
+        <div className="overflow-x-auto rounded-xl border border-border/40 bg-card/10 backdrop-blur-sm shadow-2xl shadow-blue-900/5">
+            <table className="w-full border-collapse">
+                <thead>
+                    <tr className="border-b border-border/60 bg-muted/30">
+                        <th className="px-5 py-4 text-left">
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></div>
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Strategy ID</span>
+                            </div>
                         </th>
                         <th
                             onClick={() => handleSort('total_return_pct')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
+                            className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
-                            <div className="flex items-center gap-1">
-                                Total Return (%)
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500/50"></div>
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Return (%)</span>
                                 <SortIcon field="total_return_pct" />
                             </div>
                         </th>
                         <th
                             onClick={() => handleSort('profit_factor')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
+                            className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
-                            <div className="flex items-center gap-1">
-                                Profit Factor
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-purple-500/50"></div>
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Profit Factor</span>
                                 <SortIcon field="profit_factor" />
                             </div>
                         </th>
                         <th
                             onClick={() => handleSort('win_rate')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
+                            className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
-                            <div className="flex items-center gap-1">
-                                Win Rate (%)
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400/50"></div>
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Win Rate</span>
                                 <SortIcon field="win_rate" />
                             </div>
                         </th>
                         <th
                             onClick={() => handleSort('max_drawdown_pct')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
+                            className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
-                            <div className="flex items-center gap-1">
-                                Max DD (%)
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-red-500/50"></div>
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Max DD</span>
                                 <SortIcon field="max_drawdown_pct" />
                             </div>
                         </th>
                         <th
                             onClick={() => handleSort('total_trades')}
-                            className="px-4 py-3 text-left text-xs font-semibold text-foreground/70 cursor-pointer hover:bg-muted-foreground/10 transition-colors"
+                            className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
-                            <div className="flex items-center gap-1">
-                                Trades
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-orange-400/50"></div>
+                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Trades</span>
                                 <SortIcon field="total_trades" />
                             </div>
                         </th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-foreground/70">
-                            Actions
+                        <th className="px-5 py-4 text-left">
+                            <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Actions</span>
                         </th>
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
-                    {sortedStrategies.map((strategy) => (
+                <tbody className="divide-y divide-border/20">
+                    {sortedStrategies.map((strategy, index) => (
                         <tr
                             key={strategy.id}
-                            className="hover:bg-muted/50 cursor-pointer transition-colors"
+                            className={`
+                                hover:bg-blue-500/[0.04] cursor-pointer transition-all duration-200 group
+                                ${index % 2 === 0 ? 'bg-transparent' : 'bg-muted/[0.05]'}
+                            `}
                             onClick={() => router.push(`/backtester/${strategy.id}`)}
                         >
-                            <td className="px-4 py-3 text-sm text-foreground/80 font-mono">
-                                {strategy.id.slice(0, 8)}...
+                            <td className="px-5 py-4 text-xs text-muted-foreground font-black tracking-tighter group-hover:text-foreground transition-colors">
+                                {strategy.id.slice(0, 12)}...
                             </td>
-                            <td className={`px-4 py-3 text-sm font-semibold ${strategy.total_return_pct > 0 ? 'text-green-500' : 'text-red-500'
-                                }`}>
-                                {strategy.total_return_pct?.toFixed(2)}%
+                            <td className={`px-5 py-4 text-sm font-black tracking-tight ${strategy.total_return_pct > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                {strategy.total_return_pct > 0 ? '+' : ''}{strategy.total_return_pct?.toFixed(2)}%
                             </td>
-                            <td className="px-4 py-3 text-sm text-foreground font-semibold">
+                            <td className="px-5 py-4 text-sm text-foreground font-black tracking-tight">
                                 {strategy.profit_factor?.toFixed(2)}
                             </td>
-                            <td className="px-4 py-3 text-sm text-foreground/80">
+                            <td className="px-5 py-4 text-sm text-foreground font-black tracking-tight opacity-70">
                                 {strategy.win_rate?.toFixed(1)}%
                             </td>
-                            <td className="px-4 py-3 text-sm text-red-500">
+                            <td className="px-5 py-4 text-sm text-red-500/80 font-black tracking-tight">
                                 -{strategy.max_drawdown_pct?.toFixed(2)}%
                             </td>
-                            <td className="px-4 py-3 text-sm text-foreground/80">
+                            <td className="px-5 py-4 text-sm text-foreground/60 font-black tracking-tight">
                                 {strategy.total_trades}
                             </td>
-                            <td className="px-4 py-3">
+                            <td className="px-5 py-4">
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation()
                                         router.push(`/backtester/${strategy.id}`)
                                     }}
-                                    className="text-blue-500 hover:text-blue-600 transition-colors"
+                                    className="p-2 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all"
                                 >
                                     <ExternalLink className="w-4 h-4" />
                                 </button>

@@ -72,7 +72,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
     }
 
     return (
-        <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden transition-all">
+        <div className="bg-transparent border-t border-border/40 overflow-hidden transition-all">
             <div className="px-6 py-5 border-b border-border/50">
                 <h3 className="text-[10px] font-black text-foreground uppercase tracking-widest">Saved Strategies</h3>
                 <p className="text-[10px] text-muted-foreground/50 font-black uppercase tracking-widest mt-1.5">{strategies.length} strateg{strategies.length === 1 ? 'y' : 'ies'} found</p>
@@ -84,7 +84,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
                         <tr>
                             <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Name</th>
                             <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Description</th>
-                            <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Entry Groups</th>
+                            <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Timeframe</th>
                             <th className="px-6 py-3 text-left text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Created</th>
                             <th className="px-6 py-3 text-right text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">Actions</th>
                         </tr>
@@ -102,7 +102,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
                                 </td>
                                 <td className="px-6 py-4">
                                     <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-60">
-                                        {strategy.entry_logic?.length || 0} group{strategy.entry_logic?.length !== 1 ? 's' : ''}
+                                        {strategy.entry_logic?.timeframe || 'N/A'}
                                     </div>
                                 </td>
                                 <td className="px-6 py-4">

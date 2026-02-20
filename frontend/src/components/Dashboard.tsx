@@ -69,138 +69,121 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
         <div className="p-6 bg-background space-y-6 min-h-screen font-sans transition-colors duration-300">
             {/* Top Row: Metrics & Main Chart */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                {/* Left Column: Metrics & List Info */}
+                <div className="md:col-span-4 bg-transparent border-r border-border/40 p-6 space-y-12">
+                    {/* Section: Sample Summary */}
+                    <div className="flex flex-col gap-6">
+                        <div className="flex items-center justify-between border-b border-border/40 pb-6">
+                            <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                                    <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Total Sample</span>
+                                </div>
+                                <span className="text-2xl font-black text-foreground tracking-tight truncate pl-3.5">{stats.count} RECORDS</span>
+                            </div>
+                            <div className="flex gap-3 text-[9px] font-black uppercase tracking-widest items-center">
+                                {['avg', 'p25', 'p50', 'p75'].map((m) => (
+                                    <span
+                                        key={m}
+                                        onClick={() => setMode(m as any)}
+                                        className={`cursor-pointer transition-all ${mode === m ? 'text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded' : 'text-muted-foreground/50 hover:text-foreground'}`}
+                                    >
+                                        {m === 'avg' ? 'AVG' : m === 'p25' ? '25th' : m === 'p50' ? 'MED' : '75th'}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
 
-                {/* Left Column: Metric Groups (Stats, Volume, Price, Return) */}
-                <div className="md:col-span-4 bg-card border border-border text-foreground p-6 rounded-xl shadow-sm space-y-8">
-                    <div className="flex items-center justify-between border-b border-border/50 pb-4">
-                        <h2 className="text-xl font-black uppercase tracking-tight text-foreground">{stats.count} RECORDS</h2>
-                        <div className="flex gap-3 text-[10px] font-bold uppercase tracking-wider items-center">
-                            <span
-                                onClick={() => setMode('avg')}
-                                className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${mode === 'avg' ? 'bg-blue-600 text-white' : 'bg-muted text-foreground hover:bg-muted/80'}`}
-                            >
-                                Average
-                            </span>
-                            <span
-                                onClick={() => setMode('p25')}
-                                className={`cursor-pointer transition-colors ${mode === 'p25' ? 'text-blue-500 font-black' : 'text-muted-foreground hover:text-foreground'}`}
-                            >
-                                25th
-                            </span>
-                            <span
-                                onClick={() => setMode('p50')}
-                                className={`cursor-pointer transition-colors ${mode === 'p50' ? 'text-blue-500 font-black' : 'text-muted-foreground hover:text-foreground'}`}
-                            >
-                                Median
-                            </span>
-                            <span
-                                onClick={() => setMode('p75')}
-                                className={`cursor-pointer transition-colors ${mode === 'p75' ? 'text-blue-500 font-black' : 'text-muted-foreground hover:text-foreground'}`}
-                            >
-                                75th
-                            </span>
+                        <div className="flex items-center gap-12 pl-3.5">
+                            <div className="flex flex-col gap-1 relative">
+                                <div className="absolute -left-3.5 top-0 bottom-0 w-0.5 bg-green-500/30 rounded-full"></div>
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                                    <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Bullish</span>
+                                </div>
+                                <span className="text-3xl font-black text-foreground tracking-tight">85.3%</span>
+                            </div>
+                            <div className="flex flex-col gap-1 border-l border-border/40 pl-12 opacity-80 relative">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-purple-500"></div>
+                                    <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">PMH BREAKER</span>
+                                </div>
+                                <span className="text-3xl font-black text-foreground tracking-tight">
+                                    75th
+                                </span>
+                            </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
-                        {/* Progress Bars Section */}
-                        <div className="space-y-5">
-                            <StatProgress label="PM High Gap %" value={averages.pm_high_gap_pct} color="#4ade80" />
-                            <StatProgress label="PM Fade To Open %" value={averages.pmh_fade_to_open_pct} color="#f87171" />
-                            <StatProgress label="Gap at Open %" value={averages.gap_at_open_pct} color="#22c55e" />
-                            <StatProgress label="RTH High Fade to Close %" value={averages.rth_fade_to_close_pct} color="#ef4444" />
-                            <StatProgress label="RTH High %" value={averages.rth_high_run_pct} color="#3b82f6" />
-
-                            <StatProgress label="PM High Break" value={averages.pm_high_break} color="#3b82f6" />
-                            <StatProgress label="Close Red" value={averages.close_red} color="#ef4444" />
-                            <StatProgress label="Low Spike %" value={averages.low_spike_pct} color="#9ca3af" />
-                            <StatProgress label="Range %" value={averages.rth_range_pct} color="#8b5cf6" />
-                            <StatProgress label="Low Spike vs prev. close %" value={averages.low_spike_prev_close_pct} color="#f59e0b" />
+                    {/* Section: Detailed Metrics */}
+                    <div className="flex flex-col gap-8 pt-2">
+                        <div className="flex items-center gap-2 border-b border-border/20 pb-4">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+                            <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Performance Metrics</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-12 gap-y-10 pl-3.5">
+                            <MetricIndicator label="PM High Gap" value={averages.pm_high_gap_pct} color="#3b82f6" />
+                            <MetricIndicator label="PM Fade To Open" value={averages.pmh_fade_to_open_pct} color="#ef4444" />
+                            <MetricIndicator label="Gap at Open" value={averages.gap_at_open_pct} color="#22c55e" />
+                            <MetricIndicator label="RTH High Fade to Close" value={averages.rth_fade_to_close_pct} color="#ef4444" />
+                            <MetricIndicator label="RTH High Run" value={averages.rth_high_run_pct} color="#3b82f6" />
+                            <MetricIndicator label="PM High Break" value={averages.pm_high_break} color="#3b82f6" />
+                            <MetricIndicator label="Close Red" value={averages.close_red} color="#ef4444" />
+                            <MetricIndicator label="Low Spike" value={averages.low_spike_pct} color="#9ca3af" />
+                            <MetricIndicator label="Range" value={averages.rth_range_pct} color="#8b5cf6" />
+                            <MetricIndicator label="Low Spike vs prev. close" value={averages.low_spike_prev_close_pct} color="#f59e0b" />
                         </div>
                     </div>
 
-                    {/* List Stats Section */}
-                    <div className="space-y-6">
-                        <div className="space-y-3">
-                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volume</p>
-                            <MetricRow label="Premarket Volume" value={formatLargeNumber(averages.avg_pm_volume)} />
-                            <MetricRow label="Volume" value={formatLargeNumber(averages.avg_volume)} />
+                    {/* Section: Context Logs */}
+                    <div className="space-y-8 pt-8 border-t border-border/20">
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
+                                <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Volume stats</p>
+                            </div>
+                            <div className="pl-3.5 space-y-3">
+                                <MetricRow label="Premarket Volume" value={formatLargeNumber(averages.avg_pm_volume)} />
+                                <MetricRow label="Volume" value={formatLargeNumber(averages.avg_volume)} />
+                            </div>
                         </div>
 
-                        <div className="space-y-3">
-                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Volatility</p>
-                            <MetricRow label="High Spike %" value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`} />
-                            <MetricRow label="Low Spike %" value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`} />
-                            <MetricRow label="Range %" value={`${averages.rth_range_pct?.toFixed(2) || "0.00"}%`} />
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 rounded-full bg-cyan-500"></div>
+                                <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Volatility context</p>
+                            </div>
+                            <div className="pl-3.5 space-y-3">
+                                <MetricRow label="High Spike %" value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Low Spike %" value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`} />
+                                <MetricRow label="Range %" value={`${averages.rth_range_pct?.toFixed(2) || "0.00"}%`} />
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Right Column: Main Area Chart (Intraday for Top Ticker or Aggregate) */}
-                <div className="md:col-span-8 h-[500px] bg-card border border-border p-6 rounded-xl shadow-sm">
+                {/* Right Column: Main Area Chart */}
+                <div className="md:col-span-8 h-[500px] bg-transparent p-6">
                     <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} />
                 </div>
             </div>
-
-            {/* Bottom Row: Distribution Cards - HIDDEN */}
-            {
-                false && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
-                        <HorizontalDistributionCard
-                            title="HIGH SPIKE AVERAGE"
-                            value={`${averages.high_spike_pct?.toFixed(2) || "0.00"}%`}
-                            data={rangeDistribution}
-                            icon={<Info className="w-3 h-3" />}
-                        />
-                        <HorizontalDistributionCard
-                            title="LOW SPIKE AVERAGE"
-                            value={`${averages.low_spike_pct?.toFixed(2) || "0.00"}%`}
-                            data={lowSpikeDistribution}
-                            icon={<Info className="w-3 h-3" />}
-                        />
-                        <HorizontalDistributionCard
-                            title="HOD AVERAGE TIME"
-                            value={getDefaultHOD(stats.distributions.hod_time)}
-                            data={transformDist(stats.distributions.hod_time)}
-                            icon={<Clock className="w-3 h-3" />}
-                        />
-                        <HorizontalDistributionCard
-                            title="LOD AVERAGE TIME"
-                            value={getDefaultHOD(stats.distributions.lod_time)}
-                            data={transformDist(stats.distributions.lod_time)}
-                            icon={<Clock className="w-3 h-3" />}
-                        />
-                        <HorizontalDistributionCard
-                            title="RETURN AVERAGE"
-                            value={`${averages.day_return_pct?.toFixed(2) || "0.00"}%`}
-                            data={returnDistribution}
-                            icon={<Info className="w-3 h-3" />}
-                        />
-                    </div>
-                )
-            }
         </div>
     );
 };
 
-const StatProgress = ({ label, value, color }: { label: string; value: number | undefined; color: string }) => {
+const MetricIndicator = ({ label, value, color }: { label: string; value: number | undefined; color: string }) => {
     const safeValue = value ?? 0;
+    const isNegative = safeValue < 0;
     return (
-        <div className="space-y-1.5">
-            <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-wide">
-                <span className="text-muted-foreground">{label}</span>
-                <span style={{ color: safeValue < 0 ? '#ef4444' : color }} className="font-black">
+        <div className="flex flex-col gap-1 group">
+            <div className="flex items-center gap-2">
+                <div className="w-1 h-3 rounded-full" style={{ backgroundColor: isNegative ? '#ef4444' : color }}></div>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{label}</span>
+            </div>
+            <div className="pl-3">
+                <span className={`text-xl font-black tracking-tight ${isNegative ? 'text-red-500' : 'text-foreground'}`}>
                     {safeValue >= 0 ? `${safeValue.toFixed(2)}%` : `${safeValue.toFixed(2)}%`}
                 </span>
-            </div>
-            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden border border-border/30">
-                <div
-                    className="h-full transition-all duration-700 ease-out"
-                    style={{
-                        width: `${Math.min(Math.max(Math.abs(safeValue), 5), 100)}%`,
-                        backgroundColor: safeValue < 0 ? '#ef4444' : color
-                    }}
-                />
             </div>
         </div>
     );
@@ -393,8 +376,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
 
     if (!isAggregate && !activeTicker) {
         return (
-            <div className="xl:col-span-7 bg-card border border-border p-8 rounded-xl shadow-sm flex items-center justify-center text-muted-foreground text-sm">
-                No data selected for charting.
+            <div className="xl:col-span-7 bg-transparent border border-border p-8 flex items-center justify-center text-muted-foreground text-[10px] font-black uppercase tracking-widest">
+                No intraday data available for selection.
             </div>
         );
     }
@@ -420,7 +403,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries }: { data: any[], aggreg
     const pmHigh = !isAggregate && chartData.length > 0 ? chartData[0].pm_high : 0;
 
     return (
-        <div className="xl:col-span-7 bg-card border border-border p-8 rounded-xl shadow-sm space-y-6">
+        <div className="xl:col-span-7 bg-transparent border-t border-border/40 p-8 space-y-8">
             <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">

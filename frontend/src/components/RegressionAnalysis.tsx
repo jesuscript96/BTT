@@ -102,16 +102,16 @@ export default function RegressionAnalysis({ data }: RegressionAnalysisProps) {
         <div className="flex flex-col md:flex-row gap-6 h-full min-h-[500px]">
 
             {/* Sidebar Controls */}
-            <div className="w-full md:w-80 flex flex-col gap-6 p-4 bg-muted/20 border-r border-border overflow-y-auto">
+            <div className="w-full md:w-80 flex flex-col gap-8 p-6 bg-transparent border-r border-border/40 overflow-y-auto transition-colors">
                 <div>
-                    <h3 className="text-sm font-semibold uppercase text-muted-foreground mb-4">Regression Analysis ({processedData.scatterData.length} Points)</h3>
+                    <h3 className="text-[10px] font-black uppercase text-muted-foreground tracking-widest pl-1">Linear Regression ({processedData.scatterData.length} SMPL)</h3>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-6">
                     <div className="space-y-2">
-                        <label className="text-xs font-medium text-muted-foreground">Independent Variable (X)</label>
+                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Independent Variable (X)</label>
                         <select
-                            className="w-full bg-background border border-border rounded-md p-2 text-sm text-foreground focus:ring-2 focus:ring-primary"
+                            className="w-full bg-background border border-border rounded px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-primary transition-colors"
                             value={xVariable}
                             onChange={(e) => setXVariable(e.target.value)}
                         >
@@ -120,9 +120,9 @@ export default function RegressionAnalysis({ data }: RegressionAnalysisProps) {
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-xs font-medium text-muted-foreground">Dependent Variable (Y)</label>
+                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Dependent Variable (Y)</label>
                         <select
-                            className="w-full bg-background border border-border rounded-md p-2 text-sm text-foreground focus:ring-2 focus:ring-primary"
+                            className="w-full bg-background border border-border rounded px-3 py-2 text-xs font-bold text-foreground focus:ring-2 focus:ring-primary transition-colors"
                             value={yVariable}
                             onChange={(e) => setYVariable(e.target.value)}
                         >
@@ -132,22 +132,22 @@ export default function RegressionAnalysis({ data }: RegressionAnalysisProps) {
 
                     <button
                         onClick={handleSwitch}
-                        className="w-full py-2 px-4 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-md transition-colors border border-border"
+                        className="w-full py-2 px-4 bg-muted hover:bg-muted/80 text-foreground text-[10px] font-black uppercase tracking-widest rounded border border-border transition-all"
                     >
                         Switch variables
                     </button>
                 </div>
 
-                <div className="space-y-4 pt-4 border-t border-border">
-                    <div className="flex items-center gap-2">
+                <div className="space-y-4 pt-6 border-t border-border/40">
+                    <div className="flex items-center gap-3">
                         <input
                             type="checkbox"
                             id="customScales"
                             checked={useCustomScales}
                             onChange={(e) => setUseCustomScales(e.target.checked)}
-                            className="rounded border-input bg-background text-primary focus:ring-offset-background"
+                            className="w-3 h-3 rounded-sm border-border bg-background text-primary focus:ring-0"
                         />
-                        <label htmlFor="customScales" className="text-sm font-medium text-foreground">Custom scales</label>
+                        <label htmlFor="customScales" className="text-[10px] font-black text-muted-foreground uppercase tracking-widest cursor-pointer">Scale Manual</label>
                     </div>
 
                     {useCustomScales && (
@@ -173,28 +173,28 @@ export default function RegressionAnalysis({ data }: RegressionAnalysisProps) {
                 </div>
 
                 <div className="mt-auto pt-8">
-                    <div className="bg-card p-4 rounded-lg border border-border">
-                        <div className="text-xs text-muted-foreground mb-1">Correlation (R²)</div>
-                        <div className="text-2xl font-bold text-foreground">{processedData.r2.toFixed(4)}</div>
-                        <div className="text-[10px] text-muted-foreground mt-2 break-all font-mono">{processedData.formula}</div>
+                    <div className="bg-transparent border-t border-border/40 py-6 space-y-2">
+                        <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Correlation (R²)</div>
+                        <div className="text-3xl font-black text-foreground tracking-tighter">{processedData.r2.toFixed(4)}</div>
+                        <div className="text-[9px] font-bold text-muted-foreground mt-4 break-all opacity-60">{processedData.formula}</div>
                     </div>
                 </div>
             </div>
 
             {/* Chart Area */}
-            <div className="flex-1 p-4 relative min-h-[400px]">
+            <div className="flex-1 p-6 relative min-h-[400px] bg-transparent">
                 {/* Legend Header */}
-                <div className="absolute top-4 right-8 flex gap-6 text-xs bg-background/80 p-2 rounded backdrop-blur-sm border border-border z-10">
+                <div className="absolute top-6 right-8 flex gap-8 text-[10px] font-black uppercase tracking-widest bg-background/50 p-3 rounded backdrop-blur-md border border-border/40 z-10">
                     <div className="flex items-center gap-2">
-                        <div className="w-3 h-0.5 bg-blue-500"></div>
-                        <span className="text-muted-foreground">Quadratic Regression</span>
+                        <div className="w-4 h-0.5 bg-blue-500 rounded-full"></div>
+                        <span className="text-muted-foreground">Quadratic Trend</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                        <span className="text-muted-foreground">Close Green</span>
+                        <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.3)]"></div>
+                        <span className="text-muted-foreground">Close Grn</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]"></div>
                         <span className="text-muted-foreground">Close Red</span>
                     </div>
                 </div>

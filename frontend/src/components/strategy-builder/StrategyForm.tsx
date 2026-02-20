@@ -1,11 +1,20 @@
+
 "use client";
 
 import React, { useState } from 'react';
-import { Strategy, initialFilterSettings, initialExitLogic, ConditionGroup } from '@/types/strategy';
-import { FilterSection } from './FilterSection';
-import { ConditionBuilder } from './ConditionBuilder';
-import { RiskSection } from './RiskSection';
-import { Save, Loader2 } from 'lucide-react';
+import {
+    Strategy,
+    initialUniverseFilters,
+    initialEntryLogic,
+    initialRiskManagement,
+    UniverseFilters,
+    EntryLogic,
+    RiskManagement
+} from '@/types/strategy';
+import { UniverseFiltersComponent } from './UniverseFilters';
+import { EntryLogicBuilder } from './EntryLogic';
+import { RiskManagementComponent } from './RiskManagement';
+import { Save, Loader2, Code, LayoutTemplate } from 'lucide-react';
 import { API_URL } from '@/config/constants';
 
 interface Props {
@@ -18,11 +27,22 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     // Strategy State
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
-    const [filters, setFilters] = useState(initialFilterSettings);
-    const [exitLogic, setExitLogic] = useState(initialExitLogic);
-    const [groups, setGroups] = useState<ConditionGroup[]>([
-        { id: 'default-group', conditions: [], logic: 'AND' }
-    ]);
+    const [filters, setFilters] = useState<UniverseFilters>(initialUniverseFilters);
+    const [entryLogic, setEntryLogic] = useState<EntryLogic>(initialEntryLogic);
+    const [riskManagement, setRiskManagement] = useState<RiskManagement>(initialRiskManagement);
+
+    // View State
+    const [showJson, setShowJson] = useState(true);
+
+    const constructStrategyPayload = (): Strategy => {
+        return {
+            name,
+            description,
+            universe_filters: filters,
+            entry_logic: entryLogic,
+            risk_management: riskManagement
+        };
+    };
 
     const handleSave = async () => {
         if (!name) {
@@ -32,15 +52,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
         setIsSubmitting(true);
         try {
-            const strategyData = {
-                name,
-                description,
-                filters,
-                entry_logic: groups,
-                exit_logic: exitLogic
-            };
-
+            const strategyData = constructStrategyPayload();
             const apiUrl = API_URL;
+            // Use correct endpoint structure
             const response = await fetch(`${apiUrl}/strategies/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -50,18 +64,15 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({ detail: 'Failed to parse error response' }));
                 const detail = errorData.detail;
-
+                let errorMessage = 'Failed to save';
                 if (Array.isArray(detail)) {
-                    // Handle Pydantic validation errors
-                    const messages = detail.map((err: any) => {
-                        const field = err.loc ? err.loc[err.loc.length - 1] : 'Field';
-                        return `${field}: ${err.msg}`;
-                    });
-                    throw new Error(messages.join('\n'));
+                    errorMessage = detail.map((err: any) => `${err.loc.join('.')}: ${err.msg}`).join('\n');
                 } else if (typeof detail === 'object') {
-                    throw new Error(JSON.stringify(detail));
+                    errorMessage = JSON.stringify(detail);
+                } else {
+                    errorMessage = detail || 'Failed to save';
                 }
-                throw new Error(detail || 'Failed to save');
+                throw new Error(errorMessage);
             }
 
             const savedStrategy = await response.json();
@@ -70,129 +81,128 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             // Reset form
             setName("");
             setDescription("");
-            setGroups([{ id: 'default-group', conditions: [], logic: 'AND' }]);
+            setEntryLogic(initialEntryLogic);
 
-            // Trigger refresh of strategies table
-            if (onStrategySaved) {
-                onStrategySaved();
-            }
+            if (onStrategySaved) onStrategySaved();
         } catch (error) {
             console.error(error);
-            let errorMessage = 'Unknown error';
-            if (error instanceof Error) {
-                errorMessage = error.message;
-            } else if (typeof error === 'object' && error !== null) {
-                errorMessage = JSON.stringify(error);
-            }
-            alert(`Error saving strategy: ${errorMessage}`);
+            alert(`Error saving strategy: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     return (
-        <div className="w-full px-2 py-4 font-sans text-foreground">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-8">
-                <div>
-                    <h1 className="text-2xl font-black text-foreground tracking-tight mb-2 uppercase">New Strategy</h1>
-                    <p className="text-sm text-muted-foreground font-medium">Define algorithmic rules for the Short-Bias engine.</p>
+        <div className="flex h-[calc(100vh-100px)] overflow-hidden">
+            {/* LEFT: Builder Form */}
+            <div className={`flex-1 overflow-y-auto px-6 py-4 font-sans text-foreground transition-all duration-300 ${showJson ? 'mr-0' : ''}`}>
+
+                {/* Header */}
+                <div className="flex items-center justify-between mb-8 sticky top-0 z-10 bg-background/95 backdrop-blur py-2 border-b border-border/40">
+                    <div>
+                        <h1 className="text-2xl font-black text-foreground tracking-tight mb-1 uppercase">New Strategy</h1>
+                        <p className="text-xs text-muted-foreground font-medium">Algorithmic Strategy Designer</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => setShowJson(!showJson)}
+                            className={`px-3 py-2 rounded-lg border transition-all ${showJson ? 'bg-blue-500/10 border-blue-500 text-blue-500' : 'bg-card border-border text-muted-foreground hover:bg-muted'}`}
+                            title="Toggle JSON Preview"
+                        >
+                            <Code className="w-4 h-4" />
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={isSubmitting}
+                            className="flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-900/40 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            <span>Save Strategy</span>
+                        </button>
+                    </div>
                 </div>
-                <div className="flex gap-3">
-                    <button
-                        onClick={() => {/* verify logic */ }}
-                        className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground bg-card border border-border rounded-lg hover:bg-muted transition-all hover:shadow-sm"
-                    >
-                        Validate Logic
-                    </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={isSubmitting}
-                        className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black uppercase tracking-widest text-xs shadow-lg shadow-blue-900/40 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {isSubmitting ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                            <Save className="w-4 h-4" />
-                        )}
-                        <span>Save Strategy</span>
-                    </button>
+
+                <div className="space-y-12 pb-20">
+
+                    {/* 1. IDENTITY & UNIVERSE */}
+                    <section className="grid grid-cols-12 gap-8">
+                        <div className="col-span-12 lg:col-span-4 space-y-6">
+                            <div className="flex items-center gap-2 mb-4">
+                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Metadata</h2>
+                            </div>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-2">Name</label>
+                                    <input
+                                        type="text"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        className="w-full bg-muted/10 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold focus:ring-1 focus:ring-indigo-500/50"
+                                        placeholder="My Strategy Name"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-muted-foreground uppercase mb-2">Description</label>
+                                    <textarea
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        rows={3}
+                                        className="w-full bg-muted/10 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium resize-none focus:ring-1 focus:ring-indigo-500/50"
+                                        placeholder="Description..."
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="col-span-12 lg:col-span-8">
+                            <div className="flex items-center gap-2 mb-6">
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Universe Filters</h2>
+                            </div>
+                            <div className="bg-card/30 border border-border/40 rounded-xl p-6">
+                                <UniverseFiltersComponent filters={filters} onChange={setFilters} />
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* 2. ENTRY LOGIC */}
+                    <section>
+                        <div className="flex items-center gap-2 mb-6">
+                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Entry Logic</h2>
+                        </div>
+                        <div className="bg-card/30 border border-border/40 rounded-xl p-6 min-h-[300px]">
+                            <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
+                        </div>
+                    </section>
+
+                    {/* 3. RISK MANAGEMENT */}
+                    <section>
+                        <div className="flex items-center gap-2 mb-6">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Risk Management</h2>
+                        </div>
+                        <div className="bg-card/30 border border-border/40 rounded-xl p-6 max-w-2xl">
+                            <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
+                        </div>
+                    </section>
+
                 </div>
             </div>
 
-            {/* Main Content Grid - 3 Columns */}
-            <div className="grid grid-cols-12 gap-6">
-
-                {/* 1. SETUP & FILTERS (Left - 3/12) */}
-                <div className="col-span-12 lg:col-span-3 space-y-6">
-                    {/* Metadata Card */}
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm transition-colors">
-                        <div className="flex items-center gap-2 mb-4">
-                            <div className="h-5 w-1 bg-blue-500 rounded-full" />
-                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Identity</h2>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1.5 opacity-70">Strategy Name</label>
-                                <input
-                                    type="text"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    className="w-full bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-muted-foreground/30"
-                                    placeholder="e.g. Parabolic Short v1"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1.5 opacity-70">Description</label>
-                                <textarea
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    rows={3}
-                                    className="w-full bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-muted-foreground/30 resize-none"
-                                    placeholder="Describe the mechanic..."
-                                />
-                            </div>
-                        </div>
+            {/* RIGHT: JSON Preview Panel */}
+            {showJson && (
+                <div className="w-[400px] border-l border-border/40 bg-zinc-950 overflow-y-auto font-mono text-xs p-4 transition-all animate-in slide-in-from-right-10">
+                    <div className="flex items-center justify-between mb-4 sticky top-0 bg-zinc-950 pb-2 border-b border-border/20">
+                        <h3 className="text-muted-foreground font-bold uppercase tracking-wider text-[10px]">Live JSON Preview</h3>
+                        <span className="px-2 py-0.5 rounded bg-blue-900/20 text-blue-400 text-[9px] font-bold">READ ONLY</span>
                     </div>
-
-                    {/* Filters Card */}
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm transition-colors">
-                        <div className="flex items-center gap-2 mb-4">
-                            <div className="h-5 w-1 bg-foreground rounded-full" />
-                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Universe Filters</h2>
-                        </div>
-                        <FilterSection filters={filters} onChange={setFilters} />
-                    </div>
+                    <pre className="text-zinc-400 whitespace-pre-wrap break-all">
+                        {JSON.stringify(constructStrategyPayload(), null, 2)}
+                    </pre>
                 </div>
-
-                {/* 2. ENTRY LOGIC (Center - 5/12) */}
-                <div className="col-span-12 lg:col-span-5 space-y-6">
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm h-full transition-colors">
-                        <div className="flex items-center gap-2 mb-2">
-                            <div className="h-5 w-1 bg-green-500 rounded-full" />
-                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Entry Logic</h2>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-6 ml-3 opacity-60">Trigger Conditions (AND/OR Logic)</p>
-
-                        <ConditionBuilder groups={groups} onChange={setGroups} />
-                    </div>
-                </div>
-
-                {/* 3. RISK MANAGEMENT (Right - 4/12) */}
-                <div className="col-span-12 lg:col-span-4 space-y-6">
-                    <div className="bg-card border border-border rounded-xl p-5 shadow-sm h-full transition-colors">
-                        <div className="flex items-center gap-2 mb-2">
-                            <div className="h-5 w-1 bg-red-500 rounded-full" />
-                            <h2 className="text-xs font-black text-foreground uppercase tracking-widest">Risk Management</h2>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground font-black uppercase tracking-widest mb-6 ml-3 opacity-60">Stops, Targets & Dilution</p>
-
-                        <RiskSection exitLogic={exitLogic} onChange={setExitLogic} />
-                    </div>
-                </div>
-            </div>
+            )}
         </div>
     );
 };

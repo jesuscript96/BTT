@@ -152,7 +152,7 @@ def build_screener_query(filters: dict, limit: int = 5000) -> Tuple[str, List[An
         sql_p.extend([str(default_start), str(default_end)])
         
     if ticker:
-        m_filters.append("ticker = ?")
+        m_filters.append("daily_metrics.ticker = ?")
         sql_p.append(ticker.upper())
 
     field_map = {
@@ -228,7 +228,7 @@ def build_screener_query(filters: dict, limit: int = 5000) -> Tuple[str, List[An
     # We can change where_m to be: {where_m} AND ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS'))
     # This avoids changing the join structure in get_stats_sql_logic which might be fragile.
     
-    where_m_stats = f"{where_m} AND ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS'))"
+    where_m_stats = f"{where_m} AND daily_metrics.ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS'))"
     
     return rec_query, sql_p, "1=1", "1=1", where_m_stats, where_m_stats
 

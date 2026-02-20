@@ -150,16 +150,16 @@ export default function RollingAnalysisDashboard({ ticker, startDate, endDate }:
     if (loading) return <div className="p-8 text-center text-muted-foreground animate-pulse">Loading Metrics...</div>;
 
     return (
-        <div className="flex flex-col gap-6 p-4 bg-card rounded-xl text-card-foreground border border-border">
+        <div className="flex flex-col gap-6 p-4 bg-transparent border-t border-border/40 transition-colors">
 
-            {/* Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-muted/30 rounded-lg border border-border">
+            {/* Controls Bar */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 p-6 bg-transparent border-b border-border/40">
 
                 {/* Metric Selector */}
                 <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground uppercase font-mono">Metric</span>
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Select Metric</span>
                     <select
-                        className="bg-background border border-border rounded p-2 text-sm focus:outline-none focus:border-ring text-foreground"
+                        className="bg-background border border-border rounded px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary text-foreground transition-colors"
                         value={selectedMetric}
                         onChange={(e) => setSelectedMetric(e.target.value as MetricType)}
                     >
@@ -169,38 +169,38 @@ export default function RollingAnalysisDashboard({ ticker, startDate, endDate }:
 
                 {/* Rolling Windows & Aggregation */}
                 <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground uppercase font-mono">Rolling Windows</span>
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Rolling Intervals</span>
                     <div className="flex gap-2 items-center">
                         <input
                             type="number"
-                            className="w-16 bg-background border border-border rounded p-1 text-sm text-center text-foreground focus:outline-none focus:border-ring"
+                            className="w-16 bg-background border border-border rounded p-2 text-xs font-bold text-center text-foreground focus:ring-2 focus:ring-primary"
                             value={shortWindow} onChange={e => setShortWindow(Number(e.target.value))}
                         />
-                        <span className="text-muted-foreground">/</span>
+                        <span className="text-muted-foreground opacity-50 font-black">/</span>
                         <input
                             type="number"
-                            className="w-16 bg-background border border-border rounded p-1 text-sm text-center text-foreground focus:outline-none focus:border-ring"
+                            className="w-16 bg-background border border-border rounded p-2 text-xs font-bold text-center text-foreground focus:ring-2 focus:ring-primary"
                             value={longWindow} onChange={e => setLongWindow(Number(e.target.value))}
                         />
                         <button
                             onClick={() => setAggregation(prev => prev === 'mean' ? 'median' : 'mean')}
-                            className="ml-auto px-2 py-1 bg-blue-500/10 text-blue-500 text-xs rounded border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+                            className="ml-auto px-3 py-2 bg-muted text-foreground text-[10px] font-black uppercase tracking-widest rounded border border-border hover:bg-muted/80 transition-all"
                         >
-                            {aggregation.toUpperCase()}
+                            {aggregation}
                         </button>
                     </div>
                 </div>
 
                 {/* Timespan */}
                 <div className="flex flex-col gap-1">
-                    <span className="text-xs text-muted-foreground uppercase font-mono">Timespan</span>
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">History Range</span>
                     <div className="flex gap-1">
                         {['1M', '3M', '6M', '1Y', 'All'].map(t => (
                             <button
                                 key={t}
                                 onClick={() => setTimespan(t)}
-                                className={`px-3 py-1 text-xs rounded border transition-colors ${timespan === t
-                                    ? 'bg-blue-600 border-blue-500 text-white'
+                                className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded transition-all border ${timespan === t
+                                    ? 'bg-blue-600 border-blue-600 text-white'
                                     : 'bg-background border-border text-muted-foreground hover:bg-muted hover:text-foreground'
                                     }`}
                             >
@@ -212,40 +212,44 @@ export default function RollingAnalysisDashboard({ ticker, startDate, endDate }:
 
             </div>
 
-            {/* Chart */}
-            <div className="h-[400px] w-full bg-muted/10 rounded-lg border border-border p-4 relative">
+            {/* Chart Area */}
+            <div className="h-[450px] w-full bg-transparent p-4 relative">
                 <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 20, right: 30, left: 10, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} opacity={0.5} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" vertical={false} opacity={0.3} />
                         <XAxis
                             dataKey="date"
-                            stroke="var(--muted-foreground)"
-                            tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+                            stroke="currentColor"
+                            className="text-muted-foreground"
+                            tick={{ fontSize: 10, fontWeight: 700 }}
                             minTickGap={40}
                             tickLine={false}
                             axisLine={false}
                         />
                         <YAxis
-                            stroke="var(--muted-foreground)"
-                            tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+                            stroke="currentColor"
+                            className="text-muted-foreground"
+                            tick={{ fontSize: 10, fontWeight: 700 }}
                             tickFormatter={(v) => typeof v === 'number' ? `${v.toFixed(1)}%` : ''}
                             tickLine={false}
                             axisLine={false}
+                            orientation="right"
                         />
                         <Tooltip
                             contentStyle={{
-                                backgroundColor: 'var(--card)',
-                                borderColor: 'var(--border)',
-                                color: 'var(--card-foreground)',
-                                borderRadius: '8px',
-                                boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                                backgroundColor: 'var(--background)',
+                                border: '1px solid var(--border)',
+                                color: 'var(--foreground)',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                fontWeight: '700'
                             }}
                             itemStyle={{ color: 'var(--foreground)' }}
                             formatter={(val: number | undefined) => (val !== undefined && val !== null) ? val.toFixed(2) + '%' : ''}
-                            labelStyle={{ color: 'var(--muted-foreground)', marginBottom: '4px' }}
+                            labelStyle={{ color: 'var(--muted-foreground)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
                             cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }}
                         />
-                        <Legend wrapperStyle={{ paddingTop: '10px' }} />
+                        <Legend wrapperStyle={{ paddingTop: '20px', textTransform: 'uppercase', fontSize: '10px', fontWeight: '900', letterSpacing: '0.1em' }} />
 
                         <ReferenceLine y={0} stroke="var(--border)" strokeDasharray="3 3" />
 
