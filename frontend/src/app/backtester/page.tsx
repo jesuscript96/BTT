@@ -35,7 +35,7 @@ export default function BacktesterPage() {
                     <div className="flex items-center justify-center h-full">
                         <div className="text-center p-8">
                             <h2 className="text-3xl font-black text-foreground mb-4 uppercase tracking-tighter">
-                                Backtester Pro
+                                Backtester
                             </h2>
                             <p className="text-muted-foreground max-w-sm mx-auto">
                                 Configure your backtest in the panel and click "Run Backtest" to begin your quantitative analysis

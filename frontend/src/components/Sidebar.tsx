@@ -88,8 +88,8 @@ export const Sidebar = () => {
                 <div className="flex items-center gap-3 px-2 py-2 hover:bg-sidebar-hover rounded-md cursor-pointer transition-all">
                     <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-orange-400 to-red-500 shadow-sm flex-shrink-0"></div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-foreground truncate">User Account</p>
-                        <p className="text-[10px] font-medium text-muted-foreground truncate uppercase tracking-tighter">Pro Trader</p>
+                        <p className="text-sm font-bold text-foreground truncate">Tito el Man</p>
+                        <p className="text-[10px] font-medium text-muted-foreground truncate uppercase tracking-tighter">Admin</p>
                     </div>
                 </div>
             </div>
