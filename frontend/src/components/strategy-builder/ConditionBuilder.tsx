@@ -11,28 +11,84 @@ import {
 import { Plus, Trash2, GitBranch } from 'lucide-react';
 
 // ----------------------------------------------------------------------
-// Helper Components for Inputs
+// Constants & Helpers
 // ----------------------------------------------------------------------
 
-export const IndicatorInput = ({
+// Indicators that need a period parameter (e.g. SMA(20), EMA(9), RSI(14))
+const PERIOD_INDICATORS = new Set([
+    IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
+    IndicatorType.RSI, IndicatorType.MACD, IndicatorType.ATR,
+    IndicatorType.RVOL
+]);
+
+// Human-readable labels for comparators using symbols
+const COMPARATOR_LABELS: Record<string, string> = {
+    [Comparator.GT]: ">",
+    [Comparator.LT]: "<",
+    [Comparator.GTE]: "≥",
+    [Comparator.LTE]: "≤",
+    [Comparator.EQ]: "=",
+    [Comparator.CROSSES_ABOVE]: "↗ Crosses Above",
+    [Comparator.CROSSES_BELOW]: "↘ Crosses Below",
+};
+
+// Human-readable labels for indicators
+const INDICATOR_LABELS: Record<string, string> = {
+    [IndicatorType.SMA]: "SMA",
+    [IndicatorType.EMA]: "EMA",
+    [IndicatorType.WMA]: "WMA",
+    [IndicatorType.RSI]: "RSI",
+    [IndicatorType.MACD]: "MACD",
+    [IndicatorType.ATR]: "ATR",
+    [IndicatorType.RVOL]: "RVOL",
+    [IndicatorType.VWAP]: "Cumulative VWAP",
+    [IndicatorType.CLOSE]: "Close",
+    [IndicatorType.OPEN]: "Open",
+    [IndicatorType.HIGH]: "High",
+    [IndicatorType.LOW]: "Low",
+    [IndicatorType.PMH]: "PM High",
+    [IndicatorType.PML]: "PM Low",
+    [IndicatorType.HOD]: "HOD",
+    [IndicatorType.LOD]: "LOD",
+    [IndicatorType.Y_HIGH]: "Yesterday High",
+    [IndicatorType.Y_LOW]: "Yesterday Low",
+    [IndicatorType.Y_CLOSE]: "Yesterday Close",
+    [IndicatorType.CUSTOM]: "Custom",
+};
+
+const FIXED_VALUE_KEY = "__FIXED_VALUE__";
+
+// ----------------------------------------------------------------------
+// Source Indicator Input (left side)
+// Shows: dropdown + period param if applicable. Nothing else.
+// ----------------------------------------------------------------------
+
+export const SourceIndicatorInput = ({
     value,
     onChange
 }: {
     value: IndicatorConfig;
     onChange: (val: IndicatorConfig) => void;
 }) => {
+    const needsPeriod = PERIOD_INDICATORS.has(value.name);
+
     return (
-        <div className="flex gap-2">
+        <div className="flex gap-1.5 items-center">
             <select
                 value={value.name}
-                onChange={(e) => onChange({ ...value, name: e.target.value as IndicatorType })}
+                onChange={(e) => {
+                    const name = e.target.value as IndicatorType;
+                    const newVal: IndicatorConfig = { name };
+                    if (PERIOD_INDICATORS.has(name)) newVal.period = 20;
+                    onChange(newVal);
+                }}
                 className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
             >
                 {Object.values(IndicatorType).map(t => (
-                    <option key={t} value={t}>{t}</option>
+                    <option key={t} value={t}>{INDICATOR_LABELS[t] || t}</option>
                 ))}
             </select>
-            {(value.name === IndicatorType.SMA || value.name === IndicatorType.EMA || value.name === IndicatorType.RSI) && (
+            {needsPeriod && (
                 <input
                     type="number"
                     value={value.period || ''}
@@ -41,14 +97,72 @@ export const IndicatorInput = ({
                     className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
                 />
             )}
-            <input
-                type="number"
-                value={value.offset || 0}
-                onChange={(e) => onChange({ ...value, offset: Number(e.target.value) })}
-                placeholder="Offset"
-                className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-muted-foreground"
-                title="Bars Back (0=current)"
-            />
+        </div>
+    );
+};
+
+// ----------------------------------------------------------------------
+// Target Input (right side, after comparator)
+// Dropdown with all indicators + "Fixed Value" option.
+// If indicator selected → show period if needed.
+// If "Fixed Value" selected → show numeric input.
+// ----------------------------------------------------------------------
+
+export const TargetInput = ({
+    value,
+    onChange
+}: {
+    value: IndicatorConfig | number;
+    onChange: (val: IndicatorConfig | number) => void;
+}) => {
+    const isFixed = typeof value === 'number';
+    const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
+    const needsPeriod = !isFixed && PERIOD_INDICATORS.has((value as IndicatorConfig).name);
+
+    return (
+        <div className="flex gap-1.5 items-center">
+            <select
+                value={selectedKey}
+                onChange={(e) => {
+                    const key = e.target.value;
+                    if (key === FIXED_VALUE_KEY) {
+                        onChange(0);
+                    } else {
+                        const name = key as IndicatorType;
+                        const newVal: IndicatorConfig = { name };
+                        if (PERIOD_INDICATORS.has(name)) newVal.period = 20;
+                        onChange(newVal);
+                    }
+                }}
+                className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+            >
+                {Object.values(IndicatorType).map(t => (
+                    <option key={t} value={t}>{INDICATOR_LABELS[t] || t}</option>
+                ))}
+                <option value={FIXED_VALUE_KEY}>── Fixed Value ──</option>
+            </select>
+
+            {/* Period input for indicators that need it */}
+            {!isFixed && needsPeriod && (
+                <input
+                    type="number"
+                    value={(value as IndicatorConfig).period || ''}
+                    onChange={(e) => onChange({ ...(value as IndicatorConfig), period: Number(e.target.value) })}
+                    placeholder="Period"
+                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                />
+            )}
+
+            {/* Numeric input for fixed value */}
+            {isFixed && (
+                <input
+                    type="number"
+                    value={value as number}
+                    onChange={(e) => onChange(Number(e.target.value))}
+                    placeholder="Value"
+                    className="w-20 bg-muted/20 border border-amber-500/40 rounded px-2 py-1 text-xs text-amber-400 font-bold"
+                />
+            )}
         </div>
     );
 };
@@ -72,25 +186,28 @@ export const ConditionRow = ({
             case 'indicator_comparison':
                 return (
                     <>
-                        <IndicatorInput
+                        {/* SOURCE: indicator + params */}
+                        <SourceIndicatorInput
                             value={condition.source}
                             onChange={(val) => onChange({ ...condition, source: val })}
                         />
+
+                        {/* COMPARATOR: symbols */}
                         <select
                             value={condition.comparator}
                             onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
                             className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-blue-400"
                         >
                             {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
-                                <option key={c} value={c}>{c}</option>
+                                <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
                             ))}
                         </select>
-                        <div className="flex items-center gap-2">
-                            <IndicatorInput
-                                value={condition.target as IndicatorConfig}
-                                onChange={(val) => onChange({ ...condition, target: val })}
-                            />
-                        </div>
+
+                        {/* TARGET: indicator OR fixed value */}
+                        <TargetInput
+                            value={condition.target}
+                            onChange={(val) => onChange({ ...condition, target: val })}
+                        />
                     </>
                 );
             case 'price_level_distance':
@@ -109,10 +226,10 @@ export const ConditionRow = ({
                         <select
                             value={condition.comparator}
                             onChange={(e) => onChange({ ...condition, comparator: e.target.value as any })}
-                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-purple-400"
+                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-blue-400"
                         >
-                            <option value="DISTANCE_GT">More than</option>
-                            <option value="DISTANCE_LT">Less than</option>
+                            <option value="DISTANCE_GT">&gt; than</option>
+                            <option value="DISTANCE_LT">&lt; than</option>
                         </select>
                         <div className="flex items-center gap-1">
                             <input

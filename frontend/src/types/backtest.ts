@@ -4,8 +4,14 @@ export interface BacktestRequest {
     weights: Record<string, number>;
     dataset_filters: any; // FilterRequest from Market Analysis
     query_id?: string;
-    commission_per_trade: number;
+    commission_per_share: number;
+    slippage_pct: number;
+    lookahead_prevention: boolean;
     initial_capital: number;
+    risk_per_trade_r: number;
+    market_interval: 'PM' | 'RTH' | 'AM';
+    date_from: string;
+    date_to: string;
     max_holding_minutes: number;
 }
 

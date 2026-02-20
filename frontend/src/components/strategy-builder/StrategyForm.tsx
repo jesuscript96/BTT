@@ -5,16 +5,13 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Strategy,
-    initialUniverseFilters,
     initialEntryLogic,
     initialExitLogic,
     initialRiskManagement,
-    UniverseFilters,
     EntryLogic,
     ExitLogic,
     RiskManagement
 } from '@/types/strategy';
-import { UniverseFiltersComponent } from './UniverseFilters';
 import { EntryLogicBuilder } from './EntryLogic';
 import { ExitLogicBuilder } from './ExitLogic';
 import { RiskManagementComponent } from './RiskManagement';
@@ -66,7 +63,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     // Strategy State
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
-    const [filters, setFilters] = useState<UniverseFilters>(initialUniverseFilters);
+    const [bias, setBias] = useState<'long' | 'short'>('long');
     const [entryLogic, setEntryLogic] = useState<EntryLogic>(initialEntryLogic);
     const [exitLogic, setExitLogic] = useState<ExitLogic>(initialExitLogic);
     const [riskManagement, setRiskManagement] = useState<RiskManagement>(initialRiskManagement);
@@ -102,7 +99,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
         return {
             name: name || 'Untitled Strategy',
             description,
-            universe_filters: filters,
+            bias,
             entry_logic: entryLogic,
             exit_logic: exitLogic,
             risk_management: riskManagement
@@ -169,12 +166,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             if (!response.ok) throw new Error('Failed to save strategy draft');
             const savedStrategy = await response.json();
 
-            // Store prefill data in sessionStorage
+            // Store prefill data — autoRun is FALSE, just preload
             sessionStorage.setItem('backtester_prefill', JSON.stringify({
                 strategy_id: savedStrategy.id,
                 strategy_name: savedStrategy.name,
                 dataset_id: selectedDatasetId || null,
-                autoRun: true
+                autoRun: false
             }));
 
             if (onStrategySaved) onStrategySaved();
@@ -211,7 +208,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                             onClick={handleTestInBacktester}
                             disabled={isTesting || isSubmitting}
                             className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-black uppercase tracking-widest text-[10px] shadow-lg shadow-amber-900/30 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Save as draft & open in Backtester"
+                            title="Save as draft & preload in Backtester"
                         >
                             {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
                             <span>Test</span>
@@ -229,7 +226,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
                 <div className="space-y-4 pb-4">
 
-                    {/* ROW 1: Metadata + Dataset */}
+                    {/* ROW 1: Metadata + Dataset + Bias */}
                     <section className="grid grid-cols-12 gap-4">
                         {/* Metadata */}
                         <div className="col-span-12 lg:col-span-5 space-y-3">
@@ -321,52 +318,67 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                     </p>
                                 )}
                             </div>
+
+                            {/* Long / Short Bias Toggle */}
+                            <div className="mt-3">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
+                                    <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Direction Bias</h2>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setBias('long')}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'long'
+                                                ? 'bg-emerald-500/15 border-emerald-500 text-emerald-500 shadow-md shadow-emerald-500/10'
+                                                : 'bg-card/30 border-border/40 text-muted-foreground hover:border-emerald-500/30 hover:text-emerald-400'
+                                            }`}
+                                    >
+                                        ↑ Long Bias
+                                    </button>
+                                    <button
+                                        onClick={() => setBias('short')}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'short'
+                                                ? 'bg-red-500/15 border-red-500 text-red-500 shadow-md shadow-red-500/10'
+                                                : 'bg-card/30 border-border/40 text-muted-foreground hover:border-red-500/30 hover:text-red-400'
+                                            }`}
+                                    >
+                                        ↓ Short Bias
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </section>
 
-                    {/* ROW 2: Universe Filters + Entry Logic */}
-                    <section className="grid grid-cols-12 gap-4">
-                        <div className="col-span-12 lg:col-span-5">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Universe Filters</h2>
-                            </div>
-                            <div className="bg-card/30 border border-border/40 rounded-xl p-4">
-                                <UniverseFiltersComponent filters={filters} onChange={setFilters} />
-                            </div>
+                    {/* FULL-WIDTH: Entry Logic */}
+                    <section>
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Entry Logic</h2>
                         </div>
-
-                        <div className="col-span-12 lg:col-span-7">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Entry Logic</h2>
-                            </div>
-                            <div className="bg-card/30 border border-border/40 rounded-xl p-4">
-                                <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
-                            </div>
+                        <div className="bg-card/30 border border-border/40 rounded-xl p-4">
+                            <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
                         </div>
                     </section>
 
-                    {/* ROW 3: Exit Logic + Risk Management */}
-                    <section className="grid grid-cols-12 gap-4">
-                        <div className="col-span-12 lg:col-span-7">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
-                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Exit Logic</h2>
-                            </div>
-                            <div className="bg-card/30 border border-border/40 rounded-xl p-4">
-                                <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
-                            </div>
+                    {/* FULL-WIDTH: Exit Logic */}
+                    <section>
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
+                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Exit Logic</h2>
                         </div>
+                        <div className="bg-card/30 border border-border/40 rounded-xl p-4">
+                            <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
+                        </div>
+                    </section>
 
-                        <div className="col-span-12 lg:col-span-5">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
-                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Risk Management</h2>
-                            </div>
-                            <div className="bg-card/30 border border-border/40 rounded-xl p-4">
-                                <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
-                            </div>
+                    {/* FULL-WIDTH: Risk Management */}
+                    <section>
+                        <div className="flex items-center gap-2 mb-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Risk Management</h2>
+                        </div>
+                        <div className="bg-card/30 border border-border/40 rounded-xl p-4">
+                            <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
                         </div>
                     </section>
 

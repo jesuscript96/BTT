@@ -55,7 +55,7 @@ interface DashboardProps {
 
 type StatMode = 'avg' | 'p25' | 'p50' | 'p75';
 
-// ─── Sidebar Metric Row ───────────────────────────────────────────────
+// ─── Sidebar Metric Row (Compact) ─────────────────────────────────────
 const SidebarMetricRow = ({ label, value, suffix = "%" }: { label: string; value: number | undefined; suffix?: string }) => {
     const safeValue = value ?? 0;
     const isNegative = safeValue < 0;
@@ -64,14 +64,14 @@ const SidebarMetricRow = ({ label, value, suffix = "%" }: { label: string; value
     const badgeText = isNegative ? `${safeValue.toFixed(1)}%` : `+${safeValue.toFixed(1)}%`;
 
     return (
-        <div className="flex items-center justify-between py-2.5 border-b border-border/40">
-            <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">{label}</span>
-                <span className={`text-base font-black tracking-tight ${isNegative ? 'text-red-500' : 'text-foreground'}`}>
+        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
+            <div className="flex flex-col">
+                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">{label}</span>
+                <span className={`text-sm font-black tracking-tight leading-tight ${isNegative ? 'text-red-500' : 'text-foreground'}`}>
                     {formatted}
                 </span>
             </div>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badgeColor}`}>
                 {badgeText}
             </span>
         </div>
@@ -116,18 +116,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
             {/* Top Row: Sidebar Metrics & Main Chart */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-0">
 
-                {/* ═══ LEFT COLUMN: Stacked Metric Rows ═══ */}
-                <div className="md:col-span-3 border-r border-border/40 pr-6 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)' }}>
+                {/* ═══ LEFT COLUMN: Compact 2-Col Metrics ═══ */}
+                <div className="md:col-span-3 border-r border-border/40 pr-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)' }}>
                     {/* Header: Sample + Mode Selector */}
-                    <div className="flex items-center justify-between py-2.5 border-b border-border/40">
-                        <div className="flex flex-col gap-0.5">
-                            <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between py-2 border-b border-border/40 mb-1">
+                        <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5">
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                                <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Total Sample</span>
+                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">Total Sample</span>
                             </div>
-                            <span className="text-lg font-black text-foreground tracking-tight">{stats.count} RECORDS</span>
+                            <span className="text-base font-black text-foreground tracking-tight">{stats.count} RECORDS</span>
                         </div>
-                        <div className="flex gap-2 text-[9px] font-black uppercase tracking-widest items-center">
+                        <div className="flex gap-1.5 text-[8px] font-black uppercase tracking-widest items-center">
                             {(['avg', 'p25', 'p50', 'p75'] as const).map((m) => (
                                 <span
                                     key={m}
@@ -140,37 +140,69 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                         </div>
                     </div>
 
-                    {/* Metric Rows */}
-                    <SidebarMetricRow label="Gap at Open" value={averages.gap_at_open_pct} />
-                    <SidebarMetricRow label="PM High Gap" value={averages.pm_high_gap_pct} />
-                    <SidebarMetricRow label="PM Fade to Open" value={averages.pmh_fade_to_open_pct} />
-                    <SidebarMetricRow label="RTH High Run" value={averages.rth_high_run_pct} />
-                    <SidebarMetricRow label="RTH High Fade to Close" value={averages.rth_fade_to_close_pct} />
-                    <SidebarMetricRow label="PM High Break" value={averages.pm_high_break} />
-                    <SidebarMetricRow label="Close Red" value={averages.close_red} />
-                    <SidebarMetricRow label="Range" value={averages.rth_range_pct} />
-                    <SidebarMetricRow label="Low Spike" value={averages.low_spike_pct} />
-                    <SidebarMetricRow label="Low Spike vs Prev Close" value={averages.low_spike_prev_close_pct} />
+                    {/* 2-Column Metrics Grid */}
+                    <div className="grid grid-cols-2 gap-x-3">
+                        <SidebarMetricRow label="Gap at Open" value={averages.gap_at_open_pct} />
+                        <SidebarMetricRow label="PM High Gap" value={averages.pm_high_gap_pct} />
+                        <SidebarMetricRow label="PM Fade to Open" value={averages.pmh_fade_to_open_pct} />
+                        <SidebarMetricRow label="RTH High Run" value={averages.rth_high_run_pct} />
+                        <SidebarMetricRow label="RTH Fade to Close" value={averages.rth_fade_to_close_pct} />
+                        <SidebarMetricRow label="PM High Break" value={averages.pm_high_break} />
+                        <SidebarMetricRow label="Close Red" value={averages.close_red} />
+                        <SidebarMetricRow label="Range" value={averages.rth_range_pct} />
+                        <SidebarMetricRow label="Low Spike" value={averages.low_spike_pct} />
+                        <SidebarMetricRow label="Low Spike vs Close" value={averages.low_spike_prev_close_pct} />
 
-                    {/* Volume rows */}
-                    <div className="flex items-center justify-between py-2.5 border-b border-border/40">
-                        <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Premarket Volume</span>
-                            <span className="text-base font-black text-foreground tracking-tight">{formatLargeNumber(averages.avg_pm_volume)}</span>
+                        {/* Volume */}
+                        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">PM Volume</span>
+                                <span className="text-sm font-black text-foreground tracking-tight leading-tight">{formatLargeNumber(averages.avg_pm_volume)}</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">Volume</span>
+                                <span className="text-sm font-black text-foreground tracking-tight leading-tight">{formatLargeNumber(averages.avg_volume)}</span>
+                            </div>
+                        </div>
+
+                        {/* Volatility */}
+                        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
+                            <div className="flex flex-col">
+                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">High Spike</span>
+                                <span className="text-sm font-black text-foreground tracking-tight leading-tight">{averages.high_spike_pct?.toFixed(2) || "0.00"}%</span>
+                            </div>
                         </div>
                     </div>
-                    <div className="flex items-center justify-between py-2.5 border-b border-border/40">
-                        <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">Volume</span>
-                            <span className="text-base font-black text-foreground tracking-tight">{formatLargeNumber(averages.avg_volume)}</span>
-                        </div>
-                    </div>
 
-                    {/* Volatility rows */}
-                    <div className="flex items-center justify-between py-2.5 border-b border-border/40">
-                        <div className="flex flex-col gap-0.5">
-                            <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest">High Spike</span>
-                            <span className="text-base font-black text-foreground tracking-tight">{averages.high_spike_pct?.toFixed(2) || "0.00"}%</span>
+                    {/* Volume & Volatility below metrics */}
+                    <div className="mt-3 pt-2 border-t border-border/30 space-y-1.5">
+                        <p className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">Volume</p>
+                        <div className="grid grid-cols-2 gap-x-3">
+                            <div className="flex justify-between items-center text-[10px] py-1">
+                                <span className="text-muted-foreground">PM Vol</span>
+                                <span className="text-foreground font-bold">{formatLargeNumber(averages.avg_pm_volume)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] py-1">
+                                <span className="text-muted-foreground">Volume</span>
+                                <span className="text-foreground font-bold">{formatLargeNumber(averages.avg_volume)}</span>
+                            </div>
+                        </div>
+                        <p className="text-[8px] font-black text-muted-foreground uppercase tracking-widest pt-1">Volatility</p>
+                        <div className="grid grid-cols-2 gap-x-3">
+                            <div className="flex justify-between items-center text-[10px] py-1">
+                                <span className="text-muted-foreground">High Spike</span>
+                                <span className="text-foreground font-bold">{averages.high_spike_pct?.toFixed(2) || "0.00"}%</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] py-1">
+                                <span className="text-muted-foreground">Low Spike</span>
+                                <span className="text-foreground font-bold">{averages.low_spike_pct?.toFixed(2) || "0.00"}%</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[10px] py-1 col-span-2">
+                                <span className="text-muted-foreground">Range</span>
+                                <span className="text-foreground font-bold">{averages.rth_range_pct?.toFixed(2) || "0.00"}%</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -182,63 +214,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                         <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isLoadingAggregate} />
                     </div>
 
-                    {/* Transparent cards below chart */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-                        {/* Volume Card */}
-                        <div className="bg-transparent p-4">
-                            <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-3">Volume Stats</p>
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center text-[11px]">
-                                    <span className="text-muted-foreground font-medium">Premarket Volume</span>
-                                    <span className="text-foreground font-bold">{formatLargeNumber(averages.avg_pm_volume)}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-[11px]">
-                                    <span className="text-muted-foreground font-medium">Volume</span>
-                                    <span className="text-foreground font-bold">{formatLargeNumber(averages.avg_volume)}</span>
-                                </div>
-                            </div>
-                        </div>
 
-                        {/* Volatility Card */}
-                        <div className="bg-transparent p-4">
-                            <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-3">Volatility Context</p>
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center text-[11px]">
-                                    <span className="text-muted-foreground font-medium">High Spike %</span>
-                                    <span className="text-foreground font-bold">{averages.high_spike_pct?.toFixed(2) || "0.00"}%</span>
-                                </div>
-                                <div className="flex justify-between items-center text-[11px]">
-                                    <span className="text-muted-foreground font-medium">Low Spike %</span>
-                                    <span className="text-foreground font-bold">{averages.low_spike_pct?.toFixed(2) || "0.00"}%</span>
-                                </div>
-                                <div className="flex justify-between items-center text-[11px]">
-                                    <span className="text-muted-foreground font-medium">Range %</span>
-                                    <span className="text-foreground font-bold">{averages.rth_range_pct?.toFixed(2) || "0.00"}%</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Bullish / PMH Breaker Card */}
-                        <div className="bg-transparent p-4">
-                            <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-3">Signal Summary</p>
-                            <div className="space-y-3">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Bullish</span>
-                                        <span className="text-xl font-black text-foreground tracking-tight">85.3%</span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] font-bold text-muted-foreground uppercase">PMH Breaker</span>
-                                        <span className="text-xl font-black text-foreground tracking-tight">75th</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>

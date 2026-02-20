@@ -144,7 +144,8 @@ export interface Strategy {
     id?: string;
     name: string;
     description?: string;
-    universe_filters: UniverseFilters;
+    bias: 'long' | 'short';
+    universe_filters?: UniverseFilters;
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;
     risk_management: RiskManagement;

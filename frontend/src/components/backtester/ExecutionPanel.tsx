@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Play, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Play, Loader2, Trash2 } from 'lucide-react';
 import { Strategy } from '@/types/strategy';
 import { StrategySelection, BacktestRequest, BacktestResponse } from '@/types/backtest';
 import { API_URL } from '@/config/constants';
@@ -10,7 +10,6 @@ interface PrefillData {
     strategy_id: string;
     strategy_name: string;
     dataset_id: string | null;
-    autoRun?: boolean;
 }
 
 interface ExecutionPanelProps {
@@ -23,9 +22,18 @@ interface ExecutionPanelProps {
 export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading, prefillData }: ExecutionPanelProps) {
     const [strategies, setStrategies] = useState<Strategy[]>([]);
     const [selectedStrategies, setSelectedStrategies] = useState<StrategySelection[]>([]);
-    const [commission, setCommission] = useState(1.0);
+
+    // Settings State
+    const [commissionPerShare, setCommissionPerShare] = useState(0.005);
+    const [slippagePct, setSlippagePct] = useState(0.05);
+    const [lookaheadPrevention, setLookaheadPrevention] = useState(false);
     const [initialCapital, setInitialCapital] = useState(100000);
+    const [riskPerTradeR, setRiskPerTradeR] = useState(1.0);
+    const [marketInterval, setMarketInterval] = useState<'PM' | 'RTH' | 'AM'>('RTH');
+    const [dateFrom, setDateFrom] = useState('2024-01-01');
+    const [dateTo, setDateTo] = useState('2025-12-31');
     const [maxHoldingMinutes, setMaxHoldingMinutes] = useState(390);
+
     const [datasetSummary, setDatasetSummary] = useState<string>("");
     const [savedDatasets, setSavedDatasets] = useState<any[]>([]);
     const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
@@ -36,14 +44,13 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
         if (!isLoading) {
             setLoadingPhase(0);
         } else {
-            // Start simulation
             setLoadingPhase(1);
             const interval = setInterval(() => {
                 setLoadingPhase(prev => {
                     if (prev >= 4) return 4;
                     return prev + 1;
                 });
-            }, 1200); // Change phase every 1.2s
+            }, 1200);
             return () => clearInterval(interval);
         }
     }, [isLoading]);
@@ -54,8 +61,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
         fetchSavedDatasets();
     }, []);
 
-    // Handle prefill from strategy builder
-    const hasAutoRun = React.useRef(false);
+    // Handle prefill from strategy builder (preload only, NO auto-run)
     useEffect(() => {
         if (prefillData) {
             setSelectedStrategies([{
@@ -66,27 +72,16 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
             if (prefillData.dataset_id) {
                 setSelectedDatasetId(prefillData.dataset_id);
             }
-            hasAutoRun.current = false;
         }
     }, [prefillData]);
 
-    // Auto-run backtest when prefilled
-    useEffect(() => {
-        if (prefillData?.autoRun && selectedStrategies.length > 0 && !hasAutoRun.current && !isLoading) {
-            hasAutoRun.current = true;
-            runBacktest();
-        }
-    }, [prefillData, selectedStrategies]);
-
     const fetchStrategies = async () => {
-        const apiUrl = API_URL;
         try {
-            const response = await fetch(`${apiUrl}/strategies/`); // Added trailing slash
+            const response = await fetch(`${API_URL}/strategies/`);
             const data = await response.json();
             if (Array.isArray(data)) {
                 setStrategies(data);
             } else {
-                console.error('Strategies API returned non-array:', data);
                 setStrategies([]);
             }
         } catch (error) {
@@ -95,14 +90,12 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
     };
 
     const fetchSavedDatasets = async () => {
-        const apiUrl = API_URL;
         try {
-            const response = await fetch(`${apiUrl}/queries/`);
+            const response = await fetch(`${API_URL}/queries/`);
             const data = await response.json();
             if (Array.isArray(data)) {
                 setSavedDatasets(data);
             } else {
-                console.error('Datasets API returned non-array:', data);
                 setSavedDatasets([]);
             }
         } catch (error) {
@@ -112,9 +105,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
 
     const addStrategy = (strategyId: string) => {
         const strategy = strategies.find(s => s.id === strategyId);
-        if (!strategy || selectedStrategies.find(s => s.strategy_id === strategyId)) {
-            return;
-        }
+        if (!strategy || selectedStrategies.find(s => s.strategy_id === strategyId)) return;
 
         const newSelection: StrategySelection = {
             strategy_id: strategyId,
@@ -122,7 +113,6 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
             weight: 100 / (selectedStrategies.length + 1)
         };
 
-        // Rebalance weights
         const rebalanced = selectedStrategies.map(s => ({
             ...s,
             weight: 100 / (selectedStrategies.length + 1)
@@ -133,13 +123,10 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
 
     const removeStrategy = (strategyId: string) => {
         const filtered = selectedStrategies.filter(s => s.strategy_id !== strategyId);
-
-        // Rebalance remaining
         const rebalanced = filtered.map(s => ({
             ...s,
             weight: filtered.length > 0 ? 100 / filtered.length : 0
         }));
-
         setSelectedStrategies(rebalanced);
     };
 
@@ -154,7 +141,6 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
     const normalizeWeights = () => {
         const total = selectedStrategies.reduce((sum, s) => sum + s.weight, 0);
         if (total === 0) return;
-
         setSelectedStrategies(prev =>
             prev.map(s => ({
                 ...s,
@@ -169,12 +155,8 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
             return;
         }
 
-        // Normalize weights before running
         normalizeWeights();
-
         onBacktestStart();
-
-        const apiUrl = API_URL;
 
         try {
             const weights: Record<string, number> = {};
@@ -186,16 +168,22 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                 strategy_ids: selectedStrategies.map(s => s.strategy_id),
                 weights,
                 dataset_filters: {
-                    date_from: "2024-01-01",
-                    date_to: "2025-12-31"
+                    date_from: dateFrom,
+                    date_to: dateTo
                 },
                 query_id: selectedDatasetId || undefined,
-                commission_per_trade: commission,
+                commission_per_share: commissionPerShare,
+                slippage_pct: slippagePct,
+                lookahead_prevention: lookaheadPrevention,
                 initial_capital: initialCapital,
+                risk_per_trade_r: riskPerTradeR,
+                market_interval: marketInterval,
+                date_from: dateFrom,
+                date_to: dateTo,
                 max_holding_minutes: maxHoldingMinutes
             };
 
-            const response = await fetch(`${apiUrl}/backtest/run`, {
+            const response = await fetch(`${API_URL}/backtest/run`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(request)
@@ -223,6 +211,9 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
 
     const totalWeight = selectedStrategies.reduce((sum, s) => sum + s.weight, 0);
 
+    const inputCls = "w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors";
+    const labelCls = "text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1";
+
     return (
         <aside className="w-80 bg-sidebar border-r border-border flex flex-col transition-colors duration-300">
             {/* Header */}
@@ -234,12 +225,11 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
                 {/* Strategies Section */}
                 <div>
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Strategies</h3>
 
-                    {/* Selected Strategies */}
                     <div className="space-y-3 mb-4">
                         {selectedStrategies.map(selection => (
                             <div
@@ -274,7 +264,6 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                         ))}
                     </div>
 
-                    {/* Add Strategy Dropdown */}
                     <select
                         onChange={(e) => {
                             if (e.target.value) {
@@ -282,7 +271,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                                 e.target.value = '';
                             }
                         }}
-                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
+                        className={inputCls}
                         disabled={isLoading}
                     >
                         <option value="">+ Add Strategy</option>
@@ -295,7 +284,6 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                             ))}
                     </select>
 
-                    {/* Weight Total */}
                     {selectedStrategies.length > 0 && (
                         <div className="mt-3 flex items-center justify-between text-[10px] uppercase font-bold tracking-tighter">
                             <span className="text-muted-foreground">Total Weight:</span>
@@ -309,76 +297,148 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                 {/* Dataset Section */}
                 <div>
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Dataset</h3>
-                    <div className="space-y-3">
-                        <select
-                            value={selectedDatasetId}
-                            onChange={(e) => setSelectedDatasetId(e.target.value)}
-                            className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
-                            disabled={isLoading}
-                        >
-                            <option value="">Default (Global Data)</option>
-                            {savedDatasets.map(ds => (
-                                <option key={ds.id} value={ds.id}>
-                                    {ds.name}
-                                </option>
-                            ))}
-                        </select>
-
-                        <div className="bg-muted border border-border rounded-lg p-3">
-                            <p className="text-[9px] text-muted-foreground mb-1 uppercase font-black tracking-widest">Base Filters</p>
-                            <p className="text-[11px] text-blue-500 font-bold leading-tight">
-                                {selectedDatasetId
-                                    ? `Using filters from "${savedDatasets.find(d => d.id === selectedDatasetId)?.name}"`
-                                    : "Using historical data (Full Universe)"}
-                            </p>
-                        </div>
-                    </div>
+                    <select
+                        value={selectedDatasetId}
+                        onChange={(e) => setSelectedDatasetId(e.target.value)}
+                        className={inputCls}
+                        disabled={isLoading}
+                    >
+                        <option value="">Default (Global Data)</option>
+                        {savedDatasets.map(ds => (
+                            <option key={ds.id} value={ds.id}>
+                                {ds.name}
+                            </option>
+                        ))}
+                    </select>
                 </div>
 
-                {/* Execution Settings */}
-                <div className="pb-4">
+                {/* ═══ Execution Settings ═══ */}
+                <div className="pb-2">
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Settings</h3>
 
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                         {/* Commission */}
                         <div>
-                            <label className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
-                                Commission / Trade ($)
-                            </label>
+                            <label className={labelCls}>Commission ($/share)</label>
                             <input
                                 type="number"
-                                value={commission}
-                                onChange={(e) => setCommission(Number(e.target.value))}
-                                step="0.1"
-                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
+                                value={commissionPerShare}
+                                onChange={(e) => setCommissionPerShare(Number(e.target.value))}
+                                step="0.001"
+                                className={inputCls}
                                 disabled={isLoading}
                             />
                         </div>
 
-                        {/* Initial Capital */}
+                        {/* Slippage */}
                         <div>
-                            <label className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
-                                Initial Capital ($)
-                            </label>
+                            <label className={labelCls}>Slippage (%)</label>
+                            <input
+                                type="number"
+                                value={slippagePct}
+                                onChange={(e) => setSlippagePct(Number(e.target.value))}
+                                step="0.01"
+                                className={inputCls}
+                                disabled={isLoading}
+                            />
+                        </div>
+
+                        {/* Lookahead Prevention */}
+                        <div>
+                            <label className={labelCls}>Lookahead Prevention</label>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => setLookaheadPrevention(!lookaheadPrevention)}
+                                    className={`relative w-10 h-5 rounded-full transition-colors ${lookaheadPrevention ? 'bg-blue-600' : 'bg-muted'}`}
+                                    disabled={isLoading}
+                                >
+                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${lookaheadPrevention ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                </button>
+                                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                    {lookaheadPrevention ? 'shift(1) ON' : 'OFF'}
+                                </span>
+                            </div>
+                            <p className="text-[9px] text-muted-foreground/50 mt-1">Shifts entry/exit by 1 bar to avoid look-ahead bias</p>
+                        </div>
+
+                        {/* Capital */}
+                        <div>
+                            <label className={labelCls}>Capital ($)</label>
                             <input
                                 type="number"
                                 value={initialCapital}
                                 onChange={(e) => setInitialCapital(Number(e.target.value))}
                                 step="1000"
-                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
+                                className={inputCls}
                                 disabled={isLoading}
                             />
                         </div>
 
+                        {/* Risk per Trade (R) */}
+                        <div>
+                            <label className={labelCls}>Risk per Trade (R)</label>
+                            <input
+                                type="number"
+                                value={riskPerTradeR}
+                                onChange={(e) => setRiskPerTradeR(Number(e.target.value))}
+                                step="0.1"
+                                className={inputCls}
+                                disabled={isLoading}
+                            />
+                            <p className="text-[9px] text-muted-foreground/50 mt-1">Fixed R amount to risk per trade</p>
+                        </div>
+
+                        {/* Market Interval */}
+                        <div>
+                            <label className={labelCls}>Market Interval</label>
+                            <div className="flex gap-1.5">
+                                {(['PM', 'RTH', 'AM'] as const).map((interval) => (
+                                    <button
+                                        key={interval}
+                                        onClick={() => setMarketInterval(interval)}
+                                        disabled={isLoading}
+                                        className={`flex-1 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${marketInterval === interval
+                                                ? 'bg-blue-500/15 border-blue-500 text-blue-500'
+                                                : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
+                                            }`}
+                                    >
+                                        {interval}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Date Range */}
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className={labelCls}>Date From</label>
+                                <input
+                                    type="date"
+                                    value={dateFrom}
+                                    onChange={(e) => setDateFrom(e.target.value)}
+                                    className={inputCls}
+                                    disabled={isLoading}
+                                />
+                            </div>
+                            <div>
+                                <label className={labelCls}>Date To</label>
+                                <input
+                                    type="date"
+                                    value={dateTo}
+                                    onChange={(e) => setDateTo(e.target.value)}
+                                    className={inputCls}
+                                    disabled={isLoading}
+                                />
+                            </div>
+                        </div>
+
                         {/* Max Holding Period */}
                         <div>
-                            <label className="text-[9px] uppercase font-bold tracking-widest text-muted-foreground block mb-1">
-                                Max Holding Period
-                            </label>
+                            <label className={labelCls}>Max Holding Period</label>
                             <select
                                 value={maxHoldingMinutes}
                                 onChange={(e) => setMaxHoldingMinutes(Number(e.target.value))}
-                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:ring-2 focus:ring-blue-500 outline-none transition-colors"
+                                className={inputCls}
                                 disabled={isLoading}
                             >
                                 <option value={30}>30 minutes</option>
