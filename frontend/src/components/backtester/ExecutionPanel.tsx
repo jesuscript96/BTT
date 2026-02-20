@@ -25,6 +25,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
 
     // Settings State
     const [commissionPerShare, setCommissionPerShare] = useState(0.005);
+    const [locateCostPer100, setLocateCostPer100] = useState(0.00);
     const [slippagePct, setSlippagePct] = useState(0.05);
     const [lookaheadPrevention, setLookaheadPrevention] = useState(false);
     const [initialCapital, setInitialCapital] = useState(100000);
@@ -173,6 +174,7 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                 },
                 query_id: selectedDatasetId || undefined,
                 commission_per_share: commissionPerShare,
+                locate_cost_per_100: locateCostPer100,
                 slippage_pct: slippagePct,
                 lookahead_prevention: lookaheadPrevention,
                 initial_capital: initialCapital,
@@ -330,6 +332,20 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                             />
                         </div>
 
+                        {/* Locates */}
+                        <div>
+                            <label className={labelCls}>Locates ($/100 shares)</label>
+                            <input
+                                type="number"
+                                value={locateCostPer100}
+                                onChange={(e) => setLocateCostPer100(Number(e.target.value))}
+                                step="0.01"
+                                className={inputCls}
+                                disabled={isLoading}
+                            />
+                            <p className="text-[9px] text-muted-foreground/50 mt-1">Locate fee charged per 100 shares borrowed</p>
+                        </div>
+
                         {/* Slippage */}
                         <div>
                             <label className={labelCls}>Slippage (%)</label>
@@ -398,8 +414,8 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                                         onClick={() => setMarketInterval(interval)}
                                         disabled={isLoading}
                                         className={`flex-1 py-1.5 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${marketInterval === interval
-                                                ? 'bg-blue-500/15 border-blue-500 text-blue-500'
-                                                : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
+                                            ? 'bg-blue-500/15 border-blue-500 text-blue-500'
+                                            : 'bg-card border-border text-muted-foreground hover:border-blue-500/30'
                                             }`}
                                     >
                                         {interval}

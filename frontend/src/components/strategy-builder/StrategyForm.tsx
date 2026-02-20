@@ -170,8 +170,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             sessionStorage.setItem('backtester_prefill', JSON.stringify({
                 strategy_id: savedStrategy.id,
                 strategy_name: savedStrategy.name,
-                dataset_id: selectedDatasetId || null,
-                autoRun: false
+                dataset_id: selectedDatasetId || null
             }));
 
             if (onStrategySaved) onStrategySaved();
@@ -329,8 +328,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                     <button
                                         onClick={() => setBias('long')}
                                         className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'long'
-                                                ? 'bg-emerald-500/15 border-emerald-500 text-emerald-500 shadow-md shadow-emerald-500/10'
-                                                : 'bg-card/30 border-border/40 text-muted-foreground hover:border-emerald-500/30 hover:text-emerald-400'
+                                            ? 'bg-emerald-500/15 border-emerald-500 text-emerald-500 shadow-md shadow-emerald-500/10'
+                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-emerald-500/30 hover:text-emerald-400'
                                             }`}
                                     >
                                         ↑ Long Bias
@@ -338,8 +337,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                     <button
                                         onClick={() => setBias('short')}
                                         className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'short'
-                                                ? 'bg-red-500/15 border-red-500 text-red-500 shadow-md shadow-red-500/10'
-                                                : 'bg-card/30 border-border/40 text-muted-foreground hover:border-red-500/30 hover:text-red-400'
+                                            ? 'bg-red-500/15 border-red-500 text-red-500 shadow-md shadow-red-500/10'
+                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-red-500/30 hover:text-red-400'
                                             }`}
                                     >
                                         ↓ Short Bias

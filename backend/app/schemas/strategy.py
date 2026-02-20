@@ -124,7 +124,8 @@ class RiskManagement(BaseModel):
 class StrategyCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    universe_filters: UniverseFilters
+    bias: Literal['long', 'short'] = 'long'
+    universe_filters: Optional[UniverseFilters] = None
     entry_logic: EntryLogic
     exit_logic: Optional[ExitLogic] = None
     risk_management: RiskManagement

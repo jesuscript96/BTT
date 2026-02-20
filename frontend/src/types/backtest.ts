@@ -5,6 +5,7 @@ export interface BacktestRequest {
     dataset_filters: any; // FilterRequest from Market Analysis
     query_id?: string;
     commission_per_share: number;
+    locate_cost_per_100: number;
     slippage_pct: number;
     lookahead_prevention: boolean;
     initial_capital: number;
