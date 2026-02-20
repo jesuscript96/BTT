@@ -267,8 +267,19 @@ def run_backtest(request: BacktestRequest):
                  "percentile_95": monte_carlo_result.percentile_95,
                  "probability_of_ruin": monte_carlo_result.probability_of_ruin
              },
-             "executed_at": now.isoformat()
+             "executed_at": now.isoformat(),
+             "initial_capital": request.initial_capital
         }
+        
+        # 5.5 CROSS-VALIDATION (Double Audit)
+        print(f"\nAUDIT: Running VectorBT validation...")
+        try:
+            from app.backtester.backtest_validator import validate_results
+            audit_report = validate_results(results_json)
+            results_json['audit'] = audit_report
+            print("  ✓ Audit completed")
+        except Exception as audit_err:
+            print(f"  ⚠️ Audit skipped or failed: {audit_err}")
         
         # 6. SAVE RESULTS TO DATABASE
         print("\n[5/5] Saving results to database...")

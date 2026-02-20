@@ -20,54 +20,28 @@ class MonteCarloResult:
     probability_of_ruin: float  # % of simulations ending below initial capital
 
 
+import numpy as np
+import pandas as pd
+
 def calculate_correlation_matrix(equity_curves: Dict[str, List[float]]) -> Dict[str, Dict[str, float]]:
     """
-    Calculate Pearson correlation between strategy equity curves
-    
-    Args:
-        equity_curves: Dict of strategy_id -> list of balance values
-    
-    Returns:
-        Dict of strategy_id -> Dict of strategy_id -> correlation coefficient
+    Calculate Pearson correlation using Pandas for precision and speed
     """
-    strategy_ids = list(equity_curves.keys())
-    matrix = {}
+    if not equity_curves:
+        return {}
     
-    for id1 in strategy_ids:
-        matrix[id1] = {}
-        for id2 in strategy_ids:
-            if id1 == id2:
-                matrix[id1][id2] = 1.0
-            else:
-                correlation = _pearson_correlation(
-                    equity_curves[id1],
-                    equity_curves[id2]
-                )
-                matrix[id1][id2] = correlation
-    
-    return matrix
-
-
-def _pearson_correlation(x: List[float], y: List[float]) -> float:
-    """Calculate Pearson correlation coefficient"""
-    if len(x) != len(y) or len(x) == 0:
-        return 0.0
-    
-    n = len(x)
-    
-    # Calculate means
-    mean_x = sum(x) / n
-    mean_y = sum(y) / n
-    
-    # Calculate covariance and standard deviations
-    covariance = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n)) / n
-    std_x = (sum((xi - mean_x) ** 2 for xi in x) / n) ** 0.5
-    std_y = (sum((yi - mean_y) ** 2 for yi in y) / n) ** 0.5
-    
-    if std_x == 0 or std_y == 0:
-        return 0.0
-    
-    return covariance / (std_x * std_y)
+    # Align lengths if necessary by padding with last value
+    max_len = max(len(c) for c in equity_curves.values())
+    padded_curves = {}
+    for sid, curve in equity_curves.items():
+        if len(curve) < max_len:
+            padded_curves[sid] = curve + [curve[-1]] * (max_len - len(curve))
+        else:
+            padded_curves[sid] = curve
+            
+    df = pd.DataFrame(padded_curves)
+    corr_df = df.corr()
+    return corr_df.to_dict()
 
 
 def monte_carlo_simulation(
@@ -76,96 +50,57 @@ def monte_carlo_simulation(
     num_simulations: int = 1000
 ) -> MonteCarloResult:
     """
-    Run Monte Carlo simulation by randomizing trade order
-    
-    Args:
-        trades: List of trade dictionaries with 'r_multiple' field
-        initial_capital: Starting capital
-        num_simulations: Number of random permutations to test
-    
-    Returns:
-        MonteCarloResult with worst-case scenarios and percentiles
+    Run vectorized Monte Carlo simulation
     """
     if not trades:
-        return MonteCarloResult(
-            worst_drawdown_pct=0,
-            best_final_balance=initial_capital,
-            worst_final_balance=initial_capital,
-            median_final_balance=initial_capital,
-            percentile_5=initial_capital,
-            percentile_25=initial_capital,
-            percentile_75=initial_capital,
-            percentile_95=initial_capital,
-            probability_of_ruin=0
-        )
+        return MonteCarloResult(0.0, initial_capital, initial_capital, initial_capital, 
+                               initial_capital, initial_capital, initial_capital, initial_capital, 0.0)
+
+    # Use actual USD PnL inferred from R-multiple and allocated risk
+    usd_pnls = []
+    for t in trades:
+        # In our engine, allocated_capital stores the risk (qty * abs(entry - sl))
+        risk_usd = t.get('allocated_capital', initial_capital * 0.01)
+        r = t.get('r_multiple', 0.0)
+        usd_pnls.append(r * risk_usd)
+
+    usd_pnls = np.array(usd_pnls)
+    n_trades = len(usd_pnls)
+    if n_trades == 0:
+        return MonteCarloResult(0.0, initial_capital, initial_capital, initial_capital, 
+                               initial_capital, initial_capital, initial_capital, initial_capital, 0.0)
     
-    # Extract R-multiples
-    r_multiples = [t.get('r_multiple', 0) for t in trades if t.get('r_multiple') is not None]
+    # Vectorized simulation
+    # (num_simulations, n_trades)
+    indices = np.random.randint(0, n_trades, size=(num_simulations, n_trades))
+    sim_pnls = usd_pnls[indices]
     
-    if not r_multiples:
-        return MonteCarloResult(
-            worst_drawdown_pct=0,
-            best_final_balance=initial_capital,
-            worst_final_balance=initial_capital,
-            median_final_balance=initial_capital,
-            percentile_5=initial_capital,
-            percentile_25=initial_capital,
-            percentile_75=initial_capital,
-            percentile_95=initial_capital,
-            probability_of_ruin=0
-        )
+    # (num_simulations, n_trades + 1)
+    equity_paths = np.zeros((num_simulations, n_trades + 1))
+    equity_paths[:, 0] = initial_capital
+    equity_paths[:, 1:] = np.cumsum(sim_pnls, axis=1) + initial_capital
     
-    final_balances = []
-    max_drawdowns = []
-    ruin_count = 0
+    final_balances = equity_paths[:, -1]
     
-    for _ in range(num_simulations):
-        # Randomize trade order
-        shuffled_r = r_multiples.copy()
-        random.shuffle(shuffled_r)
-        
-        # Simulate equity curve
-        balance = initial_capital
-        peak = initial_capital
-        max_dd = 0
-        
-        for r in shuffled_r:
-            # Assume 1R = 1% of current capital (simplified)
-            risk_amount = balance * 0.01
-            pnl = r * risk_amount
-            balance += pnl
-            
-            # Track drawdown
-            if balance > peak:
-                peak = balance
-            
-            dd = (peak - balance) / peak * 100 if peak > 0 else 0
-            max_dd = max(max_dd, dd)
-            
-            # Check for ruin (balance drops below 50% of initial)
-            if balance < initial_capital * 0.5:
-                ruin_count += 1
-                break
-        
-        final_balances.append(balance)
-        max_drawdowns.append(max_dd)
+    # Drawdown calculation (Vectorized across all paths)
+    running_max = np.maximum.accumulate(equity_paths, axis=1)
+    drawdowns = (running_max - equity_paths) / (running_max + 1e-10) * 100
+    max_drawdowns = np.max(drawdowns, axis=1)
     
-    # Sort for percentiles
-    final_balances.sort()
-    max_drawdowns.sort(reverse=True)
-    
-    n = len(final_balances)
+    # Probability of ruin (balance < 50% initial)
+    ruined = np.any(equity_paths < initial_capital * 0.5, axis=1)
+    prob_ruin = np.mean(ruined) * 100
     
     return MonteCarloResult(
-        worst_drawdown_pct=max_drawdowns[0] if max_drawdowns else 0,
-        best_final_balance=final_balances[-1],
-        worst_final_balance=final_balances[0],
-        median_final_balance=final_balances[n // 2],
-        percentile_5=final_balances[int(n * 0.05)],
-        percentile_25=final_balances[int(n * 0.25)],
-        percentile_75=final_balances[int(n * 0.75)],
-        percentile_95=final_balances[int(n * 0.95)],
-        probability_of_ruin=(ruin_count / num_simulations * 100)
+        worst_drawdown_pct=float(np.max(max_drawdowns)),
+        best_final_balance=float(np.max(final_balances)),
+        worst_final_balance=float(np.min(final_balances)),
+        median_final_balance=float(np.median(final_balances)),
+        percentile_5=float(np.percentile(final_balances, 5)),
+        percentile_25=float(np.percentile(final_balances, 25)),
+        percentile_75=float(np.percentile(final_balances, 75)),
+        percentile_95=float(np.percentile(final_balances, 95)),
+        probability_of_ruin=float(prob_ruin)
     )
 
 

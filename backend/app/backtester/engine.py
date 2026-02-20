@@ -13,7 +13,7 @@ from numba.typed import List as NumbaList
 
 from app.schemas.strategy import (
     Strategy, ConditionGroup, RiskType, Comparator, IndicatorType,
-    ComparisonCondition, PriceLevelCondition, CandleCondition
+    ComparisonCondition, PriceLevelCondition, CandleCondition, CandlePattern
 )
 
 
@@ -382,13 +382,27 @@ class BacktestEngine:
             
         # It's an IndicatorConfig
         name = config.name
+        period = config.period or 14 # Default period
         
+        # We handle tickers separately to avoid leaking data across symbols
+        def grouped_rolling(func):
+            return df.groupby('ticker')['close'].transform(func)
+
         series = pd.Series(0.0, index=df.index)
         
         if name == IndicatorType.CLOSE: series = df['close']
         elif name == IndicatorType.OPEN: series = df['open']
         elif name == IndicatorType.HIGH: series = df['high']
         elif name == IndicatorType.LOW: series = df['low']
+        elif name == IndicatorType.SMA:
+            series = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=period).mean())
+        elif name == IndicatorType.EMA:
+            series = df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=period, adjust=False).mean())
+        elif name == IndicatorType.WMA:
+            weights = np.arange(1, period + 1)
+            series = df.groupby('ticker')['close'].transform(
+                lambda x: x.rolling(period).apply(lambda bars: np.dot(bars, weights) / weights.sum(), raw=True)
+            )
         elif name == IndicatorType.VWAP: 
             series = df['vwap'] if 'vwap' in df.columns else df['close']
         elif name == IndicatorType.RVOL:
@@ -397,11 +411,46 @@ class BacktestEngine:
             series = df['pm_high'] if 'pm_high' in df.columns else df['high']
         elif name == IndicatorType.PML:
              series = df['pm_low'] if 'pm_low' in df.columns else df['low']
-        # Add other indicators as needed (SMA, EMA etc via pandas_ta or manual calc if not in DF)
+        elif name == IndicatorType.RSI:
+            def calc_rsi(s, p):
+                delta = s.diff()
+                up = delta.clip(lower=0)
+                down = -delta.clip(upper=0)
+                ema_up = up.ewm(com=p-1, adjust=False).mean()
+                ema_down = down.ewm(com=p-1, adjust=False).mean()
+                rs = ema_up / (ema_down + 1e-10)
+                return 100 - (100 / (1 + rs))
+            series = df.groupby('ticker')['close'].transform(lambda x: calc_rsi(x, period))
+        elif name == IndicatorType.MACD:
+            ema12 = df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=12, adjust=False).mean())
+            ema26 = df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=26, adjust=False).mean())
+            series = ema12 - ema26
+        elif name == IndicatorType.ATR:
+            def calc_atr(group, p):
+                high = group['high']
+                low = group['low']
+                prev_close = group['close'].shift(1)
+                tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+                return tr.rolling(window=p).mean()
+            series = df.groupby('ticker', group_keys=False).apply(lambda x: calc_atr(x, period))
+            if len(series) == len(df): series.index = df.index
+        elif name == IndicatorType.HOD:
+            series = df.groupby(['ticker', df['timestamp'].dt.date])['high'].transform('cummax')
+        elif name == IndicatorType.LOD:
+            series = df.groupby(['ticker', df['timestamp'].dt.date])['low'].transform('cummin')
+        elif name == IndicatorType.Y_HIGH:
+            series = df['prev_high'] if 'prev_high' in df.columns else df['high']
+        elif name == IndicatorType.Y_LOW:
+            series = df['prev_low'] if 'prev_low' in df.columns else df['low']
+        elif name == IndicatorType.Y_CLOSE:
+            series = df['prev_close'] if 'prev_close' in df.columns else df['close']
+        elif name == IndicatorType.CUSTOM:
+            # For custom, multiplier or period might be used as the value
+            series = pd.Series(float(config.multiplier if config.multiplier is not None else (config.period or 0)), index=df.index)
         
-        # Apply offset if needed (shift)
         if config.offset and config.offset > 0:
-            series = series.shift(config.offset)
+            series = df.groupby('ticker').transform(lambda x: series.loc[x.index].shift(config.offset)).iloc[:, 0]
+            series.index = df.index
             
         return series
 
@@ -451,18 +500,42 @@ class BacktestEngine:
         return pd.Series(False, index=df.index)
 
     def _evaluate_candle_pattern(self, condition: CandleCondition, df: pd.DataFrame) -> pd.Series:
-        # Simple placeholder for patterns
         pat = condition.pattern
+        lookback = condition.lookback or 1
+        count = condition.consecutive_count or 1
         
-        is_green = df['close'] > df['open']
-        is_red = df['close'] < df['open']
+        o, h, l, c = df['open'], df['high'], df['low'], df['close']
+        body = (c - o).abs()
+        wick_top = h - df[['open', 'close']].max(axis=1)
+        wick_bottom = df[['open', 'close']].min(axis=1) - l
         
-        if pat == "GREEN_VOLUME":
-            return is_green
-        elif pat == "RED_VOLUME":
-            return is_red
+        res = pd.Series(False, index=df.index)
+        
+        if pat == CandlePattern.GV: # Green Volume
+            # In our schema GV means Green Candle
+            res = c > o
+        elif pat == CandlePattern.GV_PLUS: # Green Volume Plus
+            res = (c > o) & (c > c.shift(1))
+        elif pat == CandlePattern.RV: # Red Volume
+            res = c < o
+        elif pat == CandlePattern.RV_PLUS: # Red Volume Plus
+            res = (c < o) & (c < c.shift(1))
+        elif pat == CandlePattern.DOJI:
+            res = body <= (h - l) * 0.1
+        elif pat == CandlePattern.HAMMER:
+            res = (wick_bottom > body * 2) & (wick_top < body * 0.5)
+        elif pat == CandlePattern.SHOOTING_STAR:
+            res = (wick_top > body * 2) & (wick_bottom < body * 0.5)
+        
+        # Handle lookback/offset
+        if lookback > 1:
+            res = df.groupby('ticker').transform(lambda x: res.loc[x.index].shift(lookback-1)).iloc[:, 0]
+        
+        # Handle consecutive count
+        if count > 1:
+            res = df.groupby('ticker').apply(lambda x: res.loc[x.index].rolling(count).sum() == count).reset_index(level=0, drop=True)
             
-        return pd.Series(False, index=df.index)
+        return res
 
     def run(self) -> BacktestResult:
         print(f"Starting Numba-optimized backtest with {len(self.strategies)} strategies...")
