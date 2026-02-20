@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ExecutionPanel } from '@/components/backtester/ExecutionPanel';
 import { BacktestDashboard } from '@/components/backtester/BacktestDashboard';
@@ -12,7 +12,7 @@ interface PrefillData {
     dataset_id: string | null;
 }
 
-export default function BacktesterPage() {
+function BacktesterContent() {
     const searchParams = useSearchParams();
     const [currentResult, setCurrentResult] = useState<BacktestResult | null>(null);
     const [isLoading, setIsLoading] = useState(false);
@@ -43,7 +43,6 @@ export default function BacktesterPage() {
 
     return (
         <div className="flex h-screen bg-background transition-colors duration-300">
-            {/* Execution Panel - Sidebar */}
             <ExecutionPanel
                 onBacktestStart={handleBacktestStart}
                 onBacktestComplete={handleBacktestComplete}
@@ -51,7 +50,6 @@ export default function BacktesterPage() {
                 prefillData={prefillData}
             />
 
-            {/* Main Dashboard */}
             <main className="flex-1 overflow-auto bg-background/50">
                 {currentResult ? (
                     <BacktestDashboard result={currentResult} />
@@ -72,5 +70,13 @@ export default function BacktesterPage() {
                 )}
             </main>
         </div>
+    );
+}
+
+export default function BacktesterPage() {
+    return (
+        <Suspense fallback={null}>
+            <BacktesterContent />
+        </Suspense>
     );
 }
