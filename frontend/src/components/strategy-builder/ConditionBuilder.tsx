@@ -18,7 +18,8 @@ import { Plus, Trash2, GitBranch } from 'lucide-react';
 const PERIOD_INDICATORS = new Set([
     IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
     IndicatorType.RSI, IndicatorType.MACD, IndicatorType.ATR,
-    IndicatorType.RVOL
+    IndicatorType.RVOL, IndicatorType.ADX, IndicatorType.WILLIAMS_R,
+    IndicatorType.MAX_N_BARS
 ]);
 
 // Human-readable labels for comparators using symbols
@@ -40,6 +41,8 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.RSI]: "RSI",
     [IndicatorType.MACD]: "MACD",
     [IndicatorType.ATR]: "ATR",
+    [IndicatorType.ADX]: "ADX",
+    [IndicatorType.WILLIAMS_R]: "Williams %R",
     [IndicatorType.RVOL]: "RVOL",
     [IndicatorType.VWAP]: "Cumulative VWAP (Day)",
     [IndicatorType.AVWAP]: "Anchored VWAP (Day)",
@@ -54,6 +57,16 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.Y_HIGH]: "Yesterday High",
     [IndicatorType.Y_LOW]: "Yesterday Low",
     [IndicatorType.Y_CLOSE]: "Yesterday Close",
+    [IndicatorType.VOLUME]: "Volume",
+    [IndicatorType.AVOLUME]: "Accumulated Volume",
+    [IndicatorType.CONSECUTIVE_RED_CANDLES]: "N Consecutive Red",
+    [IndicatorType.CONSECUTIVE_HIGHER_HIGHS]: "N Consecutive Higher Highs",
+    [IndicatorType.CONSECUTIVE_LOWER_LOWS]: "N Consecutive Lower Lows",
+    [IndicatorType.RET_PCT_PM]: "Ret % PM",
+    [IndicatorType.RET_PCT_RTH]: "Ret % RTH",
+    [IndicatorType.RET_PCT_AM]: "Ret % AM",
+    [IndicatorType.TIME_OF_DAY]: "Time of Day",
+    [IndicatorType.MAX_N_BARS]: "Max N Bars",
     [IndicatorType.CUSTOM]: "Custom",
 };
 

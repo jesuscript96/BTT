@@ -45,20 +45,30 @@ def create_strategy(strategy: StrategyCreate):
 
 @router.get("/", response_model=List[Strategy])
 def list_strategies():
-    con = get_db_connection()
-    # Fetch from DB
-    rows = con.execute("SELECT definition FROM strategies ORDER BY created_at DESC").fetchall()
-    
+    try:
+        con = get_db_connection()
+        rows = con.execute("SELECT definition FROM strategies ORDER BY created_at DESC").fetchall()
+    except Exception as e:
+        print(f"list_strategies DB error: {e}")
+        return []
     strategies = []
     for row in rows:
-        # row[0] is the JSON string
+        if not row or row[0] is None:
+            continue
+        raw = row[0]
+        if isinstance(raw, dict):
+            strategy_dict = raw
+        else:
+            try:
+                strategy_dict = json.loads(raw)
+            except (TypeError, ValueError) as e:
+                print(f"Error parsing strategy JSON: {e}")
+                continue
         try:
-            strategy_dict = json.loads(row[0])
             strategies.append(Strategy(**strategy_dict))
         except Exception as e:
-            print(f"Error parsing strategy: {e}")
+            print(f"Error building Strategy: {e}")
             continue
-            
     return strategies
 
 @router.get("/{strategy_id}", response_model=Strategy)

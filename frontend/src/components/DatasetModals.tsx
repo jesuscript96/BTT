@@ -86,12 +86,14 @@ export const LoadDatasetModal = ({ isOpen, onClose, onLoad }: any) => {
         setIsLoading(true);
         try {
             const res = await fetch(`${API_URL}/queries/`);
-            if (res.ok) {
-                const data = await res.json();
-                setQueries(data);
+            const data = await res.json().catch(() => []);
+            setQueries(Array.isArray(data) ? data : []);
+            if (!res.ok) {
+                console.warn("Datasets response not ok:", res.status, data);
             }
         } catch (error) {
             console.error("Error fetching datasets:", error);
+            setQueries([]);
         } finally {
             setIsLoading(false);
         }

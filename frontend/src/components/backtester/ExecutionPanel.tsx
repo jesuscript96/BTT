@@ -85,28 +85,28 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
     const fetchStrategies = async () => {
         try {
             const response = await fetch(`${API_URL}/strategies/`);
-            const data = await response.json();
-            if (Array.isArray(data)) {
-                setStrategies(data);
-            } else {
-                setStrategies([]);
+            const data = await response.json().catch(() => []);
+            setStrategies(Array.isArray(data) ? data : []);
+            if (!response.ok) {
+                console.warn("Strategies response not ok:", response.status, data);
             }
         } catch (error) {
-            console.error('Error fetching strategies:', error);
+            console.error("Error fetching strategies:", error);
+            setStrategies([]);
         }
     };
 
     const fetchSavedDatasets = async () => {
         try {
             const response = await fetch(`${API_URL}/queries/`);
-            const data = await response.json();
-            if (Array.isArray(data)) {
-                setSavedDatasets(data);
-            } else {
-                setSavedDatasets([]);
+            const data = await response.json().catch(() => []);
+            setSavedDatasets(Array.isArray(data) ? data : []);
+            if (!response.ok) {
+                console.warn("Datasets response not ok:", response.status, data);
             }
         } catch (error) {
-            console.error('Error fetching datasets:', error);
+            console.error("Error fetching datasets:", error);
+            setSavedDatasets([]);
         }
     };
 

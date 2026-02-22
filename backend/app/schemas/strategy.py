@@ -16,6 +16,8 @@ class IndicatorType(str, Enum):
     RSI = "RSI"
     MACD = "MACD"
     ATR = "ATR"
+    ADX = "ADX"
+    WILLIAMS_R = "Williams %R"
     CLOSE = "Close"
     OPEN = "Open"
     HIGH = "High"
@@ -27,7 +29,17 @@ class IndicatorType(str, Enum):
     Y_HIGH = "Yesterday High"
     Y_LOW = "Yesterday Low"
     Y_CLOSE = "Yesterday Close"
-    CUSTOM = "Custom" # For arbitrary numbers
+    VOLUME = "Volume"
+    AVOLUME = "Accumulated Volume"
+    CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles"
+    CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs"
+    CONSECUTIVE_LOWER_LOWS = "Consecutive Lower Lows"
+    RET_PCT_PM = "Ret % PM"
+    RET_PCT_RTH = "Ret % RTH"
+    RET_PCT_AM = "Ret % AM"
+    TIME_OF_DAY = "Time of Day"
+    MAX_N_BARS = "Max N Bars"
+    CUSTOM = "Custom"  # For arbitrary numbers
 
 class Comparator(str, Enum):
     GT = "GREATER_THAN"
@@ -79,9 +91,14 @@ class UniverseFilters(BaseModel):
 
 class IndicatorConfig(BaseModel):
     name: IndicatorType
-    period: Optional[int] = None # For SMA, EMA, RSI, etc.
-    multiplier: Optional[float] = None # For bands, ATR, etc.
-    offset: Optional[int] = 0 # Bars back (0 = current)
+    period: Optional[int] = None  # For SMA, EMA, RSI, etc.
+    multiplier: Optional[float] = None  # For bands, ATR, etc.
+    offset: Optional[int] = 0  # Bars back (0 = current)
+    overbought: Optional[float] = None  # e.g. RSI 70, Williams %R -20
+    oversold: Optional[float] = None  # e.g. RSI 30, Williams %R -80
+    consecutive_count: Optional[int] = None  # For consecutive red/highs/lows
+    time_hour: Optional[int] = None  # For Time of Day (0-23)
+    time_minute: Optional[int] = None  # For Time of Day (0-59)
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
@@ -117,10 +134,12 @@ class ExitLogic(BaseModel):
     root_condition: ConditionGroup
 
 class RiskManagement(BaseModel):
+    use_hard_stop: Optional[bool] = True
+    use_take_profit: Optional[bool] = True
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
-    trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "EMA13", "buffer_pct": 0.5})
-    max_drawdown_daily: Optional[float] = None # Create circuit breaker
+    trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
+    max_drawdown_daily: Optional[float] = None  # Circuit breaker
 
 class StrategyCreate(BaseModel):
     name: str

@@ -36,6 +36,7 @@ class Trade:
     fees: float
     exit_reason: Optional[str]  # "SL", "TP", "TIME", "EOD"
     is_open: bool = True
+    side: str = "long"  # "long" or "short"
 
 
 @dataclass
@@ -90,10 +91,17 @@ def _core_backtest_jit(
     strat_tp_values,  # float64 array
     strat_weights,    # float64 array
     strat_biases,     # int32 array (0=Long, 1=Short)
+    strat_risk_per_trade,  # float64 array (n_strats): if > 0 use as max allocated USD per trade
+    strat_use_hard_stop,   # int32 array (0=no, 1=yes)
+    strat_use_take_profit, # int32 array (0=no, 1=yes)
+    strat_trailing_active, # int32 array (0=no, 1=yes)
+    strat_trailing_pct,    # float64 array (distance %)
     
     # Global Config
     initial_balance,
-    commission,
+    commission,       # fixed per-trade fallback when commission_per_share and locate are 0
+    commission_per_share,
+    locate_cost_per_100,
     slippage_pct,
     max_holding_sec,  # float64
     
@@ -160,6 +168,20 @@ def _core_backtest_jit(
                 trade_sl = active_sl[j]
                 trade_tp = active_tp[j]
                 entry_time = active_entry_time[j]
+                entry_px_pos = active_entry_px[j]
+                
+                # Trailing stop: update SL when price moves in favor
+                if strat_trailing_active[strat_idx] and strat_trailing_pct[strat_idx] > 0:
+                    if bias == BIAS_LONG and bar_close > entry_px_pos:
+                        new_sl = bar_close * (1.0 - strat_trailing_pct[strat_idx] / 100.0)
+                        if new_sl > trade_sl:
+                            trade_sl = new_sl
+                            active_sl[j] = new_sl
+                    elif bias == BIAS_SHORT and bar_close < entry_px_pos:
+                        new_sl = bar_close * (1.0 + strat_trailing_pct[strat_idx] / 100.0)
+                        if new_sl < trade_sl:
+                            trade_sl = new_sl
+                            active_sl[j] = new_sl
                 
                 is_exit_signal = exit_signals[i, strat_idx]
                 
@@ -167,33 +189,35 @@ def _core_backtest_jit(
                 exit_px = 0.0
                 reason_code = -1
                 
-                # Check Stop Loss / Take Profit / Custom Exit
+                # Check Stop Loss / Take Profit / Custom Exit (use bar low/high for intrabar stop)
+                bar_low = lows[i]
+                bar_high = highs[i]
                 if bias == BIAS_LONG:
-                    if bar_close <= trade_sl:
+                    if bar_low <= trade_sl:
                         exit_signal_triggered = True
                         exit_px = trade_sl * (1 - slippage_pct/100)
-                        reason_code = 0 # SL
-                    elif bar_close >= trade_tp:
+                        reason_code = 0  # SL
+                    elif bar_high >= trade_tp:
                         exit_signal_triggered = True
                         exit_px = trade_tp * (1 - slippage_pct/100)
-                        reason_code = 1 # TP
+                        reason_code = 1  # TP
                     elif is_exit_signal:
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 - slippage_pct/100)
-                        reason_code = 5 # CUSTOM
-                else: # BIAS_SHORT
-                    if bar_close >= trade_sl:
+                        reason_code = 5  # CUSTOM
+                else:  # BIAS_SHORT
+                    if bar_high >= trade_sl:
                         exit_signal_triggered = True
                         exit_px = trade_sl * (1 + slippage_pct/100)
-                        reason_code = 0 # SL
-                    elif bar_close <= trade_tp:
+                        reason_code = 0  # SL
+                    elif bar_low <= trade_tp:
                         exit_signal_triggered = True
                         exit_px = trade_tp * (1 + slippage_pct/100)
-                        reason_code = 1 # TP
+                        reason_code = 1  # TP
                     elif is_exit_signal:
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 + slippage_pct/100)
-                        reason_code = 5 # CUSTOM
+                        reason_code = 5  # CUSTOM
                 
                 # Time-based exits
                 if not exit_signal_triggered:
@@ -248,7 +272,12 @@ def _core_backtest_jit(
                 if entry_signals[i, s]:
                     w = strat_weights[s]
                     bias = strat_biases[s]
-                    allocated = current_balance * (w / row_weight_sum)
+                    base_allocated = current_balance * (w / row_weight_sum)
+                    if strat_risk_per_trade[s] > 0:
+                        allocated = min(strat_risk_per_trade[s], base_allocated)
+                    else:
+                        allocated = base_allocated
+                    allocated = min(allocated, current_balance)
                     
                     if allocated > 0:
                         sl_type = strat_sl_types[s]
@@ -270,7 +299,9 @@ def _core_backtest_jit(
                                 val_pm = pm_lows[i] if pm_lows[i] > 0 else entry_px * 0.95
                                 stop_loss = val_pm
                             else: stop_loss = entry_px * 0.95
-                        else: # SHORT
+                            if strat_use_hard_stop[s] == 0:
+                                stop_loss = 0.0
+                        else:  # SHORT
                             if sl_type == RISK_FIXED: stop_loss = entry_px + sl_val
                             elif sl_type == RISK_PERCENT: stop_loss = entry_px * (1 + sl_val/100)
                             elif sl_type == RISK_ATR:
@@ -280,6 +311,8 @@ def _core_backtest_jit(
                                 val_pm = pm_highs[i] if pm_highs[i] > 0 else entry_px * 1.05
                                 stop_loss = val_pm
                             else: stop_loss = entry_px * 1.05
+                            if strat_use_hard_stop[s] == 0:
+                                stop_loss = entry_px * 2.0
                             
                         # Calculate TP
                         take_profit = 0.0
@@ -293,7 +326,9 @@ def _core_backtest_jit(
                                 val_vwap = vwaps[i] if vwaps[i] > 0 else entry_px * 1.05
                                 take_profit = val_vwap
                             else: take_profit = entry_px * 1.05
-                        else: # SHORT
+                            if strat_use_take_profit[s] == 0:
+                                take_profit = entry_px * 2.0
+                        else:  # SHORT
                             if tp_type == RISK_FIXED: take_profit = entry_px - tp_val
                             elif tp_type == RISK_PERCENT: take_profit = entry_px * (1 - tp_val/100)
                             elif tp_type == RISK_ATR:
@@ -303,21 +338,30 @@ def _core_backtest_jit(
                                 val_vwap = vwaps[i] if vwaps[i] > 0 else entry_px * 0.95
                                 take_profit = val_vwap
                             else: take_profit = entry_px * 0.95
+                            if strat_use_take_profit[s] == 0:
+                                take_profit = 0.0
                             
-                        risk = abs(stop_loss - entry_px)
+                        if strat_use_hard_stop[s] == 1:
+                            risk = abs(stop_loss - entry_px)
+                        else:
+                            risk = entry_px * 0.02
                         if risk > 0:
                             qty = allocated / risk
                             if qty > 0:
-                                active_entry_px.append(entry_px)
-                                active_sl.append(stop_loss)
-                                active_tp.append(take_profit)
-                                active_qty.append(qty)
-                                active_entry_time.append(current_ts)
-                                active_strat_idx.append(s)
-                                active_ticker_id.append(bar_ticker)
-                                active_metadata_idx.append(i)
-                                
-                                current_balance -= commission
+                                if commission_per_share > 0 or locate_cost_per_100 > 0:
+                                    fee = commission_per_share * qty + np.ceil(qty / 100.0) * locate_cost_per_100
+                                else:
+                                    fee = commission
+                                if current_balance >= fee:
+                                    active_entry_px.append(entry_px)
+                                    active_sl.append(stop_loss)
+                                    active_tp.append(take_profit)
+                                    active_qty.append(qty)
+                                    active_entry_time.append(current_ts)
+                                    active_strat_idx.append(s)
+                                    active_ticker_id.append(bar_ticker)
+                                    active_metadata_idx.append(i)
+                                    current_balance -= fee
         
         if (i + 1) % sample_step == 0:
             eq_times.append(current_ts)
@@ -373,8 +417,12 @@ class BacktestEngine:
         strategies: List[Strategy],
         weights: Dict[str, float],
         market_data: pd.DataFrame,
-        commission_per_trade: float,
+        commission_per_trade: float = 1.0,
+        commission_per_share: float = 0.0,
+        locate_cost_per_100: float = 0.0,
         slippage_pct: float = 0.0,
+        lookahead_prevention: bool = False,
+        risk_per_trade_usd: Optional[float] = None,
         initial_capital: float = 100000,
         max_holding_minutes: int = 390
     ):
@@ -382,7 +430,11 @@ class BacktestEngine:
         self.weights = weights
         self.market_data = market_data.sort_values('timestamp').reset_index(drop=True)
         self.commission = commission_per_trade
+        self.commission_per_share = commission_per_share
+        self.locate_cost_per_100 = locate_cost_per_100
         self.slippage_pct = slippage_pct
+        self.lookahead_prevention = lookahead_prevention
+        self.risk_per_trade_usd = risk_per_trade_usd
         self.initial_capital = initial_capital
         self.max_holding_minutes = max_holding_minutes
         
@@ -532,14 +584,135 @@ class BacktestEngine:
             series = df['prev_low'] if 'prev_low' in df.columns else df['low']
         elif name == IndicatorType.Y_CLOSE:
             series = df['prev_close'] if 'prev_close' in df.columns else df['close']
+        elif name == IndicatorType.VOLUME:
+            series = df['volume'] if 'volume' in df.columns else pd.Series(0.0, index=df.index)
+        elif name == IndicatorType.AVOLUME:
+            # Cumulative volume from session start (per ticker per date)
+            series = df.groupby(['ticker', df['timestamp'].dt.date])['volume'].cumsum()
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.WILLIAMS_R:
+            # %R = -100 * (High_n - Close) / (High_n - Low_n)
+            def williams_r(g, p):
+                high_n = g['high'].rolling(window=p).max()
+                low_n = g['low'].rolling(window=p).min()
+                return -100.0 * (high_n - g['close']) / (high_n - low_n + 1e-10)
+            series = df.groupby('ticker', group_keys=False).apply(lambda x: williams_r(x, period))
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.ADX:
+            def calc_adx(g, p):
+                high = g['high']
+                low = g['low']
+                close = g['close']
+                tr = pd.concat([
+                    high - low,
+                    (high - close.shift(1)).abs(),
+                    (low - close.shift(1)).abs()
+                ], axis=1).max(axis=1)
+                plus_dm = high.diff()
+                minus_dm = -low.diff()
+                plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+                minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+                atr = tr.rolling(p).mean()
+                plus_di = 100 * (plus_dm.rolling(p).mean() / (atr + 1e-10))
+                minus_di = 100 * (minus_dm.rolling(p).mean() / (atr + 1e-10))
+                dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10)
+                return dx.rolling(p).mean()
+            series = df.groupby('ticker', group_keys=False).apply(lambda x: calc_adx(x, period))
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.MAX_N_BARS:
+            # Max of high over last n bars
+            series = df.groupby('ticker')['high'].transform(lambda x: x.rolling(window=period).max())
+        elif name == IndicatorType.RET_PCT_PM:
+            # % return from first bar of premarket (04:00) or first bar of day per ticker/date
+            def ret_pm(g):
+                first_close = g['close'].iloc[0]
+                return (g['close'] - first_close) / (first_close + 1e-10) * 100
+            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(ret_pm)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.RET_PCT_RTH:
+            # % return from RTH open (first bar at or after 09:30 per ticker/date)
+            def ret_rth(g):
+                g = g.sort_values('timestamp')
+                rth = g[g['timestamp'].dt.hour * 60 + g['timestamp'].dt.minute >= 9 * 60 + 30]
+                if rth.empty:
+                    return pd.Series(0.0, index=g.index)
+                open_rth = rth['open'].iloc[0]
+                return (g['close'] - open_rth) / (open_rth + 1e-10) * 100
+            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(ret_rth)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.RET_PCT_AM:
+            # % return from previous close (end of RTH) or first AM bar
+            def ret_am(g):
+                g = g.sort_values('timestamp')
+                rth_end = g[g['timestamp'].dt.hour * 60 + g['timestamp'].dt.minute < 16 * 60]
+                if rth_end.empty:
+                    ref = g['close'].iloc[0]
+                else:
+                    ref = rth_end['close'].iloc[-1]
+                return (g['close'] - ref) / (ref + 1e-10) * 100
+            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(ret_am)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.CONSECUTIVE_RED_CANDLES:
+            # Count consecutive red candles (close < open) ending at current bar
+            def f(g):
+                r = g['close'] < g['open']
+                c = r.astype(int)
+                out = c.copy()
+                for i in range(1, len(c)):
+                    if r.iloc[i]:
+                        out.iloc[i] = out.iloc[i - 1] + 1
+                    else:
+                        out.iloc[i] = 0
+                return out
+            series = df.groupby('ticker', group_keys=False).apply(f)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.CONSECUTIVE_HIGHER_HIGHS:
+            def f_highs(g):
+                h = g['high']
+                out = pd.Series(0, index=g.index)
+                for i in range(1, len(h)):
+                    if h.iloc[i] > h.iloc[i - 1]:
+                        out.iloc[i] = out.iloc[i - 1] + 1
+                    else:
+                        out.iloc[i] = 0
+                return out
+            series = df.groupby('ticker', group_keys=False).apply(f_highs)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.CONSECUTIVE_LOWER_LOWS:
+            def f_lows(g):
+                l = g['low']
+                out = pd.Series(0, index=g.index)
+                for i in range(1, len(l)):
+                    if l.iloc[i] < l.iloc[i - 1]:
+                        out.iloc[i] = out.iloc[i - 1] + 1
+                    else:
+                        out.iloc[i] = 0
+                return out
+            series = df.groupby('ticker', group_keys=False).apply(f_lows)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.TIME_OF_DAY:
+            # Minutes since midnight for comparison with (time_hour * 60 + time_minute)
+            series = df['timestamp'].dt.hour * 60 + df['timestamp'].dt.minute
+            if getattr(config, 'time_hour', None) is not None or getattr(config, 'time_minute', None) is not None:
+                # If target is fixed, we still return the series; comparison is done in _evaluate_comparison
+                pass
         elif name == IndicatorType.CUSTOM:
             # For custom, multiplier or period might be used as the value
             series = pd.Series(float(config.multiplier if config.multiplier is not None else (config.period or 0)), index=df.index)
         
-        if config.offset and config.offset > 0:
-            series = df.groupby('ticker').transform(lambda x: series.loc[x.index].shift(config.offset)).iloc[:, 0]
+        if getattr(config, 'offset', 0) and config.offset > 0:
+            series = series.groupby(df['ticker']).shift(config.offset)
             series.index = df.index
-            
+
         return series
 
     def _evaluate_comparison(self, condition: ComparisonCondition, df: pd.DataFrame) -> pd.Series:
@@ -666,6 +839,20 @@ class BacktestEngine:
         entry_signals = self.generate_boolean_signals("entry")
         exit_signals = self.generate_boolean_signals("exit")
         
+        # Look-ahead prevention: shift signals by 1 bar per ticker
+        if self.lookahead_prevention and len(df) > 0:
+            n_strats = entry_signals.shape[1]
+            entry_shifted = np.zeros_like(entry_signals)
+            exit_shifted = np.zeros_like(exit_signals)
+            for ticker in unique_tickers:
+                mask = df['ticker'].values == ticker
+                idx = np.where(mask)[0]
+                if len(idx) > 1:
+                    entry_shifted[idx[1:], :] = entry_signals[idx[:-1], :]
+                    exit_shifted[idx[1:], :] = exit_signals[idx[:-1], :]
+            entry_signals = entry_shifted
+            exit_signals = exit_shifted
+        
         strat_sl_types = []
         strat_sl_values = []
         strat_tp_types = []
@@ -673,27 +860,52 @@ class BacktestEngine:
         strat_weights = []
         strat_biases = []
         
-        risk_map = {
-            RiskType.FIXED: RISK_FIXED,
-            RiskType.PERCENTAGE: RISK_PERCENT, 
-            RiskType.ATR: RISK_ATR,
-            RiskType.MARKET_STRUCTURE: RISK_STRUCTURE 
-        }
+        def _risk_type_to_int(rt):
+            if rt is None:
+                return RISK_PERCENT
+            val = getattr(rt, 'value', rt) if hasattr(rt, 'value') else rt
+            return {
+                "Fixed Amount": RISK_FIXED,
+                "Percentage": RISK_PERCENT,
+                "ATR Multiplier": RISK_ATR,
+                "Market Structure (HOD/LOD)": RISK_STRUCTURE,
+            }.get(val, RISK_PERCENT)
         
+        strat_risk_per_trade = []
+        strat_use_hard_stop = []
+        strat_use_take_profit = []
+        strat_trailing_active = []
+        strat_trailing_pct = []
         for s in self.strategies:
             strat_weights.append(self.weights.get(s.id, 0.0))
             strat_biases.append(BIAS_LONG if s.bias == 'long' else BIAS_SHORT)
+            strat_risk_per_trade.append(float(self.risk_per_trade_usd) if self.risk_per_trade_usd is not None and self.risk_per_trade_usd > 0 else 0.0)
+            rm = getattr(s, 'risk_management', None) or {}
+            def _get(obj, key, default=None):
+                if isinstance(obj, dict):
+                    return obj.get(key, default)
+                return getattr(obj, key, default)
+            strat_use_hard_stop.append(1 if _get(rm, 'use_hard_stop', True) else 0)
+            strat_use_take_profit.append(1 if _get(rm, 'use_take_profit', True) else 0)
+            ts = _get(rm, 'trailing_stop') or {}
+            strat_trailing_active.append(1 if _get(ts, 'active', False) else 0)
+            strat_trailing_pct.append(float(_get(ts, 'buffer_pct', 0.5)))
             
-            # Use safe default or map
-            sl_val = s.risk_management.hard_stop.get('value', 2.0)
-            sl_type_str = s.risk_management.hard_stop.get('type', RiskType.PERCENTAGE)
-            strat_sl_types.append(risk_map.get(sl_type_str, RISK_PERCENT))
-            strat_sl_values.append(sl_val)
+            hard_stop = _get(rm, 'hard_stop') or {}
+            take_profit = _get(rm, 'take_profit') or {}
+            if not isinstance(hard_stop, dict):
+                hard_stop = dict(hard_stop) if hard_stop else {}
+            if not isinstance(take_profit, dict):
+                take_profit = dict(take_profit) if take_profit else {}
+            sl_val = hard_stop.get('value', 2.0)
+            sl_type_str = hard_stop.get('type', RiskType.PERCENTAGE)
+            strat_sl_types.append(_risk_type_to_int(sl_type_str))
+            strat_sl_values.append(float(sl_val))
             
-            tp_val = s.risk_management.take_profit.get('value', 6.0)
-            tp_type_str = s.risk_management.take_profit.get('type', RiskType.PERCENTAGE)
-            strat_tp_types.append(risk_map.get(tp_type_str, RISK_PERCENT))
-            strat_tp_values.append(tp_val)
+            tp_val = take_profit.get('value', 6.0)
+            tp_type_str = take_profit.get('type', RiskType.PERCENTAGE)
+            strat_tp_types.append(_risk_type_to_int(tp_type_str))
+            strat_tp_values.append(float(tp_val))
             
         # 3. Call JIT Function
         print(f"JIT Warmup/Execution for {len(df)} rows...")
@@ -707,8 +919,15 @@ class BacktestEngine:
             np.array(strat_tp_values, dtype=np.float64),
             np.array(strat_weights, dtype=np.float64),
             np.array(strat_biases, dtype=np.int32),
+            np.array(strat_risk_per_trade, dtype=np.float64),
+            np.array(strat_use_hard_stop, dtype=np.int32),
+            np.array(strat_use_take_profit, dtype=np.int32),
+            np.array(strat_trailing_active, dtype=np.int32),
+            np.array(strat_trailing_pct, dtype=np.float64),
             self.initial_capital,
             self.commission,
+            self.commission_per_share,
+            self.locate_cost_per_100,
             self.slippage_pct,
             float(self.max_holding_minutes * 60.0),
             atrs, pm_highs, pm_lows, vwaps,
@@ -752,11 +971,12 @@ class BacktestEngine:
                 stop_loss=res_sl[k],
                 take_profit=res_tp[k],
                 position_size=res_qty[k],
-                allocated_capital=0.0, # Will set below
-                r_multiple=0.0, 
+                allocated_capital=0.0,
+                r_multiple=0.0,
                 fees=self.commission,
                 exit_reason=reason_map.get(res_reason[k], "UNKNOWN"),
-                is_open=False
+                is_open=False,
+                side="long" if bias == BIAS_LONG else "short"
             )
             
             # Calculate R-multiple & Risk
@@ -920,5 +1140,6 @@ class BacktestEngine:
             "position_size": trade.position_size,
             "r_multiple": trade.r_multiple,
             "fees": trade.fees,
-            "exit_reason": trade.exit_reason
+            "exit_reason": trade.exit_reason,
+            "side": getattr(trade, "side", "long")
         }

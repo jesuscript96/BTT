@@ -14,7 +14,7 @@ def validate_results(results_json: Dict):
     trades = results_json.get('trades', [])
     if not trades:
         print("No trades to validate.")
-        return
+        return {"win_rate_diff": 0, "max_dd_diff": 0, "sharpe_diff": 0, "profit_factor": 0, "total_trades": 0, "total_pnl_usd": 0}
     
     # Convert trades to a format VectorBT likes
     # We create a simple Returns series from trades for portfolio analysis
@@ -49,11 +49,14 @@ def validate_results(results_json: Dict):
     # Easier: Calculate metrics from the pnl series
     pnl_series = df_trades['r_multiple'].fillna(0) # In R units
     
-    # PnL in USD
-    usd_pnl = (df_trades['exit_price'] - df_trades['entry_price']) * df_trades['position_size']
-    # Wait, our engine is short-biased or uses absolute PnL in engine.py
-    # Re-verify PnL calculation in engine.py: pnl = (active_entry_px[j] - exit_px) * qty - commission
-    # So it handles shorts correctly.
+    # PnL in USD (long: (exit-entry)*size, short: (entry-exit)*size)
+    side = df_trades.get('side', pd.Series('long', index=df_trades.index))
+    usd_pnl = np.where(
+        side.eq('short'),
+        (df_trades['entry_price'] - df_trades['exit_price']) * df_trades['position_size'],
+        (df_trades['exit_price'] - df_trades['entry_price']) * df_trades['position_size']
+    )
+    usd_pnl = pd.Series(usd_pnl, index=df_trades.index)
     
     # Re-calculate Win Rate
     vbt_win_rate = (usd_pnl > 0).mean() * 100
@@ -88,11 +91,15 @@ def validate_results(results_json: Dict):
     print_row("Max Drawdown %", max_dd_native, vbt_max_dd)
     print_row("Sharpe (R-based)", sharpe_native, vbt_sharpe)
     
-    # Add Profit Factor
+    # Profit Factor & Total PnL
     gross_profit = usd_pnl[usd_pnl > 0].sum()
     gross_loss = abs(usd_pnl[usd_pnl < 0].sum())
-    profit_factor_native = gross_profit / (gross_loss + 1e-10)
-    print_row("Profit Factor", profit_factor_native, profit_factor_native) # Baseline for now
+    profit_factor = gross_profit / (gross_loss + 1e-10)
+    total_pnl = usd_pnl.sum()
+    total_trades = len(trades)
+    print_row("Profit Factor", profit_factor, profit_factor)
+    print(f"{'Total Trades':<20} | {total_trades:<15} | {'':<15} |")
+    print(f"{'Total PnL (USD)':<20} | {total_pnl:<15.2f} | {'':<15} |")
 
     print("="*65)
     
@@ -102,7 +109,10 @@ def validate_results(results_json: Dict):
     return {
         "win_rate_diff": abs(win_rate_native - vbt_win_rate),
         "max_dd_diff": abs(max_dd_native - vbt_max_dd),
-        "sharpe_diff": abs(sharpe_native - vbt_sharpe)
+        "sharpe_diff": abs(sharpe_native - vbt_sharpe),
+        "profit_factor": profit_factor,
+        "total_trades": total_trades,
+        "total_pnl_usd": float(total_pnl)
     }
 
 if __name__ == "__main__":

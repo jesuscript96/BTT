@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.scheduler import start_scheduler
 from app.database import get_db_connection
+from app.init_db import init_db
 
 # Lifecycle events
 @asynccontextmanager
@@ -15,15 +16,20 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize Application
     print("Startup: Connecting to massive database...")
     
-    # Verify database connection
     try:
         con = get_db_connection()
         tables = con.execute("SHOW TABLES").fetchall()
         print(f"✅ Connected to massive. Tables: {[t[0] for t in tables]}")
-        con.close()
     except Exception as e:
         print(f"❌ Error connecting to massive: {e}")
         raise
+
+    # Ensure strategies and saved_queries tables exist
+    try:
+        init_db()
+        print("✅ Init DB: strategies and saved_queries tables verified")
+    except Exception as e:
+        print(f"⚠️ Init DB warning: {e}")
         
     start_scheduler()
     yield

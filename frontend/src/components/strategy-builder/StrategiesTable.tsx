@@ -19,11 +19,16 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         setError(null);
         try {
             const response = await fetch(`${API_URL}/strategies/`);
-            if (!response.ok) throw new Error('Failed to fetch strategies');
-            const data = await response.json();
-            setStrategies(data);
+            const data = await response.json().catch(() => []);
+            if (!response.ok) {
+                const msg = (data && typeof data.detail === "string") ? data.detail : "Failed to fetch strategies";
+                throw new Error(msg);
+            }
+            setStrategies(Array.isArray(data) ? data : []);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Unknown error');
+            const message = err instanceof Error ? err.message : "Unknown error";
+            setError(message);
+            setStrategies([]);
         } finally {
             setLoading(false);
         }

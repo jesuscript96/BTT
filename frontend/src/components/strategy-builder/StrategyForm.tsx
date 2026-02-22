@@ -84,10 +84,14 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
         setLoadingDatasets(true);
         try {
             const response = await fetch(`${API_URL}/queries/`);
-            const data = await response.json();
-            if (Array.isArray(data)) setSavedDatasets(data);
+            const data = await response.json().catch(() => []);
+            setSavedDatasets(Array.isArray(data) ? data : []);
+            if (!response.ok) {
+                console.warn("Datasets response not ok:", response.status, data);
+            }
         } catch (error) {
-            console.error('Error fetching datasets:', error);
+            console.error("Error fetching datasets:", error);
+            setSavedDatasets([]);
         } finally {
             setLoadingDatasets(false);
         }

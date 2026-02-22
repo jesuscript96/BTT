@@ -2,18 +2,54 @@
 Backtest API Endpoints
 """
 from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from pydantic import BaseModel
 from uuid import uuid4
 from datetime import datetime
 import json
 import time
+import pandas as pd
 
 from app.database import get_db_connection
 from app.schemas.strategy import Strategy
 from app.routers.data import FilterRequest
 
 router = APIRouter()
+
+# Eastern session bounds (minutes since midnight): PM 04:00-09:30, RTH 09:30-16:00, AM 16:00-20:00
+MARKET_INTERVAL_BOUNDS = {
+    "PM": (4 * 60, 9 * 60 + 30),   # 240-570
+    "RTH": (9 * 60 + 30, 16 * 60),  # 570-960
+    "AM": (16 * 60, 20 * 60),       # 960-1200
+}
+
+
+def filter_market_data_by_interval_and_dates(
+    df: pd.DataFrame,
+    market_interval: Optional[List[str]] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> pd.DataFrame:
+    """Filter market_data by date range and market interval (PM/RTH/AM)."""
+    if df.empty:
+        return df
+    if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
+        df = df.copy()
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+    if date_from:
+        df = df[df["timestamp"].dt.date >= pd.to_datetime(date_from).date()]
+    if date_to:
+        df = df[df["timestamp"].dt.date <= pd.to_datetime(date_to).date()]
+    if market_interval:
+        minutes_since_midnight = df["timestamp"].dt.hour * 60 + df["timestamp"].dt.minute
+        mask = pd.Series(False, index=df.index)
+        for interval in market_interval:
+            bounds = MARKET_INTERVAL_BOUNDS.get(interval.upper())
+            if bounds:
+                lo, hi = bounds
+                mask = mask | ((minutes_since_midnight >= lo) & (minutes_since_midnight < hi))
+        df = df[mask]
+    return df.sort_values(["ticker", "timestamp"]).reset_index(drop=True)
 
 
 class BacktestRequest(BaseModel):
@@ -23,6 +59,13 @@ class BacktestRequest(BaseModel):
     dataset_filters: FilterRequest  # Reuse from Market Analysis
     query_id: Optional[str] = None  # Dynamic dataset ID
     commission_per_trade: float = 1.0
+    commission_per_share: float = 0.0
+    locate_cost_per_100: float = 0.0
+    slippage_pct: float = 0.0
+    lookahead_prevention: bool = False
+    risk_per_trade_usd: Optional[float] = None  # if set, each trade risks this amount in USD
+    risk_per_trade_r: Optional[float] = None  # frontend sends this as dollar amount per trade
+    market_interval: Optional[Union[str, List[str]]] = None  # PM, RTH, AM or list
     initial_capital: float = 100000
     max_holding_minutes: int = 390  # Full RTH session
 
@@ -194,17 +237,40 @@ def run_backtest(request: BacktestRequest):
         if market_data.empty:
              raise HTTPException(status_code=400, detail="No market data found for given filters")
              
-        
         print(f"  ✓ Fetched {len(market_data):,} rows in {duration_fetch:.2f}s")
+        
+        # 2.5 Filter by date range and market interval
+        intervals = request.market_interval
+        if intervals is not None:
+            intervals = [intervals] if isinstance(intervals, str) else list(intervals)
+        date_from = req_filters.get("date_from") if isinstance(req_filters, dict) else getattr(request.dataset_filters, "date_from", None)
+        date_to = req_filters.get("date_to") if isinstance(req_filters, dict) else getattr(request.dataset_filters, "date_to", None)
+        market_data = filter_market_data_by_interval_and_dates(
+            market_data,
+            market_interval=intervals,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if market_data.empty:
+            raise HTTPException(status_code=400, detail="No market data left after date/interval filter")
+        print(f"  ✓ After date/interval filter: {len(market_data):,} rows")
         
         # 3. Run backtest
         t2 = time.time()
         print("\n[3/5] Running backtest engine...")
+        risk_per_trade_usd = getattr(request, 'risk_per_trade_usd', None) or getattr(request, 'risk_per_trade_r', None)
+        if risk_per_trade_usd is not None and risk_per_trade_usd <= 0:
+            risk_per_trade_usd = None
         engine = BacktestEngine(
             strategies=strategies,
             weights=request.weights,
             market_data=market_data,
             commission_per_trade=request.commission_per_trade,
+            commission_per_share=getattr(request, 'commission_per_share', 0.0),
+            locate_cost_per_100=getattr(request, 'locate_cost_per_100', 0.0),
+            slippage_pct=getattr(request, 'slippage_pct', 0.0),
+            lookahead_prevention=getattr(request, 'lookahead_prevention', False),
+            risk_per_trade_usd=risk_per_trade_usd,
             initial_capital=request.initial_capital,
             max_holding_minutes=request.max_holding_minutes
         )

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Calendar, Play, Square, Save, FolderOpen } from 'lucide-react'
+import { API_URL } from '@/config/constants'
 
 interface ConfigurationPanelProps {
     config: {
@@ -14,9 +15,36 @@ interface ConfigurationPanelProps {
     onChange: (config: any) => void
 }
 
+interface SavedDataset {
+    id: string
+    name: string
+    filters: Record<string, unknown>
+    created_at?: string
+    updated_at?: string
+}
+
 export default function ConfigurationPanel({ config, onChange }: ConfigurationPanelProps) {
     const [isRunning, setIsRunning] = useState(false)
     const [savedStrategiesCount, setCount] = useState(0)
+    const [savedDatasets, setSavedDatasets] = useState<SavedDataset[]>([])
+    const [datasetsLoading, setDatasetsLoading] = useState(true)
+
+    useEffect(() => {
+        let cancelled = false
+        async function load() {
+            try {
+                const res = await fetch(`${API_URL}/queries/`)
+                const data = await res.json().catch(() => [])
+                if (!cancelled) setSavedDatasets(Array.isArray(data) ? data : [])
+            } catch (_) {
+                if (!cancelled) setSavedDatasets([])
+            } finally {
+                if (!cancelled) setDatasetsLoading(false)
+            }
+        }
+        load()
+        return () => { cancelled = true }
+    }, [])
 
     const handleRunSearch = () => {
         setIsRunning(true)
@@ -78,9 +106,13 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-green-500 focus:border-transparent transition-colors"
                 >
                     <option value="">Select dataset...</option>
-                    <option value="smallcaps_2023">Small Caps 2023-2024</option>
-                    <option value="spy_1m">SPY 1m Historical</option>
-                    <option value="custom_1">Custom Dataset 1</option>
+                    {datasetsLoading ? (
+                        <option value="" disabled>Loading...</option>
+                    ) : (
+                        savedDatasets.map((d) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                        ))
+                    )}
                 </select>
             </div>
 

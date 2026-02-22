@@ -57,8 +57,9 @@ export default function ResultsPanel({
                 })
             })
 
-            const data = await response.json()
-            setStrategies(data.strategies || [])
+            const data = await response.json().catch(() => ({}))
+            const list = data?.strategies
+            setStrategies(Array.isArray(list) ? list : [])
         } catch (error) {
             console.error('Error fetching strategies:', error)
             setStrategies([])
@@ -69,21 +70,26 @@ export default function ResultsPanel({
 
     const handleExport = async () => {
         const ids = strategies.map((s: any) => s.id)
-        const response = await fetch(`${API_URL}/strategy-search/export`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(ids)
-        })
-        const data = await response.json()
-
-        // Convert to CSV and download
-        const csv = data.csv_data.map((row: any[]) => row.join(',')).join('\n')
-        const blob = new Blob([csv], { type: 'text/csv' })
-        const url = window.URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = data.filename
-        a.click()
+        try {
+            const response = await fetch(`${API_URL}/strategy-search/export`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(ids)
+            })
+            const data = await response.json().catch(() => ({}))
+            const rows = data?.csv_data
+            if (!Array.isArray(rows)) return
+            const csv = rows.map((row: any[]) => row.join(',')).join('\n')
+            const blob = new Blob([csv], { type: 'text/csv' })
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = data?.filename ?? 'strategies.csv'
+            a.click()
+            window.URL.revokeObjectURL(url)
+        } catch (e) {
+            console.error('Export error:', e)
+        }
     }
 
     return (

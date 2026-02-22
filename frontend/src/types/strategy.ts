@@ -10,6 +10,8 @@ export enum IndicatorType {
     RSI = "RSI",
     MACD = "MACD",
     ATR = "ATR",
+    ADX = "ADX",
+    WILLIAMS_R = "Williams %R",
     CLOSE = "Close",
     OPEN = "Open",
     HIGH = "High",
@@ -21,6 +23,16 @@ export enum IndicatorType {
     Y_HIGH = "Yesterday High",
     Y_LOW = "Yesterday Low",
     Y_CLOSE = "Yesterday Close",
+    VOLUME = "Volume",
+    AVOLUME = "Accumulated Volume",
+    CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles",
+    CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs",
+    CONSECUTIVE_LOWER_LOWS = "Consecutive Lower Lows",
+    RET_PCT_PM = "Ret % PM",
+    RET_PCT_RTH = "Ret % RTH",
+    RET_PCT_AM = "Ret % AM",
+    TIME_OF_DAY = "Time of Day",
+    MAX_N_BARS = "Max N Bars",
     CUSTOM = "Custom"
 }
 
@@ -80,6 +92,11 @@ export interface IndicatorConfig {
     period?: number;
     multiplier?: number;
     offset?: number;
+    overbought?: number;
+    oversold?: number;
+    consecutive_count?: number;
+    time_hour?: number;
+    time_minute?: number;
 }
 
 export interface ComparisonCondition {
@@ -135,6 +152,8 @@ export interface TrailingStopSettings {
 }
 
 export interface RiskManagement {
+    use_hard_stop?: boolean;
+    use_take_profit?: boolean;
     hard_stop: RiskSettings;
     take_profit: RiskSettings;
     trailing_stop: TrailingStopSettings;
@@ -171,9 +190,11 @@ export const initialEntryLogic: EntryLogic = {
 };
 
 export const initialRiskManagement: RiskManagement = {
+    use_hard_stop: true,
+    use_take_profit: true,
     hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
     take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
-    trailing_stop: { active: false, type: "EMA13", buffer_pct: 0.5 }
+    trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 }
 };
 
 export const initialExitLogic: ExitLogic = {
