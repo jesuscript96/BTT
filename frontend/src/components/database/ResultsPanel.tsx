@@ -23,7 +23,7 @@ export default function ResultsPanel({
     passCriteria,
     onPassCriteriaChange
 }: ResultsPanelProps) {
-    const [strategies, setStrategies] = useState([])
+    const [strategies, setStrategies] = useState<any[]>([])
     const [loading, setLoading] = useState(false)
 
     // Fetch strategies when criteria change (debounced)
