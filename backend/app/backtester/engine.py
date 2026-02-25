@@ -96,6 +96,8 @@ def _core_backtest_jit(
     strat_use_take_profit, # int32 array (0=no, 1=yes)
     strat_trailing_active, # int32 array (0=no, 1=yes)
     strat_trailing_pct,    # float64 array (distance %)
+    strat_accept_reentries, # int32 array (0=no, 1=yes)
+    n_tickers,             # int64
     
     # Global Config
     initial_balance,
@@ -141,6 +143,10 @@ def _core_backtest_jit(
     res_sl = NumbaList()
     res_tp = NumbaList()
     res_reason = NumbaList()
+    
+    # Track open/closed state per strategy and ticker to prevent overlapping trades or re-entries
+    has_open = np.zeros((n_strats, n_tickers), dtype=np.bool_)
+    has_closed = np.zeros((n_strats, n_tickers), dtype=np.bool_)
     
     # Equity curve (sampled)
     eq_times = NumbaList()
@@ -251,6 +257,9 @@ def _core_backtest_jit(
                     res_tp.append(trade_tp)
                     res_reason.append(reason_code)
                     
+                    has_open[strat_idx, bar_ticker] = False
+                    has_closed[strat_idx, bar_ticker] = True
+                    
                     active_entry_px.pop(j)
                     active_sl.pop(j)
                     active_tp.pop(j)
@@ -270,6 +279,12 @@ def _core_backtest_jit(
         if row_weight_sum > 0 and current_balance > 0:
             for s in range(n_strats):
                 if entry_signals[i, s]:
+                    # Check Re-entry constraints
+                    if has_open[s, bar_ticker]:
+                        continue # Already in a trade for this ticker, skip
+                    if strat_accept_reentries[s] == 0 and has_closed[s, bar_ticker]:
+                        continue # Re-entries completely forbidden for this strategy, and we've already closed a trade
+                        
                     w = strat_weights[s]
                     bias = strat_biases[s]
                     base_allocated = current_balance * (w / row_weight_sum)
@@ -361,6 +376,7 @@ def _core_backtest_jit(
                                     active_strat_idx.append(s)
                                     active_ticker_id.append(bar_ticker)
                                     active_metadata_idx.append(i)
+                                    has_open[s, bar_ticker] = True
                                     current_balance -= fee
         
         if (i + 1) % sample_step == 0:
@@ -815,7 +831,7 @@ class BacktestEngine:
         ticker_ids = df['ticker'].map(ticker_map).fillna(-1).astype(np.int64).values
         ticker_map_rev = {i: t for t, i in ticker_map.items()}
         
-        timestamps = df['timestamp'].values.astype(np.int64) # ns
+        timestamps = df['timestamp'].astype('datetime64[ns]').values.astype(np.int64) # ns
         opens = df['open'].values.astype(np.float64)
         highs = df['high'].values.astype(np.float64)
         lows = df['low'].values.astype(np.float64)
@@ -876,6 +892,7 @@ class BacktestEngine:
         strat_use_take_profit = []
         strat_trailing_active = []
         strat_trailing_pct = []
+        strat_accept_reentries = []
         for s in self.strategies:
             strat_weights.append(self.weights.get(s.id, 0.0))
             strat_biases.append(BIAS_LONG if s.bias == 'long' else BIAS_SHORT)
@@ -887,6 +904,7 @@ class BacktestEngine:
                 return getattr(obj, key, default)
             strat_use_hard_stop.append(1 if _get(rm, 'use_hard_stop', True) else 0)
             strat_use_take_profit.append(1 if _get(rm, 'use_take_profit', True) else 0)
+            strat_accept_reentries.append(1 if _get(rm, 'accept_reentries', True) else 0)
             ts = _get(rm, 'trailing_stop') or {}
             strat_trailing_active.append(1 if _get(ts, 'active', False) else 0)
             strat_trailing_pct.append(float(_get(ts, 'buffer_pct', 0.5)))
@@ -924,6 +942,8 @@ class BacktestEngine:
             np.array(strat_use_take_profit, dtype=np.int32),
             np.array(strat_trailing_active, dtype=np.int32),
             np.array(strat_trailing_pct, dtype=np.float64),
+            np.array(strat_accept_reentries, dtype=np.int32),
+            len(unique_tickers),
             self.initial_capital,
             self.commission,
             self.commission_per_share,
@@ -946,7 +966,7 @@ class BacktestEngine:
         # Reconstruct Trade Objects
         # Warning: res_* are Typed Lists from Numba, iterating them is fast in Py
         
-        reason_map = {0: "SL", 1: "TP", 2: "TIME", 3: "EOD", 4: "FORCE_CLOSE", 5: "CUSTOM"}
+        reason_map = {0: "Stop Loss", 1: "Take Profit", 2: "Time Limit", 3: "End of Day", 4: "Force Close", 5: "Exit Logic"}
         
         start_reconstruct = pytime.time()
         for k in range(len(res_entry_idx)):
@@ -957,7 +977,7 @@ class BacktestEngine:
             
             ticker_name = ticker_map_rev.get(ticker_ids[meta_idx], "UNKNOWN")
             entry_ts_val = timestamps[meta_idx]
-            entry_dt = pd.Timestamp(entry_ts_val)
+            entry_dt = pd.Timestamp(entry_ts_val, unit='ns')
             
             trade = Trade(
                 id=f"{strat_obj.id}_{ticker_name}_{entry_ts_val}_{k}",
@@ -966,7 +986,7 @@ class BacktestEngine:
                 ticker=ticker_name,
                 entry_time=entry_dt,
                 entry_price=res_entry_px[k],
-                exit_time=pd.Timestamp(timestamps[res_exit_idx[k]]),
+                exit_time=pd.Timestamp(timestamps[res_exit_idx[k]], unit='ns'),
                 exit_price=res_exit_px[k],
                 stop_loss=res_sl[k],
                 take_profit=res_tp[k],
@@ -1143,3 +1163,125 @@ class BacktestEngine:
             "exit_reason": trade.exit_reason,
             "side": getattr(trade, "side", "long")
         }
+
+
+def _max_drawdown_from_curve(equity_curve: List[Dict]) -> Tuple[float, float]:
+    """Compute max drawdown from equity curve list of dicts with 'balance' key."""
+    if not equity_curve:
+        return 0.0, 0.0
+    values = [e["balance"] for e in equity_curve]
+    peak = values[0]
+    max_dd_pct, max_dd_value = 0.0, 0.0
+    for balance in values:
+        if balance > peak:
+            peak = balance
+        dd_value = peak - balance
+        dd_pct = (dd_value / peak * 100) if peak > 0 else 0
+        if dd_pct > max_dd_pct:
+            max_dd_pct, max_dd_value = dd_pct, dd_value
+    return max_dd_pct, max_dd_value
+
+
+def _r_distribution_from_trades(trades: List[Dict]) -> Dict[str, int]:
+    bins = {"-3R": 0, "-2R": 0, "-1R": 0, "0R": 0, "+1R": 0, "+2R": 0, "+3R": 0, "+4R": 0, "+5R+": 0}
+    for t in trades:
+        r = t.get("r_multiple")
+        if r is None:
+            continue
+        if r < -2.5: bins["-3R"] += 1
+        elif r < -1.5: bins["-2R"] += 1
+        elif r < -0.5: bins["-1R"] += 1
+        elif r < 0.5: bins["0R"] += 1
+        elif r < 1.5: bins["+1R"] += 1
+        elif r < 2.5: bins["+2R"] += 1
+        elif r < 3.5: bins["+3R"] += 1
+        elif r < 4.5: bins["+4R"] += 1
+        else: bins["+5R+"] += 1
+    return bins
+
+
+def _sharpe_from_trades(trades: List[Dict]) -> float:
+    r_multiples = [t["r_multiple"] for t in trades if t.get("r_multiple") is not None]
+    if not r_multiples or len(r_multiples) < 2:
+        return 0.0
+    mean_r = sum(r_multiples) / len(r_multiples)
+    variance = sum((r - mean_r) ** 2 for r in r_multiples) / len(r_multiples)
+    std_dev = variance ** 0.5
+    return mean_r / std_dev if std_dev else 0.0
+
+
+def merge_backtest_results(
+    chunk_results: List[BacktestResult],
+    initial_capital: float,
+) -> BacktestResult:
+    """
+    Merge results from chunked backtest runs (e.g. by month) into a single BacktestResult.
+    Use when running the engine on date chunks to bound memory while allowing large datasets.
+    """
+    if not chunk_results:
+        raise ValueError("chunk_results cannot be empty")
+    if len(chunk_results) == 1:
+        return chunk_results[0]
+
+    merged_trades: List[Dict] = []
+    merged_equity: List[Dict] = []
+    for r in chunk_results:
+        merged_trades.extend(r.trades)
+        merged_equity.extend(r.equity_curve)
+
+    total_trades = len(merged_trades)
+    winning_trades = sum(1 for t in merged_trades if (t.get("r_multiple") or 0) > 0)
+    losing_trades = sum(1 for t in merged_trades if (t.get("r_multiple") or 0) <= 0)
+    win_rate = (winning_trades / total_trades * 100) if total_trades else 0.0
+    r_list = [t["r_multiple"] for t in merged_trades if t.get("r_multiple") is not None]
+    avg_r = sum(r_list) / len(r_list) if r_list else 0.0
+    final_balance = chunk_results[-1].final_balance
+    max_dd_pct, max_dd_value = _max_drawdown_from_curve(merged_equity)
+    sharpe = _sharpe_from_trades(merged_trades)
+    r_dist = _r_distribution_from_trades(merged_trades)
+
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    ev_by_time_lists: Dict[str, List[float]] = {}
+    ev_by_day_lists: Dict[str, List[float]] = {}
+    monthly_returns = {}
+    for t in merged_trades:
+        r = t.get("r_multiple")
+        if r is None:
+            continue
+        et = t.get("entry_time")
+        if et:
+            try:
+                dt = pd.Timestamp(et)
+                hk = f"{dt.hour:02d}:00"
+                ev_by_time_lists.setdefault(hk, []).append(r)
+                dn = day_names[dt.weekday()]
+                ev_by_day_lists.setdefault(dn, []).append(r)
+                mk = dt.strftime("%Y-%m")
+                monthly_returns[mk] = monthly_returns.get(mk, 0) + r
+            except Exception:
+                pass
+    ev_by_time = {k: sum(v) / len(v) for k, v in ev_by_time_lists.items()}
+    ev_by_day = {k: sum(v) / len(v) for k, v in ev_by_day_lists.items()}
+
+    first = chunk_results[0]
+    return BacktestResult(
+        run_id=first.run_id,
+        strategy_ids=first.strategy_ids,
+        weights=first.weights,
+        initial_capital=initial_capital,
+        final_balance=final_balance,
+        total_trades=total_trades,
+        winning_trades=winning_trades,
+        losing_trades=losing_trades,
+        win_rate=win_rate,
+        avg_r_multiple=avg_r,
+        max_drawdown_pct=max_dd_pct,
+        max_drawdown_value=max_dd_value,
+        sharpe_ratio=sharpe,
+        equity_curve=merged_equity,
+        trades=merged_trades,
+        r_distribution=r_dist,
+        ev_by_time=ev_by_time,
+        ev_by_day=ev_by_day,
+        monthly_returns=monthly_returns,
+    )

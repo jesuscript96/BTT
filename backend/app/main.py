@@ -13,24 +13,20 @@ from app.init_db import init_db
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize Application
+    # Startup: Connect to DB so first request is fast. If DB fails, app still starts (avoids 502 on cold start).
     print("Startup: Connecting to massive database...")
-    
     try:
         con = get_db_connection()
         tables = con.execute("SHOW TABLES").fetchall()
         print(f"✅ Connected to massive. Tables: {[t[0] for t in tables]}")
+        try:
+            init_db()
+            print("✅ Init DB: strategies and saved_queries tables verified")
+        except Exception as e:
+            print(f"⚠️ Init DB warning: {e}")
     except Exception as e:
-        print(f"❌ Error connecting to massive: {e}")
-        raise
+        print(f"⚠️ DB not available at startup: {e}. App will start; first API request may fail or be slow.")
 
-    # Ensure strategies and saved_queries tables exist
-    try:
-        init_db()
-        print("✅ Init DB: strategies and saved_queries tables verified")
-    except Exception as e:
-        print(f"⚠️ Init DB warning: {e}")
-        
     start_scheduler()
     yield
     # Shutdown
@@ -40,7 +36,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Short Selling Backtester API", lifespan=lifespan)
 
 # CORS Configuration - MUST be added BEFORE routers
-origins = [
+# 502 from the platform (e.g. Render) has no CORS headers; ensuring our app always adds them when it responds.
+ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8000",
@@ -51,12 +48,27 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_cors_headers_to_all_responses(request, call_next):
+    """Ensure CORS headers are on every response so 4xx/5xx from our app are not reported as CORS errors."""
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin and (origin in ALLOWED_ORIGINS or origin.startswith("https://") and "vercel.app" in origin):
+        response.headers["Access-Control-Allow-Origin"] = origin
+    elif origin is None and request.url.path.startswith("/api/"):
+        response.headers["Access-Control-Allow-Origin"] = "https://www.mystrategybuilder.fun"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
 import logging

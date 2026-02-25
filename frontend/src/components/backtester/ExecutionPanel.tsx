@@ -39,6 +39,10 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
     const [savedDatasets, setSavedDatasets] = useState<any[]>([]);
     const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
     const [loadingPhase, setLoadingPhase] = useState(0);
+    const [loadingStrategies, setLoadingStrategies] = useState(true);
+    const [loadingDatasets, setLoadingDatasets] = useState(true);
+    const [strategiesError, setStrategiesError] = useState<string | null>(null);
+    const [datasetsError, setDatasetsError] = useState<string | null>(null);
 
     // Reset loading phase when isLoading becomes false
     useEffect(() => {
@@ -83,30 +87,46 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
     }, [prefillData, strategies]);
 
     const fetchStrategies = async () => {
+        setLoadingStrategies(true);
+        setStrategiesError(null);
         try {
             const response = await fetch(`${API_URL}/strategies/`);
             const data = await response.json().catch(() => []);
-            setStrategies(Array.isArray(data) ? data : []);
             if (!response.ok) {
-                console.warn("Strategies response not ok:", response.status, data);
+                const msg = typeof data?.detail === 'string' ? data.detail : `HTTP ${response.status}`;
+                setStrategiesError(msg);
+                setStrategies([]);
+            } else {
+                setStrategies(Array.isArray(data) ? data : []);
             }
         } catch (error) {
             console.error("Error fetching strategies:", error);
+            setStrategiesError('No se pudo conectar. Comprueba que el backend esté en marcha.');
             setStrategies([]);
+        } finally {
+            setLoadingStrategies(false);
         }
     };
 
     const fetchSavedDatasets = async () => {
+        setLoadingDatasets(true);
+        setDatasetsError(null);
         try {
             const response = await fetch(`${API_URL}/queries/`);
             const data = await response.json().catch(() => []);
-            setSavedDatasets(Array.isArray(data) ? data : []);
             if (!response.ok) {
-                console.warn("Datasets response not ok:", response.status, data);
+                const msg = typeof data?.detail === 'string' ? data.detail : `HTTP ${response.status}`;
+                setDatasetsError(msg);
+                setSavedDatasets([]);
+            } else {
+                setSavedDatasets(Array.isArray(data) ? data : []);
             }
         } catch (error) {
             console.error("Error fetching datasets:", error);
+            setDatasetsError('No se pudo conectar. Comprueba que el backend esté en marcha.');
             setSavedDatasets([]);
+        } finally {
+            setLoadingDatasets(false);
         }
     };
 
@@ -285,6 +305,12 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                         ))}
                     </div>
 
+                    {strategiesError && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mb-2 flex items-center justify-between gap-2">
+                            <span>{strategiesError}</span>
+                            <button type="button" onClick={fetchStrategies} className="text-[10px] font-bold underline">Reintentar</button>
+                        </p>
+                    )}
                     <select
                         onChange={(e) => {
                             if (e.target.value) {
@@ -295,7 +321,9 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                         className={inputCls}
                         disabled={isLoading}
                     >
-                        <option value="">+ Add Strategy</option>
+                        <option value="">
+                            {loadingStrategies ? 'Cargando estrategias...' : '+ Añadir estrategia'}
+                        </option>
                         {strategies
                             .filter(s => !selectedStrategies.find(sel => sel.strategy_id === s.id))
                             .map(strategy => (
@@ -318,13 +346,21 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                 {/* Dataset Section */}
                 <div>
                     <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-3">Dataset</h3>
+                    {datasetsError && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mb-2 flex items-center justify-between gap-2">
+                            <span>{datasetsError}</span>
+                            <button type="button" onClick={fetchSavedDatasets} className="text-[10px] font-bold underline">Reintentar</button>
+                        </p>
+                    )}
                     <select
                         value={selectedDatasetId}
                         onChange={(e) => setSelectedDatasetId(e.target.value)}
                         className={inputCls}
                         disabled={isLoading}
                     >
-                        <option value="">Default (Global Data)</option>
+                        <option value="">
+                            {loadingDatasets ? 'Cargando datasets...' : 'Por defecto (datos globales)'}
+                        </option>
                         {savedDatasets.map(ds => (
                             <option key={ds.id} value={ds.id}>
                                 {ds.name}

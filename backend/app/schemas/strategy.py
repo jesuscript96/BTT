@@ -136,6 +136,7 @@ class ExitLogic(BaseModel):
 class RiskManagement(BaseModel):
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
+    accept_reentries: Optional[bool] = True
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
     trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})

@@ -129,7 +129,12 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
         )
     """
 
-def build_screener_query(filters: dict, limit: int = 5000) -> Tuple[str, List[Any], str, str, str]:
+def build_screener_query(
+    filters: dict,
+    limit: int = 5000,
+    minimal_for_backtest: bool = False,
+    backtest_no_joins: bool = False,
+) -> Tuple[str, List[Any], str, str, str]:
     sql_p = []
     m_filters = []
     
@@ -192,27 +197,41 @@ def build_screener_query(filters: dict, limit: int = 5000) -> Tuple[str, List[An
     # Base WHERE for metrics
     where_m = " AND ".join(m_filters) if m_filters else "1=1"
     
-    # Explicit Columns
-    cols = [
-        "daily_metrics.ticker", "volume", "open", "close", "high", "low", "timestamp", "transactions",
-        "pm_volume", "pm_high", "pm_low", "pm_high_time", "pm_low_time", "gap_pct", "pmh_gap_pct",
-        "pmh_fade_pct", "rth_volume", "rth_open", "rth_high", "rth_low", "rth_close", "hod_time",
-        "lod_time", "rth_run_pct", "rth_fade_pct", "rth_range_pct", "m15_return_pct", "m30_return_pct",
-        "m60_return_pct", "m180_return_pct", "close_1559", "last_close", "day_return_pct",
-        "prev_close", "eod_volume"
-    ]
+    # Explicit Columns (minimal for backtest reduces plan size and avoids MotherDuck 4MB gRPC limit)
+    if minimal_for_backtest:
+        cols = [
+            "daily_metrics.ticker", "timestamp",
+            "pm_high", "pm_volume", "gap_pct", "day_return_pct", "rth_run_pct"
+        ]
+    else:
+        cols = [
+            "daily_metrics.ticker", "volume", "open", "close", "high", "low", "timestamp", "transactions",
+            "pm_volume", "pm_high", "pm_low", "pm_high_time", "pm_low_time", "gap_pct", "pmh_gap_pct",
+            "pmh_fade_pct", "rth_volume", "rth_open", "rth_high", "rth_low", "rth_close", "hod_time",
+            "lod_time", "rth_run_pct", "rth_fade_pct", "rth_range_pct", "m15_return_pct", "m30_return_pct",
+            "m60_return_pct", "m180_return_pct", "close_1559", "last_close", "day_return_pct",
+            "prev_close", "eod_volume"
+        ]
     col_str = ", ".join(cols)
 
     # Filter for specific types: CS, ADRC, OS
     type_filter = "t.type IN ('CS', 'ADRC', 'OS')"
-    
     # Filter out split dates (outliers)
     split_filter = "sp.ticker IS NULL"
-    
     # Combined WHERE for the main query
     where_combined = f"{where_m} AND {type_filter} AND {split_filter}"
 
-    rec_query = f"""
+    # Backtest-only: no JOINs to avoid MotherDuck 4MB gRPC plan limit (single-table scan only).
+    if backtest_no_joins:
+        rec_query = f"""
+        SELECT ticker, timestamp, pm_high, pm_volume, gap_pct, day_return_pct, rth_run_pct
+        FROM daily_metrics
+        WHERE {where_m}
+        ORDER BY timestamp DESC, gap_pct DESC
+        LIMIT {int(limit)}
+        """
+    else:
+        rec_query = f"""
         SELECT {col_str}
         FROM daily_metrics
         JOIN massive.tickers t ON daily_metrics.ticker = t.ticker

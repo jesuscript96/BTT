@@ -154,6 +154,7 @@ export interface TrailingStopSettings {
 export interface RiskManagement {
     use_hard_stop?: boolean;
     use_take_profit?: boolean;
+    accept_reentries?: boolean;
     hard_stop: RiskSettings;
     take_profit: RiskSettings;
     trailing_stop: TrailingStopSettings;
@@ -192,6 +193,7 @@ export const initialEntryLogic: EntryLogic = {
 export const initialRiskManagement: RiskManagement = {
     use_hard_stop: true,
     use_take_profit: true,
+    accept_reentries: true,
     hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
     take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 }

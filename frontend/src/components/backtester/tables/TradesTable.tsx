@@ -165,10 +165,10 @@ export function TradesTable({ trades }: TradesTableProps) {
                                         {trade.ticker}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-right text-foreground font-mono">
-                                        ${trade.entry_price.toFixed(2)}
+                                        ${trade.entry_price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-right text-foreground font-mono">
-                                        ${trade.exit_price?.toFixed(2) || '-'}
+                                        {trade.exit_price ? `$${trade.exit_price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : '-'}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-right font-black tabular-nums">
                                         <span className={
@@ -182,10 +182,11 @@ export function TradesTable({ trades }: TradesTableProps) {
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-sm">
-                                        <span className={`inline-flex px-2 py-0.5 text-[9px] font-black rounded uppercase tracking-widest ${trade.exit_reason === 'TP' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
-                                            trade.exit_reason === 'SL' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
-                                                trade.exit_reason === 'TIME' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' :
-                                                    'bg-muted text-muted-foreground border border-border'
+                                        <span className={`inline-flex px-2 py-0.5 text-[9px] font-black rounded uppercase tracking-widest ${trade.exit_reason === 'Take Profit' ? 'bg-green-500/10 text-green-500 border border-green-500/20' :
+                                            trade.exit_reason === 'Stop Loss' ? 'bg-red-500/10 text-red-500 border border-red-500/20' :
+                                                (trade.exit_reason === 'Time Limit' || trade.exit_reason === 'End of Day') ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' :
+                                                    trade.exit_reason === 'Exit Logic' ? 'bg-purple-500/10 text-purple-500 border border-purple-500/20' :
+                                                        'bg-muted text-muted-foreground border border-border'
                                             }`}>
                                             {trade.exit_reason || '-'}
                                         </span>

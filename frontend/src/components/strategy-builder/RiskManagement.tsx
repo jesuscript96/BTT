@@ -106,6 +106,25 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 )}
             </div>
 
+            {/* Re-entries Option */}
+            <div className="pt-4 border-t border-dashed border-border/40">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Accept Re-entries</label>
+                        <p className="text-[9px] text-muted-foreground/50 mt-0.5">Allow entering again if a trade for this ticker was closed.</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-muted-foreground/60">{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-indigo-500' : 'bg-muted'}`}
+                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {/* Trailing Stop */}
             <div className="pt-4 border-t border-dashed border-border/40">
                 <div className="flex items-center justify-between mb-4">
