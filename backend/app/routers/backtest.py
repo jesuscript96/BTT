@@ -1,7 +1,7 @@
 """
 Backtest API Endpoints
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from typing import List, Dict, Optional, Union
 from pydantic import BaseModel
 from uuid import uuid4
@@ -10,12 +10,16 @@ import json
 import os
 import time
 import pandas as pd
+import traceback
 
 from app.database import get_db_connection
 from app.schemas.strategy import Strategy
 from app.routers.data import FilterRequest
 
 router = APIRouter()
+
+# Global dict for tracking backtest execution status
+run_statuses = {}
 
 # Chunked backtest: when market_data exceeds this many rows, run by month and merge (keeps memory bounded).
 CHUNK_BACKTEST_ROWS = int(os.environ.get("CHUNK_BACKTEST_ROWS", "250000"))
@@ -113,7 +117,55 @@ class BacktestResponse(BaseModel):
 
 
 @router.post("/run", response_model=BacktestResponse)
-def run_backtest(request: BacktestRequest):
+def run_backtest(request: BacktestRequest, background_tasks: BackgroundTasks):
+    """
+    Start a backtest execution in the background
+    """
+    run_id = str(uuid4())
+    run_statuses[run_id] = {"status": "processing", "message": "Backtest started"}
+    
+    background_tasks.add_task(run_backtest_task, run_id, request)
+    
+    return BacktestResponse(
+        run_id=run_id,
+        status="processing",
+        message="Backtest execution started in the background",
+        results=None
+    )
+
+
+@router.get("/status/{run_id}", response_model=BacktestResponse)
+def get_backtest_status(run_id: str):
+    """
+    Check the status of a backtest run.
+    """
+    if run_id in run_statuses:
+        status_info = run_statuses[run_id]
+        return BacktestResponse(
+            run_id=run_id,
+            status=status_info["status"],
+            message=status_info.get("message", ""),
+            results=None
+        )
+    
+    # If not in memory, check if it's in the DB
+    try:
+        con = get_db_connection(read_only=True)
+        row = con.execute("SELECT id FROM backtest_results WHERE id = ?", (run_id,)).fetchone()
+        if row:
+            return BacktestResponse(
+                run_id=run_id,
+                status="completed",
+                message="Backtest completed",
+                results=None
+            )
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=404, detail="Backtest run not found or expired")
+
+
+def run_backtest_task(run_id: str, request: BacktestRequest):
     """
     Execute a backtest with given strategies and dataset
     """
@@ -440,7 +492,6 @@ def run_backtest(request: BacktestRequest):
         drawdown_series = calculate_drawdown_series(result.equity_curve)
         
         # 5. Prepare Result Object
-        run_id = str(uuid4())
         now = datetime.now()
         total_return_pct = ((result.final_balance - request.initial_capital) / request.initial_capital * 100)
         total_return_r = sum(t.get('r_multiple', 0) for t in result.trades if t.get('r_multiple') is not None)
@@ -523,17 +574,18 @@ def run_backtest(request: BacktestRequest):
         print(f"  ✓ Metrics calculated in {time.time() - t3:.2f}s")
         print(f"✓ Total Request Time: {time.time() - start_total:.2f}s")
         
-        return BacktestResponse(
-            run_id=run_id,
-            status="success",
-            message=f"Backtest completed: {result.total_trades} trades, {result.win_rate:.1f}% win rate",
-            results=BacktestResultResponse(**results_json)
-        )
+        run_statuses[run_id] = {
+            "status": "completed",
+            "message": f"Backtest completed: {result.total_trades} trades, {result.win_rate:.1f}% win rate"
+        }
         
     except Exception as e:
         print(f"Backtest execution error: {e}")
-        # traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        traceback.print_exc()
+        run_statuses[run_id] = {
+            "status": "failed",
+            "message": str(e)
+        }
 
 
 @router.get("/results/{run_id}", response_model=BacktestResultResponse)

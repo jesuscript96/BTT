@@ -235,10 +235,28 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                 throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
             }
 
-            const data: BacktestResponse = await response.json();
+            let data: BacktestResponse = await response.json();
+            const runId = data.run_id;
 
-            if (data.status === 'success' && data.results) {
-                onBacktestComplete(data.results);
+            // Poll for status
+            while (data.status === 'processing') {
+                await new Promise(resolve => setTimeout(resolve, 2500));
+                const statusResponse = await fetch(`${API_URL}/backtest/status/${runId}`);
+                if (!statusResponse.ok) {
+                    const errorData = await statusResponse.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(errorData.detail || `Status HTTP ${statusResponse.status}`);
+                }
+                data = await statusResponse.json();
+            }
+
+            if (data.status === 'completed' || data.status === 'success') {
+                // Fetch the actual results
+                const resultsResponse = await fetch(`${API_URL}/backtest/results/${runId}`);
+                if (!resultsResponse.ok) {
+                    throw new Error('Failed to fetch final results');
+                }
+                const finalResults = await resultsResponse.json();
+                onBacktestComplete(finalResults);
             } else {
                 throw new Error(data.message || 'Backtest failed');
             }
