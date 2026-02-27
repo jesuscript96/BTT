@@ -210,15 +210,32 @@ def get_tickers():
     finally:
         if con:
             con.close()
+import json
+import numpy as np
+
 @router.get("/historical")
-def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
+def get_historical_ohlc(
+    ticker: str, 
+    date_from: str, 
+    date_to: str,
+    indicators: Optional[str] = Query(None, description="JSON array of indicator configs")
+):
     """
     Fetch intraday OHLC data for a specific ticker and range.
     Uses intraday_1m table (historical_data no longer exists).
+    Adds optional requested indicators to the response.
     """
     import pandas as pd
     con = None
     try:
+        fetch_date_from = date_from
+        if indicators:
+            try:
+                # Add a 30-day buffer to calculate moving averages properly
+                fetch_date_from = (pd.to_datetime(date_from) - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+            except:
+                pass
+
         con = get_db_connection(read_only=True)
         query = """
             SELECT 
@@ -227,15 +244,81 @@ def get_historical_ohlc(ticker: str, date_from: str, date_to: str):
             WHERE ticker = ? AND timestamp >= CAST(? AS TIMESTAMP) AND timestamp <= CAST(? AS TIMESTAMP)
             ORDER BY timestamp ASC
         """
-        df = con.execute(query, [ticker.upper(), date_from, date_to]).fetch_df()
+        df = con.execute(query, [ticker.upper(), fetch_date_from, date_to]).fetch_df()
         
         if df.empty:
             return []
             
-        df['time'] = df['timestamp'].view('int64') // 10**9
+        ind_list = []
+        if indicators:
+            try:
+                ind_list = json.loads(indicators)
+            except Exception as e:
+                print(f"Error parsing indicators: {e}")
+                
+        cols_to_return = ['time', 'open', 'high', 'low', 'close', 'volume']
         
-        return df[['time', 'open', 'high', 'low', 'close', 'volume']].to_dict(orient="records")
+        if ind_list:
+            df['date'] = df['timestamp'].dt.date
+            for ind in ind_list:
+                name = ind.get('name')
+                period = ind.get('period', 14)
+                col_name = f"{name}_{period}" if period and name not in ["VWAP", "MACD"] else name
+                
+                if name == "SMA":
+                    df[col_name] = df['close'].rolling(window=period).mean()
+                    cols_to_return.append(col_name)
+                elif name == "EMA":
+                    df[col_name] = df['close'].ewm(span=period, adjust=False).mean()
+                    cols_to_return.append(col_name)
+                elif name == "VWAP":
+                    def calc_vwap(g):
+                        v = g['volume']
+                        tp = (g['high'] + g['low'] + g['close']) / 3
+                        return (tp * v).cumsum() / (v.cumsum() + 1e-10)
+                    df[col_name] = df.groupby('date', group_keys=False).apply(calc_vwap)
+                    if len(df[col_name]) == len(df): df[col_name].index = df.index
+                    cols_to_return.append(col_name)
+                elif name == "RSI":
+                    def calc_rsi(s, p):
+                        delta = s.diff()
+                        up = delta.clip(lower=0)
+                        down = -delta.clip(upper=0)
+                        ema_up = up.ewm(com=p-1, adjust=False).mean()
+                        ema_down = down.ewm(com=p-1, adjust=False).mean()
+                        rs = ema_up / (ema_down + 1e-10)
+                        return 100 - (100 / (1 + rs))
+                    df[col_name] = calc_rsi(df['close'], period)
+                    cols_to_return.append(col_name)
+                elif name == "MACD":
+                    ema12 = df['close'].ewm(span=12, adjust=False).mean()
+                    ema26 = df['close'].ewm(span=26, adjust=False).mean()
+                    df[col_name] = ema12 - ema26
+                    cols_to_return.append(col_name)
+                elif name == "ATR":
+                    def calc_atr(group, p):
+                        high = group['high']
+                        low = group['low']
+                        prev_close = group['close'].shift(1)
+                        tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+                        return tr.rolling(window=p).mean()
+                    df[col_name] = calc_atr(df, period)
+                    cols_to_return.append(col_name)
+
+        # Filter back to exactly what was requested for date_from to save payload size
+        df = df[df['timestamp'] >= pd.to_datetime(date_from).tz_localize(None)]
+
+        if df.empty:
+            return []
+
+        # DuckDB datetime64 is [us] (microseconds). To get Unix seconds, divide by 10**6
+        df['time'] = df['timestamp'].astype('int64') // 10**6
+        df = df.replace({np.nan: None})
+        
+        return df[cols_to_return].to_dict(orient="records")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Historical OHLC API Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:

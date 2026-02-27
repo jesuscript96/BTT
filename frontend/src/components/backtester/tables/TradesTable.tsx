@@ -77,9 +77,10 @@ export function TradesTable({ trades }: TradesTableProps) {
                     </button>
                     <CandlestickViewer
                         ticker={selectedTrade.ticker}
-                        dateFrom={selectedTrade.entry_time}
-                        dateTo={selectedTrade.exit_time || selectedTrade.entry_time}
+                        dateFrom={selectedTrade.entry_time.toString()}
+                        dateTo={selectedTrade.exit_time ? selectedTrade.exit_time.toString() : selectedTrade.entry_time.toString()}
                         trades={trades} // Pass all trades to show multiple markers if nearby
+                        trade={selectedTrade}
                     />
                 </div>
             )}
