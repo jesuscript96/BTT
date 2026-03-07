@@ -15,40 +15,29 @@ def _establish_connection():
     if token:
         token = token.strip()
     
-    if not token:
-        raise RuntimeError(
-            "MOTHERDUCK_TOKEN environment variable is required. "
-            "Please set it in your .env file."
-        )
-    
-    # Step 1: Ensure massive database exists
-    print("Connecting to MotherDuck...")
-    temp_con = duckdb.connect(f"md:?motherduck_token={token}")
-    temp_con.execute("CREATE DATABASE IF NOT EXISTS massive")
-    temp_con.close()
-    
-    # Step 2: Connect directly to massive database
-    print("Connected to MotherDuck catalog: massive")
-    con = duckdb.connect(f"md:massive?motherduck_token={token}")
-    
-    # Production Stability: Limits removed for local/high-performance use
-    con.execute("SET search_path = 'main'")
-    # con.execute("PRAGMA memory_limit='128MB'")
-    # con.execute("PRAGMA threads=1")
-    
-    # Diagnostic: List tables
-    tables = con.execute("SHOW TABLES").fetchall()
-    print(f"Tables in massive.main: {[t[0] for t in tables]}")
-    
-    return con
+    # We connect to md: (default database) to allow write access to user tables
+    try:
+        # MOTHERDUCK_TOKEN can be passed in the connection string or as an environment variable
+        conn_str = f"md:?motherduck_token={token}"
+        con = duckdb.connect(conn_str)
+        print("✅ Connected to MotherDuck (default database)")
+        
+        # Production Stability settings
+        con.execute("SET search_path = 'main'")
+        
+        return con
+    except Exception as e:
+        print(f"❌ MotherDuck Connection Error: {e}")
+        # Fallback to local transient DB if MotherDuck fails
+        return duckdb.connect()
 
 def get_db_connection(read_only=False):
     """
     Returns a DuckDB connection cursor to MotherDuck cloud database.
+    Note: MotherDuck manages read/write via the token and database attachment permissions.
     """
     global _con
     with _lock:
         if _con is None:
             _con = _establish_connection()
         return _con.cursor()
-
