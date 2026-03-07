@@ -94,11 +94,14 @@ async def global_exception_handler(request: Request, exc: Exception):
     print(f"GLOBAL ERROR: {exc}")
     import traceback
     traceback.print_exc()
+    origin = request.headers.get("origin")
+    allow_origin = origin if origin else "https://www.mystrategybuilder.fun"
+    
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal Server Error", "message": str(exc)},
         headers={
-            "Access-Control-Allow-Origin": "https://www.mystrategybuilder.fun",
+            "Access-Control-Allow-Origin": allow_origin,
             "Access-Control-Allow-Credentials": "true"
         }
     )

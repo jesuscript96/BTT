@@ -79,10 +79,21 @@ def _parse_filters(raw):
 def list_saved_queries():
     con = get_db_connection(read_only=True)
     try:
-        rows = con.execute("SELECT id, name, filters, created_at, updated_at FROM saved_queries ORDER BY created_at DESC").fetchall()
+        # Get queries from both local db and shared massive db
+        rows = con.execute("""
+            SELECT id, name, filters, created_at, updated_at FROM saved_queries 
+            UNION ALL 
+            SELECT id, name, filters, created_at, updated_at FROM massive.main.saved_queries
+            ORDER BY created_at DESC
+        """).fetchall()
     except Exception as e:
         print(f"list_saved_queries error: {e}")
-        return []
+        # fallback if massive.main.saved_queries doesn't exist
+        try:
+            rows = con.execute("SELECT id, name, filters, created_at, updated_at FROM saved_queries ORDER BY created_at DESC").fetchall()
+        except Exception as e2:
+            print(f"fallback list_saved_queries error: {e2}")
+            return []
     return [
         {
             "id": r[0],
