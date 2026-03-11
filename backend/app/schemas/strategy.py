@@ -7,17 +7,42 @@ from datetime import datetime
 
 # --- Enums ---
 class IndicatorType(str, Enum):
+    # Trend / MA
     SMA = "SMA"
     EMA = "EMA"
     WMA = "WMA"
-    RVOL = "RVOL"
     VWAP = "VWAP"
-    AVWAP = "AVWAP"
+    LINEAR_REGRESSION = "Linear Regression"
+    ZIG_ZAG = "Zig Zag"
+    ICHIMOKU = "Ichimoku Clouds"
+
+    # Momentum
     RSI = "RSI"
     MACD = "MACD"
+    STOCHASTIC = "Stochastic"
+    MOMENTUM = "Momentum"
+    CCI = "CCI"
+    ROC = "ROC"
+    DMI = "DMI"
+    WILLIAMS_R = "Williams %R"
+
+    # Volatility
     ATR = "ATR"
     ADX = "ADX"
-    WILLIAMS_R = "Williams %R"
+    BOLLINGER_BANDS = "Bollinger Bands"
+    PARABOLIC_SAR = "Parabolic SAR"
+    MEDAUGH_SHADING = "Medaugh Shading"
+
+    # Volume
+    OBV = "OBV"
+    VAD = "VAD"
+    CMF = "CMF"
+    ACC_DIST = "Acc/Dist"
+    VOLUME = "Volume"
+    RVOL = "RVOL"
+    AVOLUME = "Accumulated Volume"
+
+    # Price Variables
     CLOSE = "Close"
     OPEN = "Open"
     HIGH = "High"
@@ -28,16 +53,27 @@ class IndicatorType(str, Enum):
     LOD = "Low of Day"
     Y_HIGH = "Yesterday High"
     Y_LOW = "Yesterday Low"
+    Y_OPEN = "Yesterday Open"
     Y_CLOSE = "Yesterday Close"
-    VOLUME = "Volume"
-    AVOLUME = "Accumulated Volume"
-    CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles"
+    MAX_X_DAYS = "Max of last X days"
+    MIN_X_DAYS = "Min of last X days"
+
+    # Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs"
     CONSECUTIVE_LOWER_LOWS = "Consecutive Lower Lows"
+    CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles"
+    CONSECUTIVE_GREEN_CANDLES = "Consecutive Green Candles"
+    OPENING_RANGE = "Opening Range"
+    HEIKIN_ASHI = "Heikin-Ashi"
+    
+    # Time / Others
+    TIME_OF_DAY = "Time of Day"
+    PIVOT_POINTS = "Pivot Points"
+
+    # Existing / Retained Returns
     RET_PCT_PM = "Ret % PM"
     RET_PCT_RTH = "Ret % RTH"
     RET_PCT_AM = "Ret % AM"
-    TIME_OF_DAY = "Time of Day"
     MAX_N_BARS = "Max N Bars"
     CUSTOM = "Custom"  # For arbitrary numbers
 
@@ -92,6 +128,9 @@ class UniverseFilters(BaseModel):
 class IndicatorConfig(BaseModel):
     name: IndicatorType
     period: Optional[int] = None  # For SMA, EMA, RSI, etc.
+    period2: Optional[int] = None # Fast period, signal period, etc.
+    period3: Optional[int] = None # Slow period, etc.
+    stdDev: Optional[float] = None # Standard Deviation for BB
     multiplier: Optional[float] = None  # For bands, ATR, etc.
     offset: Optional[int] = 0  # Bars back (0 = current)
     overbought: Optional[float] = None  # e.g. RSI 70, Williams %R -20
@@ -99,6 +138,8 @@ class IndicatorConfig(BaseModel):
     consecutive_count: Optional[int] = None  # For consecutive red/highs/lows
     time_hour: Optional[int] = None  # For Time of Day (0-23)
     time_minute: Optional[int] = None  # For Time of Day (0-59)
+    time_condition: Optional[Literal["BEFORE", "AFTER"]] = None
+    days_lookback: Optional[int] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

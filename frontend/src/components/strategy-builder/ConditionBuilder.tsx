@@ -14,13 +14,77 @@ import { Plus, Trash2, GitBranch } from 'lucide-react';
 // Constants & Helpers
 // ----------------------------------------------------------------------
 
-// Indicators that need a period parameter (e.g. SMA(20), EMA(9), RSI(14))
-const PERIOD_INDICATORS = new Set([
-    IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
-    IndicatorType.RSI, IndicatorType.MACD, IndicatorType.ATR,
-    IndicatorType.RVOL, IndicatorType.ADX, IndicatorType.WILLIAMS_R,
-    IndicatorType.MAX_N_BARS
-]);
+// Indicators that often need a generic "period" as default fallback 
+const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
+    switch (name) {
+        case IndicatorType.SMA:
+        case IndicatorType.EMA:
+        case IndicatorType.WMA:
+        case IndicatorType.RSI:
+        case IndicatorType.ATR:
+        case IndicatorType.ADX:
+        case IndicatorType.WILLIAMS_R:
+        case IndicatorType.MOMENTUM:
+        case IndicatorType.ROC:
+        case IndicatorType.MAX_N_BARS:
+            return { period: 14 };
+        case IndicatorType.BOLLINGER_BANDS:
+            return { period: 20, stdDev: 2 };
+        case IndicatorType.MACD:
+            return { period: 12, period2: 26, period3: 9 };
+        case IndicatorType.STOCHASTIC:
+            return { period: 14, period2: 3, period3: 3 };
+        case IndicatorType.ICHIMOKU:
+            return { period: 9, period2: 26, period3: 52 };
+        case IndicatorType.MIN_X_DAYS:
+        case IndicatorType.MAX_X_DAYS:
+            return { days_lookback: 5 };
+        case IndicatorType.TIME_OF_DAY:
+            return { time_condition: "AFTER", time_hour: 9, time_minute: 30 };
+        default:
+            return {};
+    }
+};
+
+// Indicator Categories
+const INDICATOR_CATEGORIES = {
+    "Trend & Moving Averages": [
+        IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
+        IndicatorType.VWAP, IndicatorType.LINEAR_REGRESSION,
+        IndicatorType.ZIG_ZAG, IndicatorType.ICHIMOKU
+    ],
+    "Momentum & Oscillators": [
+        IndicatorType.RSI, IndicatorType.MACD, IndicatorType.STOCHASTIC,
+        IndicatorType.MOMENTUM, IndicatorType.CCI, IndicatorType.ROC,
+        IndicatorType.DMI, IndicatorType.WILLIAMS_R
+    ],
+    "Volatility": [
+        IndicatorType.ATR, IndicatorType.ADX, IndicatorType.BOLLINGER_BANDS,
+        IndicatorType.PARABOLIC_SAR, IndicatorType.MEDAUGH_SHADING
+    ],
+    "Volume": [
+        IndicatorType.OBV, IndicatorType.VAD, IndicatorType.CMF,
+        IndicatorType.ACC_DIST, IndicatorType.VOLUME, IndicatorType.RVOL,
+        IndicatorType.AVOLUME
+    ],
+    "Price Variables": [
+        IndicatorType.CLOSE, IndicatorType.OPEN, IndicatorType.HIGH,
+        IndicatorType.LOW, IndicatorType.PMH, IndicatorType.PML,
+        IndicatorType.HOD, IndicatorType.LOD, IndicatorType.Y_HIGH,
+        IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+        IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
+    ],
+    "Behavior & Patterns": [
+        IndicatorType.CONSECUTIVE_HIGHER_HIGHS, IndicatorType.CONSECUTIVE_LOWER_LOWS,
+        IndicatorType.CONSECUTIVE_GREEN_CANDLES, IndicatorType.CONSECUTIVE_RED_CANDLES,
+        IndicatorType.OPENING_RANGE, IndicatorType.HEIKIN_ASHI
+    ],
+    "Time & Others": [
+        IndicatorType.TIME_OF_DAY, IndicatorType.PIVOT_POINTS,
+        IndicatorType.RET_PCT_PM, IndicatorType.RET_PCT_RTH, IndicatorType.RET_PCT_AM,
+        IndicatorType.MAX_N_BARS, IndicatorType.CUSTOM
+    ]
+};
 
 // Human-readable labels for comparators using symbols
 const COMPARATOR_LABELS: Record<string, string> = {
@@ -35,17 +99,38 @@ const COMPARATOR_LABELS: Record<string, string> = {
 
 // Human-readable labels for indicators
 const INDICATOR_LABELS: Record<string, string> = {
+    // Trend
     [IndicatorType.SMA]: "SMA",
     [IndicatorType.EMA]: "EMA",
     [IndicatorType.WMA]: "WMA",
+    [IndicatorType.VWAP]: "VWAP",
+    [IndicatorType.LINEAR_REGRESSION]: "Linear Regression",
+    [IndicatorType.ZIG_ZAG]: "Zig Zag",
+    [IndicatorType.ICHIMOKU]: "Ichimoku Clouds",
+    // Momentum
     [IndicatorType.RSI]: "RSI",
     [IndicatorType.MACD]: "MACD",
+    [IndicatorType.STOCHASTIC]: "Stochastic",
+    [IndicatorType.MOMENTUM]: "Momentum",
+    [IndicatorType.CCI]: "CCI",
+    [IndicatorType.ROC]: "ROC",
+    [IndicatorType.DMI]: "DMI",
+    [IndicatorType.WILLIAMS_R]: "Williams %R",
+    // Volatility
     [IndicatorType.ATR]: "ATR",
     [IndicatorType.ADX]: "ADX",
-    [IndicatorType.WILLIAMS_R]: "Williams %R",
+    [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
+    [IndicatorType.PARABOLIC_SAR]: "Parabolic SAR",
+    [IndicatorType.MEDAUGH_SHADING]: "Medaugh Shading",
+    // Volume
+    [IndicatorType.OBV]: "On-Balance Volume (OBV)",
+    [IndicatorType.VAD]: "Vol Accum/Distribution",
+    [IndicatorType.CMF]: "Chaikin Money Flow",
+    [IndicatorType.ACC_DIST]: "Accumulation/Distribution",
+    [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.RVOL]: "RVOL",
-    [IndicatorType.VWAP]: "Cumulative VWAP (Day)",
-    [IndicatorType.AVWAP]: "Anchored VWAP (Day)",
+    [IndicatorType.AVOLUME]: "Accumulated Volume",
+    // Variables
     [IndicatorType.CLOSE]: "Close",
     [IndicatorType.OPEN]: "Open",
     [IndicatorType.HIGH]: "High",
@@ -56,16 +141,23 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.LOD]: "LOD",
     [IndicatorType.Y_HIGH]: "Yesterday High",
     [IndicatorType.Y_LOW]: "Yesterday Low",
+    [IndicatorType.Y_OPEN]: "Yesterday Open",
     [IndicatorType.Y_CLOSE]: "Yesterday Close",
-    [IndicatorType.VOLUME]: "Volume",
-    [IndicatorType.AVOLUME]: "Accumulated Volume",
-    [IndicatorType.CONSECUTIVE_RED_CANDLES]: "N Consecutive Red",
-    [IndicatorType.CONSECUTIVE_HIGHER_HIGHS]: "N Consecutive Higher Highs",
-    [IndicatorType.CONSECUTIVE_LOWER_LOWS]: "N Consecutive Lower Lows",
+    [IndicatorType.MAX_X_DAYS]: "Max of last X days",
+    [IndicatorType.MIN_X_DAYS]: "Min of last X days",
+    // Behavior
+    [IndicatorType.CONSECUTIVE_HIGHER_HIGHS]: "Consecutive Higher Highs",
+    [IndicatorType.CONSECUTIVE_LOWER_LOWS]: "Consecutive Lower Lows",
+    [IndicatorType.CONSECUTIVE_GREEN_CANDLES]: "Consecutive Green Candles",
+    [IndicatorType.CONSECUTIVE_RED_CANDLES]: "Consecutive Red Candles",
+    [IndicatorType.OPENING_RANGE]: "Opening Range",
+    [IndicatorType.HEIKIN_ASHI]: "Heikin-Ashi",
+    // Time & Others
+    [IndicatorType.TIME_OF_DAY]: "Time of Day",
+    [IndicatorType.PIVOT_POINTS]: "Pivot Points",
     [IndicatorType.RET_PCT_PM]: "Ret % PM",
     [IndicatorType.RET_PCT_RTH]: "Ret % RTH",
     [IndicatorType.RET_PCT_AM]: "Ret % AM",
-    [IndicatorType.TIME_OF_DAY]: "Time of Day",
     [IndicatorType.MAX_N_BARS]: "Max N Bars",
     [IndicatorType.CUSTOM]: "Custom",
 };
@@ -73,8 +165,185 @@ const INDICATOR_LABELS: Record<string, string> = {
 const FIXED_VALUE_KEY = "__FIXED_VALUE__";
 
 // ----------------------------------------------------------------------
+// Generic Selector
+// ----------------------------------------------------------------------
+export const IndicatorSelector = ({ value, onChange, isTarget }: { value: string, onChange: (val: string) => void, isTarget?: boolean }) => {
+    return (
+        <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs max-w-[150px] truncate"
+        >
+            {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => (
+                <optgroup key={category} label={category}>
+                    {indicators.map(t => (
+                        <option key={t} value={t}>{INDICATOR_LABELS[t] || t}</option>
+                    ))}
+                </optgroup>
+            ))}
+            {isTarget && <option value={FIXED_VALUE_KEY}>── Fixed Value ──</option>}
+        </select>
+    );
+};
+
+// ----------------------------------------------------------------------
+// Dynamic Inputs specific to Indicator
+// ----------------------------------------------------------------------
+export const IndicatorParams = ({
+    value,
+    onChange
+}: {
+    value: IndicatorConfig;
+    onChange: (val: IndicatorConfig) => void;
+}) => {
+    switch (value.name) {
+        case IndicatorType.SMA:
+        case IndicatorType.EMA:
+        case IndicatorType.WMA:
+        case IndicatorType.RSI:
+        case IndicatorType.ATR:
+        case IndicatorType.ADX:
+        case IndicatorType.WILLIAMS_R:
+        case IndicatorType.MOMENTUM:
+        case IndicatorType.ROC:
+        case IndicatorType.CCI:
+        case IndicatorType.MAX_N_BARS:
+            return (
+                <input
+                    type="number"
+                    value={value.period || ''}
+                    onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                    placeholder="Period"
+                    className="w-14 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                    title="Period"
+                />
+            );
+        case IndicatorType.BOLLINGER_BANDS:
+            return (
+                <div className="flex gap-1.5 items-center">
+                    <input
+                        type="number"
+                        value={value.period || ''}
+                        onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                        placeholder="Per"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Period"
+                    />
+                    <input
+                        type="number"
+                        value={value.stdDev || ''}
+                        onChange={(e) => onChange({ ...value, stdDev: Number(e.target.value) })}
+                        placeholder="SD"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Standard Deviation"
+                    />
+                </div>
+            );
+        case IndicatorType.MACD:
+        case IndicatorType.STOCHASTIC:
+            return (
+                <div className="flex gap-1.5 items-center flex-wrap max-w-[180px]">
+                    <input
+                        type="number"
+                        value={value.period || ''}
+                        onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                        placeholder="F"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Fast/K Period"
+                    />
+                    <input
+                        type="number"
+                        value={value.period2 || ''}
+                        onChange={(e) => onChange({ ...value, period2: Number(e.target.value) })}
+                        placeholder="S"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Slow/D Period"
+                    />
+                    <input
+                        type="number"
+                        value={value.period3 || ''}
+                        onChange={(e) => onChange({ ...value, period3: Number(e.target.value) })}
+                        placeholder="Sig"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Signal/Smoothing Period"
+                    />
+                </div>
+            );
+        case IndicatorType.ICHIMOKU:
+            return (
+                <div className="flex gap-1.5 items-center flex-wrap max-w-[180px]">
+                    <input
+                        type="number"
+                        value={value.period || ''}
+                        onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                        placeholder="Cnv"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Conversion Line (Tenkan)"
+                    />
+                    <input
+                        type="number"
+                        value={value.period2 || ''}
+                        onChange={(e) => onChange({ ...value, period2: Number(e.target.value) })}
+                        placeholder="Bas"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Base Line (Kijun)"
+                    />
+                    <input
+                        type="number"
+                        value={value.period3 || ''}
+                        onChange={(e) => onChange({ ...value, period3: Number(e.target.value) })}
+                        placeholder="SpB"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Leading Span B"
+                    />
+                </div>
+            );
+        case IndicatorType.MIN_X_DAYS:
+        case IndicatorType.MAX_X_DAYS:
+            return (
+                <div className="flex items-center gap-1.5">
+                    <input
+                        type="number"
+                        value={value.days_lookback || ''}
+                        onChange={(e) => onChange({ ...value, days_lookback: Number(e.target.value) })}
+                        placeholder="N"
+                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                        title="Number of Days Back"
+                    />
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">days</span>
+                </div>
+            );
+        case IndicatorType.TIME_OF_DAY:
+            return (
+                <div className="flex gap-1.5 items-center">
+                    <select
+                        value={value.time_condition || 'AFTER'}
+                        onChange={(e) => onChange({ ...value, time_condition: e.target.value as any })}
+                        className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                    >
+                        <option value="BEFORE">Before</option>
+                        <option value="AFTER">After</option>
+                    </select>
+                    <input
+                        type="time"
+                        value={`${String(value.time_hour ?? 9).padStart(2, '0')}:${String(value.time_minute ?? 30).padStart(2, '0')}`}
+                        onChange={(e) => {
+                            const [h, m] = e.target.value.split(':');
+                            if (h && m) {
+                                onChange({ ...value, time_hour: Number(h), time_minute: Number(m) });
+                            }
+                        }}
+                        className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-24"
+                    />
+                </div>
+            );
+        default:
+            return null; // Variable like Close, Open... doesn't need params
+    }
+};
+
+// ----------------------------------------------------------------------
 // Source Indicator Input (left side)
-// Shows: dropdown + period param if applicable. Nothing else.
 // ----------------------------------------------------------------------
 
 export const SourceIndicatorInput = ({
@@ -84,42 +353,23 @@ export const SourceIndicatorInput = ({
     value: IndicatorConfig;
     onChange: (val: IndicatorConfig) => void;
 }) => {
-    const needsPeriod = PERIOD_INDICATORS.has(value.name);
-
     return (
-        <div className="flex gap-1.5 items-center">
-            <select
+        <div className="flex gap-1.5 items-center flex-wrap">
+            <IndicatorSelector
                 value={value.name}
-                onChange={(e) => {
-                    const name = e.target.value as IndicatorType;
-                    const newVal: IndicatorConfig = { name };
-                    if (PERIOD_INDICATORS.has(name)) newVal.period = 20;
-                    onChange(newVal);
+                onChange={(nameStr) => {
+                    const name = nameStr as IndicatorType;
+                    const defaultParams = getDefaultParamsForIndicator(name);
+                    onChange({ name, ...defaultParams });
                 }}
-                className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-            >
-                {Object.values(IndicatorType).map(t => (
-                    <option key={t} value={t}>{INDICATOR_LABELS[t] || t}</option>
-                ))}
-            </select>
-            {needsPeriod && (
-                <input
-                    type="number"
-                    value={value.period || ''}
-                    onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
-                    placeholder="Period"
-                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-                />
-            )}
+            />
+            <IndicatorParams value={value} onChange={onChange} />
         </div>
     );
 };
 
 // ----------------------------------------------------------------------
 // Target Input (right side, after comparator)
-// Dropdown with all indicators + "Fixed Value" option.
-// If indicator selected → show period if needed.
-// If "Fixed Value" selected → show numeric input.
 // ----------------------------------------------------------------------
 
 export const TargetInput = ({
@@ -131,50 +381,37 @@ export const TargetInput = ({
 }) => {
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
-    const needsPeriod = !isFixed && PERIOD_INDICATORS.has((value as IndicatorConfig).name);
 
     return (
-        <div className="flex gap-1.5 items-center">
-            <select
+        <div className="flex gap-1.5 items-center flex-wrap">
+            <IndicatorSelector
+                isTarget
                 value={selectedKey}
-                onChange={(e) => {
-                    const key = e.target.value;
+                onChange={(key) => {
                     if (key === FIXED_VALUE_KEY) {
                         onChange(0);
                     } else {
                         const name = key as IndicatorType;
-                        const newVal: IndicatorConfig = { name };
-                        if (PERIOD_INDICATORS.has(name)) newVal.period = 20;
-                        onChange(newVal);
+                        const defaultParams = getDefaultParamsForIndicator(name);
+                        onChange({ name, ...defaultParams });
                     }
                 }}
-                className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-            >
-                {Object.values(IndicatorType).map(t => (
-                    <option key={t} value={t}>{INDICATOR_LABELS[t] || t}</option>
-                ))}
-                <option value={FIXED_VALUE_KEY}>── Fixed Value ──</option>
-            </select>
+            />
 
-            {/* Period input for indicators that need it */}
-            {!isFixed && needsPeriod && (
-                <input
-                    type="number"
-                    value={(value as IndicatorConfig).period || ''}
-                    onChange={(e) => onChange({ ...(value as IndicatorConfig), period: Number(e.target.value) })}
-                    placeholder="Period"
-                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+            {!isFixed && (
+                <IndicatorParams
+                    value={value as IndicatorConfig}
+                    onChange={(newVal) => onChange(newVal)}
                 />
             )}
 
-            {/* Numeric input for fixed value */}
             {isFixed && (
                 <input
                     type="number"
                     value={value as number}
                     onChange={(e) => onChange(Number(e.target.value))}
                     placeholder="Value"
-                    className="w-20 bg-muted/20 border border-amber-500/40 rounded px-2 py-1 text-xs text-amber-400 font-bold"
+                    className="w-16 bg-muted/20 border border-amber-500/40 rounded px-2 py-1 text-xs text-amber-400 font-bold"
                 />
             )}
         </div>
@@ -254,18 +491,10 @@ export const ConditionRow = ({
                             />
                             <span className="text-xs text-muted-foreground">% from</span>
                         </div>
-                        <select
+                        <IndicatorSelector
                             value={condition.level}
-                            onChange={(e) => onChange({ ...condition, level: e.target.value as any })}
-                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-                        >
-                            <option value="Pre-Market High">PMH</option>
-                            <option value="Pre-Market Low">PML</option>
-                            <option value="Yesterday High">Y-High</option>
-                            <option value="Yesterday Low">Y-Low</option>
-                            <option value="VWAP">VWAP</option>
-                            <option value="EMA">EMA</option>
-                        </select>
+                            onChange={(val) => onChange({ ...condition, level: val as IndicatorType })}
+                        />
                     </>
                 );
             case 'candle_pattern':

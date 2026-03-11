@@ -1,17 +1,42 @@
 
 // Enums
 export enum IndicatorType {
+    // Trend / MA
     SMA = "SMA",
     EMA = "EMA",
     WMA = "WMA",
-    RVOL = "RVOL",
     VWAP = "VWAP",
-    AVWAP = "AVWAP",
+    LINEAR_REGRESSION = "Linear Regression",
+    ZIG_ZAG = "Zig Zag",
+    ICHIMOKU = "Ichimoku Clouds",
+
+    // Momentum
     RSI = "RSI",
     MACD = "MACD",
+    STOCHASTIC = "Stochastic",
+    MOMENTUM = "Momentum",
+    CCI = "CCI",
+    ROC = "ROC",
+    DMI = "DMI",
+    WILLIAMS_R = "Williams %R",
+
+    // Volatility
     ATR = "ATR",
     ADX = "ADX",
-    WILLIAMS_R = "Williams %R",
+    BOLLINGER_BANDS = "Bollinger Bands",
+    PARABOLIC_SAR = "Parabolic SAR",
+    MEDAUGH_SHADING = "Medaugh Shading",
+
+    // Volume
+    OBV = "OBV",
+    VAD = "VAD",
+    CMF = "CMF",
+    ACC_DIST = "Acc/Dist",
+    VOLUME = "Volume",
+    RVOL = "RVOL",
+    AVOLUME = "Accumulated Volume",
+
+    // Price Variables
     CLOSE = "Close",
     OPEN = "Open",
     HIGH = "High",
@@ -22,16 +47,27 @@ export enum IndicatorType {
     LOD = "Low of Day",
     Y_HIGH = "Yesterday High",
     Y_LOW = "Yesterday Low",
+    Y_OPEN = "Yesterday Open",
     Y_CLOSE = "Yesterday Close",
-    VOLUME = "Volume",
-    AVOLUME = "Accumulated Volume",
-    CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles",
+    MAX_X_DAYS = "Max of last X days",
+    MIN_X_DAYS = "Min of last X days",
+
+    // Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs",
     CONSECUTIVE_LOWER_LOWS = "Consecutive Lower Lows",
+    CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles",
+    CONSECUTIVE_GREEN_CANDLES = "Consecutive Green Candles",
+    OPENING_RANGE = "Opening Range",
+    HEIKIN_ASHI = "Heikin-Ashi",
+
+    // Time / Others
+    TIME_OF_DAY = "Time of Day",
+    PIVOT_POINTS = "Pivot Points",
+
+    // Existing / Retained Returns
     RET_PCT_PM = "Ret % PM",
     RET_PCT_RTH = "Ret % RTH",
     RET_PCT_AM = "Ret % AM",
-    TIME_OF_DAY = "Time of Day",
     MAX_N_BARS = "Max N Bars",
     CUSTOM = "Custom"
 }
@@ -90,6 +126,9 @@ export interface UniverseFilters {
 export interface IndicatorConfig {
     name: IndicatorType;
     period?: number;
+    period2?: number;          // Fast period, signal period, etc.
+    period3?: number;          // Slow period, etc.
+    stdDev?: number;           // Standard Deviation for BB
     multiplier?: number;
     offset?: number;
     overbought?: number;
@@ -97,6 +136,8 @@ export interface IndicatorConfig {
     consecutive_count?: number;
     time_hour?: number;
     time_minute?: number;
+    time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
+    days_lookback?: number;    // "Max/Min of last X days"
 }
 
 export interface ComparisonCondition {
