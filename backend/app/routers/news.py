@@ -34,14 +34,17 @@ RSS_FEEDS = [
 async def fetch_feed(feed_url, source_name):
     try:
         # Run feedparser in a thread pool since it's blocking IO
-        feed = await asyncio.to_thread(feedparser.parse, feed_url)
+        # Add timeout to prevent hanging the whole news feed
+        feed = await asyncio.wait_for(
+            asyncio.to_thread(feedparser.parse, feed_url),
+            timeout=3.0
+        )
         news_items = []
-        for entry in feed.entries[:5]: # Get top 5 from each
-            # Clean up summary/description if needed
-            summary = entry.get('summary', '') or entry.get('description', '')
-            # Simple HTML strip could be added here if needed, but extensive parsing might be overkill
+        if not hasattr(feed, 'entries'):
+            return []
             
-            # Format date if possible, otherwise use raw
+        for entry in feed.entries[:5]: # Get top 5 from each
+            summary = entry.get('summary', '') or entry.get('description', '')
             published = entry.get('published', '') or entry.get('updated', datetime.now().strftime("%a, %d %b %Y %H:%M:%S GMT"))
 
             news_items.append(NewsItem(
@@ -52,6 +55,9 @@ async def fetch_feed(feed_url, source_name):
                 summary=summary
             ))
         return news_items
+    except asyncio.TimeoutError:
+        print(f"Timeout fetching feed {feed_url}")
+        return []
     except Exception as e:
         print(f"Error fetching feed {feed_url}: {e}")
         return []

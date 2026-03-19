@@ -13,7 +13,8 @@ from numba.typed import List as NumbaList
 
 from app.schemas.strategy import (
     Strategy, ConditionGroup, RiskType, Comparator, IndicatorType,
-    ComparisonCondition, PriceLevelCondition, CandleCondition, CandlePattern
+    ComparisonCondition, PriceLevelDistanceCondition,
+    CandleCondition, CandlePattern
 )
 
 
@@ -454,6 +455,9 @@ class BacktestEngine:
         self.initial_capital = initial_capital
         self.max_holding_minutes = max_holding_minutes
         
+        # Internal cache
+        self._ha_data: Optional[pd.DataFrame] = None
+        
         # Output state
         self.closed_trades: List[Trade] = []
         self.equity_curve: List[Dict] = []
@@ -502,7 +506,7 @@ class BacktestEngine:
                 if condition.type == "indicator_comparison":
                     cond_result = self._evaluate_comparison(condition, df)
                 elif condition.type == "price_level_distance":
-                    cond_result = self._evaluate_price_level(condition, df)
+                    cond_result = self._evaluate_distance(condition, df)
                 elif condition.type == "candle_pattern":
                     cond_result = self._evaluate_candle_pattern(condition, df)
                 else:
@@ -510,12 +514,56 @@ class BacktestEngine:
             else:
                  cond_result = pd.Series(False, index=df.index)
                  
+                 
             if group.operator == "AND":
                 current_signal = current_signal & cond_result
             else:
                 current_signal = current_signal | cond_result
         
         return current_signal
+
+    def _get_ha_data(self) -> pd.DataFrame:
+        """Get or calculate Heikin-Ashi candles"""
+        if self._ha_data is not None:
+            return self._ha_data
+            
+        df = self.market_data
+        # Grouped calculation of HA Open (recursive)
+        def compute_ha_open(group):
+            g_opens = group['open'].values
+            g_closes = group['close'].values
+            # Re-calculate HA Close for the loop
+            g_ha_closes = (g_opens + group['high'].values + group['low'].values + g_closes) / 4
+            
+            ha_opens = np.zeros(len(g_opens))
+            # Initial HA Open
+            ha_opens[0] = (g_opens[0] + g_closes[0]) / 2
+            
+            for i in range(1, len(g_opens)):
+                ha_opens[i] = (ha_opens[i-1] + g_ha_closes[i-1]) / 2
+            
+            return pd.Series(ha_opens, index=group.index)
+
+        ha_close = (df['open'] + df['high'] + df['low'] + df['close']) / 4
+        
+        ha_open = pd.Series(0.0, index=df.index)
+        for ticker, group in df.groupby('ticker'):
+            ha_open.loc[group.index] = compute_ha_open(group)
+            
+        ha_high = pd.concat([df['high'], ha_open, ha_close], axis=1).max(axis=1)
+        ha_low = pd.concat([df['low'], ha_open, ha_close], axis=1).min(axis=1)
+        
+        self._ha_data = pd.DataFrame({
+            'open': ha_open,
+            'high': ha_high,
+            'low': ha_low,
+            'close': ha_close,
+            'ticker': df['ticker'],
+            'timestamp': df['timestamp'],
+            'volume': df['volume'] if 'volume' in df.columns else 0.0
+        }, index=df.index)
+        
+        return self._ha_data
 
     def _resolve_indicator(self, config, df: pd.DataFrame) -> pd.Series:
         """Resolve an IndicatorConfig or float to a Series"""
@@ -526,23 +574,37 @@ class BacktestEngine:
         name = config.name
         period = config.period or 14 # Default period
         
+        # Determine source data (Normal vs Heikin-Ashi)
+        use_ha = getattr(config, 'calc_on_heikin', False) or \
+                 name in [IndicatorType.HA_CLOSE, IndicatorType.HA_OPEN, IndicatorType.HA_HIGH, IndicatorType.HA_LOW]
+        
+        source_df = self._get_ha_data() if use_ha else df
+        
         # We handle tickers separately to avoid leaking data across symbols
         def grouped_rolling(func):
-            return df.groupby('ticker')['close'].transform(func)
+            return source_df.groupby('ticker')['close'].transform(func)
 
         series = pd.Series(0.0, index=df.index)
         
-        if name == IndicatorType.CLOSE: series = df['close']
-        elif name == IndicatorType.OPEN: series = df['open']
-        elif name == IndicatorType.HIGH: series = df['high']
-        elif name == IndicatorType.LOW: series = df['low']
+        if name in [IndicatorType.CLOSE, IndicatorType.HA_CLOSE]: series = source_df['close']
+        elif name in [IndicatorType.OPEN, IndicatorType.HA_OPEN, IndicatorType.CURRENT_OPEN, IndicatorType.BAR_OPEN]: series = source_df['open']
+        elif name == IndicatorType.DAY_OPEN:
+            # First open of the day for each ticker
+            df_dates = source_df['timestamp'].dt.date
+            series = source_df.groupby(['ticker', df_dates])['open'].transform('first')
+            series.index = source_df.index
+        elif name == IndicatorType.PREV_CLOSE:
+            series = source_df.groupby('ticker')['close'].shift(1)
+            series.index = source_df.index
+        elif name in [IndicatorType.HIGH, IndicatorType.HA_HIGH]: series = source_df['high']
+        elif name in [IndicatorType.LOW, IndicatorType.HA_LOW]: series = source_df['low']
         elif name == IndicatorType.SMA:
-            series = df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=period).mean())
+            series = source_df.groupby('ticker')['close'].transform(lambda x: x.rolling(window=period).mean())
         elif name == IndicatorType.EMA:
-            series = df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=period, adjust=False).mean())
+            series = source_df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=period, adjust=False).mean())
         elif name == IndicatorType.WMA:
             weights = np.arange(1, period + 1)
-            series = df.groupby('ticker')['close'].transform(
+            series = source_df.groupby('ticker')['close'].transform(
                 lambda x: x.rolling(period).apply(lambda bars: np.dot(bars, weights) / weights.sum(), raw=True)
             )
         elif name == IndicatorType.VWAP:
@@ -551,7 +613,7 @@ class BacktestEngine:
                 v = g['volume']
                 tp = (g['high'] + g['low'] + g['close']) / 3
                 return (tp * v).cumsum() / v.cumsum()
-            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(calc_vwap)
+            series = source_df.groupby(['ticker', source_df['timestamp'].dt.date], group_keys=False).apply(calc_vwap)
             if len(series) == len(df): series.index = df.index
         elif name == IndicatorType.AVWAP:
             # Anchored VWAP (Day start) - same as VWAP for intraday
@@ -559,7 +621,7 @@ class BacktestEngine:
                 v = g['volume']
                 tp = (g['high'] + g['low'] + g['close']) / 3
                 return (tp * v).cumsum() / v.cumsum()
-            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(calc_vwap)
+            series = source_df.groupby(['ticker', source_df['timestamp'].dt.date], group_keys=False).apply(calc_vwap)
             if len(series) == len(df): series.index = df.index
         elif name == IndicatorType.RVOL:
             series = df['rvol'] if 'rvol' in df.columns else pd.Series(1.0, index=df.index)
@@ -576,10 +638,10 @@ class BacktestEngine:
                 ema_down = down.ewm(com=p-1, adjust=False).mean()
                 rs = ema_up / (ema_down + 1e-10)
                 return 100 - (100 / (1 + rs))
-            series = df.groupby('ticker')['close'].transform(lambda x: calc_rsi(x, period))
+            series = source_df.groupby('ticker')['close'].transform(lambda x: calc_rsi(x, period))
         elif name == IndicatorType.MACD:
-            ema12 = df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=12, adjust=False).mean())
-            ema26 = df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=26, adjust=False).mean())
+            ema12 = source_df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=12, adjust=False).mean())
+            ema26 = source_df.groupby('ticker')['close'].transform(lambda x: x.ewm(span=26, adjust=False).mean())
             series = ema12 - ema26
         elif name == IndicatorType.ATR:
             def calc_atr(group, p):
@@ -748,40 +810,38 @@ class BacktestEngine:
              
         return pd.Series(False, index=df.index)
 
-    def _evaluate_price_level(self, condition: PriceLevelCondition, df: pd.DataFrame) -> pd.Series:
-        # source (Close/High/Low) vs level (PMH, etc) +/- value_pct
-        source = df[condition.source.lower()]
+    def _evaluate_distance(self, condition: PriceLevelDistanceCondition, df: pd.DataFrame) -> pd.Series:
+        s1 = self._resolve_indicator(condition.source, df)
+        s2 = self._resolve_indicator(condition.level, df)
+        val = condition.value_pct
+        comp = condition.comparator
+        pos = getattr(condition, 'position', 'any')
+
+        # Distance logic: (Source - Level) / Level * 100
+        diff_pct = ((s1 - s2) / s2) * 100
+        abs_diff_pct = diff_pct.abs()
         
-        level_map = {
-            IndicatorType.PMH: 'pm_high',
-            IndicatorType.PML: 'pm_low',
-            IndicatorType.Y_HIGH: 'prev_high', # Assuming this col exists or 0
-            IndicatorType.Y_LOW: 'prev_low',
-            IndicatorType.Y_CLOSE: 'prev_close'
-        }
-        
-        lvl_col = level_map.get(condition.level)
-        if not lvl_col or lvl_col not in df.columns:
-            return pd.Series(False, index=df.index)
-            
-        level_val = df[lvl_col]
-        
-        # Distance % = (Source - Level) / Level * 100
-        dist = (source - level_val) / level_val * 100
-        
-        if condition.comparator == "DISTANCE_GT":
-            return dist > condition.value_pct
-        elif condition.comparator == "DISTANCE_LT":
-            return dist < condition.value_pct
-            
+        # Position filter
+        pos_mask = pd.Series(True, index=df.index)
+        if pos == 'above':
+            pos_mask = diff_pct > 0
+        elif pos == 'below':
+            pos_mask = diff_pct < 0
+
+        if comp == 'DISTANCE_GT':
+            return (abs_diff_pct > val) & pos_mask
+        if comp == 'DISTANCE_LT':
+            return (abs_diff_pct < val) & pos_mask
         return pd.Series(False, index=df.index)
 
     def _evaluate_candle_pattern(self, condition: CandleCondition, df: pd.DataFrame) -> pd.Series:
         pat = condition.pattern
         lookback = condition.lookback or 1
         count = condition.consecutive_count or 1
+        use_ha = getattr(condition, 'calc_on_heikin', False)
         
-        o, h, l, c = df['open'], df['high'], df['low'], df['close']
+        target_df = self._get_ha_data() if use_ha else df
+        o, h, l, c = target_df['open'], target_df['high'], target_df['low'], target_df['close']
         body = (c - o).abs()
         wick_top = h - df[['open', 'close']].max(axis=1)
         wick_bottom = df[['open', 'close']].min(axis=1) - l

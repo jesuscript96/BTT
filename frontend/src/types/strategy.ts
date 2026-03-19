@@ -6,6 +6,7 @@ export enum IndicatorType {
     EMA = "EMA",
     WMA = "WMA",
     VWAP = "VWAP",
+    AVWAP = "AVWAP",
     LINEAR_REGRESSION = "Linear Regression",
     ZIG_ZAG = "Zig Zag",
     ICHIMOKU = "Ichimoku Clouds",
@@ -51,6 +52,10 @@ export enum IndicatorType {
     Y_CLOSE = "Yesterday Close",
     MAX_X_DAYS = "Max of last X days",
     MIN_X_DAYS = "Min of last X days",
+    CURRENT_OPEN = "Current Open",
+    BAR_OPEN = "Bar Open",
+    DAY_OPEN = "Day Open",
+    PREV_CLOSE = "Previous Close",
 
     // Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs",
@@ -59,6 +64,10 @@ export enum IndicatorType {
     CONSECUTIVE_GREEN_CANDLES = "Consecutive Green Candles",
     OPENING_RANGE = "Opening Range",
     HEIKIN_ASHI = "Heikin-Ashi",
+    HA_OPEN = "HA Open",
+    HA_HIGH = "HA High",
+    HA_LOW = "HA Low",
+    HA_CLOSE = "HA Close",
 
     // Time / Others
     TIME_OF_DAY = "Time of Day",
@@ -110,6 +119,11 @@ export enum RiskType {
     MARKET_STRUCTURE = "Market Structure (HOD/LOD)"
 }
 
+export enum TakeProfitMode {
+    FULL = "Full",
+    PARTIAL = "Partial"
+}
+
 // Component Interfaces
 export interface UniverseFilters {
     min_market_cap?: number;
@@ -138,6 +152,7 @@ export interface IndicatorConfig {
     time_minute?: number;
     time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
     days_lookback?: number;    // "Max/Min of last X days"
+    calc_on_heikin?: boolean;
 }
 
 export interface ComparisonCondition {
@@ -145,14 +160,17 @@ export interface ComparisonCondition {
     source: IndicatorConfig;
     comparator: Comparator;
     target: IndicatorConfig | number;
+    timeframe?: Timeframe;
 }
 
-export interface PriceLevelCondition {
+export interface PriceLevelDistanceCondition {
     type: "price_level_distance";
-    source: "Close" | "High" | "Low";
-    level: IndicatorType;
+    source: IndicatorConfig;
+    level: IndicatorConfig;
     comparator: "DISTANCE_GT" | "DISTANCE_LT";
     value_pct: number;
+    position?: 'above' | 'below' | 'any';
+    timeframe?: Timeframe;
 }
 
 export interface CandleCondition {
@@ -160,9 +178,11 @@ export interface CandleCondition {
     pattern: CandlePattern;
     lookback: number;
     consecutive_count: number;
+    timeframe?: Timeframe;
+    calc_on_heikin?: boolean;
 }
 
-export type AnyCondition = ComparisonCondition | PriceLevelCondition | CandleCondition;
+export type AnyCondition = ComparisonCondition | PriceLevelDistanceCondition | CandleCondition;
 
 // Recursive Logical Group
 export interface ConditionGroup {
@@ -186,6 +206,11 @@ export interface RiskSettings {
     value: number;
 }
 
+export interface PartialTakeProfit {
+    distance_pct: number;
+    capital_pct: number;
+}
+
 export interface TrailingStopSettings {
     active: boolean;
     type: string;
@@ -195,9 +220,11 @@ export interface TrailingStopSettings {
 export interface RiskManagement {
     use_hard_stop?: boolean;
     use_take_profit?: boolean;
+    take_profit_mode: TakeProfitMode;
     accept_reentries?: boolean;
     hard_stop: RiskSettings;
     take_profit: RiskSettings;
+    partial_take_profits: PartialTakeProfit[];
     trailing_stop: TrailingStopSettings;
     max_drawdown_daily?: number;
 }
@@ -234,9 +261,14 @@ export const initialEntryLogic: EntryLogic = {
 export const initialRiskManagement: RiskManagement = {
     use_hard_stop: true,
     use_take_profit: true,
+    take_profit_mode: TakeProfitMode.FULL,
     accept_reentries: true,
     hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
     take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
+    partial_take_profits: [
+        { distance_pct: 3.0, capital_pct: 50.0 },
+        { distance_pct: 6.0, capital_pct: 50.0 }
+    ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 }
 };
 

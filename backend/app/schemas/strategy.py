@@ -12,6 +12,7 @@ class IndicatorType(str, Enum):
     EMA = "EMA"
     WMA = "WMA"
     VWAP = "VWAP"
+    AVWAP = "AVWAP"
     LINEAR_REGRESSION = "Linear Regression"
     ZIG_ZAG = "Zig Zag"
     ICHIMOKU = "Ichimoku Clouds"
@@ -57,6 +58,10 @@ class IndicatorType(str, Enum):
     Y_CLOSE = "Yesterday Close"
     MAX_X_DAYS = "Max of last X days"
     MIN_X_DAYS = "Min of last X days"
+    CURRENT_OPEN = "Current Open"
+    BAR_OPEN = "Bar Open"
+    DAY_OPEN = "Day Open"
+    PREV_CLOSE = "Previous Close"
 
     # Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs"
@@ -65,6 +70,10 @@ class IndicatorType(str, Enum):
     CONSECUTIVE_GREEN_CANDLES = "Consecutive Green Candles"
     OPENING_RANGE = "Opening Range"
     HEIKIN_ASHI = "Heikin-Ashi"
+    HA_OPEN = "HA Open"
+    HA_HIGH = "HA High"
+    HA_LOW = "HA Low"
+    HA_CLOSE = "HA Close"
     
     # Time / Others
     TIME_OF_DAY = "Time of Day"
@@ -112,6 +121,10 @@ class RiskType(str, Enum):
     ATR = "ATR Multiplier"
     MARKET_STRUCTURE = "Market Structure (HOD/LOD)"
 
+class TakeProfitMode(str, Enum):
+    FULL = "Full"
+    PARTIAL = "Partial"
+
 # --- Component Models ---
 
 class UniverseFilters(BaseModel):
@@ -140,31 +153,39 @@ class IndicatorConfig(BaseModel):
     time_minute: Optional[int] = None  # For Time of Day (0-59)
     time_condition: Optional[Literal["BEFORE", "AFTER"]] = None
     days_lookback: Optional[int] = None
+    calc_on_heikin: Optional[bool] = False
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
     source: IndicatorConfig
     comparator: Comparator
-    target: Union[IndicatorConfig, float]  # Target can be another indicator OR a static number
+    target: Union[IndicatorConfig, float]
+    timeframe: Optional[Timeframe] = None
 
-class PriceLevelCondition(BaseModel):
+class PriceLevelDistanceCondition(BaseModel):
     type: Literal["price_level_distance"] = "price_level_distance"
-    source: Literal["Close", "High", "Low"] = "Close"
-    level: IndicatorType # PMH, PML, Y_HIGH, etc.
-    comparator: Literal["DISTANCE_GT", "DISTANCE_LT"] # Check distance
-    value_pct: float # Percentage distance (e.g. 5.0 for 5%)
+    source: IndicatorConfig
+    level: IndicatorConfig
+    comparator: Literal["DISTANCE_GT", "DISTANCE_LT"]
+    value_pct: float
+    position: Optional[Literal["above", "below", "any"]] = "any"
+    timeframe: Optional[Timeframe] = None
 
 class CandleCondition(BaseModel):
     type: Literal["candle_pattern"] = "candle_pattern"
     pattern: CandlePattern
-    lookback: int = 1 # How many bars back to check
-    consecutive_count: int = 1 # e.g. 3 red candles in a row
+    lookback: int = 1
+    consecutive_count: int = 1
+    timeframe: Optional[Timeframe] = None
+    calc_on_heikin: Optional[bool] = False
 
 # Recursive Entry Logic
+AnyCondition = Union[ComparisonCondition, PriceLevelDistanceCondition, CandleCondition]
+
 class ConditionGroup(BaseModel):
     type: Literal["group"] = "group"
     operator: Literal["AND", "OR"] = "AND"
-    conditions: List[Union['ConditionGroup', ComparisonCondition, PriceLevelCondition, CandleCondition]]
+    conditions: List[Union['ConditionGroup', AnyCondition]]
 
 class EntryLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
@@ -174,12 +195,18 @@ class ExitLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
 
+class PartialTakeProfit(BaseModel):
+    distance_pct: float
+    capital_pct: float
+
 class RiskManagement(BaseModel):
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
+    take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL
     accept_reentries: Optional[bool] = True
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
+    partial_take_profits: Optional[List[PartialTakeProfit]] = Field(default_factory=list)
     trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
     max_drawdown_daily: Optional[float] = None  # Circuit breaker
 

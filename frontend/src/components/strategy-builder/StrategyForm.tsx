@@ -10,7 +10,8 @@ import {
     initialRiskManagement,
     EntryLogic,
     ExitLogic,
-    RiskManagement
+    RiskManagement,
+    TakeProfitMode
 } from '@/types/strategy';
 import { EntryLogicBuilder } from './EntryLogic';
 import { ExitLogicBuilder } from './ExitLogic';
@@ -76,6 +77,13 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     // View State
     const [showJson, setShowJson] = useState(false);
 
+    // Validation
+    const isTPValid = !riskManagement.use_take_profit || 
+                     riskManagement.take_profit_mode === TakeProfitMode.FULL || 
+                     Math.abs((riskManagement.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0) - 100) < 0.01;
+
+    const canSubmit = name && !isSubmitting && !isTesting && isTPValid;
+
     useEffect(() => {
         fetchSavedDatasets();
     }, []);
@@ -113,6 +121,11 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     const handleSave = async () => {
         if (!name) {
             alert("Please enter a strategy name");
+            return;
+        }
+
+        if (!isTPValid) {
+            alert("The sum of Partial Take Profit capital must be exactly 100%");
             return;
         }
 
@@ -209,17 +222,18 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                         </button>
                         <button
                             onClick={handleTestInBacktester}
-                            disabled={isTesting || isSubmitting}
+                            disabled={!canSubmit}
                             className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-black uppercase tracking-widest text-[10px] shadow-lg shadow-amber-900/30 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Save as draft & preload in Backtester"
+                            title={!isTPValid ? "Partial TP sum must be 100%" : "Save as draft & preload in Backtester"}
                         >
                             {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
                             <span>Test</span>
                         </button>
                         <button
                             onClick={handleSave}
-                            disabled={isSubmitting}
+                            disabled={!canSubmit}
                             className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black uppercase tracking-widest text-[10px] shadow-lg shadow-blue-900/40 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={!isTPValid ? "Partial TP sum must be 100%" : "Save Strategy"}
                         >
                             {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                             <span>Save</span>

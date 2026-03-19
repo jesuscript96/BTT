@@ -38,9 +38,9 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   // Initialize filters with defaults matching the panel UI
   const [currentFilters, setCurrentFilters] = useState<any>({
-    min_gap_pct: 30,
+    min_gap_pct: 5,
     max_gap_pct: 50,
-    min_pm_volume: 5000000,
+    min_pm_volume: 100000,
     start_date: new Date(new Date().setMonth(new Date().getMonth() - 4)).toISOString().split('T')[0],
     end_date: new Date().toISOString().split('T')[0]
   });
