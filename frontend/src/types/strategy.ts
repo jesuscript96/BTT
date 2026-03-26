@@ -18,19 +18,19 @@ export enum IndicatorType {
     MOMENTUM = "Momentum",
     CCI = "CCI",
     ROC = "ROC",
-    DMI = "DMI",
+    DMI_PLUS = "DMI+",
+    DMI_MINUS = "DMI-",
     WILLIAMS_R = "Williams %R",
 
     // Volatility
     ATR = "ATR",
     ADX = "ADX",
     BOLLINGER_BANDS = "Bollinger Bands",
+    DONCHIAN = "Donchian Channels",
     PARABOLIC_SAR = "Parabolic SAR",
-    MEDAUGH_SHADING = "Medaugh Shading",
 
     // Volume
     OBV = "OBV",
-    VAD = "VAD",
     CMF = "CMF",
     ACC_DIST = "Acc/Dist",
     VOLUME = "Volume",
@@ -38,47 +38,44 @@ export enum IndicatorType {
     AVOLUME = "Accumulated Volume",
 
     // Price Variables
-    CLOSE = "Close",
-    OPEN = "Open",
-    HIGH = "High",
-    LOW = "Low",
+    BAR_CLOSE = "Bar Close",
+    BAR_OPEN = "Bar Open",
+    HIGH_BAR = "High Bar",
+    LOW_BAR = "Low Bar",
     PMH = "Pre-Market High",
     PML = "Pre-Market Low",
-    HOD = "High of Day",
-    LOD = "Low of Day",
+    RTH_HIGH = "RTH High",
+    RTH_LOW = "RTH Low",
+    RTH_OPEN = "RTH Open",
     Y_HIGH = "Yesterday High",
     Y_LOW = "Yesterday Low",
     Y_OPEN = "Yesterday Open",
     Y_CLOSE = "Yesterday Close",
     MAX_X_DAYS = "Max of last X days",
     MIN_X_DAYS = "Min of last X days",
-    CURRENT_OPEN = "Current Open",
-    BAR_OPEN = "Bar Open",
-    DAY_OPEN = "Day Open",
-    PREV_CLOSE = "Previous Close",
 
     // Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs",
     CONSECUTIVE_LOWER_LOWS = "Consecutive Lower Lows",
     CONSECUTIVE_RED_CANDLES = "Consecutive Red Candles",
     CONSECUTIVE_GREEN_CANDLES = "Consecutive Green Candles",
-    OPENING_RANGE = "Opening Range",
+    CONSECUTIVE_HIGHER_LOWS = "Consecutive Higher Lows",
+    CONSECUTIVE_LOWER_HIGHS = "Consecutive Lower Highs",
+    OPENING_RANGE_PLUS = "Opening Range +",
+    OPENING_RANGE_MINUS = "Opening Range -",
+    OPENING_RANGE_AM_PLUS = "Opening Range AM +",
+    OPENING_RANGE_AM_MINUS = "Opening Range AM -",
     HEIKIN_ASHI = "Heikin-Ashi",
-    HA_OPEN = "HA Open",
-    HA_HIGH = "HA High",
-    HA_LOW = "HA Low",
-    HA_CLOSE = "HA Close",
 
     // Time / Others
     TIME_OF_DAY = "Time of Day",
-    PIVOT_POINTS = "Pivot Points",
+    RANGE_OF_TIME = "Range of Time",
+    HIGH_LOW_FROM_TIME = "High/Low from x time",
+    HIGH_LOW_FROM_HOUR_TIME = "High/Low from hour-time",
 
     // Existing / Retained Returns
     RET_PCT_PM = "Ret % PM",
-    RET_PCT_RTH = "Ret % RTH",
-    RET_PCT_AM = "Ret % AM",
-    MAX_N_BARS = "Max N Bars",
-    CUSTOM = "Custom"
+    RET_PCT_RTH = "Ret % RTH"
 }
 
 export enum Comparator {
@@ -153,6 +150,16 @@ export interface IndicatorConfig {
     time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
     days_lookback?: number;    // "Max/Min of last X days"
     calc_on_heikin?: boolean;
+
+    // Added specific parameters for new indicator rules
+    macd_line?: "Signal" | "MACD Line" | "Histogram";
+    band_line?: "Upper" | "Lower" | "Basis";
+    orb_minutes?: number;
+    ha_option?: "Close Bar" | "Open Bar" | "High Bar" | "Low Bar" | "Consecutive Green" | "Consecutive Red";
+    time_from_hour?: number;
+    time_from_minute?: number;
+    range_minutes?: number;
+    return_pct?: number; 
 }
 
 export interface ComparisonCondition {

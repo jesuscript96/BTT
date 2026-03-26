@@ -9,21 +9,11 @@ import {
     Timeframe
 } from '@/types/strategy';
 import { Plus, Trash2, GitBranch, Clock } from 'lucide-react';
+import { getAllowedTargets, DISTANCE_SOURCE_EXCLUDES } from '@/lib/indicatorValidation';
 
 // ----------------------------------------------------------------------
 // Constants & Helpers
 // ----------------------------------------------------------------------
-
-// Indicators that should NOT be in the distance condition dropdowns (oscillators, volume, etc)
-const DISTANCE_CONDITION_EXCLUDES = [
-    IndicatorType.RSI, IndicatorType.STOCHASTIC, IndicatorType.MOMENTUM,
-    IndicatorType.CCI, IndicatorType.ROC, IndicatorType.DMI,
-    IndicatorType.WILLIAMS_R, IndicatorType.ATR, IndicatorType.ADX,
-    IndicatorType.OBV, IndicatorType.VAD, IndicatorType.ACC_DIST,
-    IndicatorType.VOLUME, IndicatorType.RVOL, IndicatorType.AVOLUME,
-    IndicatorType.HEIKIN_ASHI, IndicatorType.HA_OPEN, IndicatorType.HA_HIGH,
-    IndicatorType.HA_LOW, IndicatorType.HA_CLOSE
-];
 
 // Indicators that often need a generic "period" as default fallback 
 const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
@@ -37,12 +27,12 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.WILLIAMS_R:
         case IndicatorType.MOMENTUM:
         case IndicatorType.ROC:
-        case IndicatorType.MAX_N_BARS:
             return { period: 14 };
         case IndicatorType.BOLLINGER_BANDS:
-            return { period: 20, stdDev: 2 };
+        case IndicatorType.DONCHIAN:
+            return { period: 20, stdDev: 2, band_line: "Upper" };
         case IndicatorType.MACD:
-            return { period: 12, period2: 26, period3: 9 };
+            return { period: 12, period2: 26, period3: 9, macd_line: "MACD Line" };
         case IndicatorType.STOCHASTIC:
             return { period: 14, period2: 3, period3: 3 };
         case IndicatorType.ICHIMOKU:
@@ -51,14 +41,27 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.MAX_X_DAYS:
             return { days_lookback: 5 };
         case IndicatorType.TIME_OF_DAY:
+        case IndicatorType.HIGH_LOW_FROM_TIME:
             return { time_condition: "AFTER", time_hour: 9, time_minute: 30 };
+        case IndicatorType.HIGH_LOW_FROM_HOUR_TIME:
+            return { time_from_hour: 9, time_from_minute: 30, range_minutes: 60 };
+        case IndicatorType.OPENING_RANGE_PLUS:
+        case IndicatorType.OPENING_RANGE_MINUS:
+        case IndicatorType.OPENING_RANGE_AM_PLUS:
+        case IndicatorType.OPENING_RANGE_AM_MINUS:
+            return { orb_minutes: 30 };
+        case IndicatorType.HEIKIN_ASHI:
+            return { ha_option: "Close Bar" };
+        case IndicatorType.RET_PCT_PM:
+        case IndicatorType.RET_PCT_RTH:
+            return { return_pct: 1.0 };
         default:
             return {};
     }
 };
 
 // Indicator Categories
-const INDICATOR_CATEGORIES = {
+const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     "Trend & Moving Averages": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
         IndicatorType.VWAP, IndicatorType.AVWAP, IndicatorType.LINEAR_REGRESSION,
@@ -67,35 +70,35 @@ const INDICATOR_CATEGORIES = {
     "Momentum & Oscillators": [
         IndicatorType.RSI, IndicatorType.MACD, IndicatorType.STOCHASTIC,
         IndicatorType.MOMENTUM, IndicatorType.CCI, IndicatorType.ROC,
-        IndicatorType.DMI, IndicatorType.WILLIAMS_R
+        IndicatorType.DMI_PLUS, IndicatorType.DMI_MINUS, IndicatorType.WILLIAMS_R
     ],
     "Volatility": [
         IndicatorType.ATR, IndicatorType.ADX, IndicatorType.BOLLINGER_BANDS,
-        IndicatorType.PARABOLIC_SAR, IndicatorType.MEDAUGH_SHADING
+        IndicatorType.DONCHIAN, IndicatorType.PARABOLIC_SAR
     ],
     "Volume": [
-        IndicatorType.OBV, IndicatorType.VAD, IndicatorType.CMF,
-        IndicatorType.ACC_DIST, IndicatorType.VOLUME, IndicatorType.RVOL,
-        IndicatorType.AVOLUME
+        IndicatorType.OBV, IndicatorType.CMF, IndicatorType.ACC_DIST,
+        IndicatorType.VOLUME, IndicatorType.RVOL, IndicatorType.AVOLUME
     ],
     "Price Variables": [
-        IndicatorType.CLOSE, IndicatorType.OPEN, IndicatorType.HIGH,
-        IndicatorType.LOW, IndicatorType.PMH, IndicatorType.PML,
-        IndicatorType.HOD, IndicatorType.LOD, IndicatorType.Y_HIGH,
-        IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
-        IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS,
-        IndicatorType.CURRENT_OPEN, IndicatorType.BAR_OPEN, IndicatorType.DAY_OPEN, IndicatorType.PREV_CLOSE
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN, IndicatorType.HIGH_BAR,
+        IndicatorType.LOW_BAR, IndicatorType.PMH, IndicatorType.PML,
+        IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW, IndicatorType.RTH_OPEN,
+        IndicatorType.Y_HIGH, IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+        IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
     ],
     "Behavior & Patterns": [
         IndicatorType.CONSECUTIVE_HIGHER_HIGHS, IndicatorType.CONSECUTIVE_LOWER_LOWS,
         IndicatorType.CONSECUTIVE_GREEN_CANDLES, IndicatorType.CONSECUTIVE_RED_CANDLES,
-        IndicatorType.OPENING_RANGE, IndicatorType.HEIKIN_ASHI,
-        IndicatorType.HA_CLOSE, IndicatorType.HA_HIGH, IndicatorType.HA_LOW, IndicatorType.HA_OPEN
+        IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS,
+        IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
+        IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
+        IndicatorType.HEIKIN_ASHI
     ],
     "Time & Others": [
-        IndicatorType.TIME_OF_DAY, IndicatorType.PIVOT_POINTS,
-        IndicatorType.RET_PCT_PM, IndicatorType.RET_PCT_RTH, IndicatorType.RET_PCT_AM,
-        IndicatorType.MAX_N_BARS, IndicatorType.CUSTOM
+        IndicatorType.TIME_OF_DAY, IndicatorType.RANGE_OF_TIME,
+        IndicatorType.HIGH_LOW_FROM_TIME, IndicatorType.HIGH_LOW_FROM_HOUR_TIME,
+        IndicatorType.RET_PCT_PM, IndicatorType.RET_PCT_RTH
     ]
 };
 
@@ -128,60 +131,57 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.MOMENTUM]: "Momentum",
     [IndicatorType.CCI]: "CCI",
     [IndicatorType.ROC]: "ROC",
-    [IndicatorType.DMI]: "DMI",
+    [IndicatorType.DMI_PLUS]: "DMI+",
+    [IndicatorType.DMI_MINUS]: "DMI-",
     [IndicatorType.WILLIAMS_R]: "Williams %R",
     // Volatility
     [IndicatorType.ATR]: "ATR",
     [IndicatorType.ADX]: "ADX",
     [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
+    [IndicatorType.DONCHIAN]: "Donchian Channels",
     [IndicatorType.PARABOLIC_SAR]: "Parabolic SAR",
-    [IndicatorType.MEDAUGH_SHADING]: "Medaugh Shading",
     // Volume
     [IndicatorType.OBV]: "On-Balance Volume (OBV)",
-    [IndicatorType.VAD]: "Vol Accum/Distribution",
     [IndicatorType.CMF]: "Chaikin Money Flow",
     [IndicatorType.ACC_DIST]: "Accumulation/Distribution",
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.RVOL]: "RVOL",
     [IndicatorType.AVOLUME]: "Accumulated Volume",
     // Variables
-    [IndicatorType.CLOSE]: "Close",
-    [IndicatorType.OPEN]: "Open",
-    [IndicatorType.HIGH]: "High",
-    [IndicatorType.LOW]: "Low",
+    [IndicatorType.BAR_CLOSE]: "Bar Close",
+    [IndicatorType.BAR_OPEN]: "Bar Open",
+    [IndicatorType.HIGH_BAR]: "High Bar",
+    [IndicatorType.LOW_BAR]: "Low Bar",
     [IndicatorType.PMH]: "PM High",
     [IndicatorType.PML]: "PM Low",
-    [IndicatorType.HOD]: "HOD",
-    [IndicatorType.LOD]: "LOD",
+    [IndicatorType.RTH_HIGH]: "RTH High",
+    [IndicatorType.RTH_LOW]: "RTH Low",
+    [IndicatorType.RTH_OPEN]: "RTH Open",
     [IndicatorType.Y_HIGH]: "Yesterday High",
     [IndicatorType.Y_LOW]: "Yesterday Low",
     [IndicatorType.Y_OPEN]: "Yesterday Open",
     [IndicatorType.Y_CLOSE]: "Yesterday Close",
     [IndicatorType.MAX_X_DAYS]: "Max of last X days",
     [IndicatorType.MIN_X_DAYS]: "Min of last X days",
-    [IndicatorType.CURRENT_OPEN]: "Current Open",
-    [IndicatorType.BAR_OPEN]: "Bar Open",
-    [IndicatorType.DAY_OPEN]: "Day Open",
-    [IndicatorType.PREV_CLOSE]: "Previous Close",
     // Behavior
-    [IndicatorType.CONSECUTIVE_HIGHER_HIGHS]: "Consecutive Higher Highs",
-    [IndicatorType.CONSECUTIVE_LOWER_LOWS]: "Consecutive Lower Lows",
-    [IndicatorType.CONSECUTIVE_GREEN_CANDLES]: "Consecutive Green Candles",
-    [IndicatorType.CONSECUTIVE_RED_CANDLES]: "Consecutive Red Candles",
-    [IndicatorType.OPENING_RANGE]: "Opening Range",
-    [IndicatorType.HEIKIN_ASHI]: "Heikin-Ashi (Candle)",
-    [IndicatorType.HA_CLOSE]: "HA Close",
-    [IndicatorType.HA_HIGH]: "HA High",
-    [IndicatorType.HA_LOW]: "HA Low",
-    [IndicatorType.HA_OPEN]: "HA Open",
+    [IndicatorType.CONSECUTIVE_HIGHER_HIGHS]: "Consec Higher Highs",
+    [IndicatorType.CONSECUTIVE_LOWER_LOWS]: "Consec Lower Lows",
+    [IndicatorType.CONSECUTIVE_GREEN_CANDLES]: "Consec Green Candles",
+    [IndicatorType.CONSECUTIVE_RED_CANDLES]: "Consec Red Candles",
+    [IndicatorType.CONSECUTIVE_HIGHER_LOWS]: "Consec Higher Lows",
+    [IndicatorType.CONSECUTIVE_LOWER_HIGHS]: "Consec Lower Highs",
+    [IndicatorType.OPENING_RANGE_PLUS]: "Opening Range +",
+    [IndicatorType.OPENING_RANGE_MINUS]: "Opening Range -",
+    [IndicatorType.OPENING_RANGE_AM_PLUS]: "Opening Range AM +",
+    [IndicatorType.OPENING_RANGE_AM_MINUS]: "Opening Range AM -",
+    [IndicatorType.HEIKIN_ASHI]: "Heikin-Ashi",
     // Time & Others
     [IndicatorType.TIME_OF_DAY]: "Time of Day",
-    [IndicatorType.PIVOT_POINTS]: "Pivot Points",
+    [IndicatorType.RANGE_OF_TIME]: "Range of Time",
+    [IndicatorType.HIGH_LOW_FROM_TIME]: "High/Low from x time",
+    [IndicatorType.HIGH_LOW_FROM_HOUR_TIME]: "High/Low from hour-time",
     [IndicatorType.RET_PCT_PM]: "Ret % PM",
-    [IndicatorType.RET_PCT_RTH]: "Ret % RTH",
-    [IndicatorType.RET_PCT_AM]: "Ret % AM",
-    [IndicatorType.MAX_N_BARS]: "Max N Bars",
-    [IndicatorType.CUSTOM]: "Custom",
+    [IndicatorType.RET_PCT_RTH]: "Ret % RTH"
 };
 
 const FIXED_VALUE_KEY = "__FIXED_VALUE__";
@@ -193,11 +193,13 @@ export const IndicatorSelector = ({
     value, 
     onChange, 
     isTarget,
+    allowedTargets,
     exclude = []
 }: { 
     value: string, 
     onChange: (val: string) => void, 
     isTarget?: boolean,
+    allowedTargets?: IndicatorType[],
     exclude?: IndicatorType[]
 }) => {
     return (
@@ -207,7 +209,10 @@ export const IndicatorSelector = ({
             className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs max-w-[150px] truncate"
         >
             {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
-                const filtered = indicators.filter(t => !exclude.includes(t));
+                const filtered = indicators.filter(t => 
+                    (allowedTargets ? allowedTargets.includes(t) : true) && 
+                    !exclude.includes(t)
+                );
                 if (filtered.length === 0) return null;
                 
                 return (
@@ -249,7 +254,6 @@ export const IndicatorParams = ({
                     case IndicatorType.MOMENTUM:
                     case IndicatorType.ROC:
                     case IndicatorType.CCI:
-                    case IndicatorType.MAX_N_BARS:
                         return (
                             <input
                                 type="number"
@@ -261,6 +265,7 @@ export const IndicatorParams = ({
                             />
                         );
                     case IndicatorType.BOLLINGER_BANDS:
+                    case IndicatorType.DONCHIAN:
                         return (
                             <div className="flex gap-1.5 items-center">
                                 <input
@@ -271,17 +276,65 @@ export const IndicatorParams = ({
                                     className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
                                     title="Period"
                                 />
-                                <input
-                                    type="number"
-                                    value={value.stdDev || ''}
-                                    onChange={(e) => onChange({ ...value, stdDev: Number(e.target.value) })}
-                                    placeholder="SD"
-                                    className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-                                    title="Standard Deviation"
-                                />
+                                {value.name === IndicatorType.BOLLINGER_BANDS && (
+                                    <input
+                                        type="number"
+                                        value={value.stdDev || ''}
+                                        onChange={(e) => onChange({ ...value, stdDev: Number(e.target.value) })}
+                                        placeholder="SD"
+                                        className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                        title="Standard Deviation"
+                                    />
+                                )}
+                                <select
+                                    value={value.band_line || 'Upper'}
+                                    onChange={(e) => onChange({ ...value, band_line: e.target.value as "Upper" | "Lower" | "Basis" })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-20"
+                                >
+                                    <option value="Upper">Upper</option>
+                                    <option value="Lower">Lower</option>
+                                    <option value="Basis">Basis</option>
+                                </select>
                             </div>
                         );
                     case IndicatorType.MACD:
+                        return (
+                            <div className="flex gap-1.5 items-center flex-wrap max-w-[220px]">
+                                <input
+                                    type="number"
+                                    value={value.period || ''}
+                                    onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                                    placeholder="F"
+                                    className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Fast Period"
+                                />
+                                <input
+                                    type="number"
+                                    value={value.period2 || ''}
+                                    onChange={(e) => onChange({ ...value, period2: Number(e.target.value) })}
+                                    placeholder="S"
+                                    className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Slow Period"
+                                />
+                                <input
+                                    type="number"
+                                    value={value.period3 || ''}
+                                    onChange={(e) => onChange({ ...value, period3: Number(e.target.value) })}
+                                    placeholder="Sig"
+                                    className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Signal Period"
+                                />
+                                <select
+                                    value={value.macd_line || 'MACD Line'}
+                                    onChange={(e) => onChange({ ...value, macd_line: e.target.value as "Signal" | "MACD Line" | "Histogram" })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-[85px]"
+                                >
+                                    <option value="MACD Line">MACD Line</option>
+                                    <option value="Signal">Signal</option>
+                                    <option value="Histogram">Histogram</option>
+                                </select>
+                            </div>
+                        );
                     case IndicatorType.STOCHASTIC:
                         return (
                             <div className="flex gap-1.5 items-center flex-wrap max-w-[180px]">
@@ -337,6 +390,38 @@ export const IndicatorParams = ({
                                     placeholder="SpB"
                                     className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
                                     title="Leading Span B"
+                                />
+                            </div>
+                        );
+                    case IndicatorType.HEIKIN_ASHI:
+                        return (
+                            <select
+                                value={value.ha_option || 'Close Bar'}
+                                onChange={(e) => onChange({ ...value, ha_option: e.target.value as any })}
+                                className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                            >
+                                <option value="Close Bar">Close</option>
+                                <option value="Open Bar">Open</option>
+                                <option value="High Bar">High</option>
+                                <option value="Low Bar">Low</option>
+                                <option value="Consecutive Green">Consec Green</option>
+                                <option value="Consecutive Red">Consec Red</option>
+                            </select>
+                        );
+                    case IndicatorType.OPENING_RANGE_PLUS:
+                    case IndicatorType.OPENING_RANGE_MINUS:
+                    case IndicatorType.OPENING_RANGE_AM_PLUS:
+                    case IndicatorType.OPENING_RANGE_AM_MINUS:
+                        return (
+                            <div className="flex gap-1.5 items-center">
+                                <span className="text-xs text-muted-foreground whitespace-nowrap">Mins:</span>
+                                <input
+                                    type="number"
+                                    value={value.orb_minutes || ''}
+                                    onChange={(e) => onChange({ ...value, orb_minutes: Number(e.target.value) })}
+                                    placeholder="M"
+                                    className="w-14 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Reference minutes (ex. 30 for 30min ORB)"
                                 />
                             </div>
                         );
@@ -435,10 +520,12 @@ export const SourceIndicatorInput = ({
 
 export const TargetInput = ({
     value,
-    onChange
+    onChange,
+    allowedTargets
 }: {
     value: IndicatorConfig | number;
     onChange: (val: IndicatorConfig | number) => void;
+    allowedTargets?: IndicatorType[];
 }) => {
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
@@ -448,6 +535,7 @@ export const TargetInput = ({
             <IndicatorSelector
                 isTarget
                 value={selectedKey}
+                allowedTargets={allowedTargets}
                 onChange={(key) => {
                     if (key === FIXED_VALUE_KEY) {
                         onChange(0);
@@ -500,7 +588,7 @@ export const ConditionRow = ({
     // Helper to auto-update target if source is HA
     const handleSourceChange = (newSource: IndicatorConfig) => {
         if (condition.type === 'indicator_comparison') {
-            const isHA = [IndicatorType.HA_CLOSE, IndicatorType.HA_HIGH, IndicatorType.HA_LOW, IndicatorType.HA_OPEN].includes(newSource.name);
+            const isHA = newSource.name === IndicatorType.HEIKIN_ASHI;
             const newTarget = typeof condition.target === 'object' 
                 ? { ...condition.target, calc_on_heikin: isHA }
                 : condition.target;
@@ -513,7 +601,7 @@ export const ConditionRow = ({
 
     const handleTargetChange = (newTarget: IndicatorConfig | number) => {
         if (condition.type === 'indicator_comparison') {
-            const isHA = [IndicatorType.HA_CLOSE, IndicatorType.HA_HIGH, IndicatorType.HA_LOW, IndicatorType.HA_OPEN].includes(condition.source.name);
+            const isHA = condition.source.name === IndicatorType.HEIKIN_ASHI;
             const finalTarget = typeof newTarget === 'object'
                 ? { ...newTarget, calc_on_heikin: isHA }
                 : newTarget;
@@ -547,6 +635,7 @@ export const ConditionRow = ({
                         <TargetInput
                             value={condition.target}
                             onChange={handleTargetChange}
+                            allowedTargets={getAllowedTargets(condition.source.name, false)}
                         />
                     </>
                 );
@@ -555,7 +644,7 @@ export const ConditionRow = ({
                     <>
                         <SourceIndicatorInput
                             value={condition.source}
-                            exclude={DISTANCE_CONDITION_EXCLUDES as IndicatorType[]}
+                            exclude={DISTANCE_SOURCE_EXCLUDES as IndicatorType[]}
                             onChange={(val) => onChange({ ...condition, source: val })}
                         />
                         <div className="text-xs text-muted-foreground">is</div>
@@ -579,7 +668,7 @@ export const ConditionRow = ({
                         <div className="text-xs text-muted-foreground">from</div>
                         <SourceIndicatorInput
                             value={condition.level}
-                            exclude={DISTANCE_CONDITION_EXCLUDES as IndicatorType[]}
+                            exclude={DISTANCE_SOURCE_EXCLUDES as IndicatorType[]}
                             onChange={(val) => onChange({ ...condition, level: val })}
                         />
                         <div className="flex items-center gap-1.5 ml-2 border-l border-border/30 pl-2">
@@ -672,7 +761,7 @@ export const ConditionRow = ({
                     } else if (type === 'price_level_distance') {
                         onChange({
                             type: 'price_level_distance',
-                            source: { name: IndicatorType.CLOSE, offset: 0 },
+                            source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
                             level: { name: IndicatorType.PMH, offset: 0 },
                             comparator: 'DISTANCE_LT',
                             value_pct: 2.0,
@@ -731,7 +820,7 @@ export const GroupDisplay = ({
     const addCondition = () => {
         const newCondition: AnyCondition = {
             type: 'indicator_comparison',
-            source: { name: IndicatorType.CLOSE },
+            source: { name: IndicatorType.BAR_CLOSE },
             comparator: Comparator.GT,
             target: { name: IndicatorType.VWAP },
             timeframe: parentTimeframe
