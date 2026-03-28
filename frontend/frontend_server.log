@@ -1,0 +1,30 @@
+
+> frontend@0.1.0 dev
+> next dev
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.100.2:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1002ms
+ GET / 200 in 994ms (compile: 775ms, render: 219ms)
+ GET / 200 in 93ms (compile: 37ms, render: 55ms)
+ GET / 200 in 42ms (compile: 11ms, render: 31ms)
+ GET / 200 in 79ms (compile: 20ms, render: 58ms)
+ GET / 200 in 81ms (compile: 26ms, render: 55ms)
+  Downloading swc package @next/swc-wasm-nodejs... to /Users/jvch/Library/Caches/next-swc
+⚠ Attempted to load @next/swc-darwin-arm64, but an error occurred: dlopen(/Users/jvch/Desktop/AutomatoWebs/BTT/frontend/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node, 0x0001): tried: '/Users/jvch/Desktop/AutomatoWebs/BTT/frontend/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node' (code signature in <0C00123F-5897-3BFC-8A9E-72C783770284> '/Users/jvch/Desktop/AutomatoWebs/BTT/frontend/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node' not valid for use in process: library load denied by system policy), '/System/Volumes/Preboot/Cryptexes/OS/Users/jvch/Desktop/AutomatoWebs/BTT/frontend/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node' (no such file), '/Users/jvch/Desktop/AutomatoWebs/BTT/frontend/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node' (code signature in <0C00123F-5897-3BFC-8A9E-72C783770284> '/Users/jvch/Desktop/AutomatoWebs/BTT/frontend/node_modules/@next/swc-darwin-arm64/next-swc.darwin-arm64.node' not valid for use in process: library load denied by system policy)
+⚠ TypeError: fetch failed
+    at ignore-listed frames {
+  [cause]: Error: getaddrinfo ENOTFOUND registry.npmjs.org
+      at ignore-listed frames {
+    errno: -3008,
+    code: 'ENOTFOUND',
+    syscall: 'getaddrinfo',
+    hostname: 'registry.npmjs.org'
+  }
+}
+⨯ Failed to load SWC binary for darwin/arm64, see more info here: https://nextjs.org/docs/messages/failed-loading-swc
+[?25h

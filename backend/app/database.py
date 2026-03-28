@@ -1,40 +1,72 @@
-import duckdb
 import os
+import duckdb
 from threading import Lock
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Global connection and lock for thread safety
 _con = None
 _lock = Lock()
 
 def _establish_connection():
-    """Establish connection to MotherDuck cloud database."""
-    token = os.getenv("MOTHERDUCK_TOKEN")
-    if token:
-        token = token.strip()
+    """Establish connection to local or GCS database."""
+    provider = os.getenv("DB_PROVIDER", "motherduck").lower()
     
-    # We connect to md: (default database) to allow write access to user tables
     try:
-        # MOTHERDUCK_TOKEN can be passed in the connection string or as an environment variable
-        conn_str = f"md:?motherduck_token={token}"
-        con = duckdb.connect(conn_str)
-        print("✅ Connected to MotherDuck (default database)")
-        
-        # Production Stability settings
-        con.execute("SET search_path = 'main'")
-        
-        return con
+        if provider == "gcs":
+            # For GCS, we use an in-memory DB or local file for writes, 
+            # and read data directly from parquet files.
+            # Using a local file 'users.duckdb' to persist strategies/queries.
+            con = duckdb.connect('users.duckdb')
+            print("✅ Connected to local users.duckdb (GCS data mode)")
+            
+            # Setup GCS secret for DuckDB reads (HMAC works better in DuckDB)
+            access_key = os.getenv("GCS_HMAC_KEY")
+            secret = os.getenv("GCS_HMAC_SECRET")
+            
+            con.execute("INSTALL httpfs; LOAD httpfs;")
+            
+            if access_key and secret:
+                # Try to drop secret if exists to avoid error on reload
+                try: con.execute("DROP SECRET IF EXISTS gcs_secret;")
+                except: pass
+                
+                con.execute(f"""
+                    CREATE SECRET gcs_secret (
+                        TYPE GCS,
+                        KEY_ID '{access_key}',
+                        SECRET '{secret}'
+                    );
+                """)
+                print("✅ GCS HMAC Secret configured for DuckDB reads.")
+            else:
+                print("⚠️ GCS HMAC credentials not found in environment. Market views may fail.")
+            
+            return con
+            
+        elif provider == "local":
+            con = duckdb.connect('local_data.duckdb')
+            print("✅ Connected to local database.")
+            return con
+            
+        else: # Default to motherduck for backward compatibility during transition
+            token = os.getenv("MOTHERDUCK_TOKEN")
+            if token:
+                token = token.strip()
+            conn_str = f"md:?motherduck_token={token}" if token else "md:"
+            con = duckdb.connect(conn_str)
+            print("✅ Connected to MotherDuck (default database)")
+            con.execute("SET search_path = 'main'")
+            return con
+            
     except Exception as e:
-        print(f"❌ MotherDuck Connection Error: {e}")
-        # Fallback to local transient DB if MotherDuck fails
+        print(f"❌ Connection Error: {e}")
+        # Fallback to local transient DB
         return duckdb.connect()
 
 def get_db_connection(read_only=False):
     """
-    Returns a DuckDB connection cursor to MotherDuck cloud database.
-    Note: MotherDuck manages read/write via the token and database attachment permissions.
+    Returns a DuckDB connection cursor.
     """
     global _con
     with _lock:

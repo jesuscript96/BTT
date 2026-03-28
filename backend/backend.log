@@ -1,0 +1,1310 @@
+INFO:     Will watch for changes in these directories: ['/Users/jvch/Desktop/AutomatoWebs/BTT/backend']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [46085] using WatchFiles
+INFO:     Started server process [46165]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:50078 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50079 - "GET /api/queries/ HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['8fb01706-3bd2-4eaf-92a4-f6d2d2018035']
+Weights: {'8fb01706-3bd2-4eaf-92a4-f6d2d2018035': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.20s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  Splits batch 1 failed: Binder Error: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+LINE 1: ...OM massive.splits WHERE execution_date >= ? AND execution_date <= ? AND ticker...
+                                                  ^
+  Splits batch 2 failed: Binder Error: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+LINE 1: ...OM massive.splits WHERE execution_date >= ? AND execution_date <= ? AND ticker...
+                                                  ^
+  Splits batch 3 failed: Binder Error: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+LINE 1: ...OM massive.splits WHERE execution_date >= ? AND execution_date <= ? AND ticker...
+                                                  ^
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  Intraday chunk 2025-11-03T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2025-11-03T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2025-12-01T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2025-12-01T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-01-01T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-01-01T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-02-01T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-02-01T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+Backtest execution error: 400: No market data found for given filters
+INFO:     127.0.0.1:50131 - "POST /api/backtest/run HTTP/1.1" 500 Internal Server Error
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['8fb01706-3bd2-4eaf-92a4-f6d2d2018035']
+Weights: {'8fb01706-3bd2-4eaf-92a4-f6d2d2018035': 100.0}
+Dataset filters: ticker=None date_from='2025-11-01' date_to='2026-02-25' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.17s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  Splits batch 1 failed: Binder Error: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+LINE 1: ...OM massive.splits WHERE execution_date >= ? AND execution_date <= ? AND ticker...
+                                                  ^
+  Splits batch 2 failed: Binder Error: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+LINE 1: ...OM massive.splits WHERE execution_date >= ? AND execution_date <= ? AND ticker...
+                                                  ^
+  Splits batch 3 failed: Binder Error: Cannot compare values of type DATE and type VARCHAR - an explicit cast is required
+LINE 1: ...OM massive.splits WHERE execution_date >= ? AND execution_date <= ? AND ticker...
+                                                  ^
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  Intraday chunk 2025-11-03T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2025-11-03T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2025-12-01T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2025-12-01T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-01-01T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-01-01T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-02-01T00:00:00 batch 1 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+  Intraday chunk 2026-02-01T00:00:00 batch 2 failed: Binder Error: Cannot compare values of type TIMESTAMP and type VARCHAR - an explicit cast is required
+LINE 1: ...olume FROM intraday_1m WHERE timestamp >= ? AND timestamp < ? AND ticker IN (?...
+     
+Backtest execution error: 400: No market data found for given filters
+INFO:     127.0.0.1:50279 - "POST /api/backtest/run HTTP/1.1" 500 Internal Server Error
+WARNING:  WatchFiles detected changes in 'app/routers/backtest.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [46165]
+INFO:     Started server process [48953]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:64300 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64301 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64376 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['8fb01706-3bd2-4eaf-92a4-f6d2d2018035']
+Weights: {'8fb01706-3bd2-4eaf-92a4-f6d2d2018035': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.15s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  ✓ Fetched 309,556 rows in 12.11s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6676 trades in 0.15s
+Total JIT Execution: 2.19s
+  ✓ Backtest execution in 2.23s (6676 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run fd6f3841-0860-475b-a872-70e9bed515d5
+  ✓ Metrics calculated in 0.39s
+✓ Total Request Time: 14.92s
+INFO:     127.0.0.1:64376 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.15s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  ✓ Fetched 309,556 rows in 8.64s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.05s
+Total JIT Execution: 0.15s
+  ✓ Backtest execution in 0.23s (6677 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run 873578fe-848e-47e0-9883-16515f4d8352
+  ✓ Metrics calculated in 0.39s
+✓ Total Request Time: 9.43s
+INFO:     127.0.0.1:65214 - "POST /api/backtest/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65299 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65300 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65299 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65301 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65301 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65299 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65300 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65301 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65435 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['1ef5f888-49dc-4a88-9eb1-372b6fdf4ff0']
+Weights: {'1ef5f888-49dc-4a88-9eb1-372b6fdf4ff0': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.18s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  ✓ Fetched 309,556 rows in 9.27s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 8142 trades in 0.06s
+Total JIT Execution: 0.09s
+  ✓ Backtest execution in 0.13s (8142 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run e87fa167-2b25-4384-a3f2-4adb7c7a640d
+  ✓ Metrics calculated in 0.44s
+✓ Total Request Time: 10.05s
+INFO:     127.0.0.1:65435 - "POST /api/backtest/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49210 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49213 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50132 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50133 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50132 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50134 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50224 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['9e2214ed-2b1f-4285-9ec4-978f72e81a5d']
+Weights: {'9e2214ed-2b1f-4285-9ec4-978f72e81a5d': 100.0}
+Dataset filters: ticker=None date_from='2025-01-01' date_to='2026-01-01' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.15s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 3675decf-1dc0-44d0-b1a4-7bd3520d6b6d
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  ✓ Fetched 1,073,019 rows in 39.22s
+  ✓ After date/interval filter: 514,165 rows
+
+[3/5] Running backtest in chunks (>250,000 rows)...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 51064 rows...
+Reconstructed 43 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 1/12 (2025-01): 51,064 rows, 43 trades, balance=99,919
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 42050 rows...
+Reconstructed 37 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 2/12 (2025-02): 42,050 rows, 37 trades, balance=99,840
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 32381 rows...
+Reconstructed 31 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 3/12 (2025-03): 32,381 rows, 31 trades, balance=99,776
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 37716 rows...
+Reconstructed 28 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 4/12 (2025-04): 37,716 rows, 28 trades, balance=99,724
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 42214 rows...
+Reconstructed 27 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 5/12 (2025-05): 42,214 rows, 27 trades, balance=99,666
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 44675 rows...
+Reconstructed 29 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 6/12 (2025-06): 44,675 rows, 29 trades, balance=99,613
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 45836 rows...
+Reconstructed 28 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 7/12 (2025-07): 45,836 rows, 28 trades, balance=99,553
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 39584 rows...
+Reconstructed 40 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 8/12 (2025-08): 39,584 rows, 40 trades, balance=99,468
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 55362 rows...
+Reconstructed 33 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 9/12 (2025-09): 55,362 rows, 33 trades, balance=99,399
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 55301 rows...
+Reconstructed 48 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 10/12 (2025-10): 55,301 rows, 48 trades, balance=99,296
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 31937 rows...
+Reconstructed 22 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 11/12 (2025-11): 31,937 rows, 22 trades, balance=99,251
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 36045 rows...
+Reconstructed 38 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 12/12 (2025-12): 36,045 rows, 38 trades, balance=99,167
+  ✓ Merged 12 chunks in 0.26s (404 total trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run 40263b29-46af-4186-957f-fef3ffc48828
+  ✓ Metrics calculated in 0.30s
+✓ Total Request Time: 40.02s
+INFO:     127.0.0.1:50224 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['9e2214ed-2b1f-4285-9ec4-978f72e81a5d']
+Weights: {'9e2214ed-2b1f-4285-9ec4-978f72e81a5d': 100.0}
+Dataset filters: ticker=None date_from='2025-01-01' date_to='2026-01-01' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.19s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 3675decf-1dc0-44d0-b1a4-7bd3520d6b6d
+  - Building query for universe selection...
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+  ✓ Fetched 1,073,019 rows in 33.18s
+  ✓ After date/interval filter: 514,165 rows
+
+[3/5] Running backtest in chunks (>250,000 rows)...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 51064 rows...
+Reconstructed 43 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 1/12 (2025-01): 51,064 rows, 43 trades, balance=99,919
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 42050 rows...
+Reconstructed 37 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 2/12 (2025-02): 42,050 rows, 37 trades, balance=99,840
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 32381 rows...
+Reconstructed 31 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 3/12 (2025-03): 32,381 rows, 31 trades, balance=99,776
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 37716 rows...
+Reconstructed 28 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 4/12 (2025-04): 37,716 rows, 28 trades, balance=99,724
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 42214 rows...
+Reconstructed 27 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 5/12 (2025-05): 42,214 rows, 27 trades, balance=99,666
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 44675 rows...
+Reconstructed 29 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 6/12 (2025-06): 44,675 rows, 29 trades, balance=99,613
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 45836 rows...
+Reconstructed 28 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 7/12 (2025-07): 45,836 rows, 28 trades, balance=99,553
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 39584 rows...
+Reconstructed 40 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 8/12 (2025-08): 39,584 rows, 40 trades, balance=99,468
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 55362 rows...
+Reconstructed 33 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 9/12 (2025-09): 55,362 rows, 33 trades, balance=99,398
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 55301 rows...
+Reconstructed 48 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 10/12 (2025-10): 55,301 rows, 48 trades, balance=99,296
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 31937 rows...
+Reconstructed 22 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 11/12 (2025-11): 31,937 rows, 22 trades, balance=99,251
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 36045 rows...
+Reconstructed 38 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 12/12 (2025-12): 36,045 rows, 38 trades, balance=99,167
+  ✓ Merged 12 chunks in 0.26s (404 total trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run ed4eed71-f6df-4513-af9e-435da1cdadd5
+  ✓ Metrics calculated in 0.28s
+✓ Total Request Time: 34.01s
+INFO:     127.0.0.1:52262 - "POST /api/backtest/run HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'app/routers/backtest.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [48953]
+INFO:     Started server process [17297]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:56345 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56345 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56366 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56368 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56345 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56368 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56345 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56366 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56368 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['9e2214ed-2b1f-4285-9ec4-978f72e81a5d']
+Weights: {'9e2214ed-2b1f-4285-9ec4-978f72e81a5d': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.15s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 3675decf-1dc0-44d0-b1a4-7bd3520d6b6d
+  - Building query for universe selection...
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+  ✓ Fetched 1,073,019 rows in 34.06s
+  ✓ After date/interval filter: 514,165 rows
+
+[3/5] Running backtest in chunks (>250,000 rows)...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 51064 rows...
+Reconstructed 43 trades in 0.17s
+Total JIT Execution: 0.42s
+  Chunk 1/12 (2025-01): 51,064 rows, 43 trades, balance=99,959
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 42050 rows...
+Reconstructed 37 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 2/12 (2025-02): 42,050 rows, 37 trades, balance=99,916
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 32381 rows...
+Reconstructed 31 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 3/12 (2025-03): 32,381 rows, 31 trades, balance=99,881
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 37716 rows...
+Reconstructed 28 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 4/12 (2025-04): 37,716 rows, 28 trades, balance=99,849
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 42214 rows...
+Reconstructed 27 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 5/12 (2025-05): 42,214 rows, 27 trades, balance=99,817
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 44675 rows...
+Reconstructed 29 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 6/12 (2025-06): 44,675 rows, 29 trades, balance=99,792
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 45836 rows...
+Reconstructed 28 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 7/12 (2025-07): 45,836 rows, 28 trades, balance=99,758
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 39584 rows...
+Reconstructed 40 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 8/12 (2025-08): 39,584 rows, 40 trades, balance=99,712
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 55362 rows...
+Reconstructed 33 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 9/12 (2025-09): 55,362 rows, 33 trades, balance=99,675
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 55301 rows...
+Reconstructed 48 trades in 0.00s
+Total JIT Execution: 0.02s
+  Chunk 10/12 (2025-10): 55,301 rows, 48 trades, balance=99,619
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 31937 rows...
+Reconstructed 22 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 11/12 (2025-11): 31,937 rows, 22 trades, balance=99,595
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 36045 rows...
+Reconstructed 38 trades in 0.00s
+Total JIT Execution: 0.01s
+  Chunk 12/12 (2025-12): 36,045 rows, 38 trades, balance=99,547
+  ✓ Merged 12 chunks in 0.67s (404 total trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run 666b0781-a2ff-441f-bc5c-5b62ed743b65
+  ✓ Metrics calculated in 0.28s
+✓ Total Request Time: 35.25s
+INFO:     127.0.0.1:56378 - "GET /api/backtest/status/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56378 - "GET /api/backtest/results/666b0781-a2ff-441f-bc5c-5b62ed743b65 HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'app/routers/data.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [17297]
+INFO:     Started server process [73561]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:50277 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50278 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50336 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50336 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.14s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+INFO:     127.0.0.1:50336 - "GET /api/backtest/status/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+INFO:     127.0.0.1:50336 - "GET /api/backtest/status/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:50336 - "GET /api/backtest/status/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50336 - "GET /api/backtest/status/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+  ✓ Fetched 309,556 rows in 11.66s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.21s
+Total JIT Execution: 0.46s
+  ✓ Backtest execution in 0.49s (6677 trades)
+INFO:     127.0.0.1:50336 - "GET /api/backtest/status/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run 72c613d3-41b2-464e-91a9-f760256512c6
+  ✓ Metrics calculated in 0.41s
+✓ Total Request Time: 12.72s
+INFO:     127.0.0.1:50336 - "GET /api/backtest/status/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50336 - "GET /api/backtest/results/72c613d3-41b2-464e-91a9-f760256512c6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51096 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51095 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51126 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.14s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+INFO:     127.0.0.1:51126 - "GET /api/backtest/status/b8fbaab0-509a-4944-a0a7-eb9b69529c53 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:51126 - "GET /api/backtest/status/b8fbaab0-509a-4944-a0a7-eb9b69529c53 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51126 - "GET /api/backtest/status/b8fbaab0-509a-4944-a0a7-eb9b69529c53 HTTP/1.1" 200 OK
+  ✓ Fetched 309,556 rows in 8.58s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.04s
+Total JIT Execution: 0.18s
+  ✓ Backtest execution in 0.21s (6677 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run b8fbaab0-509a-4944-a0a7-eb9b69529c53
+  ✓ Metrics calculated in 0.34s
+✓ Total Request Time: 9.29s
+INFO:     127.0.0.1:51126 - "GET /api/backtest/status/b8fbaab0-509a-4944-a0a7-eb9b69529c53 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51126 - "GET /api/backtest/results/b8fbaab0-509a-4944-a0a7-eb9b69529c53 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51243 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51244 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51249 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51250 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
+    self._check_compatible_with(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 540, in _check_compatible_with
+    self._assert_tzawareness_compat(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 782, in _assert_tzawareness_compat
+    raise TypeError(
+TypeError: Cannot compare tz-naive and tz-aware datetime-like objects.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 983, in _cmp_method
+    other = self._validate_comparison_value(other)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
+    raise InvalidComparison(other) from err
+pandas.errors.InvalidComparison: 2026-02-24 20:56:00+00:00
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/data.py", line 309, in get_historical_ohlc
+    df = df[df['timestamp'] >= pd.to_datetime(date_from)]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/series.py", line 6119, in _cmp_method
+    res_values = ops.comparison_op(lvalues, rvalues, op)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 330, in comparison_op
+    res_values = op(lvalues, rvalues)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 985, in _cmp_method
+    return invalid_comparison(self, other, op)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
+    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
+TypeError: Invalid comparison between dtype=datetime64[us] and Timestamp
+Historical OHLC API Error: Invalid comparison between dtype=datetime64[us] and Timestamp
+INFO:     127.0.0.1:51243 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 500 Internal Server Error
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
+    self._check_compatible_with(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 540, in _check_compatible_with
+    self._assert_tzawareness_compat(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 782, in _assert_tzawareness_compat
+    raise TypeError(
+TypeError: Cannot compare tz-naive and tz-aware datetime-like objects.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 983, in _cmp_method
+    other = self._validate_comparison_value(other)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
+    raise InvalidComparison(other) from err
+pandas.errors.InvalidComparison: 2026-02-24 20:56:00+00:00
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/data.py", line 309, in get_historical_ohlc
+    df = df[df['timestamp'] >= pd.to_datetime(date_from)]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/series.py", line 6119, in _cmp_method
+    res_values = ops.comparison_op(lvalues, rvalues, op)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 330, in comparison_op
+    res_values = op(lvalues, rvalues)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 985, in _cmp_method
+    return invalid_comparison(self, other, op)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
+    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
+TypeError: Invalid comparison between dtype=datetime64[us] and Timestamp
+Historical OHLC API Error: Invalid comparison between dtype=datetime64[us] and Timestamp
+INFO:     127.0.0.1:51250 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 500 Internal Server Error
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
+    self._check_compatible_with(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 540, in _check_compatible_with
+    self._assert_tzawareness_compat(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 782, in _assert_tzawareness_compat
+    raise TypeError(
+TypeError: Cannot compare tz-naive and tz-aware datetime-like objects.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 983, in _cmp_method
+    other = self._validate_comparison_value(other)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
+    raise InvalidComparison(other) from err
+pandas.errors.InvalidComparison: 2026-02-24 00:00:00+00:00
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/data.py", line 309, in get_historical_ohlc
+    df = df[df['timestamp'] >= pd.to_datetime(date_from)]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/series.py", line 6119, in _cmp_method
+    res_values = ops.comparison_op(lvalues, rvalues, op)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 330, in comparison_op
+    res_values = op(lvalues, rvalues)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 985, in _cmp_method
+    return invalid_comparison(self, other, op)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
+    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
+TypeError: Invalid comparison between dtype=datetime64[us] and Timestamp
+Historical OHLC API Error: Invalid comparison between dtype=datetime64[us] and Timestamp
+INFO:     127.0.0.1:51517 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T00:00:00Z&date_to=2026-02-24T23:59:59Z HTTP/1.1" 500 Internal Server Error
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
+    self._check_compatible_with(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 540, in _check_compatible_with
+    self._assert_tzawareness_compat(other)
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimes.py", line 782, in _assert_tzawareness_compat
+    raise TypeError(
+TypeError: Cannot compare tz-naive and tz-aware datetime-like objects.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 983, in _cmp_method
+    other = self._validate_comparison_value(other)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
+    raise InvalidComparison(other) from err
+pandas.errors.InvalidComparison: 2026-02-24 00:00:00+00:00
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/data.py", line 309, in get_historical_ohlc
+    df = df[df['timestamp'] >= pd.to_datetime(date_from)]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/series.py", line 6119, in _cmp_method
+    res_values = ops.comparison_op(lvalues, rvalues, op)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/array_ops.py", line 330, in comparison_op
+    res_values = op(lvalues, rvalues)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/arrays/datetimelike.py", line 985, in _cmp_method
+    return invalid_comparison(self, other, op)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv/lib/python3.11/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
+    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
+TypeError: Invalid comparison between dtype=datetime64[us] and Timestamp
+Historical OHLC API Error: Invalid comparison between dtype=datetime64[us] and Timestamp
+INFO:     127.0.0.1:53295 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T00:00:00Z&date_to=2026-02-24T23:59:59Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%7D%5D HTTP/1.1" 500 Internal Server Error
+WARNING:  WatchFiles detected changes in 'app/routers/data.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [73561]
+INFO:     Started server process [93151]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/data.py:314: FutureWarning: Series.view is deprecated and will be removed in a future version. Use ``astype`` as an alternative to change the dtype.
+  df['time'] = df['timestamp'].view('int64') // 10**9
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:53507 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T00:00:00Z&date_to=2026-02-24T23:59:59Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%7D%5D HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'app/routers/data.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [93151]
+INFO:     Started server process [93480]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:53803 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T00:00:00Z&date_to=2026-02-24T23:59:59Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54354 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54353 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54386 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54386 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.15s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+INFO:     127.0.0.1:54386 - "GET /api/backtest/status/9eaa912b-cf4a-482a-9576-cdee4c6bdad7 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:54386 - "GET /api/backtest/status/9eaa912b-cf4a-482a-9576-cdee4c6bdad7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54386 - "GET /api/backtest/status/9eaa912b-cf4a-482a-9576-cdee4c6bdad7 HTTP/1.1" 200 OK
+  ✓ Fetched 309,556 rows in 8.84s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.21s
+Total JIT Execution: 0.48s
+  ✓ Backtest execution in 0.51s (6677 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+INFO:     127.0.0.1:54386 - "GET /api/backtest/status/9eaa912b-cf4a-482a-9576-cdee4c6bdad7 HTTP/1.1" 200 OK
+  ✓ Validated and saved run 9eaa912b-cf4a-482a-9576-cdee4c6bdad7
+  ✓ Metrics calculated in 0.38s
+✓ Total Request Time: 9.90s
+INFO:     127.0.0.1:54386 - "GET /api/backtest/status/9eaa912b-cf4a-482a-9576-cdee4c6bdad7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54386 - "GET /api/backtest/results/9eaa912b-cf4a-482a-9576-cdee4c6bdad7 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54590 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54591 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54592 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54593 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54590 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54593 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54704 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54705 - "GET /api/data/historical?ticker=VIR&date_from=2026-02-24T20:54:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54710 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54711 - "GET /api/data/historical?ticker=VIR&date_from=2026-02-24T20:54:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54704 - "GET /api/data/historical?ticker=VIR&date_from=2026-02-24T20:54:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54711 - "GET /api/data/historical?ticker=VIR&date_from=2026-02-24T20:54:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54711 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:22:00.000Z&date_to=2026-02-24T22:30:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54711 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'check_dates.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [93480]
+INFO:     Started server process [94913]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app/routers/data.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [94913]
+INFO:     Started server process [95255]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:55521 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T00:00:00Z&date_to=2026-02-24T23:59:59Z&indicators=%5B%5D HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'app/routers/data.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [95255]
+INFO:     Started server process [95478]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+- Verified table: saved_queries
+- Verified table: strategies
+Current tables in massive: ['ETF', 'backtest_results', 'daily_metrics', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:56112 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56113 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56113 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.22s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+INFO:     127.0.0.1:56113 - "GET /api/backtest/status/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:56113 - "GET /api/backtest/status/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56113 - "GET /api/backtest/status/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56113 - "GET /api/backtest/status/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+  ✓ Fetched 309,556 rows in 11.59s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.22s
+INFO:     127.0.0.1:56113 - "GET /api/backtest/status/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+Total JIT Execution: 0.54s
+  ✓ Backtest execution in 0.57s (6677 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run c1d00369-11e8-4e7e-9572-b1a86366c716
+  ✓ Metrics calculated in 0.93s
+✓ Total Request Time: 13.33s
+INFO:     127.0.0.1:56113 - "GET /api/backtest/status/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56113 - "GET /api/backtest/results/c1d00369-11e8-4e7e-9572-b1a86366c716 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56305 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56306 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56307 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56308 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56305 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56308 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61300 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61299 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61299 - "OPTIONS /api/backtest/run HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61299 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.16s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+INFO:     127.0.0.1:61299 - "GET /api/backtest/status/960797fe-0549-4bbd-8d73-486604ec2b30 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:61299 - "GET /api/backtest/status/960797fe-0549-4bbd-8d73-486604ec2b30 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61299 - "GET /api/backtest/status/960797fe-0549-4bbd-8d73-486604ec2b30 HTTP/1.1" 200 OK
+  ✓ Fetched 309,556 rows in 9.86s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+INFO:     127.0.0.1:61299 - "GET /api/backtest/status/960797fe-0549-4bbd-8d73-486604ec2b30 HTTP/1.1" 200 OK
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.04s
+Total JIT Execution: 0.22s
+  ✓ Backtest execution in 0.25s (6677 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run 960797fe-0549-4bbd-8d73-486604ec2b30
+  ✓ Metrics calculated in 0.42s
+✓ Total Request Time: 10.69s
+INFO:     127.0.0.1:61299 - "GET /api/backtest/status/960797fe-0549-4bbd-8d73-486604ec2b30 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61299 - "GET /api/backtest/results/960797fe-0549-4bbd-8d73-486604ec2b30 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61414 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61415 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61416 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61417 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61414 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61417 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61683 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T00:00:00Z&date_to=2026-02-24T23:59:59Z&indicators=%5B%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63423 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63424 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63423 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63424 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63473 - "POST /api/backtest/run HTTP/1.1" 200 OK
+
+==================================================
+BACKTEST EXECUTION STARTED
+==================================================
+Strategy IDs: ['3bac965e-d918-43d1-9c33-c66decd0827f']
+Weights: {'3bac965e-d918-43d1-9c33-c66decd0827f': 100.0}
+Dataset filters: ticker=None date_from='2024-01-01' date_to='2025-12-31' min_gap_pct=None max_gap_pct=None min_rth_volume=None min_m15_ret_pct=None max_m15_ret_pct=None min_rth_run_pct=None max_rth_run_pct=None min_high_spike_pct=None max_high_spike_pct=None min_low_spike_pct=None max_low_spike_pct=None hod_after=None lod_before=None rules=[]
+Initial capital: $100000.0
+✓ Database connection established
+
+[1/5] Fetching strategies...
+  ✓ Loaded strategies in 0.15s
+
+[2/5] Fetching market data...
+  - Using Saved Dataset: 7ea480c1-7e23-458c-9c4f-627745a88e2b
+  - Building query for universe selection...
+INFO:     127.0.0.1:63473 - "GET /api/backtest/status/4c8a968d-3784-435d-9578-f8d24c7714c8 HTTP/1.1" 200 OK
+  - Fetched universe to Python (minimal columns, by week).
+  - Applying tickers (CS/ADRC/OS) filter in batches...
+  - Applying splits filter in batches...
+  - Tickers and splits filter applied.
+  - Fetching intraday by month and ticker batches (batch=60)...
+INFO:     127.0.0.1:63473 - "GET /api/backtest/status/4c8a968d-3784-435d-9578-f8d24c7714c8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63473 - "GET /api/backtest/status/4c8a968d-3784-435d-9578-f8d24c7714c8 HTTP/1.1" 200 OK
+  ✓ Fetched 309,556 rows in 8.55s
+  ✓ After date/interval filter: 146,692 rows
+
+[3/5] Running backtest engine...
+Starting Numba-optimized backtest with 1 strategies...
+JIT Warmup/Execution for 146692 rows...
+Reconstructed 6677 trades in 0.07s
+Total JIT Execution: 0.16s
+  ✓ Backtest execution in 0.18s (6677 trades)
+
+AUDIT: Running VectorBT validation...
+  ⚠️ Audit skipped or failed: No module named 'vectorbt'
+
+[5/5] Saving results to database...
+  ✓ Validated and saved run 4c8a968d-3784-435d-9578-f8d24c7714c8
+  ✓ Metrics calculated in 0.38s
+✓ Total Request Time: 9.28s
+INFO:     127.0.0.1:63473 - "GET /api/backtest/status/4c8a968d-3784-435d-9578-f8d24c7714c8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63473 - "GET /api/backtest/results/4c8a968d-3784-435d-9578-f8d24c7714c8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63559 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63560 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63562 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63561 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63559 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63561 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64413 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64412 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64657 - "GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64658 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64657 - "GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z&indicators=%5B%7B%22name%22%3A%22SMA%22%2C%22period%22%3A50%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%2C%7B%22name%22%3A%22SMA%22%2C%22period%22%3A20%2C%22multiplier%22%3Anull%2C%22offset%22%3A0%2C%22overbought%22%3Anull%2C%22oversold%22%3Anull%2C%22consecutive_count%22%3Anull%2C%22time_hour%22%3Anull%2C%22time_minute%22%3Anull%7D%5D HTTP/1.1" 200 OK
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/data.py", line 247, in get_historical_ohlc
+    df = con.execute(query, [ticker.upper(), fetch_date_from, date_to]).fetch_df()
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+duckdb.duckdb.Error: Request failed: Your MotherDuck trial has ended. For more info, please open: https://app.motherduck.com. An organization admin must select from Free, Lite, or Business plans to restore access. (FAILED_PRECONDITION, RPC 'TRANSACTION', request id: '819c9cbe-af7e-4645-9073-a15a12609c50')
+WARNING:  WatchFiles detected changes in 'app/init_db.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [95478]
+INFO:     Started server process [73475]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app/routers/query.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [73475]
+INFO:     Started server process [73605]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'verify_dataset_persistence.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [73605]
+INFO:     Started server process [73886]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.

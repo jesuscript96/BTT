@@ -1,6 +1,7 @@
 from datetime import date
 from typing import Optional, List, Any, Tuple
 import math
+import os
 
 def safe_float(v):
     if v is None: return 0.0
@@ -143,18 +144,43 @@ def build_screener_query(
     trade_date = filters.get('trade_date')
     ticker = filters.get('ticker')
     
+    provider = os.getenv("DB_PROVIDER", "motherduck").lower()
+
     if start_date and end_date:
         m_filters.append("CAST(timestamp AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
         sql_p.extend([str(start_date), str(end_date)])
+        
+        # Partition Pruning for GCS
+        if provider == "gcs":
+            try:
+                sy, ey = int(str(start_date)[:4]), int(str(end_date)[:4])
+                # Filter by year partition column
+                m_filters.append(f"year >= {sy} AND year <= {ey}")
+            except: pass
+            
     elif trade_date:
         m_filters.append("CAST(timestamp AS DATE) = CAST(? AS DATE)")
         sql_p.append(str(trade_date))
+        
+        # Partition Pruning for GCS
+        if provider == "gcs":
+            try:
+                y = int(str(trade_date)[:4])
+                m = int(str(trade_date)[5:7])
+                m_filters.append(f"year = {y} AND month = {m}")
+            except: pass
     else:
         from datetime import datetime, timedelta
         default_end = datetime.now().date()
         default_start = default_end - timedelta(days=7)
         m_filters.append("CAST(timestamp AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
         sql_p.extend([str(default_start), str(default_end)])
+        
+        # Partition Pruning for GCS
+        if provider == "gcs":
+            try:
+                m_filters.append(f"year >= {default_start.year} AND year <= {default_end.year}")
+            except: pass
         
     if ticker:
         m_filters.append("daily_metrics.ticker = ?")

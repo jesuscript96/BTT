@@ -14,11 +14,16 @@ from app.init_db import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Connect to DB so first request is fast. If DB fails, app still starts (avoids 502 on cold start).
-    print("Startup: Connecting to massive database...")
+    print("Startup: Connecting to database...")
+    from app.gcs_sync import download_user_db, upload_user_db
+    
+    # 1. Download user DB if in GCS mode
+    download_user_db()
+    
     try:
         con = get_db_connection()
         tables = con.execute("SHOW TABLES").fetchall()
-        print(f"✅ Connected to massive. Tables: {[t[0] for t in tables]}")
+        print(f"✅ Connected. Tables: {[t[0] for t in tables]}")
         try:
             init_db()
             print("✅ Init DB: strategies and saved_queries tables verified")
@@ -31,6 +36,9 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     print("Shutdown: Cleaning up...")
+    
+    # Upload user DB back to GCS explicitly on graceful shutdown
+    upload_user_db()
 
 
 app = FastAPI(title="Short Selling Backtester API", lifespan=lifespan)

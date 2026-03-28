@@ -1,0 +1,24 @@
+INFO:     Started server process [39581]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+Startup: Connecting to massive database...
+Connecting to MotherDuck...
+Connected to MotherDuck catalog: massive
+Tables in massive.main: ['ETF', 'backtest_results', 'daily_metrics', 'dataset_pairs', 'datasets', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+✅ Connected to massive. Tables: ['ETF', 'backtest_results', 'daily_metrics', 'dataset_pairs', 'datasets', 'intraday_1m', 'paper_trades', 'saved_queries', 'splits', 'strategies', 'tickers', 'websocket']
+Checking and creating tables in massive...
+⚠️ Init DB warning: Invalid Input Error: Cannot execute statement of type "CREATE" on database "massive" which is attached in read-only mode!
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:53119 - "GET /api/market/screener?min_gap=30&max_gap=50&limit=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53385 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53385 - "GET /api/market/screener?min_gap_at_open_pct=30&max_gap_at_open_pct=50&min_pm_volume=5000000&start_date=2025-11-02&end_date=2026-03-02&limit=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53396 - "GET /api/market/ticker/KIDZ/intraday?trade_date=2026-02-25%2000:00:00 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53385 - "GET /api/market/aggregate/intraday?min_gap_at_open_pct=30&max_gap_at_open_pct=50&min_pm_volume=5000000&start_date=2025-11-02&end_date=2026-03-02&limit=5000 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53469 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [39581]

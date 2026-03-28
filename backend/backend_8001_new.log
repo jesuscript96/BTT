@@ -1,0 +1,58 @@
+INFO:     Started server process [24282]
+INFO:     Waiting for application startup.
+WARNING: Your client version of DuckDB (v1.1.3) will soon be unsupported with MotherDuck. Please upgrade your DuckDB. We recommend DuckDB v1.4.4. For the installation guide, please refer to https://duckdb.org/docs/installation/.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)
+Startup: Connecting to massive database...
+✅ Connected to MotherDuck (default database)
+✅ Connected to massive. Tables: ['backtest_results', 'daily_metrics', 'dataset_pairs', 'datasets', 'intraday_1m', 'saved_queries', 'splits', 'strategies', 'tickers']
+Checking and creating tables in massive...
+✅ Market data views initialized
+✅ Local database tables initialized
+Current tables in massive: ['backtest_results', 'daily_metrics', 'dataset_pairs', 'datasets', 'intraday_1m', 'saved_queries', 'splits', 'strategies', 'tickers']
+✅ Init DB: strategies and saved_queries tables verified
+ℹ️  Scheduler disabled (ingestion handled externally).
+INFO:     127.0.0.1:57439 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58129 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58128 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58177 - "POST /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58177 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54373 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64842 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64841 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56228 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56247 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56249 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56250 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56248 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56302 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56303 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56536 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56615 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56897 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56897 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56901 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56902 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56903 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57546 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57545 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57594 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57593 - "GET /api/market/news HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57594 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57593 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57599 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57600 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58154 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58155 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58505 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58506 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59700 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59701 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60336 - "GET /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60335 - "GET /api/queries/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60723 - "OPTIONS /api/strategies/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60723 - "POST /api/strategies/ HTTP/1.1" 422 Unprocessable Content
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [24282]

@@ -1,0 +1,143 @@
+=== Automated Testing Suite ===
+Running tests against REAL MotherDuck database...
+
+[1/2] Environment ready
+
+[2/2] Running all tests...
+[1m============================= test session starts ==============================[0m
+platform darwin -- Python 3.13.2, pytest-9.0.2, pluggy-1.6.0 -- /Users/jvch/Desktop/AutomatoWebs/BTT/backend/.venv_313/bin/python3.13
+cachedir: .pytest_cache
+metadata: {'Python': '3.13.2', 'Platform': 'macOS-15.6-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.0.2', 'pluggy': '1.6.0'}, 'Plugins': {'anyio': '4.12.1', 'metadata': '3.1.1', 'html': '4.2.0'}}
+rootdir: /Users/jvch/Desktop/AutomatoWebs/BTT/backend
+plugins: anyio-4.12.1, metadata-3.1.1, html-4.2.0
+[1mcollecting ... [0mcollected 94 items
+
+tests/test_backtest_engine.py::TestEntrySignalGeneration::test_price_condition_signal [32mPASSED[0m[32m [  1%][0m
+tests/test_backtest_engine.py::TestEntrySignalGeneration::test_vwap_condition_signal [32mPASSED[0m[32m [  2%][0m
+tests/test_backtest_engine.py::TestStopLossCalculations::test_sl_percent_short [32mPASSED[0m[32m [  3%][0m
+tests/test_backtest_engine.py::TestStopLossCalculations::test_sl_fixed_short [32mPASSED[0m[32m [  4%][0m
+tests/test_backtest_engine.py::TestTakeProfitCalculations::test_tp_percent_short [32mPASSED[0m[32m [  5%][0m
+tests/test_backtest_engine.py::TestPositionSizing::test_position_size_calculation [32mPASSED[0m[32m [  6%][0m
+tests/test_backtest_engine.py::TestRMultipleCalculation::test_r_multiple_winner [32mPASSED[0m[32m [  7%][0m
+tests/test_backtest_engine.py::TestRMultipleCalculation::test_r_multiple_loser [32mPASSED[0m[32m [  8%][0m
+tests/test_backtest_engine.py::TestPortfolioMetrics::test_win_rate_calculation [32mPASSED[0m[32m [  9%][0m
+tests/test_backtest_engine.py::TestPortfolioMetrics::test_profit_factor_calculation [32mPASSED[0m[32m [ 10%][0m
+tests/test_backtest_queries.py::TestSavedQueryReconstruction::test_saved_query_min_gap [32mPASSED[0m[32m [ 11%][0m
+tests/test_backtest_queries.py::TestSavedQueryReconstruction::test_saved_query_max_gap [32mPASSED[0m[32m [ 12%][0m
+tests/test_backtest_queries.py::TestSavedQueryReconstruction::test_saved_query_volume [32mPASSED[0m[32m [ 13%][0m
+tests/test_backtest_queries.py::TestSavedQueryReconstruction::test_saved_query_dynamic_rules [32mPASSED[0m[32m [ 14%][0m
+tests/test_backtest_queries.py::TestJoinLogic::test_daily_historical_join [31mFAILED[0m[31m [ 15%][0m
+tests/test_backtest_queries.py::TestJoinLogic::test_date_casting_in_join [32mPASSED[0m[31m [ 17%][0m
+tests/test_backtest_queries.py::TestJoinLogic::test_interval_calculation [31mFAILED[0m[31m [ 18%][0m
+tests/test_backtest_queries.py::TestDateFiltering::test_date_from_filter [31mFAILED[0m[31m [ 19%][0m
+tests/test_backtest_queries.py::TestDateFiltering::test_date_to_filter [31mFAILED[0m[31m [ 20%][0m
+tests/test_backtest_queries.py::TestDateFiltering::test_ticker_filter_in_query [32mPASSED[0m[31m [ 21%][0m
+tests/test_backtest_queries.py::TestRowLimiting::test_max_rows_limit [32mPASSED[0m[31m [ 22%][0m
+tests/test_backtest_queries.py::TestRowLimiting::test_no_date_range_default_limit [32mPASSED[0m[31m [ 23%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_gap_at_open_pct [32mPASSED[0m[31m [ 24%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_pmh_fade_to_open_pct [32mPASSED[0m[31m [ 25%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_rth_run_pct [32mPASSED[0m[31m [ 26%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_rth_fade_to_close_pct [32mPASSED[0m[31m [ 27%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_high_spike_pct [32mPASSED[0m[31m [ 28%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_low_spike_pct [32mPASSED[0m[31m [ 29%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_m15_return_pct [32mPASSED[0m[31m [ 30%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_m30_return_pct [32mPASSED[0m[31m [ 31%][0m
+tests/test_market_calculations.py::TestAverageCalculations::test_avg_m60_return_pct [32mPASSED[0m[31m [ 32%][0m
+tests/test_market_calculations.py::TestVolumeCalculations::test_avg_rth_volume [32mPASSED[0m[31m [ 34%][0m
+tests/test_market_calculations.py::TestVolumeCalculations::test_avg_pm_volume [32mPASSED[0m[31m [ 35%][0m
+tests/test_market_calculations.py::TestPriceCalculations::test_avg_pm_high [32mPASSED[0m[31m [ 36%][0m
+tests/test_market_calculations.py::TestPriceCalculations::test_avg_rth_open [32mPASSED[0m[31m [ 37%][0m
+tests/test_market_calculations.py::TestPriceCalculations::test_avg_rth_close [32mPASSED[0m[31m [ 38%][0m
+tests/test_market_calculations.py::TestBooleanToPercentageConversions::test_open_lt_vwap_percentage [32mPASSED[0m[31m [ 39%][0m
+tests/test_market_calculations.py::TestBooleanToPercentageConversions::test_pm_high_break_percentage [32mPASSED[0m[31m [ 40%][0m
+tests/test_market_calculations.py::TestBooleanToPercentageConversions::test_close_lt_m15_percentage [32mPASSED[0m[31m [ 41%][0m
+tests/test_market_calculations.py::TestBooleanToPercentageConversions::test_close_lt_m30_percentage [32mPASSED[0m[31m [ 42%][0m
+tests/test_market_calculations.py::TestBooleanToPercentageConversions::test_close_lt_m60_percentage [32mPASSED[0m[31m [ 43%][0m
+tests/test_market_calculations.py::TestBooleanToPercentageConversions::test_close_direction_red [32mPASSED[0m[31m [ 44%][0m
+tests/test_market_calculations.py::TestDistributionCalculations::test_hod_time_distribution [32mPASSED[0m[31m [ 45%][0m
+tests/test_market_calculations.py::TestDistributionCalculations::test_lod_time_distribution [32mPASSED[0m[31m [ 46%][0m
+tests/test_market_calculations.py::TestAggregateIntradayCalculations::test_aggregate_avg_change [32mPASSED[0m[31m [ 47%][0m
+tests/test_market_calculations.py::TestAggregateIntradayCalculations::test_aggregate_median_change [32mPASSED[0m[31m [ 48%][0m
+tests/test_market_calculations.py::TestAggregateIntradayCalculations::test_aggregate_time_grouping [32mPASSED[0m[31m [ 50%][0m
+tests/test_market_filters_advanced.py::TestStaticValueComparisons::test_static_equals [32mPASSED[0m[31m [ 51%][0m
+tests/test_market_filters_advanced.py::TestStaticValueComparisons::test_static_not_equals [32mPASSED[0m[31m [ 52%][0m
+tests/test_market_filters_advanced.py::TestStaticValueComparisons::test_static_greater_than [32mPASSED[0m[31m [ 53%][0m
+tests/test_market_filters_advanced.py::TestStaticValueComparisons::test_static_greater_or_equal [32mPASSED[0m[31m [ 54%][0m
+tests/test_market_filters_advanced.py::TestStaticValueComparisons::test_static_less_than [32mPASSED[0m[31m [ 55%][0m
+tests/test_market_filters_advanced.py::TestStaticValueComparisons::test_static_less_or_equal [32mPASSED[0m[31m [ 56%][0m
+tests/test_market_filters_advanced.py::TestVariableComparisons::test_variable_price_comparison [32mPASSED[0m[31m [ 57%][0m
+tests/test_market_filters_advanced.py::TestVariableComparisons::test_variable_volume_comparison [32mPASSED[0m[31m [ 58%][0m
+tests/test_market_filters_advanced.py::TestVariableComparisons::test_variable_spike_comparison [32mPASSED[0m[31m [ 59%][0m
+tests/test_market_filters_advanced.py::TestVariableComparisons::test_variable_price_vs_pm_high [32mPASSED[0m[31m [ 60%][0m
+tests/test_market_filters_advanced.py::TestVariableComparisons::test_all_metric_combinations [32mPASSED[0m[31m [ 61%][0m
+tests/test_market_filters_advanced.py::TestLogicCombinations::test_single_rule_and_logic [32mPASSED[0m[31m [ 62%][0m
+tests/test_market_filters_advanced.py::TestLogicCombinations::test_multiple_rules_and_logic [32mPASSED[0m[31m [ 63%][0m
+tests/test_market_filters_advanced.py::TestLogicCombinations::test_multiple_rules_or_logic [32mPASSED[0m[31m [ 64%][0m
+tests/test_market_filters_advanced.py::TestLogicCombinations::test_mixed_static_and_variable [32mPASSED[0m[31m [ 65%][0m
+tests/test_market_filters_advanced.py::TestEdgeCases::test_empty_result_set [32mPASSED[0m[31m [ 67%][0m
+tests/test_market_filters_advanced.py::TestEdgeCases::test_null_value_handling [32mPASSED[0m[31m [ 68%][0m
+tests/test_market_filters_advanced.py::TestEdgeCases::test_invalid_operator_handling [32mPASSED[0m[31m [ 69%][0m
+tests/test_market_filters_advanced.py::TestEdgeCases::test_combined_filters_with_nulls [32mPASSED[0m[31m [ 70%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_gap_filter [32mPASSED[0m[31m [ 71%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_gap_filter [32mPASSED[0m[31m [ 72%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_rth_volume_filter [32mPASSED[0m[31m [ 73%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_pm_volume_filter [32mPASSED[0m[31m [ 74%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_rth_run_filter [32mPASSED[0m[31m [ 75%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_rth_run_filter [32mPASSED[0m[31m [ 76%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_pmh_fade_filter [32mPASSED[0m[31m [ 77%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_high_spike_filter [32mPASSED[0m[31m [ 78%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_high_spike_filter [32mPASSED[0m[31m [ 79%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_low_spike_filter [32mPASSED[0m[31m [ 80%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_low_spike_filter [32mPASSED[0m[31m [ 81%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_m15_return_filter [32mPASSED[0m[31m [ 82%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_m15_return_filter [32mPASSED[0m[31m [ 84%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_m30_return_filter [32mPASSED[0m[31m [ 85%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_m30_return_filter [32mPASSED[0m[31m [ 86%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_min_m60_return_filter [32mPASSED[0m[31m [ 87%][0m
+tests/test_market_filters_basic.py::TestBasicNumericFilters::test_max_m60_return_filter [32mPASSED[0m[31m [ 88%][0m
+tests/test_market_filters_basic.py::TestTimeFilters::test_hod_after_filter [32mPASSED[0m[31m [ 89%][0m
+tests/test_market_filters_basic.py::TestTimeFilters::test_lod_before_filter [32mPASSED[0m[31m [ 90%][0m
+tests/test_market_filters_basic.py::TestBooleanFilters::test_open_lt_vwap_filter [32mPASSED[0m[31m [ 91%][0m
+tests/test_market_filters_basic.py::TestBooleanFilters::test_pm_high_break_filter [32mPASSED[0m[31m [ 92%][0m
+tests/test_market_filters_basic.py::TestBooleanFilters::test_close_lt_m15_filter [32mPASSED[0m[31m [ 93%][0m
+tests/test_market_filters_basic.py::TestBooleanFilters::test_close_lt_m30_filter [32mPASSED[0m[31m [ 94%][0m
+tests/test_market_filters_basic.py::TestBooleanFilters::test_close_lt_m60_filter [32mPASSED[0m[31m [ 95%][0m
+tests/test_market_filters_basic.py::TestDateFilters::test_single_date_filter [32mPASSED[0m[31m [ 96%][0m
+tests/test_market_filters_basic.py::TestDateFilters::test_date_range_filter [32mPASSED[0m[31m [ 97%][0m
+tests/test_market_filters_basic.py::TestDateFilters::test_ticker_filter [32mPASSED[0m[31m [ 98%][0m
+tests/test_strategy_api.py::test_create_and_get_strategy [31mFAILED[0m[31m          [100%][0m
+
+=================================== FAILURES ===================================
+[31m[1m___________________ TestJoinLogic.test_daily_historical_join ___________________[0m
+[1m[31mtests/test_backtest_queries.py[0m:81: in test_daily_historical_join
+    [0mdate_val = pd.to_datetime(row[[33m"[39;49;00m[33mdate[39;49;00m[33m"[39;49;00m])[90m[39;49;00m
+               ^^[90m[39;49;00m
+[1m[31mE   NameError: name 'pd' is not defined[0m
+[31m[1m___________________ TestJoinLogic.test_interval_calculation ____________________[0m
+[1m[31mtests/test_backtest_queries.py[0m:124: in test_interval_calculation
+    [0mdate_val = pd.to_datetime(row[[33m"[39;49;00m[33mdate[39;49;00m[33m"[39;49;00m])[90m[39;49;00m
+               ^^[90m[39;49;00m
+[1m[31mE   NameError: name 'pd' is not defined[0m
+[31m[1m___________________ TestDateFiltering.test_date_from_filter ____________________[0m
+[1m[31mtests/test_backtest_queries.py[0m:151: in test_date_from_filter
+    [0mmin_timestamp = pd.to_datetime(df[[33m"[39;49;00m[33mtimestamp[39;49;00m[33m"[39;49;00m].min())[90m[39;49;00m
+                    ^^[90m[39;49;00m
+[1m[31mE   NameError: name 'pd' is not defined[0m
+[31m[1m____________________ TestDateFiltering.test_date_to_filter _____________________[0m
+[1m[31mtests/test_backtest_queries.py[0m:173: in test_date_to_filter
+    [0mmax_timestamp = pd.to_datetime(df[[33m"[39;49;00m[33mtimestamp[39;49;00m[33m"[39;49;00m].max())[90m[39;49;00m
+                    ^^[90m[39;49;00m
+[1m[31mE   NameError: name 'pd' is not defined[0m
+[31m[1m_________________________ test_create_and_get_strategy _________________________[0m
+[1m[31mtests/test_strategy_api.py[0m:43: in test_create_and_get_strategy
+    [0m[94massert[39;49;00m response.status_code == [94m200[39;49;00m[90m[39;49;00m
+[1m[31mE   assert 422 == 200[0m
+[1m[31mE    +  where 422 = <Response [422 Unprocessable Entity]>.status_code[0m
+[36m[1m=========================== short test summary info ============================[0m
+[31mFAILED[0m tests/test_backtest_queries.py::[1mTestJoinLogic::test_daily_historical_join[0m - NameError: name 'pd' is not defined
+[31mFAILED[0m tests/test_backtest_queries.py::[1mTestJoinLogic::test_interval_calculation[0m - NameError: name 'pd' is not defined
+[31mFAILED[0m tests/test_backtest_queries.py::[1mTestDateFiltering::test_date_from_filter[0m - NameError: name 'pd' is not defined
+[31mFAILED[0m tests/test_backtest_queries.py::[1mTestDateFiltering::test_date_to_filter[0m - NameError: name 'pd' is not defined
+[31mFAILED[0m tests/test_strategy_api.py::[1mtest_create_and_get_strategy[0m - assert 422 == 200
+[31m======================== [31m[1m5 failed[0m, [32m89 passed[0m[31m in 19.67s[0m[31m =========================[0m
+❌ Tests failed!

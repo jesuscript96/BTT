@@ -1,0 +1,49 @@
+
+> frontend@0.1.0 dev
+> next dev
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.100.6:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1437ms
+ GET /backtester 200 in 120ms (compile: 7ms, render: 113ms)
+ GET /backtester 200 in 116ms (compile: 41ms, render: 76ms)
+ GET /api/data/historical?ticker=BRTX&date_from=2026-02-24T20:06:00.000Z&date_to=2026-02-24T22:16:00.000Z 404 in 214ms (compile: 148ms, render: 66ms)
+ GET /api/data/historical?ticker=BRTX&date_from=2026-02-24T20:06:00.000Z&date_to=2026-02-24T22:16:00.000Z 404 in 22ms (compile: 1687µs, render: 21ms)
+ GET /strategies/new 200 in 76ms (compile: 62ms, render: 14ms)
+ GET /backtester 200 in 13ms (compile: 4ms, render: 9ms)
+ GET / 200 in 42ms (compile: 31ms, render: 11ms)
+ GET /backtester 200 in 33ms (compile: 11ms, render: 21ms)
+ GET /api/data/historical?ticker=SIDU&date_from=2025-12-22T14:31:00.000Z&date_to=2025-12-22T17:22:00.000Z 404 in 71ms (compile: 17ms, render: 55ms)
+ GET /api/data/historical?ticker=SIDU&date_from=2025-12-22T14:31:00.000Z&date_to=2025-12-22T17:22:00.000Z 404 in 25ms (compile: 4ms, render: 22ms)
+ GET /api/data/historical?ticker=FOLD&date_from=2025-12-19T14:39:00.000Z&date_to=2025-12-19T18:10:00.000Z 404 in 46ms (compile: 8ms, render: 38ms)
+✓ Compiled in 192ms
+ GET / 200 in 150ms (compile: 9ms, render: 141ms)
+ GET /strategies/new 200 in 18ms (compile: 4ms, render: 15ms)
+ GET /backtester 200 in 59ms (compile: 46ms, render: 13ms)
+✓ Compiled in 81ms
+✓ Compiled in 316ms
+ GET /api/strategies/9e2214ed-2b1f-4285-9ec4-978f72e81a5d 404 in 49ms (compile: 10ms, render: 39ms)
+ GET /api/data/historical?ticker=FOLD&date_from=2025-12-19T14:39:00.000Z&date_to=2025-12-19T18:10:00.000Z 404 in 18ms (compile: 1210µs, render: 16ms)
+✓ Compiled in 17ms
+✓ Compiled in 18ms
+ GET /backtester 200 in 208ms (compile: 82ms, render: 127ms)
+ GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f 404 in 84ms (compile: 7ms, render: 77ms)
+ GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z 404 in 57ms (compile: 7ms, render: 50ms)
+ GET /api/strategies/3bac965e-d918-43d1-9c33-c66decd0827f 404 in 33ms (compile: 1768µs, render: 31ms)
+ GET /api/data/historical?ticker=TLIH&date_from=2026-02-24T20:56:00.000Z&date_to=2026-02-24T22:59:00.000Z 404 in 18ms (compile: 3ms, render: 15ms)
+✓ Compiled in 41ms
+ GET /backtester 200 in 170ms (compile: 68ms, render: 102ms)
+✓ Compiled in 41ms
+ GET /backtester 200 in 74ms (compile: 55ms, render: 19ms)
+ GET /backtester 200 in 6ms (compile: 841µs, render: 5ms)
+ GET /backtester 200 in 138ms (compile: 13ms, render: 124ms)
+✓ Compiled in 24ms
+✓ Compiled in 20ms
+ GET /backtester 200 in 172ms (compile: 69ms, render: 103ms)
+ GET /backtester 200 in 148ms (compile: 37ms, render: 111ms)
+✓ Compiled in 89ms
+[?25h

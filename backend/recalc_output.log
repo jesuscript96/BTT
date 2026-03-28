@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/fix_calculations.py", line 10, in <module>
+    from app.database import get_db_connection
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/database.py", line 1, in <module>
+    import duckdb
+ModuleNotFoundError: No module named 'duckdb'

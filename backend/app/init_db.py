@@ -5,13 +5,47 @@ def init_db():
     cur = get_db_connection()
     print("Checking and creating tables in massive...")
     
-    # 1. Ensure market data views exist (mapping to massive shared db)
+    # 1. Ensure market data views exist (mapping to massive shared db or GCS)
     try:
-        cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.main.daily_metrics")
-        cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.main.intraday_1m")
-        cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.main.tickers")
-        cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.main.splits")
-        print("✅ Market data views initialized")
+        import os
+        provider = os.getenv("DB_PROVIDER", "motherduck").lower()
+        if provider == "gcs":
+            # Clean up old ambiguous schema if it exists in users.duckdb
+            try:
+                cur.execute("DROP SCHEMA IF EXISTS massive CASCADE;")
+            except:
+                pass
+
+            # Attaching a virtual database named 'massive' to match hardcoded queries
+            try:
+                cur.execute("ATTACH ':memory:' AS massive;")
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    print(f"⚠️ Warning attaching massive: {e}")
+            
+            # In GCS mode, we create views pointing to the parquet files directly
+            # Optimization: Using precise glob patterns to avoid recursive scanning overhead.
+            # daily_metrics and intraday_1m are partitioned: year=*/month=*/data.parquet
+            cur.execute("CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/daily_metrics/*/*/*.parquet', hive_partitioning=true)")
+            cur.execute("CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/intraday_1m/*/*/*.parquet', hive_partitioning=true)")
+            
+            # tickers and splits are non-partitioned single files or flat directories
+            cur.execute("CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/tickers/*.parquet')")
+            cur.execute("CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/splits/*.parquet')")
+            
+            # Also create aliases in the main schema (of users.duckdb) for convenience
+            cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.daily_metrics")
+            cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.intraday_1m")
+            cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.tickers")
+            cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.splits")
+            
+            print("✅ Optimized GCS views initialized (non-recursive globs)")
+        else:
+            cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.main.daily_metrics")
+            cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.main.intraday_1m")
+            cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.main.tickers")
+            cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.main.splits")
+            print("✅ Market data views initialized from MotherDuck")
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize market data views: {e}")
 

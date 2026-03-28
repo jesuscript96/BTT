@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/Users/jvch/Desktop/AutomatoWebs/BTT/backend/app/routers/market.py", line 191, in screen_market
+    df_stats = con.execute(stats_query, params).fetch_df()
+               ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+_duckdb.BinderException: Binder Error: Referenced column "pmh_fade_to_open_pct" not found in FROM clause!
+Candidate bindings: "gap_at_open_pct", "rth_open", "day_return_pct", "rth_run_pct", "date"
+
+LINE 7:                 AVG(pmh_fade_to_open_pct) as pmh_fade_to_open_pct,
+                            ^
