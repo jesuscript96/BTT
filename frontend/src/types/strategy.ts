@@ -6,7 +6,8 @@ export enum IndicatorType {
     EMA = "EMA",
     WMA = "WMA",
     VWAP = "VWAP",
-    AVWAP = "AVWAP",
+    VWAP_SD_PLUS = "VWAP Sd+",
+    VWAP_SD_MINUS = "VWAP Sd-",
     LINEAR_REGRESSION = "Linear Regression",
     ZIG_ZAG = "Zig Zag",
     ICHIMOKU = "Ichimoku Clouds",
@@ -31,11 +32,10 @@ export enum IndicatorType {
 
     // Volume
     OBV = "OBV",
-    CMF = "CMF",
-    ACC_DIST = "Acc/Dist",
     VOLUME = "Volume",
     RVOL = "RVOL",
     AVOLUME = "Accumulated Volume",
+    SMA_VOLUME = "SMA Volume",
 
     // Price Variables
     BAR_CLOSE = "Bar Close",
@@ -159,7 +159,14 @@ export interface IndicatorConfig {
     time_from_hour?: number;
     time_from_minute?: number;
     range_minutes?: number;
-    return_pct?: number; 
+    return_pct?: number;
+
+    // New indicator-specific parameters
+    deviationLevel?: number;       // Linear Regression deviation (1, 2, 3)
+    reversionPercentage?: number;  // Zig Zag reversion %
+    ichimoku_line?: "Tenkan" | "Kijun" | "Senkou A" | "Senkou B" | "Chikou";
+    min_af?: number;               // Parabolic SAR min acceleration factor
+    max_af?: number;               // Parabolic SAR max acceleration factor
 }
 
 export interface ComparisonCondition {

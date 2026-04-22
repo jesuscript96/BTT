@@ -27,7 +27,15 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.WILLIAMS_R:
         case IndicatorType.MOMENTUM:
         case IndicatorType.ROC:
+        case IndicatorType.CCI:
             return { period: 14 };
+        case IndicatorType.VWAP_SD_PLUS:
+        case IndicatorType.VWAP_SD_MINUS:
+            return { stdDev: 1 };
+        case IndicatorType.LINEAR_REGRESSION:
+            return { period: 14, deviationLevel: 1 };
+        case IndicatorType.ZIG_ZAG:
+            return { reversionPercentage: 5 };
         case IndicatorType.BOLLINGER_BANDS:
         case IndicatorType.DONCHIAN:
             return { period: 20, stdDev: 2, band_line: "Upper" };
@@ -36,7 +44,12 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.STOCHASTIC:
             return { period: 14, period2: 3, period3: 3 };
         case IndicatorType.ICHIMOKU:
-            return { period: 9, period2: 26, period3: 52 };
+            return { period: 9, period2: 26, period3: 52, ichimoku_line: "Tenkan" };
+        case IndicatorType.PARABOLIC_SAR:
+            return { min_af: 0.02, max_af: 0.20 };
+        case IndicatorType.OBV:
+        case IndicatorType.SMA_VOLUME:
+            return { period: 14 };
         case IndicatorType.MIN_X_DAYS:
         case IndicatorType.MAX_X_DAYS:
             return { days_lookback: 5 };
@@ -64,8 +77,8 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
 const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     "Trend & Moving Averages": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
-        IndicatorType.VWAP, IndicatorType.AVWAP, IndicatorType.LINEAR_REGRESSION,
-        IndicatorType.ZIG_ZAG, IndicatorType.ICHIMOKU
+        IndicatorType.VWAP, IndicatorType.VWAP_SD_PLUS, IndicatorType.VWAP_SD_MINUS,
+        IndicatorType.LINEAR_REGRESSION, IndicatorType.ZIG_ZAG, IndicatorType.ICHIMOKU
     ],
     "Momentum & Oscillators": [
         IndicatorType.RSI, IndicatorType.MACD, IndicatorType.STOCHASTIC,
@@ -77,8 +90,8 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.DONCHIAN, IndicatorType.PARABOLIC_SAR
     ],
     "Volume": [
-        IndicatorType.OBV, IndicatorType.CMF, IndicatorType.ACC_DIST,
-        IndicatorType.VOLUME, IndicatorType.RVOL, IndicatorType.AVOLUME
+        IndicatorType.OBV, IndicatorType.VOLUME, IndicatorType.RVOL,
+        IndicatorType.AVOLUME, IndicatorType.SMA_VOLUME
     ],
     "Price Variables": [
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN, IndicatorType.HIGH_BAR,
@@ -120,10 +133,11 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.EMA]: "EMA",
     [IndicatorType.WMA]: "WMA",
     [IndicatorType.VWAP]: "VWAP",
-    [IndicatorType.AVWAP]: "AVWAP (Anchored)",
+    [IndicatorType.VWAP_SD_PLUS]: "VWAP Sd+",
+    [IndicatorType.VWAP_SD_MINUS]: "VWAP Sd-",
     [IndicatorType.LINEAR_REGRESSION]: "Linear Regression",
     [IndicatorType.ZIG_ZAG]: "Zig Zag",
-    [IndicatorType.ICHIMOKU]: "Ichimoku Clouds",
+    [IndicatorType.ICHIMOKU]: "Ichimoku",
     // Momentum
     [IndicatorType.RSI]: "RSI",
     [IndicatorType.MACD]: "MACD",
@@ -141,12 +155,11 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.DONCHIAN]: "Donchian Channels",
     [IndicatorType.PARABOLIC_SAR]: "Parabolic SAR",
     // Volume
-    [IndicatorType.OBV]: "On-Balance Volume (OBV)",
-    [IndicatorType.CMF]: "Chaikin Money Flow",
-    [IndicatorType.ACC_DIST]: "Accumulation/Distribution",
+    [IndicatorType.OBV]: "OBV",
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.RVOL]: "RVOL",
     [IndicatorType.AVOLUME]: "Accumulated Volume",
+    [IndicatorType.SMA_VOLUME]: "SMA Volume",
     // Variables
     [IndicatorType.BAR_CLOSE]: "Bar Close",
     [IndicatorType.BAR_OPEN]: "Bar Open",
@@ -206,7 +219,7 @@ export const IndicatorSelector = ({
         <select
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs max-w-[150px] truncate"
+            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs min-w-[120px] w-auto"
         >
             {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
                 const filtered = indicators.filter(t => 
@@ -254,6 +267,8 @@ export const IndicatorParams = ({
                     case IndicatorType.MOMENTUM:
                     case IndicatorType.ROC:
                     case IndicatorType.CCI:
+                    case IndicatorType.OBV:
+                    case IndicatorType.SMA_VOLUME:
                         return (
                             <input
                                 type="number"
@@ -263,6 +278,87 @@ export const IndicatorParams = ({
                                 className="w-14 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
                                 title="Period"
                             />
+                        );
+                    case IndicatorType.VWAP_SD_PLUS:
+                    case IndicatorType.VWAP_SD_MINUS:
+                        return (
+                            <div className="flex gap-1.5 items-center">
+                                <span className="text-[10px] text-muted-foreground">SD:</span>
+                                <select
+                                    value={value.stdDev || 1}
+                                    onChange={(e) => onChange({ ...value, stdDev: Number(e.target.value) })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-14"
+                                    title="Standard Deviation level"
+                                >
+                                    <option value={1}>1</option>
+                                    <option value={2}>2</option>
+                                    <option value={3}>3</option>
+                                </select>
+                            </div>
+                        );
+                    case IndicatorType.LINEAR_REGRESSION:
+                        return (
+                            <div className="flex gap-1.5 items-center">
+                                <input
+                                    type="number"
+                                    value={value.period || ''}
+                                    onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                                    placeholder="P"
+                                    className="w-14 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Period"
+                                />
+                                <span className="text-[10px] text-muted-foreground">Dev:</span>
+                                <select
+                                    value={value.deviationLevel || 1}
+                                    onChange={(e) => onChange({ ...value, deviationLevel: Number(e.target.value) })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-14"
+                                    title="Deviation level"
+                                >
+                                    <option value={1}>1</option>
+                                    <option value={2}>2</option>
+                                    <option value={3}>3</option>
+                                </select>
+                            </div>
+                        );
+                    case IndicatorType.ZIG_ZAG:
+                        return (
+                            <div className="flex gap-1.5 items-center">
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={value.reversionPercentage || ''}
+                                    onChange={(e) => onChange({ ...value, reversionPercentage: Number(e.target.value) })}
+                                    placeholder="%"
+                                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Reversion Percentage"
+                                />
+                                <span className="text-[10px] text-muted-foreground">%</span>
+                            </div>
+                        );
+                    case IndicatorType.PARABOLIC_SAR:
+                        return (
+                            <div className="flex gap-1.5 items-center">
+                                <span className="text-[10px] text-muted-foreground">AF:</span>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={value.min_af ?? ''}
+                                    onChange={(e) => onChange({ ...value, min_af: Number(e.target.value) })}
+                                    placeholder="Min"
+                                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Min Acceleration Factor"
+                                />
+                                <span className="text-[10px] text-muted-foreground">→</span>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={value.max_af ?? ''}
+                                    onChange={(e) => onChange({ ...value, max_af: Number(e.target.value) })}
+                                    placeholder="Max"
+                                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                    title="Max Acceleration Factor"
+                                />
+                            </div>
                         );
                     case IndicatorType.BOLLINGER_BANDS:
                     case IndicatorType.DONCHIAN:
@@ -299,7 +395,7 @@ export const IndicatorParams = ({
                         );
                     case IndicatorType.MACD:
                         return (
-                            <div className="flex gap-1.5 items-center flex-wrap max-w-[220px]">
+                            <div className="flex gap-1.5 items-center flex-wrap">
                                 <input
                                     type="number"
                                     value={value.period || ''}
@@ -327,7 +423,7 @@ export const IndicatorParams = ({
                                 <select
                                     value={value.macd_line || 'MACD Line'}
                                     onChange={(e) => onChange({ ...value, macd_line: e.target.value as "Signal" | "MACD Line" | "Histogram" })}
-                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-[85px]"
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-auto"
                                 >
                                     <option value="MACD Line">MACD Line</option>
                                     <option value="Signal">Signal</option>
@@ -337,7 +433,7 @@ export const IndicatorParams = ({
                         );
                     case IndicatorType.STOCHASTIC:
                         return (
-                            <div className="flex gap-1.5 items-center flex-wrap max-w-[180px]">
+                            <div className="flex gap-1.5 items-center flex-wrap">
                                 <input
                                     type="number"
                                     value={value.period || ''}
@@ -366,7 +462,19 @@ export const IndicatorParams = ({
                         );
                     case IndicatorType.ICHIMOKU:
                         return (
-                            <div className="flex gap-1.5 items-center flex-wrap max-w-[180px]">
+                            <div className="flex gap-1.5 items-center flex-wrap">
+                                <select
+                                    value={value.ichimoku_line || 'Tenkan'}
+                                    onChange={(e) => onChange({ ...value, ichimoku_line: e.target.value as any })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs w-auto"
+                                    title="Ichimoku Line"
+                                >
+                                    <option value="Tenkan">Tenkan</option>
+                                    <option value="Kijun">Kijun</option>
+                                    <option value="Senkou A">Senkou A</option>
+                                    <option value="Senkou B">Senkou B</option>
+                                    <option value="Chikou">Chikou</option>
+                                </select>
                                 <input
                                     type="number"
                                     value={value.period || ''}

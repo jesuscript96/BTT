@@ -12,7 +12,8 @@ class IndicatorType(str, Enum):
     EMA = "EMA"
     WMA = "WMA"
     VWAP = "VWAP"
-    AVWAP = "AVWAP"
+    VWAP_SD_PLUS = "VWAP Sd+"
+    VWAP_SD_MINUS = "VWAP Sd-"
     LINEAR_REGRESSION = "Linear Regression"
     ZIG_ZAG = "Zig Zag"
     ICHIMOKU = "Ichimoku Clouds"
@@ -37,11 +38,10 @@ class IndicatorType(str, Enum):
 
     # Volume
     OBV = "OBV"
-    CMF = "CMF"
-    ACC_DIST = "Acc/Dist"
     VOLUME = "Volume"
     RVOL = "RVOL"
     AVOLUME = "Accumulated Volume"
+    SMA_VOLUME = "SMA Volume"
 
     # Price Variables
     BAR_CLOSE = "Bar Close"
@@ -161,6 +161,13 @@ class IndicatorConfig(BaseModel):
     time_from_minute: Optional[int] = None
     range_minutes: Optional[int] = None
     return_pct: Optional[float] = None
+
+    # New indicator-specific parameters
+    deviationLevel: Optional[int] = None       # Linear Regression deviation (1, 2, 3)
+    reversionPercentage: Optional[float] = None  # Zig Zag reversion %
+    ichimoku_line: Optional[str] = None          # "Tenkan", "Kijun", "Senkou A", "Senkou B", "Chikou"
+    min_af: Optional[float] = None               # Parabolic SAR min acceleration factor
+    max_af: Optional[float] = None               # Parabolic SAR max acceleration factor
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
