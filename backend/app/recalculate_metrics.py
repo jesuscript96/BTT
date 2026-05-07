@@ -15,7 +15,7 @@ os.chdir(backend_dir)
 load_dotenv()
 
 from app.database import get_db_connection
-from app.processor import process_daily_metrics
+from app.services.processor_service import process_daily_metrics
 
 def recalculate_metrics_for_ticker(ticker, limit_days=30):
     """Recalculate metrics for a single ticker (last N days)"""

@@ -21,7 +21,7 @@ def init_db():
                 cur.execute("ATTACH ':memory:' AS massive;")
             except Exception as e:
                 if "already exists" not in str(e).lower():
-                    print(f"⚠️ Warning attaching massive: {e}")
+                    print(f"[WARN] Warning attaching massive: {e}")
             
             # In GCS mode, we create views pointing to the parquet files directly
             # Optimization: Using precise glob patterns to avoid recursive scanning overhead.
@@ -39,15 +39,15 @@ def init_db():
             cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.tickers")
             cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.splits")
             
-            print("✅ Optimized GCS views initialized (non-recursive globs)")
+            print("[INFO] Optimized GCS views initialized (non-recursive globs)")
         else:
             cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.main.daily_metrics")
             cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.main.intraday_1m")
             cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.main.tickers")
             cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.main.splits")
-            print("✅ Market data views initialized from MotherDuck")
+            print("[INFO] Market data views initialized from MotherDuck")
     except Exception as e:
-        print(f"⚠️ Warning: Could not initialize market data views: {e}")
+        print(f"[WARN] Warning: Could not initialize market data views: {e}")
 
     # 2. Create user tables in the default writeable database
     cur.execute("""
@@ -108,7 +108,7 @@ def init_db():
         )
     """)
 
-    print("✅ Local database tables initialized")
+    print("[INFO] Local database tables initialized")
     
     tables = cur.execute("SHOW TABLES").fetchall()
     print(f"Current tables in massive: {[t[0] for t in tables]}")

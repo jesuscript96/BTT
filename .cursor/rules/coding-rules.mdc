@@ -1,0 +1,34 @@
+---
+description: Convenciones de código y reglas del proyecto. Aplicar siempre al escribir o modificar código.
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Reglas de código
+
+## General
+- Antes de modificar cualquier archivo, leerlo completo
+- Un paso a la vez, confirmar antes de continuar
+- No eliminar código sin mover primero a _archive/
+- No commitear .env, gcs-key.json, *.duckdb, *.log
+
+## Backend Python
+- Routers: solo endpoints y modelos Pydantic, sin lógica de negocio
+- Servicios: toda la lógica de negocio vive en services/
+- Motor de backtesting: cambios en backtester/ requieren verificar Numba JIT
+- Usar [INFO]/[WARN]/[ERROR] en prints hasta implementar logging formal
+- Variables de entorno siempre vía os.getenv(), nunca hardcodeadas
+
+## Frontend Next.js
+- Fetch centralizado en lib/api.ts, no fetch suelto por componentes
+- No hardcodear URLs del backend, usar NEXT_PUBLIC_API_URL
+
+## Base de datos
+- No modificar vistas de GCS sin verificar schema primero
+- Queries siempre parametrizadas con ?, nunca concatenación de strings
+- users.duckdb es dato de runtime, no va en el repo
+
+## Lo que no tocar sin consenso
+- backtester/engine.py: lógica JIT delicada
+- Schema de daily_metrics e intraday_1m: rompe backtests históricos
+- Estructura de Parquet en GCS

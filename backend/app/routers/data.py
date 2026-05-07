@@ -78,7 +78,7 @@ def filter_daily_metrics(filters: FilterRequest):
     """
     # Lazy imports (Pandas ~50MB RAM)
     import pandas as pd
-    from app.processor import get_dashboard_stats, get_aggregate_time_series
+    from app.services.processor_service import get_dashboard_stats, get_aggregate_time_series
     
     con = None
     try:

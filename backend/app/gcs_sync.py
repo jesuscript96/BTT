@@ -11,13 +11,14 @@ def get_gcs_client():
         key_path = os.path.join(os.path.dirname(__file__), "..", key_path)
         
     if not os.path.exists(key_path):
-        print(f"⚠️ GCS key file not found at {key_path}")
+        # Evitar caracteres no-ASCII (p. ej. en consolas cp1252 de Windows)
+        print(f"[WARN] GCS key file not found at {key_path}")
         return None
         
     try:
         return storage.Client.from_service_account_json(key_path)
     except Exception as e:
-        print(f"⚠️ Error creating GCS client: {e}")
+        print(f"[WARN] Error creating GCS client: {e}")
         return None
 
 def download_user_db() -> bool:
@@ -33,19 +34,19 @@ def download_user_db() -> bool:
     object_name = "users.duckdb"
     local_file = "users.duckdb"
     
-    print(f"📥 Attempting to download {object_name} from gs://{bucket_name}...")
+    print(f"[INFO] Attempting to download {object_name} from gs://{bucket_name}...")
     try:
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_name)
         if blob.exists():
             blob.download_to_filename(local_file)
-            print(f"✅ Successfully downloaded {local_file}")
+            print(f"[INFO] Successfully downloaded {local_file}")
             return True
         else:
-            print(f"⚠️ {object_name} not found in GCS. A new local file will be created.")
+            print(f"[WARN] {object_name} not found in GCS. A new local file will be created.")
             return False
     except Exception as e:
-        print(f"❌ Error downloading {object_name}: {e}")
+        print(f"[ERROR] Error downloading {object_name}: {e}")
         return False
 
 def upload_user_db() -> bool:
@@ -55,7 +56,7 @@ def upload_user_db() -> bool:
         
     local_file = "users.duckdb"
     if not os.path.exists(local_file):
-        print("⚠️ users.duckdb does not exist locally. Nothing to upload.")
+        print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False
         
     client = get_gcs_client()
@@ -65,15 +66,15 @@ def upload_user_db() -> bool:
     bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
     object_name = "users.duckdb"
     
-    print(f"📤 Uploading {local_file} to gs://{bucket_name}/{object_name}...")
+    print(f"[INFO] Uploading {local_file} to gs://{bucket_name}/{object_name}...")
     try:
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_name)
         blob.upload_from_filename(local_file)
-        print("✅ Successfully uploaded users.duckdb to GCS")
+        print("[INFO] Successfully uploaded users.duckdb to GCS")
         return True
     except Exception as e:
-        print(f"❌ Error uploading to GCS: {e}")
+        print(f"[ERROR] Error uploading to GCS: {e}")
         return False
 
 # For manual testing
