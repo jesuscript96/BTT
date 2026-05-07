@@ -23,14 +23,14 @@ async def lifespan(app: FastAPI):
     try:
         con = get_db_connection()
         tables = con.execute("SHOW TABLES").fetchall()
-        print(f"✅ Connected. Tables: {[t[0] for t in tables]}")
+        print(f"[INFO] Connected. Tables: {[t[0] for t in tables]}")
         try:
             init_db()
-            print("✅ Init DB: strategies and saved_queries tables verified")
+            print("[INFO] Init DB: strategies and saved_queries tables verified")
         except Exception as e:
-            print(f"⚠️ Init DB warning: {e}")
+            print(f"[WARN] Init DB warning: {e}")
     except Exception as e:
-        print(f"⚠️ DB not available at startup: {e}. App will start; first API request may fail or be slow.")
+        print(f"[WARN] DB not available at startup: {e}. App will start; first API request may fail or be slow.")
 
     start_scheduler()
     yield

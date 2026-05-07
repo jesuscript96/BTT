@@ -1,0 +1,21 @@
+# Proyecto: Short Selling Backtester (BTT)
+
+## Qué es
+Plataforma de trading algorítmico enfocada en shorts de small caps e intradiario.
+Competidor directo: Flash Research (líder de mercado, cientos de dólares/mes).
+Objetivo: alternativa optimizada aplicando mejores prácticas de IA en 2026.
+
+## Repositorios activos
+- BTT: plataforma principal (screener + strategy builder + backtester + resultados)
+- backtester2: iteración del motor de backtesting con arquitectura mejorada
+
+## Equipo
+- Adrián: desarrollador principal, arquitectura y desarrollo
+- Jaume: Product Manager, muy técnico en trading, usuario principal
+- Jesús: Marketing/Ventas, generará muchas ideas de features
+
+## Estado actual
+- Sin autenticación ni autorización en ningún repo
+- Sin CI/CD ni Docker
+- Base de datos: Google Cloud Storage (Parquet) + DuckDB vía httpfs
+- Frontends en Vercel, backends en Hetzner

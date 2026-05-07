@@ -1,3 +1,9 @@
+---
+description: Stack técnico y decisiones de arquitectura. Leer al crear archivos, cambiar estructura o agregar dependencias.
+globs: ["**/backend/**", "**/frontend/**"]
+alwaysApply: false
+---
+
 # Arquitectura
 
 ## Stack
