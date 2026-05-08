@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Download } from 'lucide-react'
 import PassCriteriaFilters from './PassCriteriaFilters'
 import StrategiesTable from './StrategiesTable'
-import { API_URL } from '@/config/constants'
+import { searchStrategies, exportStrategies } from '@/lib/api'
 
 interface ResultsPanelProps {
     searchConfig: any
@@ -38,26 +38,21 @@ export default function ResultsPanel({
     const fetchStrategies = async () => {
         setLoading(true)
         try {
-            const response = await fetch(`${API_URL}/strategy-search/filter`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    search_mode: searchConfig.mode,
-                    search_space: searchConfig.space,
-                    dataset_id: searchConfig.datasetId,
-                    date_from: searchConfig.dateFrom,
-                    date_to: searchConfig.dateTo,
-                    pass_criteria: {
-                        min_trades: passCriteria.minTrades || null,
-                        min_win_rate: passCriteria.minWinRate || null,
-                        min_profit_factor: passCriteria.minProfitFactor || null,
-                        min_expected_value: passCriteria.minExpectedValue || null,
-                        min_net_profit: passCriteria.minNetProfit || null
-                    }
-                })
+            const data = await searchStrategies({
+                search_mode: searchConfig.mode,
+                search_space: searchConfig.space,
+                dataset_id: searchConfig.datasetId,
+                date_from: searchConfig.dateFrom,
+                date_to: searchConfig.dateTo,
+                pass_criteria: {
+                    min_trades: passCriteria.minTrades || null,
+                    min_win_rate: passCriteria.minWinRate || null,
+                    min_profit_factor: passCriteria.minProfitFactor || null,
+                    min_expected_value: passCriteria.minExpectedValue || null,
+                    min_net_profit: passCriteria.minNetProfit || null
+                }
             })
 
-            const data = await response.json().catch(() => ({}))
             const list = data?.strategies
             setStrategies(Array.isArray(list) ? list : [])
         } catch (error) {
@@ -71,12 +66,7 @@ export default function ResultsPanel({
     const handleExport = async () => {
         const ids = strategies.map((s: any) => s.id)
         try {
-            const response = await fetch(`${API_URL}/strategy-search/export`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(ids)
-            })
-            const data = await response.json().catch(() => ({}))
+            const data = await exportStrategies(ids)
             const rows = data?.csv_data
             if (!Array.isArray(rows)) return
             const csv = rows.map((row: any[]) => row.join(',')).join('\n')

@@ -5,7 +5,7 @@ import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, UTCTime
 import { Trade } from '@/types/backtest';
 import { IndicatorConfig, IndicatorType, Strategy } from '@/types/strategy';
 import { Plus, X } from 'lucide-react';
-import { API_URL } from '@/config/constants';
+import { getStrategy, getHistoricalData } from '@/lib/api';
 
 interface CandlestickViewerProps {
     ticker: string;
@@ -57,42 +57,36 @@ export function CandlestickViewer({ ticker, dateFrom, dateTo, trades = [], trade
 
         const fetchStrategy = async () => {
             try {
-                const res = await fetch(`${API_URL}/strategies/${trade.strategy_id}`);
-                if (res.ok) {
-                    const contentType = res.headers.get("content-type");
-                    if (contentType && contentType.indexOf("application/json") !== -1) {
-                        const strat: Strategy = await res.json();
-                        setStrategy(strat);
+                const strat: Strategy = await getStrategy(trade.strategy_id);
+                setStrategy(strat);
 
-                        const extract = (group: any): IndicatorConfig[] => {
-                            let inds: IndicatorConfig[] = [];
-                            if (!group || !group.conditions) return inds;
-                            for (const cond of group.conditions) {
-                                if (cond.type === "group") {
-                                    inds = [...inds, ...extract(cond)];
-                                } else if (cond.type === "indicator_comparison") {
-                                    if (cond.source && typeof cond.source !== "number") inds.push(cond.source as IndicatorConfig);
-                                    if (cond.target && typeof cond.target !== "number") inds.push(cond.target as IndicatorConfig);
-                                } else if (cond.type === "price_level_distance") {
-                                    inds.push({ name: cond.level as IndicatorType });
-                                }
-                            }
-                            return inds;
-                        };
-
-                        const extracted = [
-                            ...extract(strat.entry_logic?.root_condition),
-                            ...extract(strat.exit_logic?.root_condition)
-                        ];
-
-                        const unique = Array.from(new Map(extracted.map(ind => [JSON.stringify(ind), ind])).values());
-                        const plottable = unique.filter((ind: IndicatorConfig) =>
-                            !["Close", "Open", "High", "Low", "Volume", "Time of Day", "Consecutive Red Candles", "Consecutive Higher Highs", "Consecutive Lower Lows"].includes(ind.name)
-                        );
-
-                        setSelectedIndicators(plottable);
+                const extract = (group: any): IndicatorConfig[] => {
+                    let inds: IndicatorConfig[] = [];
+                    if (!group || !group.conditions) return inds;
+                    for (const cond of group.conditions) {
+                        if (cond.type === "group") {
+                            inds = [...inds, ...extract(cond)];
+                        } else if (cond.type === "indicator_comparison") {
+                            if (cond.source && typeof cond.source !== "number") inds.push(cond.source as IndicatorConfig);
+                            if (cond.target && typeof cond.target !== "number") inds.push(cond.target as IndicatorConfig);
+                        } else if (cond.type === "price_level_distance") {
+                            inds.push({ name: cond.level as IndicatorType });
+                        }
                     }
-                }
+                    return inds;
+                };
+
+                const extracted = [
+                    ...extract(strat.entry_logic?.root_condition),
+                    ...extract(strat.exit_logic?.root_condition)
+                ];
+
+                const unique = Array.from(new Map(extracted.map(ind => [JSON.stringify(ind), ind])).values());
+                const plottable = unique.filter((ind: IndicatorConfig) =>
+                    !["Close", "Open", "High", "Low", "Volume", "Time of Day", "Consecutive Red Candles", "Consecutive Higher Highs", "Consecutive Lower Lows"].includes(ind.name)
+                );
+
+                setSelectedIndicators(plottable);
             } catch (e) {
                 console.error("Error fetching strategy for indicators", e);
             }
@@ -160,19 +154,13 @@ export function CandlestickViewer({ ticker, dateFrom, dateTo, trades = [], trade
                 const toDate = new Date(dateTo);
                 toDate.setHours(toDate.getHours() + 1);
 
-                const indQuery = selectedIndicators.length > 0 ? `&indicators=${encodeURIComponent(JSON.stringify(selectedIndicators))}` : '';
-                const url = `${API_URL}/data/historical?ticker=${ticker}&date_from=${fromDate.toISOString()}&date_to=${toDate.toISOString()}${indQuery}`;
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch data: ${response.statusText}`);
-                }
-                const contentType = response.headers.get("content-type");
-                if (!contentType || contentType.indexOf("application/json") === -1) {
-                    const text = await response.text();
-                    console.error("Non-JSON response:", text);
-                    throw new Error("Received non-JSON response from server");
-                }
-                const data = await response.json();
+                const indQuery = selectedIndicators.length > 0 ? encodeURIComponent(JSON.stringify(selectedIndicators)) : undefined;
+                const data = await getHistoricalData({
+                    ticker,
+                    date_from: fromDate.toISOString(),
+                    date_to: toDate.toISOString(),
+                    indicators: indQuery,
+                });
 
                 if (Array.isArray(data) && data.length > 0) {
                     try {

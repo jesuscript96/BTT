@@ -68,10 +68,7 @@ export function RMultipleHistogram({ distribution }: RMultipleHistogramProps) {
                             backdropFilter: 'blur(8px)'
                         }}
                         itemStyle={{ color: 'var(--foreground)' }}
-                        formatter={(value: number | undefined) => {
-                            if (value === undefined) return [0, 'Trades'];
-                            return [value, 'Trades'];
-                        }}
+                        formatter={(value) => value === undefined ? [0, 'Trades'] : [Number(value), 'Trades']}
                     />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                         {data.map((entry, index) => (

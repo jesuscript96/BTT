@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { BacktestDashboard } from '@/components/backtester/BacktestDashboard';
 import { BacktestResult } from '@/types/backtest';
 import { Loader2, ArrowLeft } from 'lucide-react';
-import { API_URL } from '@/config/constants';
+import { getBacktestResults } from '@/lib/api';
 
 
 export default function BacktestResultPage() {
@@ -25,11 +25,7 @@ export default function BacktestResultPage() {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch(`${API_URL}/backtest/results/${id}`);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch results: ${response.statusText}`);
-            }
-            const data = await response.json();
+            const data = await getBacktestResults(id as string);
             setResult(data);
         } catch (err) {
             console.error("Error fetching backtest result:", err);

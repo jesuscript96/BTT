@@ -109,10 +109,7 @@ export function MonteCarloResults({ monteCarlo, initialCapital }: MonteCarloResu
                                 backdropFilter: 'blur(8px)'
                             }}
                             itemStyle={{ color: 'var(--foreground)' }}
-                            formatter={(value: number | undefined) => {
-                                if (value === undefined) return [0, 'Simulations'];
-                                return [value, 'Simulations'];
-                            }}
+                            formatter={(value) => value === undefined ? [0, 'Simulations'] : [Number(value), 'Simulations']}
                         />
                         <ReferenceLine
                             y={initialCapital}

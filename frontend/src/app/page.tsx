@@ -16,7 +16,7 @@ import RollingAnalysisDashboard from "@/components/RollingAnalysisDashboard";
 import RegressionAnalysis from "@/components/RegressionAnalysis";
 import TickerAnalysis from "@/components/TickerAnalysis";
 
-import { API_URL } from "@/config/constants";
+import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
 
 // Custom debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -161,7 +161,7 @@ export default function Home() {
 
     try {
       // 1. FAST FETCH: Get Screener Data (Grid/Sidebar) - Critical Path
-      const result = await fetch(`${API_URL}/market/screener?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json());
+      const result = await getScreener(queryParams, controller.signal) as any;
 
       if (Array.isArray(result)) {
         setData(result);
@@ -174,8 +174,7 @@ export default function Home() {
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
       setIsAggregateLoading(true);
-      fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`, { signal: controller.signal })
-        .then(r => r.json())
+      getAggregateIntraday(queryParams, controller.signal)
         .then(aggregateResult => {
           setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
         })
@@ -196,22 +195,14 @@ export default function Home() {
 
   const handleExport = async () => {
     try {
-      const res = await fetch(`${API_URL}/export`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...currentFilters, rules: activeRules }),
-      });
-
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `export_${new Date().toISOString()}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
+      const blob = await exportData({ ...currentFilters, rules: activeRules });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export_${new Date().toISOString()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch (error) {
       console.error("Export failed:", error);
       alert("Export failed");

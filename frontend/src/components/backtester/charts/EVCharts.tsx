@@ -69,10 +69,7 @@ export function EVCharts({ evByTime, evByDay }: EVChartsProps) {
                                 backdropFilter: 'blur(8px)'
                             }}
                             itemStyle={{ color: 'var(--foreground)' }}
-                            formatter={(value: number | undefined) => {
-                                if (value === undefined) return ['0R', 'Avg R-Multiple'];
-                                return [`${value.toFixed(2)}R`, 'Avg R-Multiple'];
-                            }}
+                            formatter={(value) => value === undefined ? ['0R', 'Avg R-Multiple'] : [`${Number(value).toFixed(2)}R`, 'Avg R-Multiple']}
                         />
                         <Bar dataKey="ev" radius={[4, 4, 0, 0]}>
                             {timeData.map((entry, index) => (
@@ -125,10 +122,7 @@ export function EVCharts({ evByTime, evByDay }: EVChartsProps) {
                                 backdropFilter: 'blur(8px)'
                             }}
                             itemStyle={{ color: 'var(--foreground)' }}
-                            formatter={(value: number | undefined) => {
-                                if (value === undefined) return ['0R', 'Avg R-Multiple'];
-                                return [`${value.toFixed(2)}R`, 'Avg R-Multiple'];
-                            }}
+                            formatter={(value) => value === undefined ? ['0R', 'Avg R-Multiple'] : [`${Number(value).toFixed(2)}R`, 'Avg R-Multiple']}
                         />
                         <Bar dataKey="ev" radius={[4, 4, 0, 0]}>
                             {dayData.map((entry, index) => (

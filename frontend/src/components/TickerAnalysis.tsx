@@ -8,7 +8,7 @@ import {
 import {
     LineChart, Line, ResponsiveContainer, YAxis
 } from 'recharts';
-import { API_URL } from '@/config/constants';
+import { getTickerAnalysis, getTickerSecFilings } from '@/lib/api';
 
 interface TickerAnalysisProps {
     ticker?: string;
@@ -54,14 +54,9 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         const fetchData = async () => {
             setLoading(true);
             try {
-                // Parallel fetching
-                const [analysisRes, filingsRes] = await Promise.all([
-                    fetch(`${API_URL}/ticker-analysis/${selectedTicker}`),
-                    fetch(`${API_URL}/ticker-analysis/${selectedTicker}/sec-filings`)
-                ]);
-
-                if (analysisRes.ok) setData(await analysisRes.json());
-                if (filingsRes.ok) setFilings(await filingsRes.json());
+                // Parallel fetching — each independent so one failure doesn't block the other
+                try { setData(await getTickerAnalysis(selectedTicker)); } catch { /* ignore */ }
+                try { setFilings(await getTickerSecFilings(selectedTicker)); } catch { /* ignore */ }
 
             } catch (error) {
                 console.error("Error fetching ticker analysis:", error);
