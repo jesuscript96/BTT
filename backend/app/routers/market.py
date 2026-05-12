@@ -99,13 +99,13 @@ def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
     try:
         con = get_db_connection(read_only=True)
         if not trade_date:
-            latest = con.execute("SELECT MAX(CAST(timestamp AS DATE)) FROM intraday_1m WHERE ticker = ?", [ticker]).fetchone()
+            latest = con.execute("SELECT MAX(date) FROM intraday_1m WHERE ticker = ?", [ticker]).fetchone()
             if latest and latest[0]: trade_date = latest[0]
             else: return []
 
         query = """
             SELECT timestamp, open, high, low, close, volume
-            FROM intraday_1m WHERE ticker = ? AND CAST(timestamp AS DATE) = ?
+            FROM intraday_1m WHERE ticker = ? AND date = ?
             GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY timestamp ASC
         """
         cur = con.execute(query, [ticker, trade_date])
@@ -238,7 +238,7 @@ def get_aggregate_intraday(
             WITH daily_opens AS (
                  SELECT ticker, open as day_open 
                  FROM daily_metrics 
-                 WHERE CAST(timestamp AS DATE) = CAST(? AS DATE)
+                 WHERE DATE_TRUNC('day', timestamp) = CAST(? AS DATE)
                  AND ticker IN ({placeholders})
             ),
             joined_intraday AS (
@@ -250,7 +250,7 @@ def get_aggregate_intraday(
                     ((i.close - d.day_open) / d.day_open * 100) as pct_change
                 FROM intraday_1m i
                 JOIN daily_opens d ON i.ticker = d.ticker
-                WHERE CAST(i.timestamp AS DATE) = CAST(? AS DATE)
+                WHERE i.date = CAST(? AS DATE)
                 AND i.ticker IN ({placeholders})
             )
             SELECT 
