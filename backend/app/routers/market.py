@@ -20,6 +20,8 @@ router = APIRouter(
 )
 
 from app.services.query_service import build_screener_query, get_stats_sql_logic, map_stats_row
+from app.services.cache_service import get_hot_daily_df
+import pandas as pd
 
 @router.get("/screener")
 def screen_market(
@@ -32,6 +34,44 @@ def screen_market(
 ):
     con = None
     try:
+        # ── Hot Cache Fast Path ──
+        hot_df = get_hot_daily_df()
+        if hot_df is not None and min_gap >= 20.0:
+            result = hot_df.copy()
+            if min_gap:
+                result = result[result['gap_pct'] >= min_gap]
+            if max_gap is not None:
+                result = result[result['gap_pct'] <= max_gap]
+            if start_date:
+                result = result[result['timestamp'] >= pd.Timestamp(str(start_date))]
+            if end_date:
+                result = result[result['timestamp'] <= pd.Timestamp(str(end_date))]
+            if min_volume:
+                result = result[result['volume'] >= min_volume]
+            if ticker:
+                result = result[result['ticker'] == ticker.upper()]
+
+            result = result.sort_values(['timestamp', 'gap_pct'], ascending=[False, False]).head(limit)
+
+            recs = []
+            for _, rd in result.iterrows():
+                recs.append({
+                    "ticker": rd['ticker'],
+                    "date": str(rd['timestamp']),
+                    "open": safe_float(rd['open']), "high": safe_float(rd['high']), "low": safe_float(rd['low']), "close": safe_float(rd['close']),
+                    "volume": safe_float(rd['volume']),
+                    "gap_at_open_pct": safe_float(rd['gap_pct']),
+                    "rth_run_pct": safe_float(rd.get('rth_run_pct', 0)),
+                    "day_return_pct": safe_float(rd.get('day_return_pct', 0)),
+                    "pmh_gap_pct": 0.0, "pmh_fade_pct": 0.0, "rth_fade_pct": 0.0,
+                })
+            return {
+                "records": recs,
+                "stats": {"count": len(recs), "avg": {}, "p25": {}, "p50": {}, "p75": {}, "distributions": {"hod_time": {}, "lod_time": {}}},
+                "source": "hot_cache"
+            }
+
+        # ── Normal GCS Path ──
         con = get_db_connection(read_only=True)
         # Prepare filters dictionary for service
         filters = dict(request.query_params)

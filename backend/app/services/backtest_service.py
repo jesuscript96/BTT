@@ -9,6 +9,7 @@ from app.backtester.portfolio import (
     calculate_strategy_equity_curves,
 )
 from app.services.query_service import build_screener_query
+from app.services.cache_service import get_tickers_df, get_splits_df
 import pandas as pd
 import json, os, time, traceback
 from datetime import datetime
@@ -176,10 +177,8 @@ def run_backtest_task(run_id: str, request, run_statuses: dict):
             batch = universe_tickers[i : i + TICKER_QUERY_BATCH]
             placeholders = ",".join("?" * len(batch))
             try:
-                valid_df = con.execute(
-                    f"SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS') AND ticker IN ({placeholders})",
-                    batch,
-                ).fetchdf()
+                tickers_df = get_tickers_df()
+                valid_df = tickers_df[tickers_df["ticker"].isin(batch)][["ticker"]]
                 valid_tickers.update(valid_df["ticker"].astype(str).str.upper())
             except Exception as e:
                 print(f"  Tickers batch {i // TICKER_QUERY_BATCH + 1} failed: {e}")
@@ -191,10 +190,12 @@ def run_backtest_task(run_id: str, request, run_statuses: dict):
             batch = universe_tickers[i : i + TICKER_QUERY_BATCH]
             placeholders = ",".join("?" * len(batch))
             try:
-                splits_df = con.execute(
-                    f"SELECT ticker, execution_date FROM massive.splits WHERE execution_date >= CAST(? AS DATE) AND execution_date <= CAST(? AS DATE) AND ticker IN ({placeholders})",
-                    [date_from_f, date_to_f] + batch,
-                ).fetchdf()
+                splits_df_all = get_splits_df()
+                splits_df = splits_df_all[
+                    (splits_df_all["ticker"].isin(batch)) &
+                    (splits_df_all["execution_date"] >= pd.Timestamp(date_from_f).date()) &
+                    (splits_df_all["execution_date"] <= pd.Timestamp(date_to_f).date())
+                ].copy()
                 if not splits_df.empty:
                     splits_df["execution_date"] = pd.to_datetime(splits_df["execution_date"]).dt.date
                     split_set.update(zip(splits_df["ticker"].astype(str).str.upper(), splits_df["execution_date"]))

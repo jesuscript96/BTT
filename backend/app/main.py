@@ -29,6 +29,13 @@ async def lifespan(app: FastAPI):
             print("[INFO] Init DB: strategies and saved_queries tables verified")
         except Exception as e:
             print(f"[WARN] Init DB warning: {e}")
+
+        from app.services.cache_service import load_tickers_cache, load_splits_cache
+        try:
+            load_tickers_cache()
+            load_splits_cache()
+        except Exception as e:
+            print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:
         print(f"[WARN] DB not available at startup: {e}. App will start; first API request may fail or be slow.")
 

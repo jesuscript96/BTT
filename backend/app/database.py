@@ -1,12 +1,11 @@
 import os
 import duckdb
-from threading import Lock
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_con = None
-_lock = Lock()
+_local = threading.local()
 
 def _establish_connection():
     """Establish connection to local or GCS database."""
@@ -65,11 +64,14 @@ def _establish_connection():
         return duckdb.connect()
 
 def get_db_connection(read_only=False):
-    """
-    Returns a DuckDB connection cursor.
-    """
-    global _con
-    with _lock:
-        if _con is None:
-            _con = _establish_connection()
-        return _con.cursor()
+    if not hasattr(_local, "conn") or _local.conn is None:
+        _local.conn = _establish_connection()
+    return _local.conn.cursor()
+
+def reset_connection():
+    try:
+        if hasattr(_local, "conn") and _local.conn is not None:
+            _local.conn.close()
+    except Exception:
+        pass
+    _local.conn = None
