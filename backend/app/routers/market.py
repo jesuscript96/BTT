@@ -27,6 +27,7 @@ import pandas as pd
 def screen_market(
     request: Request,
     min_gap: float = 0.0, max_gap: Optional[float] = None,
+    min_gap_at_open_pct: float = 0.0,
     min_run: float = 0.0, min_volume: float = 0.0,
     trade_date: Optional[date] = None, start_date: Optional[date] = None,
     end_date: Optional[date] = None, ticker: Optional[str] = None,
@@ -36,10 +37,11 @@ def screen_market(
     try:
         # ── Hot Cache Fast Path ──
         hot_df = get_hot_daily_df()
-        if hot_df is not None and min_gap >= 20.0:
+        effective_gap = max(min_gap, min_gap_at_open_pct)
+        if hot_df is not None and effective_gap >= 20.0:
             result = hot_df.copy()
-            if min_gap:
-                result = result[result['gap_pct'] >= min_gap]
+            if effective_gap:
+                result = result[result['gap_pct'] >= effective_gap]
             if max_gap is not None:
                 result = result[result['gap_pct'] <= max_gap]
             if start_date:
@@ -206,17 +208,13 @@ def get_latest_market_date():
 def get_aggregate_intraday(
     request: Request,
     min_gap: float = 0.0, max_gap: Optional[float] = None,
+    min_gap_at_open_pct: float = 0.0,
     min_run: float = 0.0, min_volume: float = 0.0,
     trade_date: Optional[date] = None, start_date: Optional[date] = None,
     end_date: Optional[date] = None, ticker: Optional[str] = None
 ):
     con = None
     try:
-        from app.services.query_service import build_aggregate_query
-        
-        con = get_db_connection(read_only=True)
-        
-        # 1. Build Query to get tickers
         filters = dict(request.query_params)
         filters.update({
             'min_gap': min_gap, 'max_gap': max_gap,
@@ -224,56 +222,98 @@ def get_aggregate_intraday(
             'trade_date': trade_date, 'start_date': start_date,
             'end_date': end_date, 'ticker': ticker
         })
-        
+
+        # ── Hot Cache Fast Path ──
+        from app.services.cache_service import get_hot_daily_df
+        hot_df = get_hot_daily_df()
+        effective_gap = max(min_gap, min_gap_at_open_pct)
+
+        if hot_df is not None and effective_gap >= 20.0:
+            result_df = hot_df.copy()
+            if effective_gap:
+                result_df = result_df[result_df['gap_pct'] >= effective_gap]
+            if max_gap:
+                result_df = result_df[result_df['gap_pct'] <= max_gap]
+            if start_date:
+                result_df = result_df[result_df['timestamp'] >= pd.Timestamp(str(start_date))]
+            if end_date:
+                result_df = result_df[result_df['timestamp'] <= pd.Timestamp(str(end_date))]
+
+            result_df = result_df.sort_values(['timestamp', 'gap_pct'], ascending=[False, False])
+
+            if result_df.empty:
+                return []
+
+            target_date = pd.Timestamp(result_df.iloc[0]['timestamp']).date()
+            tickers = result_df[result_df['timestamp'].dt.date == target_date]['ticker'].unique().tolist()[:50]
+
+            if not tickers:
+                return []
+
+            # daily_opens from hot cache
+            opens_df = result_df[result_df['timestamp'].dt.date == target_date][['ticker', 'open']].copy()
+            opens_df = opens_df.rename(columns={'open': 'day_open'})
+
+            # FASE 2: intraday_1m query (sin daily_opens CTE — el merge es en pandas)
+            placeholders = ','.join(['?'] * len(tickers))
+            con = get_db_connection(read_only=True)
+            intra_query = f"""
+                SELECT i.timestamp, i.ticker, i.close
+                FROM intraday_1m i
+                WHERE i.date = CAST(? AS DATE)
+                AND i.ticker IN ({placeholders})
+            """
+            intra_rows = con.execute(intra_query, [target_date] + tickers).fetchall()
+
+            if not intra_rows:
+                return []
+
+            intraday_df = pd.DataFrame(intra_rows, columns=['timestamp', 'ticker', 'close'])
+            intraday_df = intraday_df.merge(opens_df, on='ticker', how='inner')
+            intraday_df['pct_change'] = (intraday_df['close'] - intraday_df['day_open']) / intraday_df['day_open'] * 100
+            intraday_df['minute'] = pd.to_datetime(intraday_df['timestamp']).dt.strftime('%H:%M')
+            grouped = intraday_df.groupby('minute').agg(
+                avg_change=('pct_change', 'mean'),
+                median_change=('pct_change', 'median')
+            ).reset_index()
+
+            result = []
+            for _, r in grouped.iterrows():
+                result.append({
+                    "time": r['minute'],
+                    "avg_change": safe_float(r['avg_change']),
+                    "median_change": safe_float(r['median_change'])
+                })
+            return result
+
+        # ── Normal GCS Path ──
+        from app.services.query_service import build_aggregate_query
+        con = get_db_connection(read_only=True)
+
         screener_query, sql_p = build_aggregate_query(filters)
-        
-        # Execute to get tickers
-        # Use CTE to just get tickers to avoid transferring all data
-        # wrapping screener query
+
         ticker_query = f"WITH screen_res AS ({screener_query}) SELECT ticker, gap_pct, timestamp FROM screen_res"
-        
         cur = con.execute(ticker_query, sql_p)
         rows = cur.fetchall()
-        
+
         if not rows:
             return []
-            
-        # Get target date from the first result if not provided
+
         target_date = trade_date
         if not target_date and rows:
-            # rows[0][2] is timestamp
             if rows[0][2]:
                 target_date = rows[0][2].date()
-        
+
         if not target_date:
             return []
-            
-        tickers = [r[0] for r in rows]
-        # De-duplicate just in case
-        tickers = list(set(tickers))
-        
+
+        tickers = list(set([r[0] for r in rows]))
+
         if not tickers:
             return []
-            
-        # 2. Query Intraday Data for these tickers and aggregate
-        # We want average close price change relative to open
-        
+
         placeholders = ','.join(['?'] * len(tickers))
-        
-        # Logic:
-        # For each ticker, for each minute:
-        # Calculate (close - open_of_day) / open_of_day * 100
-        # Then Average and Median across all tickers for that minute
-        
-        # NEED: Open price for each ticker on that day to normalize.
-        # Intraday table might not be easy to join efficiently?
-        # Actually daily_metrics has open price.
-        # But let's rely on intraday first candle.
-        
-        # Better: (Close - Open) / Open * 100 for each minute bar? 
-        # No, dashboard shows "Change vs Open Price". 
-        # Usually this means % change from day open.
-        
+
         agg_query = f"""
             WITH daily_opens AS (
                  SELECT ticker, open as day_open 
@@ -283,10 +323,7 @@ def get_aggregate_intraday(
             ),
             joined_intraday AS (
                 SELECT 
-                    i.timestamp,
-                    i.ticker,
-                    i.close,
-                    d.day_open,
+                    i.timestamp, i.ticker, i.close, d.day_open,
                     ((i.close - d.day_open) / d.day_open * 100) as pct_change
                 FROM intraday_1m i
                 JOIN daily_opens d ON i.ticker = d.ticker
@@ -301,12 +338,11 @@ def get_aggregate_intraday(
             GROUP BY 1
             ORDER BY 1
         """
-        
+
         params = [target_date] + tickers + [target_date] + tickers
-        
         agg_cur = con.execute(agg_query, params)
         agg_rows = agg_cur.fetchall()
-        
+
         result = []
         for r in agg_rows:
             result.append({
@@ -314,12 +350,9 @@ def get_aggregate_intraday(
                 "avg_change": safe_float(r[1]),
                 "median_change": safe_float(r[2])
             })
-            
         return result
 
     except Exception as e:
-        # print(f"Aggregate Error: {e}")
-        # Return empty list on error to not break frontend
         return []
     finally:
         if con: con.close()
