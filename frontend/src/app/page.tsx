@@ -170,13 +170,14 @@ export default function Home() {
         setData(result.records || []);
         setStats(result.stats || null);
       }
-      setIsLoading(false); // UI Interactive immediately
+      setIsLoading(false);
+      setAggregateSeries(null); // null = loading, prevents individual ticker mode
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
       setIsAggregateLoading(true);
       getAggregateIntraday(queryParams, controller.signal)
         .then(aggregateResult => {
-          setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
+          setAggregateSeries(Array.isArray(aggregateResult) && aggregateResult.length > 0 ? aggregateResult : []);
         })
         .catch(err => {
           if (err.name !== 'AbortError') console.error("Error fetching aggregate data:", err);

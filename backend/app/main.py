@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
+import time
 from contextlib import asynccontextmanager
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -30,10 +31,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[WARN] Init DB warning: {e}")
 
-        from app.services.cache_service import load_tickers_cache, load_splits_cache
+        from app.services.cache_service import load_tickers_cache, load_splits_cache, load_hot_daily_cache
         try:
+            t0 = time.time()
             load_tickers_cache()
+            print(f"[TIMING] tickers: {round(time.time()-t0, 2)}s")
+
+            t0 = time.time()
             load_splits_cache()
+            print(f"[TIMING] splits: {round(time.time()-t0, 2)}s")
+
+            t0 = time.time()
+            load_hot_daily_cache()
+            print(f"[TIMING] hot cache: {round(time.time()-t0, 2)}s")
+            print("[INFO] Hot daily cache loaded at startup")
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:

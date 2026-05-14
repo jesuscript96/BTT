@@ -58,7 +58,8 @@ def load_hot_daily_cache() -> None:
             gap_pct, open, close, high, low, volume,
             pm_volume, pm_high, pm_low, rth_volume,
             rth_high, rth_low, rth_run_pct,
-            day_return_pct
+            day_return_pct,
+            pmh_gap_pct, pmh_fade_pct, rth_fade_pct
         FROM daily_metrics
         WHERE year >= 2022
         AND gap_pct >= {HOT_GAP_MIN}

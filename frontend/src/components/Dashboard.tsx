@@ -234,13 +234,17 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
         post: false
     });
 
-    const isAggregate = aggregateSeries && aggregateSeries.length > 0;
+    const isAggregate = React.useMemo(
+        () => !!(aggregateSeries && aggregateSeries.length > 0),
+        [aggregateSeries]
+    );
 
     React.useEffect(() => {
+        if (aggregateSeries === null) return; // still loading aggregate
         if (!isAggregate && data && data.length > 0) {
             setActiveTicker(data[0].ticker);
         }
-    }, [data, isAggregate]);
+    }, [data, isAggregate, aggregateSeries]);
 
     React.useEffect(() => {
         if (isAggregate) {
@@ -332,7 +336,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                         {isAggregate ? (
                             <>
                                 <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
-                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
+                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">(AGGREGATE)</span>
                             </>
                         ) : (
                             <>

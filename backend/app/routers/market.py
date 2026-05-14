@@ -53,6 +53,33 @@ def screen_market(
             if ticker:
                 result = result[result['ticker'] == ticker.upper()]
 
+            # Compute stats from full filtered result (before head)
+            import numpy as np
+            col_map = {
+                'gap_pct': 'gap_at_open_pct',
+                'rth_run_pct': 'rth_run_pct',
+                'day_return_pct': 'day_return_pct',
+                'pm_volume': 'avg_pm_volume',
+                'volume': 'avg_volume',
+                'pmh_gap_pct': 'pm_high_gap_pct',
+                'pmh_fade_pct': 'pmh_fade_to_open_pct',
+                'rth_fade_pct': 'rth_fade_to_close_pct',
+            }
+            stats_payload = {
+                "count": len(result),
+                "avg": {}, "p25": {}, "p50": {}, "p75": {},
+                "distributions": {"hod_time": {}, "lod_time": {}}
+            }
+            for raw_col, frontend_key in col_map.items():
+                if raw_col not in result.columns:
+                    continue
+                series = result[raw_col].dropna().astype(float)
+                if len(series) > 0:
+                    stats_payload["avg"][frontend_key] = float(series.mean())
+                    stats_payload["p25"][frontend_key] = float(series.quantile(0.25))
+                    stats_payload["p50"][frontend_key] = float(series.quantile(0.50))
+                    stats_payload["p75"][frontend_key] = float(series.quantile(0.75))
+
             result = result.sort_values(['timestamp', 'gap_pct'], ascending=[False, False]).head(limit)
 
             recs = []
@@ -65,11 +92,13 @@ def screen_market(
                     "gap_at_open_pct": safe_float(rd['gap_pct']),
                     "rth_run_pct": safe_float(rd.get('rth_run_pct', 0)),
                     "day_return_pct": safe_float(rd.get('day_return_pct', 0)),
-                    "pmh_gap_pct": 0.0, "pmh_fade_pct": 0.0, "rth_fade_pct": 0.0,
+                    "pmh_gap_pct": safe_float(rd.get('pmh_gap_pct', 0)),
+                    "pmh_fade_pct": safe_float(rd.get('pmh_fade_pct', 0)),
+                    "rth_fade_pct": safe_float(rd.get('rth_fade_pct', 0)),
                 })
             return {
                 "records": recs,
-                "stats": {"count": len(recs), "avg": {}, "p25": {}, "p50": {}, "p75": {}, "distributions": {"hod_time": {}, "lod_time": {}}},
+                "stats": stats_payload,
                 "source": "hot_cache"
             }
 
