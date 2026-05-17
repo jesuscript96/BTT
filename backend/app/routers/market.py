@@ -64,6 +64,10 @@ def screen_market(
                 'pmh_gap_pct': 'pm_high_gap_pct',
                 'pmh_fade_pct': 'pmh_fade_to_open_pct',
                 'rth_fade_pct': 'rth_fade_to_close_pct',
+                'close_red': 'close_red_pct',
+                'high_spike_pct': 'high_spike_pct',
+                'low_spike_pct': 'low_spike_pct',
+                'rth_range_pct': 'rth_range_pct',
             }
             stats_payload = {
                 "count": len(result),

@@ -70,6 +70,26 @@ def load_hot_daily_cache() -> None:
     mem_mb = _hot_daily_cache.memory_usage(deep=True).sum() / 1024 / 1024
     print(f"[HOT CACHE] loaded from GCS Parquet: {len(_hot_daily_cache):,} rows, {mem_mb:.1f} MB")
 
+    # Columnas calculadas que no existen en el Parquet
+    df = _hot_daily_cache
+
+    if 'close' in df.columns and 'open' in df.columns:
+        _hot_daily_cache['close_red'] = (
+            (df['close'] < df['open']).astype('float32') * 100
+        )
+
+    if 'rth_high' in df.columns and 'open' in df.columns:
+        _hot_daily_cache['high_spike_pct'] = (
+            ((df['rth_high'] - df['open']) / df['open'] * 100)
+            .astype('float32')
+        )
+
+    if 'rth_low' in df.columns and 'open' in df.columns:
+        _hot_daily_cache['low_spike_pct'] = (
+            ((df['rth_low'] - df['open']) / df['open'] * 100)
+            .astype('float32')
+        )
+
 def get_hot_daily_df() -> pd.DataFrame | None:
     if _hot_daily_cache is None:
         load_hot_daily_cache()
