@@ -1,5 +1,6 @@
 import pandas as pd
 import logging
+import os
 from datetime import datetime, timedelta
 from app.database import get_db_connection
 
@@ -52,29 +53,22 @@ HOT_PRICE_MIN = 0.10
 def load_hot_daily_cache() -> None:
     global _hot_daily_cache
     con = get_db_connection()
+
+    bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+    path = f"gs://{bucket}/cold_storage/hot_cache/daily_metrics_gaps.parquet"
+
     _hot_daily_cache = con.execute(f"""
-        SELECT 
-            ticker, timestamp, year, month,
-            gap_pct, open, close, high, low, volume,
-            pm_volume, pm_high, pm_low, rth_volume,
-            rth_high, rth_low, rth_run_pct,
-            day_return_pct,
-            pmh_gap_pct, pmh_fade_pct, rth_fade_pct
-        FROM daily_metrics
-        WHERE year >= 2022
-        AND gap_pct >= {HOT_GAP_MIN}
-        AND gap_pct <= {HOT_GAP_MAX}
-        AND open > {HOT_PRICE_MIN}
+        SELECT * FROM read_parquet('{path}')
     """).fetchdf()
-    
+
     # Optimizar memoria
     for col in _hot_daily_cache.select_dtypes(include=['float64']).columns:
         _hot_daily_cache[col] = _hot_daily_cache[col].astype('float32')
     if 'ticker' in _hot_daily_cache.columns:
         _hot_daily_cache['ticker'] = _hot_daily_cache['ticker'].astype('category')
-    
+
     mem_mb = _hot_daily_cache.memory_usage(deep=True).sum() / 1024 / 1024
-    print(f"[HOT CACHE] daily_metrics gap days loaded: {len(_hot_daily_cache):,} rows, {mem_mb:.1f} MB")
+    print(f"[HOT CACHE] loaded from GCS Parquet: {len(_hot_daily_cache):,} rows, {mem_mb:.1f} MB")
 
 def get_hot_daily_df() -> pd.DataFrame | None:
     if _hot_daily_cache is None:
