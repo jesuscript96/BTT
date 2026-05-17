@@ -8,6 +8,11 @@ interface DataGridProps {
 }
 
 export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }) => {
+    const [page, setPage] = React.useState(0);
+    const PAGE_SIZE = 100;
+    const visibleData = data.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+    React.useEffect(() => { setPage(0); }, [data]);
     if (isLoading) {
         return (
             <div className="flex items-center justify-center p-20 text-zinc-500">
@@ -43,7 +48,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
-                    {data.map((row, i) => (
+                    {visibleData.map((row, i) => (
                         <tr key={i} className="hover:bg-accent/50 transition-colors group">
                             <td className="px-4 py-3 sticky left-0 bg-background group-hover:bg-accent/50 z-10 border-r border-border/50 text-center">
                                 <button
@@ -69,6 +74,21 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
                     ))}
                 </tbody>
             </table>
+            {data.length > PAGE_SIZE && (
+                <div className="flex items-center justify-center gap-3 p-3 text-sm font-medium text-muted-foreground border-t border-border">
+                    <button
+                        onClick={() => setPage(p => Math.max(0, p - 1))}
+                        disabled={page === 0}
+                        className="px-3 py-1 rounded bg-card border border-border hover:bg-muted disabled:opacity-30 transition-colors"
+                    >← Anterior</button>
+                    <span>{page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, data.length)} de {data.length.toLocaleString()}</span>
+                    <button
+                        onClick={() => setPage(p => p + 1)}
+                        disabled={(page + 1) * PAGE_SIZE >= data.length}
+                        className="px-3 py-1 rounded bg-card border border-border hover:bg-muted disabled:opacity-30 transition-colors"
+                    >Siguiente →</button>
+                </div>
+            )}
         </div>
     );
 };

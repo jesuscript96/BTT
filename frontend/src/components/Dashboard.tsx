@@ -49,7 +49,7 @@ interface TimeSeriesItem {
 interface DashboardProps {
     stats: DashboardStats;
     data: unknown[];
-    aggregateSeries?: TimeSeriesItem[];
+    aggregateSeries?: TimeSeriesItem[] | null;
     isLoadingAggregate?: boolean;
 }
 
@@ -222,7 +222,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 };
 
 // ─── Intraday Chart (unchanged logic) ─────────────────────────────────
-const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[], isLoadingAggregate?: boolean }) => {
+const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[] | null, isLoadingAggregate?: boolean }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");

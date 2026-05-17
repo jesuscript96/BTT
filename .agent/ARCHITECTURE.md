@@ -24,6 +24,13 @@ app/
 - Chunks por mes para evitar límites de memoria en universos grandes
 - Numba JIT (@njit) para el bucle bar-by-bar del engine
 
+## Hot Storage en RAM
+- **Tickers y splits**: cargados en startup vía `cache_service.py` (27K y 16K filas, <1s)
+- **Gap days (daily_metrics donde gap≥20%)**: Parquet pre-filtrado en GCS (`cold_storage/hot_cache/daily_metrics_gaps.parquet`). 31K filas, 7.3 MB. Carga en <1s vs 216s del scan completo.
+- **Columnas calculadas en hot cache**: `close_red`, `high_spike_pct`, `low_spike_pct` se derivan de columnas existentes al cargar.
+- **Fast path en screener**: cuando `min_gap ≥ 20`, el endpoint `/market/screener` sirve desde RAM en <100ms (400x más rápido que GCS).
+- **Actualización**: ejecutar `scripts/generate_hot_cache_parquet.py` para regenerar el Parquet cuando lleguen nuevos datos a GCS.
+
 ## Lo que NO existe aún
 - Autenticación/autorización
 - Rate limiting

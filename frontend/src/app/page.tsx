@@ -34,7 +34,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression' | 'ticker'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
-  const [aggregateSeries, setAggregateSeries] = useState<any[]>([]);
+  const [aggregateSeries, setAggregateSeries] = useState<any[] | null>([]);
   const [isLoading, setIsLoading] = useState(false);
   // Initialize filters with defaults matching the panel UI
   const [currentFilters, setCurrentFilters] = useState<any>({
@@ -50,8 +50,12 @@ export default function Home() {
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0);
 
-  // Debounce filter updates to prevent excessive re-renders/fetches
-  const debouncedFilters = useDebounce(currentFilters, 400);
+  const handleFilterStateChange = React.useCallback((newFilters: any) => {
+    setCurrentFilters(newFilters);
+    setData([]);
+    setStats(null);
+    setAggregateSeries([]);
+  }, []);
   const abortControllerRef = React.useRef<AbortController | null>(null);
 
 
@@ -229,7 +233,7 @@ export default function Home() {
       <AdvancedFilterPanel
         key={filterPanelKey}
         filters={currentFilters}
-        onFilterStateChange={setCurrentFilters}
+        onFilterStateChange={handleFilterStateChange}
         onFilter={(newFilters) => fetchData(newFilters, activeRules)}
         onExport={handleExport}
         onSaveDataset={() => setIsSaveModalOpen(true)}
@@ -339,7 +343,7 @@ export default function Home() {
 
             <div className="flex-1 min-h-[500px] bg-card rounded-xl border border-border shadow-sm overflow-hidden">
               <DataGrid
-                data={data}
+                data={React.useMemo(() => data, [data])}
                 isLoading={isLoading}
               />
             </div>
