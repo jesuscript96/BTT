@@ -16,7 +16,7 @@ import RollingAnalysisDashboard from "@/components/RollingAnalysisDashboard";
 import RegressionAnalysis from "@/components/RegressionAnalysis";
 import TickerAnalysis from "@/components/TickerAnalysis";
 
-import { API_URL } from "@/config/constants";
+import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
 
 // Custom debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -34,7 +34,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression' | 'ticker'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
-  const [aggregateSeries, setAggregateSeries] = useState<any[]>([]);
+  const [aggregateSeries, setAggregateSeries] = useState<any[] | null>([]);
   const [isLoading, setIsLoading] = useState(false);
   // Initialize filters with defaults matching the panel UI
   const [currentFilters, setCurrentFilters] = useState<any>({
@@ -50,8 +50,12 @@ export default function Home() {
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0);
 
-  // Debounce filter updates to prevent excessive re-renders/fetches
-  const debouncedFilters = useDebounce(currentFilters, 400);
+  const handleFilterStateChange = React.useCallback((newFilters: any) => {
+    setCurrentFilters(newFilters);
+    setData([]);
+    setStats(null);
+    setAggregateSeries([]);
+  }, []);
   const abortControllerRef = React.useRef<AbortController | null>(null);
 
 
@@ -161,7 +165,7 @@ export default function Home() {
 
     try {
       // 1. FAST FETCH: Get Screener Data (Grid/Sidebar) - Critical Path
-      const result = await fetch(`${API_URL}/market/screener?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json());
+      const result = await getScreener(queryParams, controller.signal) as any;
 
       if (Array.isArray(result)) {
         setData(result);
@@ -170,14 +174,14 @@ export default function Home() {
         setData(result.records || []);
         setStats(result.stats || null);
       }
-      setIsLoading(false); // UI Interactive immediately
+      setIsLoading(false);
+      setAggregateSeries(null); // null = loading, prevents individual ticker mode
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
       setIsAggregateLoading(true);
-      fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`, { signal: controller.signal })
-        .then(r => r.json())
+      getAggregateIntraday(queryParams, controller.signal)
         .then(aggregateResult => {
-          setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
+          setAggregateSeries(Array.isArray(aggregateResult) && aggregateResult.length > 0 ? aggregateResult : []);
         })
         .catch(err => {
           if (err.name !== 'AbortError') console.error("Error fetching aggregate data:", err);
@@ -196,22 +200,14 @@ export default function Home() {
 
   const handleExport = async () => {
     try {
-      const res = await fetch(`${API_URL}/export`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...currentFilters, rules: activeRules }),
-      });
-
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `export_${new Date().toISOString()}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
+      const blob = await exportData({ ...currentFilters, rules: activeRules });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export_${new Date().toISOString()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch (error) {
       console.error("Export failed:", error);
       alert("Export failed");
@@ -237,7 +233,7 @@ export default function Home() {
       <AdvancedFilterPanel
         key={filterPanelKey}
         filters={currentFilters}
-        onFilterStateChange={setCurrentFilters}
+        onFilterStateChange={handleFilterStateChange}
         onFilter={(newFilters) => fetchData(newFilters, activeRules)}
         onExport={handleExport}
         onSaveDataset={() => setIsSaveModalOpen(true)}
@@ -347,7 +343,7 @@ export default function Home() {
 
             <div className="flex-1 min-h-[500px] bg-card rounded-xl border border-border shadow-sm overflow-hidden">
               <DataGrid
-                data={data}
+                data={React.useMemo(() => data, [data])}
                 isLoading={isLoading}
               />
             </div>

@@ -5,7 +5,7 @@ import {
     XAxis, YAxis, Tooltip, ResponsiveContainer,
     Area, CartesianGrid, ReferenceLine, ComposedChart, Line, ReferenceArea
 } from "recharts";
-import { API_URL } from "@/config/constants";
+import { getTickerIntraday } from "@/lib/api";
 import { NewsFeed } from "./NewsFeed";
 
 interface DistributionItem {
@@ -49,7 +49,7 @@ interface TimeSeriesItem {
 interface DashboardProps {
     stats: DashboardStats;
     data: unknown[];
-    aggregateSeries?: TimeSeriesItem[];
+    aggregateSeries?: TimeSeriesItem[] | null;
     isLoadingAggregate?: boolean;
 }
 
@@ -222,7 +222,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 };
 
 // ─── Intraday Chart (unchanged logic) ─────────────────────────────────
-const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[], isLoadingAggregate?: boolean }) => {
+const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[] | null, isLoadingAggregate?: boolean }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");
@@ -234,13 +234,17 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
         post: false
     });
 
-    const isAggregate = aggregateSeries && aggregateSeries.length > 0;
+    const isAggregate = React.useMemo(
+        () => !!(aggregateSeries && aggregateSeries.length > 0),
+        [aggregateSeries]
+    );
 
     React.useEffect(() => {
+        if (aggregateSeries === null) return; // still loading aggregate
         if (!isAggregate && data && data.length > 0) {
             setActiveTicker(data[0].ticker);
         }
-    }, [data, isAggregate]);
+    }, [data, isAggregate, aggregateSeries]);
 
     React.useEffect(() => {
         if (isAggregate) {
@@ -251,15 +255,10 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
 
         if (!activeTicker) return;
         setLoading(true);
-        let url = `${API_URL}/market/ticker/${activeTicker}/intraday`;
-        if (data && data[0] && data[0].date) {
-            url += `?trade_date=${data[0].date}`;
-        }
-
-        fetch(url)
-            .then(res => res.json())
-            .then(resData => {
-                const parsed = resData.map((d: any) => ({
+        getTickerIntraday(activeTicker, data && data[0] && data[0].date ? data[0].date : undefined)
+            .then((resData: unknown) => {
+                const arr = resData as any[];
+                const parsed = arr.map((d: any) => ({
                     ...d,
                     time: d.timestamp.split(' ')[1].substring(0, 5),
                     timeShort: d.timestamp.split(' ')[1].substring(0, 5)
@@ -337,7 +336,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                         {isAggregate ? (
                             <>
                                 <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
-                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
+                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">(AGGREGATE)</span>
                             </>
                         ) : (
                             <>

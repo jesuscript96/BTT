@@ -12,9 +12,9 @@ def start_scheduler():
     pulse_enabled = os.getenv("ENABLE_PULSE", "false").lower() == "true"
     
     if not pulse_enabled:
-        print("ℹ️  Scheduler disabled (ingestion handled externally).")
+        print("[INFO] Scheduler disabled (ingestion handled externally).")
         return
     
     # If someone explicitly enables it, warn them
-    print("⚠️  ENABLE_PULSE=true but ingestion is no longer handled by this backend.")
-    print("💡  Data ingestion should be done through the external pipeline.")
+    print("[WARN] ENABLE_PULSE=true but ingestion is no longer handled by this backend.")
+    print("[INFO] Data ingestion should be done through the external pipeline.")

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Strategy } from '@/types/strategy';
 import { Loader2, Trash2 } from 'lucide-react';
-import { API_URL } from '@/config/constants';
+import { getStrategies, deleteStrategy } from '@/lib/api';
 
 interface Props {
     refreshTrigger?: number;
@@ -18,13 +18,8 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`${API_URL}/strategies/`);
-            const data = await response.json().catch(() => []);
-            if (!response.ok) {
-                const msg = (data && typeof data.detail === "string") ? data.detail : "Failed to fetch strategies";
-                throw new Error(msg);
-            }
-            setStrategies(Array.isArray(data) ? data : []);
+            const data = await getStrategies();
+            setStrategies(data);
         } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";
             setError(message);
@@ -38,10 +33,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (!confirm('Are you sure you want to delete this strategy?')) return;
 
         try {
-            const response = await fetch(`${API_URL}/strategies/${id}`, {
-                method: 'DELETE'
-            });
-            if (!response.ok) throw new Error('Failed to delete');
+            await deleteStrategy(id);
             fetchStrategies(); // Refresh list
         } catch (err) {
             alert('Error deleting strategy');

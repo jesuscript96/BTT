@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Calendar, Play, Square, Save, FolderOpen } from 'lucide-react'
-import { API_URL } from '@/config/constants'
+import { getQueries } from '@/lib/api'
 
 interface ConfigurationPanelProps {
     config: {
@@ -33,9 +33,8 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
         let cancelled = false
         async function load() {
             try {
-                const res = await fetch(`${API_URL}/queries/`)
-                const data = await res.json().catch(() => [])
-                if (!cancelled) setSavedDatasets(Array.isArray(data) ? data : [])
+                const data = await getQueries()
+                if (!cancelled) setSavedDatasets(data)
             } catch (_) {
                 if (!cancelled) setSavedDatasets([])
             } finally {

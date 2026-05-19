@@ -5,6 +5,7 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer, ReferenceLine
 } from "recharts";
+import { getMetricsHistory } from "@/lib/api";
 
 type MetricType = 'rth_range_pct' | 'return_close_vs_open_pct' | 'high_spike_pct' | 'low_spike_pct' | 'gap_extension_pct' | 'close_index_pct' | 'pmh_gap_pct' | 'pm_fade_at_open_pct';
 
@@ -74,10 +75,8 @@ export default function RollingAnalysisDashboard({ ticker, startDate, endDate }:
         async function fetchData() {
             try {
                 setLoading(true);
-                const res = await fetch(`http://localhost:8000/api/market/ticker/${ticker}/metrics_history?limit=1000`);
-                if (!res.ok) throw new Error("Failed to load metrics");
-                const json = await res.json();
-                setRawData(json);
+                const json = await getMetricsHistory(ticker, 1000);
+                setRawData(json as DailyMetric[]);
             } catch (e) {
                 console.error(e);
             } finally {
@@ -245,7 +244,7 @@ export default function RollingAnalysisDashboard({ ticker, startDate, endDate }:
                                 fontWeight: '700'
                             }}
                             itemStyle={{ color: 'var(--foreground)' }}
-                            formatter={(val: number | undefined) => (val !== undefined && val !== null) ? val.toFixed(2) + '%' : ''}
+                            formatter={(val) => (val !== undefined && val !== null) ? Number(val).toFixed(2) + '%' : ''}
                             labelStyle={{ color: 'var(--muted-foreground)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.1em' }}
                             cursor={{ stroke: 'var(--muted-foreground)', strokeWidth: 1, strokeDasharray: '4 4' }}
                         />

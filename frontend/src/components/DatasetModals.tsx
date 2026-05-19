@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { X, Save, FolderOpen, Trash2 } from "lucide-react";
 
-import { API_URL } from '@/config/constants';
+import { createQuery, getQueries, deleteQuery } from '@/lib/api';
 
 export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
     const [name, setName] = useState("");
@@ -15,18 +15,12 @@ export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
         if (!name.trim()) return;
         setIsSaving(true);
         try {
-            const res = await fetch(`${API_URL}/queries/`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    name,
-                    filters: { ...filters, rules }
-                }),
+            await createQuery({
+                name,
+                filters: { ...filters, rules }
             });
-            if (res.ok) {
-                onClose();
-                setName("");
-            }
+            onClose();
+            setName("");
         } catch (error) {
             console.error("Error saving dataset:", error);
         } finally {
@@ -85,12 +79,8 @@ export const LoadDatasetModal = ({ isOpen, onClose, onLoad }: any) => {
     const fetchQueries = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`${API_URL}/queries/`);
-            const data = await res.json().catch(() => []);
-            setQueries(Array.isArray(data) ? data : []);
-            if (!res.ok) {
-                console.warn("Datasets response not ok:", res.status, data);
-            }
+            const data = await getQueries();
+            setQueries(data);
         } catch (error) {
             console.error("Error fetching datasets:", error);
             setQueries([]);
@@ -103,7 +93,7 @@ export const LoadDatasetModal = ({ isOpen, onClose, onLoad }: any) => {
         e.stopPropagation();
         if (!confirm("Delete this dataset?")) return;
         try {
-            await fetch(`${API_URL}/queries/${id}`, { method: "DELETE" });
+            await deleteQuery(id);
             setQueries(prev => prev.filter(q => q.id !== id));
         } catch (error) {
             console.error("Error deleting dataset:", error);

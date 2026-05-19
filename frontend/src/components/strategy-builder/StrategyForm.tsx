@@ -17,7 +17,7 @@ import { EntryLogicBuilder } from './EntryLogic';
 import { ExitLogicBuilder } from './ExitLogic';
 import { RiskManagementComponent } from './RiskManagement';
 import { Save, Loader2, Code, FlaskConical, Database, X } from 'lucide-react';
-import { API_URL } from '@/config/constants';
+import { getQueries, createStrategy } from '@/lib/api';
 
 interface SavedQuery {
     id: string;
@@ -91,12 +91,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     const fetchSavedDatasets = async () => {
         setLoadingDatasets(true);
         try {
-            const response = await fetch(`${API_URL}/queries/`);
-            const data = await response.json().catch(() => []);
-            setSavedDatasets(Array.isArray(data) ? data : []);
-            if (!response.ok) {
-                console.warn("Datasets response not ok:", response.status, data);
-            }
+            const data = await getQueries();
+            setSavedDatasets(data);
         } catch (error) {
             console.error("Error fetching datasets:", error);
             setSavedDatasets([]);
@@ -132,27 +128,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
         setIsSubmitting(true);
         try {
             const strategyData = constructStrategyPayload();
-            const response = await fetch(`${API_URL}/strategies/`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(strategyData)
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ detail: 'Failed to parse error response' }));
-                const detail = errorData.detail;
-                let errorMessage = 'Failed to save';
-                if (Array.isArray(detail)) {
-                    errorMessage = detail.map((err: any) => `${err.loc.join('.')}: ${err.msg}`).join('\n');
-                } else if (typeof detail === 'object') {
-                    errorMessage = JSON.stringify(detail);
-                } else {
-                    errorMessage = detail || 'Failed to save';
-                }
-                throw new Error(errorMessage);
-            }
-
-            const savedStrategy = await response.json();
+            const savedStrategy = await createStrategy(strategyData);
             alert(`Strategy "${savedStrategy.name}" saved successfully!`);
 
             setName("");
@@ -174,14 +150,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
         try {
             // Save strategy as draft first
             const strategyData = constructStrategyPayload();
-            const response = await fetch(`${API_URL}/strategies/`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(strategyData)
-            });
-
-            if (!response.ok) throw new Error('Failed to save strategy draft');
-            const savedStrategy = await response.json();
+            const savedStrategy = await createStrategy(strategyData);
 
             // Store prefill data — autoRun is FALSE, just preload
             sessionStorage.setItem('backtester_prefill', JSON.stringify({

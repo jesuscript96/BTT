@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { API_URL } from '@/config/constants';
+import { getMarketNews } from '@/lib/api';
 import { Newspaper, ExternalLink, Clock } from 'lucide-react';
 
 interface NewsItem {
@@ -17,11 +17,8 @@ export const NewsFeed: React.FC = () => {
     useEffect(() => {
         const fetchNews = async () => {
             try {
-                const res = await fetch(`${API_URL}/market/news`);
-                if (res.ok) {
-                    const data = await res.json();
-                    setNews(data);
-                }
+                const data = await getMarketNews();
+                setNews(data as NewsItem[]);
             } catch (err) {
                 console.error("Failed to fetch news", err);
             } finally {

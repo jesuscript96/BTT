@@ -11,6 +11,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+
+# Frontend lib is source code, not Python lib
+!frontend/src/lib/
 lib64/
 parts/
 sdist/

@@ -13,7 +13,7 @@ interface AdvancedFilterPanelProps {
     isLoading: boolean;
 }
 
-export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
+export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.memo(({
     filters,
     onFilterStateChange,
     onFilter,
@@ -205,7 +205,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
             )} */}
         </div>
     );
-};
+});
 
 const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) => (
     <div className="flex flex-col gap-1">

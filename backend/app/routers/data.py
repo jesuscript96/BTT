@@ -78,7 +78,7 @@ def filter_daily_metrics(filters: FilterRequest):
     """
     # Lazy imports (Pandas ~50MB RAM)
     import pandas as pd
-    from app.processor import get_dashboard_stats, get_aggregate_time_series
+    from app.services.processor_service import get_dashboard_stats, get_aggregate_time_series
     
     con = None
     try:
@@ -324,3 +324,70 @@ def get_historical_ohlc(
     finally:
         if con:
             con.close()
+import numpy as np
+
+@router.post("/api/cache/refresh")
+async def refresh_cache():
+    from app.db.gcs_cache import sync_hot_tables
+    try:
+        sync_hot_tables(force=True)
+        return {"status": "ok", "message": "Cache refreshed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+from app.db.gcs_cache import get_strategies_df, get_saved_queries_df
+
+
+@router.get("/datasets")
+def list_datasets():
+    try:
+        df = get_saved_queries_df()
+        if df is None or df.empty:
+            return []
+        return df.to_dict(orient="records")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/datasets/{dataset_id}")
+def get_dataset(dataset_id: str):
+    try:
+        df = get_saved_queries_df()
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        row = df[df["id"] == dataset_id]
+        if row.empty:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        return row.iloc[0].to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/strategies")
+def list_strategies_backtester():
+    try:
+        df = get_strategies_df()
+        if df is None or df.empty:
+            return []
+        return df.to_dict(orient="records")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/strategies/{strategy_id}")
+def get_strategy_backtester(strategy_id: str):
+    try:
+        df = get_strategies_df()
+        if df is None or df.empty:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        row = df[df["id"] == strategy_id]
+        if row.empty:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        return row.iloc[0].to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

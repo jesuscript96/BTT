@@ -1,12 +1,11 @@
 import os
 import duckdb
-from threading import Lock
+import threading
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_con = None
-_lock = Lock()
+_local = threading.local()
 
 def _establish_connection():
     """Establish connection to local or GCS database."""
@@ -18,7 +17,7 @@ def _establish_connection():
             # and read data directly from parquet files.
             # Using a local file 'users.duckdb' to persist strategies/queries.
             con = duckdb.connect('users.duckdb')
-            print("✅ Connected to local users.duckdb (GCS data mode)")
+            print("[INFO] Connected to local users.duckdb (GCS data mode)")
             
             # Setup GCS secret for DuckDB reads (HMAC works better in DuckDB)
             access_key = os.getenv("GCS_HMAC_KEY")
@@ -38,15 +37,15 @@ def _establish_connection():
                         SECRET '{secret}'
                     );
                 """)
-                print("✅ GCS HMAC Secret configured for DuckDB reads.")
+                print("[INFO] GCS HMAC Secret configured for DuckDB reads.")
             else:
-                print("⚠️ GCS HMAC credentials not found in environment. Market views may fail.")
+                print("[WARN] GCS HMAC credentials not found in environment. Market views may fail.")
             
             return con
             
         elif provider == "local":
             con = duckdb.connect('local_data.duckdb')
-            print("✅ Connected to local database.")
+            print("[INFO] Connected to local database.")
             return con
             
         else: # Default to motherduck for backward compatibility during transition
@@ -55,21 +54,24 @@ def _establish_connection():
                 token = token.strip()
             conn_str = f"md:?motherduck_token={token}" if token else "md:"
             con = duckdb.connect(conn_str)
-            print("✅ Connected to MotherDuck (default database)")
+            print("[INFO] Connected to MotherDuck (default database)")
             con.execute("SET search_path = 'main'")
             return con
             
     except Exception as e:
-        print(f"❌ Connection Error: {e}")
+        print(f"[ERROR] Connection Error: {e}")
         # Fallback to local transient DB
         return duckdb.connect()
 
 def get_db_connection(read_only=False):
-    """
-    Returns a DuckDB connection cursor.
-    """
-    global _con
-    with _lock:
-        if _con is None:
-            _con = _establish_connection()
-        return _con.cursor()
+    if not hasattr(_local, "conn") or _local.conn is None:
+        _local.conn = _establish_connection()
+    return _local.conn.cursor()
+
+def reset_connection():
+    try:
+        if hasattr(_local, "conn") and _local.conn is not None:
+            _local.conn.close()
+    except Exception:
+        pass
+    _local.conn = None
