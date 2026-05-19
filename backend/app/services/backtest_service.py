@@ -880,7 +880,7 @@ def _get_market_sessions_mask(
             except Exception:
                 pass
                 
-    return mask.values
+    return mask.values if hasattr(mask, 'values') else mask
 
 def _safe_float(val) -> float | None:
     try:
