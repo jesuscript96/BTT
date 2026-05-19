@@ -1,0 +1,131 @@
+"use client";
+
+import { useState } from "react";
+import type { BacktestResult, DayCandles, TradeRecord, EquityPoint } from "@/lib/api_backtester";
+import PerformanceTab from "@/components/backtester/tabs/PerformanceTab";
+import CalendarTab from "@/components/backtester/tabs/CalendarTab";
+import TradesTab from "@/components/backtester/tabs/TradesTab";
+import ChartsTab from "@/components/backtester/tabs/ChartsTab";
+import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
+import Chart from "@/components/backtester/Chart";
+
+const TABS = [
+  { id: "performance", label: "Performance" },
+  { id: "calendar", label: "Calendar" },
+  { id: "trades", label: "Trades" },
+  { id: "analysis", label: "Análisis por trade" },
+  { id: "charts", label: "Charts" },
+  { id: "optimization", label: "Op. Surface" },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
+
+interface ResultsTabsProps {
+  result: BacktestResult;
+  initCash: number;
+  riskR: number;
+  dayCandles: DayCandles | null;
+  candlesLoading: boolean;
+  currentTrades: TradeRecord[];
+  currentEquity: EquityPoint[];
+  isDarkMode?: boolean;
+  strategyId?: string;
+  datasetId?: string;
+  backtestParams?: Record<string, unknown>;
+}
+
+export default function ResultsTabs({
+  result,
+  initCash,
+  riskR,
+  dayCandles,
+  candlesLoading,
+  currentTrades,
+  currentEquity,
+  isDarkMode = false,
+  strategyId = "",
+  datasetId = "",
+  backtestParams = {},
+}: ResultsTabsProps) {
+  const [activeTab, setActiveTab] = useState<TabId>("performance");
+
+  return (
+    <div className="transition-colors">
+      <div className="overflow-x-auto" style={{ borderBottom: '1px solid var(--border)' }}>
+        <nav className="flex min-w-max">
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] whitespace-nowrap transition-colors
+                ${activeTab === tab.id
+                  ? "text-[var(--foreground)] border-b-2 border-[var(--foreground)]"
+                  : "text-[var(--muted)] hover:text-[var(--foreground)] border-b-2 border-transparent"
+                }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      <div className="pt-5 pb-2">
+        <div style={{ display: activeTab === "performance" ? "block" : "none" }}>
+          <PerformanceTab
+            dayResults={result.day_results}
+            trades={result.trades}
+            initCash={initCash}
+            riskR={riskR}
+            isDarkMode={isDarkMode}
+          />
+        </div>
+        <div style={{ display: activeTab === "calendar" ? "block" : "none" }}>
+          <CalendarTab dayResults={result.day_results} trades={result.trades} isDarkMode={isDarkMode} />
+        </div>
+        <div style={{ display: activeTab === "trades" ? "block" : "none" }}>
+          <TradesTab trades={result.trades} />
+        </div>
+        <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>
+          <div>
+            {candlesLoading && (
+              <div className="flex items-center justify-center p-8">
+                <div className="text-center space-y-2">
+                  <svg className="animate-spin h-5 w-5 text-[var(--muted)] mx-auto" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <p className="text-[10px] text-[var(--muted)] font-mono">loading chart...</p>
+                </div>
+              </div>
+            )}
+            {!candlesLoading && dayCandles && dayCandles.candles.length > 0 && (
+              <Chart
+                candles={dayCandles.candles}
+                trades={currentTrades}
+                equity={currentEquity}
+                ticker={dayCandles.ticker}
+                date={dayCandles.date}
+              />
+            )}
+            {!candlesLoading && (!dayCandles || dayCandles.candles.length === 0) && (
+              <p className="text-[10px] text-[var(--muted)] text-center py-8 font-mono">
+                Selecciona un dia en el panel lateral para ver el analisis del trade.
+              </p>
+            )}
+          </div>
+        </div>
+        <div style={{ display: activeTab === "charts" ? "block" : "none" }}>
+          <ChartsTab trades={result.trades} dayResults={result.day_results} riskR={riskR} isDarkMode={isDarkMode} />
+        </div>
+        <div style={{ display: activeTab === "optimization" ? "block" : "none" }}>
+          <OptimizationSurfaceTab
+            strategyId={strategyId}
+            datasetId={datasetId}
+            isDarkMode={isDarkMode}
+            backtestParams={backtestParams}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -79,24 +79,6 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
     t0 = time.time()
     logger.info(f"BACKTEST START dataset={req.dataset_id} strategy={req.strategy_id}")
 
-    # ── MOCK SHORTCUT ──
-    if req.dataset_id == "mock_dataset_1" and req.strategy_id == "mock_strat_1":
-        logger.info("Returning mock backtest data")
-        try:
-            with open("mock_backtest.json", "r") as f:
-                data = json.load(f)
-            random.seed(42)
-            gap_map = {}
-            for d in data.get("day_results", []):
-                gap = round(random.uniform(-15, 40), 2)
-                d["gap_pct"] = gap
-                gap_map[d["date"]] = gap
-            for t in data.get("trades", []):
-                t["gap_pct"] = gap_map.get(t.get("date"), round(random.uniform(-15, 40), 2))
-            return data
-        except Exception as e:
-            raise HTTPException(status_code=500, detail="Mock data not generated")
-
     # ── STRATEGY LOAD + VALIDATION ──
     strategy = get_strategy(req.strategy_id)
     if not strategy:

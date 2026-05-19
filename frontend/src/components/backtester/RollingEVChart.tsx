@@ -1,0 +1,197 @@
+"use client";
+
+import { useEffect, useRef, useState, useMemo } from "react";
+import {
+    createChart,
+    BaselineSeries,
+    type IChartApi,
+    type Time,
+} from "lightweight-charts";
+import type { TradeRecord } from "@/lib/api_backtester";
+
+interface RollingEVChartProps {
+    trades: TradeRecord[];
+    riskR: number;
+    isDarkMode?: boolean;
+}
+
+export default function RollingEVChart({ trades, riskR, isDarkMode = false }: RollingEVChartProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const chartRef = useRef<IChartApi | null>(null);
+    const [rollingWindow, setRollingWindow] = useState(50);
+    type RollingBasis = "trades" | "days";
+    const [basis, setBasis] = useState<RollingBasis>("days");
+
+    const evData = useMemo(() => {
+        if (!trades.length) return [];
+        const r = riskR > 0 ? riskR : 1;
+
+        if (basis === "days") {
+            // Group trades by day, compute daily EV, then rolling avg over days
+            const dayTrades = new Map<string, TradeRecord[]>();
+            for (const t of trades) {
+                const d = new Date(t.exit_time);
+                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                if (!dayTrades.has(dateStr)) dayTrades.set(dateStr, []);
+                dayTrades.get(dateStr)!.push(t);
+            }
+
+            const dailyEV: { date: string; ev: number }[] = [];
+            for (const [date, dayT] of dayTrades) {
+                const wins = dayT.filter((t) => t.pnl > 0);
+                const losses = dayT.filter((t) => t.pnl <= 0);
+                const pWin = wins.length / dayT.length;
+                const pLoss = losses.length / dayT.length;
+                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl / r, 0) / wins.length : 0;
+                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl / r, 0) / losses.length) : 0;
+                dailyEV.push({ date, ev: pWin * avgWin - pLoss * avgLoss });
+            }
+            dailyEV.sort((a, b) => a.date.localeCompare(b.date));
+
+            const minDaysReq = Math.min(5, Math.ceil(dailyEV.length / 5));
+            const result: { time: Time; value: number }[] = [];
+            for (let i = 0; i < dailyEV.length; i++) {
+                const start = Math.max(0, i - rollingWindow + 1);
+                const slice = dailyEV.slice(start, i + 1);
+                if (slice.length < minDaysReq) continue;
+                const avg = slice.reduce((s, d) => s + d.ev, 0) / slice.length;
+                result.push({ time: dailyEV[i].date as unknown as Time, value: avg });
+            }
+            return result;
+        } else {
+            // Rolling over individual trades
+            const sorted = [...trades].sort(
+                (a, b) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime()
+            );
+            const minTradesReq = Math.min(5, Math.ceil(sorted.length / 5));
+            const raw: { date: string; value: number }[] = [];
+            for (let i = 0; i < sorted.length; i++) {
+                const start = Math.max(0, i - rollingWindow + 1);
+                const slice = sorted.slice(start, i + 1);
+                if (slice.length < minTradesReq) continue;
+                const wins = slice.filter((t) => t.pnl > 0);
+                const losses = slice.filter((t) => t.pnl <= 0);
+                const pWin = wins.length / slice.length;
+                const pLoss = losses.length / slice.length;
+                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl / r, 0) / wins.length : 0;
+                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl / r, 0) / losses.length) : 0;
+                const ev = pWin * avgWin - pLoss * avgLoss;
+                const d = new Date(sorted[i].exit_time);
+                const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                raw.push({ date: dateStr, value: ev });
+            }
+            // Keep last per day, sorted
+            const dayMap = new Map<string, number>();
+            for (const p of raw) dayMap.set(p.date, p.value);
+            return Array.from(dayMap.entries())
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([date, value]) => ({ time: date as unknown as Time, value }));
+        }
+    }, [trades, rollingWindow, riskR, basis]);
+
+
+
+    useEffect(() => {
+        if (!containerRef.current || !evData.length) return;
+
+        const bgColor = isDarkMode ? "#18181a" : "#fafaf7";
+        const gridColor = isDarkMode ? "#303033" : "#f0eeea";
+        const textColor = isDarkMode ? "#475569" : "#a8a29e";
+
+        const chart = createChart(containerRef.current, {
+            width: containerRef.current.clientWidth,
+            height: containerRef.current.clientHeight || 120,
+            layout: {
+                background: { color: bgColor },
+                textColor: textColor,
+                fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+                fontSize: 10,
+            },
+            grid: {
+                vertLines: { color: gridColor },
+                horzLines: { color: gridColor },
+            },
+            rightPriceScale: { borderVisible: false },
+            timeScale: { borderVisible: false, timeVisible: true },
+            crosshair: { mode: 0 },
+        });
+        chartRef.current = chart;
+
+        // BaselineSeries with gradient fill above/below zero — like equity/drawdown
+        const series = chart.addSeries(BaselineSeries, {
+            baseValue: { type: "price", price: 0 },
+            topLineColor: isDarkMode ? "#ffffff" : "#000000",
+            topFillColor1: isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+            topFillColor2: isDarkMode ? "rgba(255,255,255,0.01)" : "rgba(0,0,0,0.01)",
+            bottomLineColor: isDarkMode ? "#ffffff" : "#000000",
+            bottomFillColor1: isDarkMode ? "rgba(255,255,255,0.01)" : "rgba(0,0,0,0.01)",
+            bottomFillColor2: isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+            lineWidth: 2,
+            priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+        });
+        series.setData(evData);
+
+        // Ensure the full history is visible
+        chart.timeScale().fitContent();
+
+        const el = containerRef.current;
+        const handleResize = () => {
+            if (el) {
+                chart.applyOptions({
+                    width: el.clientWidth,
+                    height: el.clientHeight || 120,
+                });
+                chart.timeScale().fitContent();
+            }
+        };
+        globalThis.addEventListener("resize", handleResize);
+        const resizeObserver = new ResizeObserver(handleResize);
+        resizeObserver.observe(el);
+
+        return () => {
+            resizeObserver.disconnect();
+            globalThis.removeEventListener("resize", handleResize);
+            chart.remove();
+            chartRef.current = null;
+        };
+    }, [evData, isDarkMode]);
+
+    return (
+        <div className="flex flex-col h-full transition-colors">
+            <div className="px-3 py-2 flex items-center justify-between">
+                <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-[0.15em]">
+                    Rolling EV
+                </span>
+                <div className="flex items-center gap-3">
+                    <div className="flex text-[9px] font-mono">
+                        {([["trades", "T"], ["days", "D"]] as const).map(([val, label]) => (
+                            <button
+                                key={val}
+                                onClick={() => setBasis(val)}
+                                className={`px-1.5 py-0.5 transition-colors ${basis === val
+                                    ? "text-[var(--foreground)] font-bold"
+                                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                                    }`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <span className="text-[8px] text-[var(--muted)] font-mono">W</span>
+                        <input
+                            type="number"
+                            min={5}
+                            max={500}
+                            value={rollingWindow}
+                            onChange={(e) => setRollingWindow(Math.max(5, Math.min(500, parseInt(e.target.value) || 50)))}
+                            className="w-10 text-[10px] border-none bg-transparent text-center font-mono text-[var(--foreground)] outline-none"
+                            style={{ borderBottom: '1px solid var(--border)' }}
+                        />
+                    </div>
+                </div>
+            </div>
+            <div ref={containerRef} className="flex-1" style={{ minHeight: 100 }} />
+        </div>
+    );
+}

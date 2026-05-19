@@ -55,27 +55,39 @@ def list_strategies() -> list[dict]:
 
 
 def get_strategy(strategy_id: str) -> dict | None:
-    df = get_strategies_df()
-    if df.empty:
-        return None
-    match = df[df["id"] == strategy_id]
-    if match.empty:
-        return None
-    r = match.iloc[0]
+    # Primero buscar en users.duckdb (BTT local)
     try:
-        definition = (
-            r["definition"]
-            if isinstance(r["definition"], dict)
-            else json.loads(r["definition"] or "{}")
-        )
-    except Exception:
-        definition = {}
-    return {
-        "id": r["id"],
-        "name": r["name"],
-        "description": r.get("description"),
-        "definition": definition,
-    }
+        from app.database import get_db_connection
+        con = get_db_connection()
+        row = con.execute(
+            "SELECT id, name, description, definition FROM strategies WHERE id = ?",
+            [strategy_id]
+        ).fetchone()
+        if row:
+            import json
+            definition = row[3]
+            if isinstance(definition, str):
+                definition = json.loads(definition)
+            return {
+                "id": row[0],
+                "name": row[1],
+                "description": row[2],
+                "definition": definition
+            }
+    except Exception as e:
+        print(f"[WARN] Could not read strategy from users.duckdb: {e}")
+
+    # Fallback: buscar en hot cache GCS Parquet
+    try:
+        df = get_strategies_df()
+        if df is not None and not df.empty:
+            match = df[df["id"] == strategy_id]
+            if not match.empty:
+                return match.iloc[0].to_dict()
+    except Exception as e:
+        print(f"[WARN] Could not read strategy from GCS cache: {e}")
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -110,30 +122,38 @@ def list_datasets() -> list[dict]:
 
 
 def get_dataset(dataset_id: str) -> dict | None:
-    df = get_saved_queries_df()
-    if df.empty:
-        return None
-    match = df[df["id"] == dataset_id]
-    if match.empty:
-        return None
-    row = match.iloc[0]
+    # Primero buscar en users.duckdb
+    try:
+        from app.database import get_db_connection
+        con = get_db_connection()
+        row = con.execute(
+            "SELECT id, name, filters FROM saved_queries WHERE id = ?",
+            [dataset_id]
+        ).fetchone()
+        if row:
+            import json
+            filters = row[2]
+            if isinstance(filters, str):
+                filters = json.loads(filters)
+            return {
+                "id": row[0],
+                "name": row[1],
+                "filters": filters
+            }
+    except Exception as e:
+        print(f"[WARN] Could not read dataset from users.duckdb: {e}")
 
-    filters_json = row.get("filters")
-    if isinstance(filters_json, str):
-        filters = json.loads(filters_json)
-    else:
-        filters = filters_json or {}
+    # Fallback: GCS hot cache
+    try:
+        df = get_saved_queries_df()
+        if df is not None and not df.empty:
+            match = df[df["id"] == dataset_id]
+            if not match.empty:
+                return match.iloc[0].to_dict()
+    except Exception as e:
+        print(f"[WARN] Could not read dataset from GCS cache: {e}")
 
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "created_at": str(row["created_at"]) if pd.notnull(row.get("created_at")) else None,
-        "filters": filters,
-        "pair_count": row.get("pair_count", 0),
-        "min_date": filters.get("start_date") or filters.get("date_from"),
-        "max_date": filters.get("end_date") or filters.get("date_to"),
-        "pairs": [],
-    }
+    return None
 
 
 # ---------------------------------------------------------------------------
