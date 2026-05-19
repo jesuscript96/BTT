@@ -1,466 +1,890 @@
-from app.database import get_db_connection
-from app.schemas.strategy import Strategy
-from app.routers.data import FilterRequest
-from app.backtester.engine import BacktestEngine, merge_backtest_results
-from app.backtester.portfolio import (
-    monte_carlo_simulation,
-    calculate_correlation_matrix,
-    calculate_drawdown_series,
-    calculate_strategy_equity_curves,
-)
-from app.services.query_service import build_screener_query
-from app.services.cache_service import get_tickers_df, get_splits_df
+"""
+Runs backtests per ticker-date pair using translated strategy signals.
+Pure numpy simulation — no vectorbt dependency.
+
+Memory-optimised streaming architecture:
+  Single-pass loop over groupby — signal generation + portfolio simulation
+  happen for one day at a time so peak RSS stays well under 512 MB.
+"""
+
+import ctypes
+import datetime
+import gc
+import logging
+import sys
+import time
+
+import numpy as np
 import pandas as pd
-import json, os, time, traceback
-from datetime import datetime
+
+from app.services.strategy_engine import translate_strategy, _parse_risk_management
+from app.services.portfolio_sim import simulate
+
+logger = logging.getLogger("backtester.engine")
+
+# Pre-computed time boundaries for patch mask (avoid recreating per iteration)
+_PATCH_START = datetime.time(8, 0)
+_PATCH_END = datetime.time(8, 45)
 
 
-# Chunked backtest: when market_data exceeds this many rows, run by month and merge (keeps memory bounded).
-CHUNK_BACKTEST_ROWS = int(os.environ.get("CHUNK_BACKTEST_ROWS", "250000"))
 
-# Eastern session bounds (minutes since midnight): PM 04:00-09:30, RTH 09:30-16:00, AM 16:00-20:00
-MARKET_INTERVAL_BOUNDS = {
-    "PM": (4 * 60, 9 * 60 + 30),   # 240-570
-    "RTH": (9 * 60 + 30, 16 * 60),  # 570-960
-    "AM": (16 * 60, 20 * 60),       # 960-1200
-}
-
-
-def filter_market_data_by_interval_and_dates(
-    df: pd.DataFrame,
-    market_interval: list[str] | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-) -> pd.DataFrame:
-    """Filter market_data by date range and market interval (PM/RTH/AM)."""
-    if df.empty:
-        return df
-    if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
-        df = df.copy()
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-    if date_from:
-        df = df[df["timestamp"].dt.date >= pd.to_datetime(date_from).date()]
-    if date_to:
-        df = df[df["timestamp"].dt.date <= pd.to_datetime(date_to).date()]
-    if market_interval:
-        minutes_since_midnight = df["timestamp"].dt.hour * 60 + df["timestamp"].dt.minute
-        mask = pd.Series(False, index=df.index)
-        for interval in market_interval:
-            bounds = MARKET_INTERVAL_BOUNDS.get(interval.upper())
-            if bounds:
-                lo, hi = bounds
-                mask = mask | ((minutes_since_midnight >= lo) & (minutes_since_midnight < hi))
-        df = df[mask]
-    return df.sort_values(["ticker", "timestamp"]).reset_index(drop=True)
-
-
-def run_backtest_task(run_id: str, request, run_statuses: dict):
-    """
-    Execute a backtest with given strategies and dataset.
-
-    `run_statuses` is passed in from the router module to avoid circular imports.
-    """
-    print("\n" + "=" * 50)
-    print("BACKTEST EXECUTION STARTED")
-    print("=" * 50)
-    print(f"Strategy IDs: {request.strategy_ids}")
-    print(f"Weights: {request.weights}")
-    print(f"Dataset filters: {request.dataset_filters}")
-    print(f"Initial capital: ${request.initial_capital}")
-
-    start_total = time.time()
-    try:
-        con = get_db_connection()
-        print("✓ Database connection established")
-
-        # 1. Fetch strategies from database
-        t0 = time.time()
-        print("\n[1/5] Fetching strategies...")
-        strategies: list[Strategy] = []
-        strategy_names: dict[str, str] = {}
-
-        for strategy_id in request.strategy_ids:
-            row = con.execute("SELECT definition, name FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-            if not row:
-                raise Exception(f"Strategy {strategy_id} not found")
-            try:
-                strategy_data = row[0]
-                if isinstance(strategy_data, str):
-                    strategy_data = json.loads(strategy_data)
-                strategy = Strategy(**strategy_data)
-                strategies.append(strategy)
-                strategy_names[strategy_id] = row[1]
-            except Exception as e:
-                print(f"Error parsing strategy {strategy_id}: {e}")
-                raise Exception(f"Invalid strategy format: {e}")
-
-        print(f"  ✓ Loaded strategies in {time.time() - t0:.2f}s")
-
-        # 2. Fetch market data based on filters
-        t1 = time.time()
-        print("\n[2/5] Fetching market data...")
-
-        req_filters = {}
-        dataset_summary = "Custom Filters"
-
-        if request.query_id:
-            print(f"  - Using Saved Dataset: {request.query_id}")
-            sq_row = con.execute("SELECT filters, name FROM saved_queries WHERE id = ?", (request.query_id,)).fetchone()
-            if not sq_row:
-                req_filters = request.dataset_filters.dict() if hasattr(request.dataset_filters, "dict") else request.dataset_filters
-                print(f"  ⚠️ Saved dataset {request.query_id} not found, using request filters.")
-            else:
-                req_filters = json.loads(sq_row[0])
-                dataset_summary = sq_row[1]
-        else:
-            req_filters = request.dataset_filters.dict() if hasattr(request.dataset_filters, "dict") else request.dataset_filters
-
-        print("  - Building query for universe selection...")
-
-        universe_limit = int(os.environ.get("BACKTEST_UNIVERSE_LIMIT", "5000"))
-        rec_query, sql_p, where_d, where_i, where_m, _ = build_screener_query(
-            req_filters,
-            limit=universe_limit,
-            minimal_for_backtest=True,
-            backtest_no_joins=True,
-        )
-
-        date_from_f = req_filters.get("date_from") or req_filters.get("start_date") or "2024-01-01"
-        date_to_f = req_filters.get("date_to") or req_filters.get("end_date") or "2025-12-31"
-        limit_per_chunk = min(200, max(100, universe_limit // 52))
-        universe_chunks = []
-        chunk_start = pd.Timestamp(date_from_f)
-        end_ts = pd.Timestamp(date_to_f) + pd.Timedelta(days=1)
-        date_filter = (
-            " AND CAST(daily_metrics.timestamp AS DATE) >= CAST(? AS DATE) AND CAST(daily_metrics.timestamp AS DATE) < CAST(? AS DATE) "
-        )
-        rec_query_chunk = rec_query.replace("ORDER BY timestamp DESC", date_filter + "ORDER BY timestamp DESC").replace(
-            f"LIMIT {universe_limit}", f"LIMIT {limit_per_chunk}"
-        )
-
-        while chunk_start < end_ts:
-            chunk_end = min(chunk_start + pd.Timedelta(days=7), end_ts)
-            params = list(sql_p) + [chunk_start.date().isoformat(), chunk_end.date().isoformat()]
-            try:
-                chunk = con.execute(rec_query_chunk, params).fetchdf()
-            except Exception as e:
-                err_msg = str(e)
-                print(f"  Universe chunk {chunk_start.date()} failed: {err_msg[:200]}")
-                if "4194304" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "larger than max" in err_msg:
-                    raise Exception(
-                        "Query plan too large for MotherDuck (4MB). Try a smaller date range or fewer filters. Error: "
-                        + err_msg[:150]
-                    )
-                chunk_start = chunk_end
-                continue
-            if not chunk.empty:
-                universe_chunks.append(chunk)
-            chunk_start = chunk_end
-
-        if not universe_chunks:
-            raise Exception("No universe rows for given filters")
-
-        universe_df = (
-            pd.concat(universe_chunks, ignore_index=True)
-            .drop_duplicates(subset=["ticker", "timestamp"])
-            .reset_index(drop=True)
-        )
-        if universe_df.empty:
-            raise Exception("No universe rows for given filters")
-        print("  - Fetched universe to Python (minimal columns, by week).")
-
-        universe_tickers = universe_df["ticker"].astype(str).str.upper().unique().tolist()
-        TICKER_QUERY_BATCH = 150
-        valid_tickers = set()
-        print("  - Applying tickers (CS/ADRC/OS) filter in batches...")
-        for i in range(0, len(universe_tickers), TICKER_QUERY_BATCH):
-            batch = universe_tickers[i : i + TICKER_QUERY_BATCH]
-            placeholders = ",".join("?" * len(batch))
-            try:
-                tickers_df = get_tickers_df()
-                valid_df = tickers_df[tickers_df["ticker"].isin(batch)][["ticker"]]
-                valid_tickers.update(valid_df["ticker"].astype(str).str.upper())
-            except Exception as e:
-                print(f"  Tickers batch {i // TICKER_QUERY_BATCH + 1} failed: {e}")
-        valid_tickers = valid_tickers or None
-
-        split_set = set()
-        print("  - Applying splits filter in batches...")
-        for i in range(0, len(universe_tickers), TICKER_QUERY_BATCH):
-            batch = universe_tickers[i : i + TICKER_QUERY_BATCH]
-            placeholders = ",".join("?" * len(batch))
-            try:
-                splits_df_all = get_splits_df()
-                splits_df = splits_df_all[
-                    (splits_df_all["ticker"].isin(batch)) &
-                    (splits_df_all["execution_date"] >= pd.Timestamp(date_from_f).date()) &
-                    (splits_df_all["execution_date"] <= pd.Timestamp(date_to_f).date())
-                ].copy()
-                if not splits_df.empty:
-                    splits_df["execution_date"] = pd.to_datetime(splits_df["execution_date"]).dt.date
-                    split_set.update(zip(splits_df["ticker"].astype(str).str.upper(), splits_df["execution_date"]))
-            except Exception as e:
-                print(f"  Splits batch {i // TICKER_QUERY_BATCH + 1} failed: {e}")
-
-        universe_df["timestamp"] = pd.to_datetime(universe_df["timestamp"])
-        universe_df["_date"] = universe_df["timestamp"].dt.date
-        if valid_tickers is not None:
-            universe_df = universe_df[universe_df["ticker"].astype(str).str.upper().isin(valid_tickers)]
-        if split_set:
-            universe_df = universe_df[
-                ~universe_df.apply(lambda r: (str(r["ticker"]).upper(), r["_date"]) in split_set, axis=1)
-            ]
-        universe_df = universe_df.reset_index(drop=True)
-        if universe_df.empty:
-            raise Exception("No universe rows after tickers/splits filter")
-        print("  - Tickers and splits filter applied.")
-
-        universe_metrics = universe_df[
-            ["ticker", "_date", "pm_high", "pm_volume", "gap_pct", "day_return_pct", "rth_run_pct"]
-        ].copy()
-        universe_metrics.rename(columns={"day_return_pct": "day_ret", "rth_run_pct": "rth_run"}, inplace=True)
-        date_min = universe_metrics["_date"].min()
-        date_max = universe_metrics["_date"].max()
-
-        has_date_col = False
+def _release_memory():
+    if sys.platform == "linux":
         try:
-            cols = [c[0] for c in con.execute("DESCRIBE intraday_1m").fetchall()]
-            has_date_col = "date" in cols
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
         except Exception:
             pass
 
-        TICKER_BATCH_SIZE = int(os.environ.get("BACKTEST_INTRADAY_TICKER_BATCH", "60"))
-        print(f"  - Fetching intraday by month and ticker batches (batch={TICKER_BATCH_SIZE})...")
-        chunks = []
-        month_start = pd.Timestamp(date_min)
-        while month_start.date() <= date_max:
-            month_end = month_start + pd.offsets.MonthEnd(0) + pd.Timedelta(days=1)
-            ts_from = month_start.isoformat()
-            ts_to = month_end.isoformat()
-            month_metrics = universe_metrics[
-                (universe_metrics["_date"] >= month_start.date()) & (universe_metrics["_date"] < month_end.date())
-            ]
-            tickers_this_month = month_metrics["ticker"].unique().tolist()
-            if not tickers_this_month:
-                month_start = month_end
-                continue
-            month_chunks = []
-            for i in range(0, len(tickers_this_month), TICKER_BATCH_SIZE):
-                batch = tickers_this_month[i : i + TICKER_BATCH_SIZE]
-                placeholders = ",".join("?" * len(batch))
-                q = (
-                    "SELECT ticker, timestamp, open, high, low, close, volume "
-                    "FROM intraday_1m "
-                    "WHERE timestamp >= CAST(? AS TIMESTAMP) AND timestamp < CAST(? AS TIMESTAMP) "
-                    f"AND ticker IN ({placeholders})"
-                )
-                params = [ts_from, ts_to] + batch
-                try:
-                    sub = con.execute(q, params).fetchdf()
-                except Exception as e:
-                    err_msg = str(e)
-                    print(f"  Intraday chunk {ts_from} batch {i//TICKER_BATCH_SIZE + 1} failed: {err_msg[:200]}")
-                    if "4194304" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "larger than max" in err_msg:
-                        raise Exception(
-                            "Intraday query plan too large. Set BACKTEST_INTRADAY_TICKER_BATCH=30 and retry. " + err_msg[:120]
-                        )
-                    continue
-                if sub.empty:
-                    continue
-                month_chunks.append(sub)
-            if not month_chunks:
-                month_start = month_end
-                continue
-            chunk = pd.concat(month_chunks, ignore_index=True)
-            chunk["timestamp"] = pd.to_datetime(chunk["timestamp"])
-            chunk["_date"] = chunk["timestamp"].dt.date
-            chunk = chunk.merge(universe_metrics, on=["ticker", "_date"], how="inner")
-            chunk = chunk.drop(columns=["_date"], errors="ignore")
-            chunks.append(chunk)
-            month_start = month_end
 
-        if not chunks:
-            raise Exception("No market data found for given filters")
+def run_backtest(
+    intraday_df: pd.DataFrame = None,
+    qualifying_df: pd.DataFrame = None,
+    strategy_def: dict = None,
+    init_cash: float = 10000.0,
+    risk_r: float = 100.0,
+    risk_type: str = "FIXED",
+    fixed_ratio_delta: float = 500.0,
+    size_by_sl: bool = False,
+    fees: float = 0.0,
+    fee_type: str = "PERCENT",
+    slippage: float = 0.0,
+    market_sessions: list[str] | None = None,
+    custom_start_time: str | None = None,
+    custom_end_time: str | None = None,
+    locates_cost: float = 0.0,
+    look_ahead_prevention: bool = False,
+    day_group_iter=None,
+    n_groups_hint: int = 0,
+    monthly_expenses: float = 0.0,
+    _signal_cache: dict | None = None,
+) -> dict:
+    t_total = time.time()
 
-        market_data = (
-            pd.concat(chunks, ignore_index=True)
-            .sort_values(["ticker", "timestamp"])
-            .reset_index(drop=True)
-        )
-        duration_fetch = time.time() - t1
-        if market_data.empty:
-            raise Exception("No market data found for given filters")
+    qual_lookup = _build_qualifying_lookup(qualifying_df)
+    del qualifying_df
 
-        max_rows = int(os.environ.get("BACKTEST_MAX_ROWS", "0"))
-        if max_rows > 0 and len(market_data) > max_rows:
-            raise Exception(
-                f"Dataset too large ({len(market_data):,} rows). Max {max_rows:,}. Set BACKTEST_MAX_ROWS=0 to allow any size (uses chunked run)."
-            )
+    empty_result = {
+        "aggregate_metrics": _aggregate_metrics([], [], [], [], init_cash, risk_r),
+        "day_results": [],
+        "trades": [],
+        "equity_curves": [],
+        "global_equity": [],
+        "global_drawdown": [],
+    }
 
-        print(f"  ✓ Fetched {len(market_data):,} rows in {duration_fetch:.2f}s")
+    # --- Choose data source: streaming iterator or monolithic DataFrame ---
+    if day_group_iter is not None:
+        group_source = day_group_iter
+        n_groups = n_groups_hint
+        logger.info(f"[INIT] streaming mode, ~{n_groups} groups expected")
+    elif intraday_df is not None and not intraday_df.empty:
+        grouped = intraday_df.groupby(["date", "ticker"])
+        group_source = iter(grouped)
+        n_groups = grouped.ngroups
+        logger.info(f"[INIT] monolithic mode, {n_groups} groups")
+    else:
+        return empty_result
 
-        intervals = request.market_interval
-        if intervals is not None:
-            intervals = [intervals] if isinstance(intervals, str) else list(intervals)
-        date_from = req_filters.get("date_from") if isinstance(req_filters, dict) else getattr(request.dataset_filters, "date_from", None)
-        date_to = req_filters.get("date_to") if isinstance(req_filters, dict) else getattr(request.dataset_filters, "date_to", None)
-        market_data = filter_market_data_by_interval_and_dates(
-            market_data,
-            market_interval=intervals,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        if market_data.empty:
-            raise Exception("No market data left after date/interval filter")
-        print(f"  ✓ After date/interval filter: {len(market_data):,} rows")
+    all_trades: list[dict] = []
+    all_equity: list[dict] = []
+    day_results: list[dict] = []
+    days_with_entries = 0
+    scanned = 0
+    t1 = time.time()
 
-        t2 = time.time()
-        risk_per_trade_usd = getattr(request, "risk_per_trade_usd", None) or getattr(request, "risk_per_trade_r", None)
-        if risk_per_trade_usd is not None and risk_per_trade_usd <= 0:
-            risk_per_trade_usd = None
+    # Tracking running stats for KELLY
+    running_stats = {
+        "win_count": 0,
+        "loss_count": 0,
+        "total_win_pnl": 0.0,
+        "total_loss_pnl": 0.0,
+        "win_rate": 0.5, # Default starting point
+        "avg_win": 0.0,
+        "avg_loss": 0.0
+    }
 
-        def run_engine_on_df(df: pd.DataFrame, initial_cap: float):
-            eng = BacktestEngine(
-                strategies=strategies,
-                weights=request.weights,
-                market_data=df,
-                commission_per_trade=request.commission_per_trade,
-                commission_per_share=getattr(request, "commission_per_share", 0.0),
-                locate_cost_per_100=getattr(request, "locate_cost_per_100", 0.0),
-                slippage_pct=getattr(request, "slippage_pct", 0.0),
-                lookahead_prevention=getattr(request, "lookahead_prevention", False),
-                risk_per_trade_usd=risk_per_trade_usd,
-                initial_capital=initial_cap,
-                max_holding_minutes=request.max_holding_minutes,
-            )
-            return eng.run()
+    global_realized_pnl = 0.0
+    current_date = None
+    daily_pnl = 0.0
 
-        if len(market_data) > CHUNK_BACKTEST_ROWS:
-            print(f"\n[3/5] Running backtest in chunks (>{CHUNK_BACKTEST_ROWS:,} rows)...")
-            df = market_data.sort_values("timestamp").reset_index(drop=True)
-            if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
-            df["_month"] = df["timestamp"].dt.to_period("M")
-            months = sorted(df["_month"].unique())
-            chunk_results = []
-            cap = request.initial_capital
-            for i, month in enumerate(months):
-                chunk = df[df["_month"] == month].drop(columns=["_month"])
-                res = run_engine_on_df(chunk, cap)
-                chunk_results.append(res)
-                cap = res.final_balance
-                print(f"  Chunk {i+1}/{len(months)} ({month}): {len(chunk):,} rows, {res.total_trades} trades, balance={cap:,.0f}")
-            result = merge_backtest_results(chunk_results, request.initial_capital)
-            print(f"  ✓ Merged {len(chunk_results)} chunks in {time.time() - t2:.2f}s ({result.total_trades} total trades)")
-        else:
-            print("\n[3/5] Running backtest engine...")
-            result = run_engine_on_df(market_data, request.initial_capital)
-            print(f"  ✓ Backtest execution in {time.time() - t2:.2f}s ({result.total_trades} trades)")
+    for (date_raw, ticker_raw), day_df in group_source:
+        scanned += 1
+        day_df = day_df.sort_values("timestamp").reset_index(drop=True)
+        if len(day_df) < 5:
+            continue
 
-        t3 = time.time()
-        monte_carlo_sims = min(1000, max(100, int(os.environ.get("MONTE_CARLO_SIMULATIONS", "500"))))
-        monte_carlo_result = monte_carlo_simulation(result.trades, request.initial_capital, monte_carlo_sims)
+        ticker = str(ticker_raw)
+        date = str(date_raw)[:10]
+        
+        # When moving to a new day, add the previous day's PnL to the global pool
+        if current_date is None:
+            current_date = date
+        elif date != current_date:
+            global_realized_pnl += daily_pnl
+            daily_pnl = 0.0
+            current_date = date
 
-        correlation_matrix = None
-        if len(strategies) > 1:
-            strategy_curves = calculate_strategy_equity_curves(result.trades, request.initial_capital)
-            balance_curves = {sid: [point["balance"] for point in curve] for sid, curve in strategy_curves.items()}
-            correlation_matrix = calculate_correlation_matrix(balance_curves)
-
-        drawdown_series = calculate_drawdown_series(result.equity_curve)
-
-        now = datetime.now()
-        total_return_pct = (result.final_balance - request.initial_capital) / request.initial_capital * 100
-        total_return_r = sum(t.get("r_multiple", 0) for t in result.trades if t.get("r_multiple") is not None)
-
-        results_json = {
-            "run_id": run_id,
-            "strategy_ids": request.strategy_ids,
-            "strategy_names": list(strategy_names.values()),
-            "weights": request.weights,
-            "initial_capital": request.initial_capital,
-            "final_balance": result.final_balance,
-            "total_return_pct": total_return_pct,
-            "total_return_r": total_return_r,
-            "total_trades": result.total_trades,
-            "winning_trades": result.winning_trades,
-            "losing_trades": result.losing_trades,
-            "win_rate": result.win_rate,
-            "avg_r_multiple": result.avg_r_multiple,
-            "max_drawdown_pct": result.max_drawdown_pct,
-            "max_drawdown_value": result.max_drawdown_value,
-            "sharpe_ratio": result.sharpe_ratio,
-            "equity_curve": result.equity_curve,
-            "drawdown_series": drawdown_series,
-            "trades": result.trades,
-            "r_distribution": result.r_distribution,
-            "ev_by_time": result.ev_by_time,
-            "ev_by_day": result.ev_by_day,
-            "monthly_returns": result.monthly_returns,
-            "correlation_matrix": correlation_matrix,
-            "monte_carlo": {
-                "worst_drawdown_pct": monte_carlo_result.worst_drawdown_pct,
-                "best_final_balance": monte_carlo_result.best_final_balance,
-                "worst_final_balance": monte_carlo_result.worst_final_balance,
-                "median_final_balance": monte_carlo_result.median_final_balance,
-                "percentile_5": monte_carlo_result.percentile_5,
-                "percentile_25": monte_carlo_result.percentile_25,
-                "percentile_75": monte_carlo_result.percentile_75,
-                "percentile_95": monte_carlo_result.percentile_95,
-                "probability_of_ruin": monte_carlo_result.probability_of_ruin,
-            },
-            "executed_at": now.isoformat(),
-            "initial_capital": request.initial_capital,
+        # Base cash for this sim run is initial + accumulated global PnL
+        compounding_cash = init_cash + global_realized_pnl
+        
+        arrays = {
+            "open": day_df["open"].values.astype(np.float64),
+            "high": day_df["high"].values.astype(np.float64),
+            "low": day_df["low"].values.astype(np.float64),
+            "close": day_df["close"].values.astype(np.float64),
+            "volume": day_df["volume"].values,
+            "timestamp": day_df["timestamp"].values,
         }
+        # Invert lookup from (ticker, date) to match original format
+        daily_stats = qual_lookup.get((ticker_raw, date_raw), {})
+        del day_df
 
-        skip_audit = os.environ.get("SKIP_BACKTEST_AUDIT", "").lower() in ("1", "true", "yes")
-        if not skip_audit:
-            print("\nAUDIT: Running VectorBT validation...")
+        mini_df = pd.DataFrame(arrays)
+
+        # --- Trim DataFrame to the selected market session window ---
+        # This ensures that the simulator's "last candle" (n-1) IS the session
+        # boundary, so EOD exits happen at the end of the selected session.
+        if market_sessions and "all" not in market_sessions:
+            session_mask = _get_market_sessions_mask(
+                mini_df["timestamp"], market_sessions, custom_start_time, custom_end_time
+            )
+            mini_df = mini_df[session_mask].reset_index(drop=True)
+            if len(mini_df) < 2:
+                del mini_df
+                continue
+            # Rebuild arrays from trimmed DataFrame
+            arrays = {
+                "open": mini_df["open"].values.astype(np.float64),
+                "high": mini_df["high"].values.astype(np.float64),
+                "low": mini_df["low"].values.astype(np.float64),
+                "close": mini_df["close"].values.astype(np.float64),
+                "volume": mini_df["volume"].values,
+                "timestamp": mini_df["timestamp"].values,
+            }
+
+        # --- Signal computation (with optional cache for risk-only optimization) ---
+        cache_key = (ticker, date)
+
+        if _signal_cache is not None and cache_key in _signal_cache:
+            # Reuse cached entry/exit signals, only re-parse risk management
+            cached = _signal_cache[cache_key]
+            entries_arr = cached["entries"]
+            exits_arr = cached["exits"]
+            sig_direction = cached["direction"]
+            sig_accept_reentries = cached["accept_reentries"]
+
+            if not np.any(entries_arr):
+                del mini_df
+                continue
+
+            # Re-parse risk management with current (modified) strategy_def
+            risk = strategy_def.get("risk_management", {})
+            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_trail_pct, sig_partial_tps = \
+                _parse_risk_management(risk, mini_df, daily_stats, {})
+        else:
             try:
-                from app.backtester.backtest_validator import validate_results
+                signals = translate_strategy(mini_df, strategy_def, daily_stats)
+            except Exception:
+                del mini_df
+                continue
+            if not signals["entries"].any():
+                del mini_df, signals
+                continue
 
-                audit_report = validate_results(results_json)
-                results_json["audit"] = audit_report
-                print("  ✓ Audit completed")
-            except Exception as audit_err:
-                print(f"  ⚠️ Audit skipped or failed: {audit_err}")
+            entries_arr = signals["entries"].values if hasattr(signals["entries"], "values") else np.asarray(signals["entries"])
+            exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
+            sig_direction = signals["direction"]
+            sig_accept_reentries = signals.get("accept_reentries", False)
+            sig_sl_stop = signals["sl_stop"]
+            sig_sl_trail = signals["sl_trail"]
+            sig_tp_stop = signals["tp_stop"]
+            sig_trail_pct = signals.get("trail_pct")
+            sig_partial_tps = signals.get("partial_take_profits")
+
+            # Populate cache for subsequent optimization iterations
+            if _signal_cache is not None:
+                _signal_cache[cache_key] = {
+                    "entries": entries_arr.copy(),
+                    "exits": exits_arr.copy(),
+                    "direction": sig_direction,
+                    "accept_reentries": sig_accept_reentries,
+                }
+
+            del signals
+
+        # --- TEMPORARY PATCH FOR MISPRINTS ---
+        # 8:00 to 8:45 restriction to ignore misprints
+        ts_series = mini_df["timestamp"]
+        if not pd.api.types.is_datetime64_any_dtype(ts_series):
+            ts_series = pd.to_datetime(ts_series)
+            
+        # Avoid .dt.time which creates expensive python datetime.time objects
+        patch_mask = (ts_series.dt.hour == 8) & (ts_series.dt.minute >= 0) & (ts_series.dt.minute < 45)
+        patch_mask = patch_mask.values
+
+        # If after masking we have no entries, skip simulation
+        if not np.any(entries_arr):
+            del mini_df
+            continue
+
+        try:
+            sim_result = simulate(
+                close=arrays["close"],
+                open_=arrays["open"],
+                high=arrays["high"],
+                low=arrays["low"],
+                entries=entries_arr,
+                exits=exits_arr,
+                direction=sig_direction,
+                init_cash=compounding_cash,
+                risk_r=risk_r,
+                risk_type=risk_type,
+                fixed_ratio_delta=fixed_ratio_delta,
+                size_by_sl=size_by_sl,
+                prev_stats=running_stats,
+                fees=fees,
+                fee_type=fee_type,
+                slippage=slippage,
+                locates_cost=locates_cost,
+                look_ahead_prevention=look_ahead_prevention,
+                sl_stop=sig_sl_stop,
+                sl_trail=sig_sl_trail,
+                tp_stop=sig_tp_stop,
+                trail_pct=sig_trail_pct,
+                accumulate=sig_accept_reentries,
+                patch_mask=patch_mask,
+                partial_take_profits=sig_partial_tps,
+            )
+        except Exception as exc:
+            logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")
+            del mini_df
+            continue
+
+        del mini_df
+
+        eq_vals = sim_result["equity"]
+        raw_trades = sim_result["trades"]
+
+        if not raw_trades:
+            del sim_result
+            continue
+
+        # Update running stats for Kelly Criterion
+        for t in raw_trades:
+            pnl = t["pnl"]
+            daily_pnl += pnl  # Track today's PnL to roll over into tomorrow's compounding base
+            if pnl > 0:
+                running_stats["win_count"] += 1
+                running_stats["total_win_pnl"] += pnl
+            else:
+                running_stats["loss_count"] += 1
+                running_stats["total_loss_pnl"] += abs(pnl)
+        
+        total_finished = running_stats["win_count"] + running_stats["loss_count"]
+        if total_finished > 0:
+            running_stats["win_rate"] = running_stats["win_count"] / total_finished
+            running_stats["avg_win"] = running_stats["total_win_pnl"] / running_stats["win_count"] if running_stats["win_count"] > 0 else 0.0
+            running_stats["avg_loss"] = running_stats["total_loss_pnl"] / running_stats["loss_count"] if running_stats["loss_count"] > 0 else 0.0
+
+        # Avoid pd.to_datetime parsing if array is already datetime kind natively
+        ts_arr = arrays["timestamp"]
+        if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
+            timestamps = pd.Series(ts_arr)
+            ts_epoch = ts_arr.astype("datetime64[s]").astype("int64")
         else:
-            print("\n  (Audit skipped via SKIP_BACKTEST_AUDIT)")
+            timestamps = pd.Series(pd.to_datetime(ts_arr))
+            ts_epoch = timestamps.values.astype("datetime64[s]").astype("int64")
 
-        print("\n[5/5] Saving results to database...")
-        con.execute(
-            """
-            INSERT INTO backtest_results (
-                id, strategy_ids, dataset_summary, total_trades, win_rate,
-                final_balance, max_drawdown_pct, executed_at, results_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                json.dumps(request.strategy_ids),
-                dataset_summary,
-                result.total_trades,
-                result.win_rate,
-                result.final_balance,
-                result.max_drawdown_pct,
-                now,
-                json.dumps(results_json),
-            ),
+        # --- Calculate Risk Unit for "R" reporting ---
+        if risk_type == "FIXED":
+            risk_unit_dollar = risk_r
+        elif risk_type == "PERCENT":
+            risk_unit_dollar = compounding_cash * (risk_r / 100.0)
+        elif risk_type == "KELLY":
+            # In Kelly, 1R is the risk amount calculated by the formula
+            # For reporting purposes, we use the risk amount used in the actual simulation
+            risk_unit_dollar = sim_result.get("last_risk_amount", risk_r) 
+        else:
+            risk_unit_dollar = risk_r
+
+        trades_records = _enrich_trades(
+            raw_trades, timestamps, ticker, date, strategy_def, risk_unit_dollar,
+            gap_pct=daily_stats.get("gap_pct"),
         )
 
-        print(f"  ✓ Validated and saved run {run_id}")
-        print(f"  ✓ Metrics calculated in {time.time() - t3:.2f}s")
-        print(f"✓ Total Request Time: {time.time() - start_total:.2f}s")
+        equity = _extract_equity_from_values(eq_vals, timestamps)
 
-        run_statuses[run_id] = {
-            "status": "completed",
-            "message": f"Backtest completed: {result.total_trades} trades, {result.win_rate:.1f}% win rate",
-        }
+        stats = _extract_day_stats_from_values(eq_vals, ticker, date, trades_records, daily_stats.get("gap_pct"))
 
-    except Exception as e:
-        print(f"Backtest execution error: {e}")
-        traceback.print_exc()
-        run_statuses[run_id] = {
-            "status": "failed",
-            "message": str(e),
+        all_equity.append({"ticker": ticker, "date": date, "equity": equity})
+        all_trades.extend(trades_records)
+        day_results.append(stats)
+        days_with_entries += 1
+
+        del sim_result, eq_vals, raw_trades, arrays, daily_stats
+
+        if days_with_entries % 200 == 0:
+            gc.collect()
+            logger.info(
+                f"[STREAM] {days_with_entries} days processed, "
+                f"{scanned}/{n_groups} scanned ({round(time.time()-t1, 2)}s)"
+            )
+
+    # Final sweep of daily_pnl if the last day generated trades
+    global_realized_pnl += daily_pnl
+
+    del qual_lookup
+    if intraday_df is not None:
+        del intraday_df
+    gc.collect()
+    _release_memory()
+    logger.info(
+        f"[STREAM] done: {days_with_entries} days with entries "
+        f"({round(time.time()-t1, 2)}s)"
+    )
+
+    t4 = time.time()
+    # Logic: global_eq is pure trades, global_eq_exp is trades - monthly_expenses
+    global_eq, global_dd, global_eq_exp = _compute_global_equity_and_drawdown(
+        all_trades, init_cash, monthly_expenses
+    )
+    aggregate = _aggregate_metrics(
+        day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses
+    )
+    logger.info(f"[AGG] aggregate+equity done ({round(time.time()-t4, 2)}s)")
+
+    logger.info(
+        f"[DONE] {len(day_results)} days, {len(all_trades)} trades, "
+        f"total={round(time.time()-t_total, 2)}s"
+    )
+
+    return {
+        "aggregate_metrics": aggregate,
+        "day_results": day_results,
+        "trades": all_trades,
+        "equity_curves": all_equity,
+        "global_equity": global_eq,
+        "global_equity_expenses": global_eq_exp,
+        "global_drawdown": global_dd,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _build_qualifying_lookup(qualifying_df: pd.DataFrame) -> dict:
+    if qualifying_df.empty:
+        return {}
+    # Vectorized: avoid slow iterrows() — convert entire DataFrame at once
+    records = qualifying_df.to_dict(orient="records")
+    return {
+        (r["ticker"], r["date"]): r
+        for r in records
+    }
+
+
+def _build_candles(ts_epoch: np.ndarray, arrays: dict) -> list[dict]:
+    n = len(ts_epoch)
+    candles = [None] * n
+    for j in range(n):
+        candles[j] = {
+            "time": int(ts_epoch[j]),
+            "open": float(arrays["open"][j]),
+            "high": float(arrays["high"][j]),
+            "low": float(arrays["low"][j]),
+            "close": float(arrays["close"][j]),
+            "volume": int(arrays["volume"][j]),
         }
+    return candles
+
+
+def _enrich_trades(
+    raw_trades: list[dict],
+    timestamps: pd.Series,
+    ticker: str,
+    date: str,
+    strategy_def: dict,
+    risk_unit_dollar: float,
+    gap_pct: float | None = None,
+) -> list[dict]:
+    if not raw_trades:
+        return []
+
+    max_idx = len(timestamps) - 1
+    # Convert timestamps to epoch seconds for chart marker matching
+    ts_epoch = timestamps.values.astype("datetime64[s]").astype("int64")
+
+    result = []
+    for t in raw_trades:
+        ei = min(t["entry_idx"], max_idx)
+        xi = min(t["exit_idx"], max_idx)
+        entry_ts = timestamps.iloc[ei]
+        exit_ts = timestamps.iloc[xi]
+
+        r_multiple = _compute_r_multiple(t["pnl"], risk_unit_dollar)
+
+        result.append({
+            "ticker": ticker,
+            "date": date,
+            "entry_time": str(entry_ts),
+            "exit_time": str(exit_ts),
+            "entry_idx": t["entry_idx"],
+            "exit_idx": t["exit_idx"],
+            # Epoch timestamps for correct chart marker placement
+            "entry_time_epoch": int(ts_epoch[ei]),
+            "exit_time_epoch": int(ts_epoch[xi]),
+            "entry_price": t["entry_price"],
+            "exit_price": t["exit_price"],
+            "pnl": t["pnl"],
+            "return_pct": t["return_pct"],
+            "direction": t["direction"],
+            "status": t["status"],
+            "size": t["size"],
+            "exit_reason": t["exit_reason"],
+            "mae": t["mae"],
+            "mfe": t.get("mfe", 0.0),
+            "r_multiple": r_multiple,
+            "entry_hour": entry_ts.hour,
+            "entry_weekday": entry_ts.weekday(),
+            "gap_pct": float(gap_pct) if gap_pct is not None else None,
+        })
+    return result
+
+
+
+def _compute_r_multiple(pnl: float, risk_unit_dollar: float) -> float | None:
+    """
+    R-multiple is simply the PnL of the (partial) trade 
+    divided by the 1R risk unit used for the whole trade.
+    """
+    if risk_unit_dollar <= 0:
+        return None
+    return round(pnl / risk_unit_dollar, 2)
+
+
+# ---------------------------------------------------------------------------
+# Equity extraction
+# ---------------------------------------------------------------------------
+
+_MAX_EQUITY_POINTS = 200
+
+
+def _extract_equity_from_values(eq_vals: np.ndarray, timestamps: pd.Series) -> list[dict]:
+    try:
+        n = min(len(eq_vals), len(timestamps))
+        if n == 0:
+            return []
+        ts_epoch = timestamps.iloc[:n].values.astype("datetime64[s]").astype("int64")
+        vals = eq_vals[:n].astype(np.float64)
+        if n > _MAX_EQUITY_POINTS:
+            idx = np.linspace(0, n - 1, _MAX_EQUITY_POINTS, dtype=int)
+            ts_epoch = ts_epoch[idx]
+            vals = vals[idx]
+        return [{"time": int(t), "value": float(v)} for t, v in zip(ts_epoch, vals)]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Global equity & drawdown
+# ---------------------------------------------------------------------------
+
+def _compute_global_equity_and_drawdown(
+    all_trades: list[dict],
+    init_cash: float,
+    monthly_expenses: float = 0.0
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Build equity curve as cumulative P&L per calendar day.
+
+    Logic: start at init_cash, group trades by date, sum daily P&L,
+    accumulate.  equity[day] = equity[prev_day] + sum(pnl of trades on day).
+    """
+    if not all_trades:
+        return [], [], []
+
+    # Group trade P&L by date
+    daily_pnl: dict[str, float] = {}
+    for trade in all_trades:
+        date_str = trade.get("date", "")
+        if not date_str:
+            continue
+        daily_pnl[date_str] = daily_pnl.get(date_str, 0.0) + trade.get("pnl", 0.0)
+
+    if not daily_pnl:
+        return [], [], []
+
+    # Sort by date
+    sorted_dates = sorted(daily_pnl.keys())
+
+    # Construction: Point 0 = init_cash before any trades
+    # Point i = end of day i
+    equity_values = [init_cash]
+    cumulative = init_cash
+    for d in sorted_dates:
+        cumulative += daily_pnl[d]
+        equity_values.append(cumulative)
+
+    values = np.array(equity_values, dtype=np.float64)
+
+    # Use first date to infer a 'start' time (day before first trade)
+    first_dt = pd.Timestamp(sorted_dates[0], tz="UTC")
+    start_ts = int((first_dt - pd.Timedelta(days=1)).timestamp())
+    times = [start_ts] + [int(pd.Timestamp(d, tz="UTC").timestamp()) for d in sorted_dates]
+    times_arr = np.array(times, dtype=np.int64)
+
+    running_max = np.maximum.accumulate(values)
+    dd_pct = np.where(running_max > 0, (values / running_max - 1) * 100, 0.0)
+
+    # --- Compute Expenses Curve ---
+    equity_exp_values = [init_cash]
+    exp_cumulative = 0.0
+    last_m = None
+
+    for i, d in enumerate(sorted_dates):
+        m = d[:7]  # YYYY-MM
+        if last_m is None or m != last_m:
+            exp_cumulative += monthly_expenses
+            last_m = m
+        equity_exp_values.append(equity_values[i + 1] - exp_cumulative)
+
+    values_exp = np.array(equity_exp_values, dtype=np.float64)
+
+    values_rounded = np.round(values, 2)
+    values_exp_rounded = np.round(values_exp, 2)
+    dd_rounded = np.round(dd_pct, 4)
+
+    global_equity = [
+        {"time": int(t), "value": float(v)} for t, v in zip(times_arr, values_rounded)
+    ]
+    global_equity_exp = [
+        {"time": int(t), "value": float(v)} for t, v in zip(times_arr, values_exp_rounded)
+    ]
+    global_drawdown = [
+        {"time": int(t), "value": float(d)} for t, d in zip(times_arr, dd_rounded)
+    ]
+
+    return global_equity, global_drawdown, global_equity_exp
+
+
+# ---------------------------------------------------------------------------
+# Per-day statistics
+# ---------------------------------------------------------------------------
+
+def _extract_day_stats_from_values(
+    eq_vals: np.ndarray,
+    ticker: str,
+    date: str,
+    trades_records: list[dict],
+    gap_pct: float | None = None
+) -> dict:
+    empty = {
+        "ticker": ticker, "date": date,
+        "total_return_pct": 0, "max_drawdown_pct": 0, "win_rate_pct": 0,
+        "total_trades": 0, "profit_factor": 0, "sharpe_ratio": 0,
+        "sortino_ratio": 0, "expectancy": 0, "best_trade_pct": 0,
+        "worst_trade_pct": 0, "init_value": 0, "end_value": 0,
+        "gap_pct": float(gap_pct) if gap_pct is not None else None,
+    }
+    try:
+        eq_arr = np.asarray(eq_vals, dtype=np.float64)
+        if len(eq_arr) == 0:
+            return empty
+
+        start_val = float(eq_arr[0])
+        end_val = float(eq_arr[-1])
+        total_ret = (end_val / start_val - 1) * 100 if start_val > 0 else 0.0
+
+        running_max = np.maximum.accumulate(eq_arr)
+        dd_pct = np.where(running_max > 0, (eq_arr / running_max - 1) * 100, 0.0)
+        max_dd = float(np.min(dd_pct))
+
+        n_trades = len(trades_records)
+        pnls = np.array([t["pnl"] for t in trades_records]) if trades_records else np.array([])
+        wins = pnls[pnls > 0] if len(pnls) else np.array([])
+        losses = pnls[pnls <= 0] if len(pnls) else np.array([])
+
+        win_rate = (len(wins) / n_trades * 100) if n_trades > 0 else 0.0
+        sum_wins = float(wins.sum()) if len(wins) else 0.0
+        sum_losses = float(np.abs(losses.sum())) if len(losses) else 0.0
+        profit_factor = (sum_wins / sum_losses) if sum_losses > 0 else 0.0
+        expectancy = float(pnls.mean()) if len(pnls) else 0.0
+
+        rets_pct = np.array([t["return_pct"] for t in trades_records]) if trades_records else np.array([])
+        best_trade = float(rets_pct.max()) if len(rets_pct) else 0.0
+        worst_trade = float(rets_pct.min()) if len(rets_pct) else 0.0
+
+        bar_returns = np.diff(eq_arr) / np.where(eq_arr[:-1] != 0, eq_arr[:-1], 1.0)
+        std = float(np.std(bar_returns)) if len(bar_returns) > 1 else 0.0
+        mean_r = float(np.mean(bar_returns)) if len(bar_returns) > 0 else 0.0
+        ann_factor = np.sqrt(252 * 390)
+        sharpe = (mean_r / std * ann_factor) if std > 0 else 0.0
+        down_returns = bar_returns[bar_returns < 0]
+        down_std = float(np.std(down_returns)) if len(down_returns) > 1 else 0.0
+        sortino = (mean_r / down_std * ann_factor) if down_std > 0 else 0.0
+    except Exception:
+        return empty
+
+    return {
+        "ticker": ticker,
+        "date": date,
+        "total_return_pct": _safe_float(total_ret),
+        "max_drawdown_pct": _safe_float(max_dd),
+        "win_rate_pct": _safe_float(win_rate),
+        "total_trades": n_trades,
+        "profit_factor": _safe_float(profit_factor),
+        "sharpe_ratio": _safe_float(sharpe),
+        "sortino_ratio": _safe_float(sortino),
+        "expectancy": _safe_float(expectancy),
+        "best_trade_pct": _safe_float(best_trade),
+        "worst_trade_pct": _safe_float(worst_trade),
+        "init_value": _safe_float(start_val),
+        "end_value": _safe_float(end_val),
+        "gap_pct": float(gap_pct) if gap_pct is not None else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Aggregate metrics
+# ---------------------------------------------------------------------------
+
+def _aggregate_metrics(
+    day_results: list[dict],
+    trades: list[dict],
+    global_eq: list[dict],
+    global_dd: list[dict],
+    init_cash: float,
+    risk_r: float = 100,
+    monthly_expenses: float = 0.0
+) -> dict:
+    empty = {
+        "total_days": 0, "total_trades": 0, "win_rate_pct": 0,
+        "avg_return_per_day_pct": 0, "total_return_pct": 0, "avg_sharpe": 0,
+        "max_drawdown_pct": 0, "avg_profit_factor": 0, "avg_pnl": 0, "total_pnl": 0,
+        "sortino_ratio": 0, "calmar_ratio": 0, "dd_return_ratio": 0,
+        "r_squared": 0, "avg_mae": 0, "max_profit_pct": 0,
+        "avg_win": 0, "avg_loss": 0, "max_consecutive_wins": 0,
+        "max_consecutive_losses": 0, "expectancy": 0, "payoff_ratio": 0,
+        "avg_r_per_day": 0,
+    }
+    if not day_results and not trades:
+        return empty
+
+    if not day_results and trades:
+        unique_dates = {t.get("date", "")[:10] for t in trades if t.get("date")}
+        total_days = len(unique_dates)
+        total_trades = len(trades)
+    else:
+        total_days = len(day_results)
+        total_trades = sum(d.get("total_trades", 0) for d in day_results)
+
+    # Re-calculate total expenses for the net profit metric
+    # (Since total_expenses was previously removed from loop)
+    # We find number of unique months in trades
+    all_months = sorted(list(set(t.get("date", "")[:7] for t in trades if t.get("date"))))
+    total_expenses = len(all_months) * monthly_expenses
+    
+    pnls = np.array([t.get("pnl", 0) for t in trades]) if trades else np.array([])
+    total_pnl_trades = float(pnls.sum()) if len(pnls) else 0.0
+    total_pnl_net = total_pnl_trades - total_expenses
+    winning_trades = int((pnls > 0).sum()) if len(pnls) else 0
+    total_closed = len(pnls)
+    win_rate = (winning_trades / total_closed * 100) if total_closed > 0 else 0
+
+    # Calculate Total Return against Initial Cash
+    # PnL / Init Cash gives the actual Return % for the period on the account size
+    # PnL / Init Cash gives the actual Return % for the period on the account size
+    total_pnl = float(pnls.sum()) if len(pnls) else 0.0
+    total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
+
+    # Build a continuous daily equity curve for accurate annualized volatility
+    avg_sharpe = 0.0
+    sortino_ratio = 0.0
+    avg_return_per_day_pct = 0.0
+
+    if total_days > 0 and trades:
+        try:
+            # Reconstruct daily PnL timeline
+            daily_pnls: dict[str, float] = {}
+            for t in trades:
+                d = t.get("date", "")
+                if d:
+                    daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
+            
+            sorted_dates = sorted(daily_pnls.keys())
+            first_date = pd.to_datetime(sorted_dates[0])
+            last_date = pd.to_datetime(sorted_dates[-1])
+            
+            # Create a dense date range spanning from first trade day to last trade day
+            all_dates = pd.date_range(start=first_date, end=last_date, freq='D')
+            
+            dense_eq = [init_cash]
+            current_eq = init_cash
+            
+            for d in all_dates:
+                d_str = d.strftime("%Y-%m-%d")
+                current_eq += daily_pnls.get(d_str, 0.0)
+                dense_eq.append(current_eq)
+                
+            eq_arr = np.array(dense_eq, dtype=np.float64)
+            daily_rets = np.diff(eq_arr) / np.where(eq_arr[:-1] != 0, eq_arr[:-1], 1.0)
+            
+            std = float(np.std(daily_rets))
+            mean_r = float(np.mean(daily_rets))
+            avg_return_per_day_pct = mean_r * 100.0
+            
+            # Annualize (approx 365 calendar days or 252 trading days. Using 365 since frequency is 'D')
+            avg_sharpe = (mean_r / std * np.sqrt(365)) if std > 0 else 0.0
+            
+            down_rets = daily_rets[daily_rets < 0]
+            down_std = float(np.std(down_rets)) if len(down_rets) > 0 else 0.0
+            sortino_ratio = (mean_r / down_std * np.sqrt(365)) if down_std > 0 else 0.0
+
+        except Exception as e:
+            logger.warning(f"Error computing dense metrics: {e}")
+
+    # --- Drawdown Logic ---
+    # Global Max Drawdown (overall lowest point in portfolio equity curve)
+    # The global_dd array contains negative percentages representing the drawdown amount
+    global_drawdowns = np.array([d["value"] for d in global_dd]) if global_dd else np.array([0])
+    global_max_dd = float(global_drawdowns.min()) if len(global_drawdowns) else 0.0
+
+    # Also consider the worst-case intraday point from any single day
+    day_max_dds = np.array([d.get("max_drawdown_pct", 0) or 0 for d in day_results])
+    worst_day_dd = float(day_max_dds.min()) if len(day_max_dds) else 0.0
+    
+    # The absolute Max DD is the worst between global closed-equity DD and any intraday DD
+    final_max_dd = min(global_max_dd, worst_day_dd)
+
+    # True Global Profit Factor
+    gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
+    gross_loss = abs(sum(t["pnl"] for t in trades if t["pnl"] < 0))
+    avg_pf = float(gross_profit / gross_loss) if gross_loss > 0 else 0.0
+
+    avg_pnl = float(pnls.mean()) if len(pnls) else 0
+
+    # --- New metrics ---
+    wins = pnls[pnls > 0] if len(pnls) else np.array([])
+    losses = pnls[pnls < 0] if len(pnls) else np.array([])
+    avg_win = float(wins.mean()) if len(wins) else 0
+    avg_loss = float(losses.mean()) if len(losses) else 0
+    payoff_ratio = abs(avg_win / avg_loss) if avg_loss != 0 else 0
+
+    # Expectancy
+    expectancy = avg_pnl
+
+    # Calmar = total return / abs(max dd) -> Using annualized return makes more sense, but simple total is standard here
+    calmar_ratio = (total_return / abs(final_max_dd)) if final_max_dd != 0 else 0.0
+
+    # DD/Return ratio -> How much max DD to achieve Total Return
+    dd_return_ratio = (abs(final_max_dd) / total_return) if total_return != 0 else 0.0
+
+    # R-Squared (how linear the equity curve is)
+    # Use global equity values to compute R²
+    if global_eq and len(global_eq) > 2:
+        eq_vals = np.array([d["value"] for d in global_eq])
+        x = np.arange(len(eq_vals))
+        correlation = np.corrcoef(x, eq_vals)[0, 1]
+        r_squared = float(correlation ** 2) if not np.isnan(correlation) else 0.0
+    else:
+        r_squared = 0.0
+
+    # MAE (Maximum Adverse Excursion) — worst case across all trades. Note that MAE is a positive %
+    maes = np.array([t.get("mae", 0) for t in trades]) if trades else np.array([])
+    max_mae = float(maes.max()) if len(maes) else 0
+
+    # Max profit run per day
+    returns = np.array([d.get("total_return_pct", 0) or 0 for d in day_results])
+    max_profit_pct = float(returns.max()) if len(returns) else 0
+
+    # Consecutive wins/losses
+    max_cons_wins = 0
+    max_cons_losses = 0
+    curr_wins = 0
+    curr_losses = 0
+    for p in pnls:
+        if p > 0:
+            curr_wins += 1
+            curr_losses = 0
+            max_cons_wins = max(max_cons_wins, curr_wins)
+        else:
+            curr_losses += 1
+            curr_wins = 0
+            max_cons_losses = max(max_cons_losses, curr_losses)
+
+    return {
+        "total_days": total_days,
+        "total_trades": total_trades,
+        "win_rate_pct": round(win_rate, 2),
+        "avg_return_per_day_pct": round(avg_return_per_day_pct, 4),
+        "total_return_pct": round(total_return, 4),
+        "avg_sharpe": round(avg_sharpe, 4),
+        "max_drawdown_pct": round(final_max_dd, 4),
+        "avg_profit_factor": round(avg_pf, 4),
+        "avg_pnl": round(avg_pnl, 2),
+        "total_pnl": round(float(pnls.sum()), 2) if len(pnls) else 0,
+        "sortino_ratio": round(sortino_ratio, 4),
+        "calmar_ratio": round(calmar_ratio, 4),
+        "dd_return_ratio": round(dd_return_ratio, 4),
+        "r_squared": round(r_squared, 4),
+        "max_mae": round(max_mae, 2),
+        "max_profit_pct": round(max_profit_pct, 4),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+        "max_consecutive_wins": max_cons_wins,
+        "max_consecutive_losses": max_cons_losses,
+        "expectancy": round(expectancy, 2),
+        "payoff_ratio": round(payoff_ratio, 4),
+        "total_expenses": round(total_expenses, 2),
+        "total_pnl_net": round(total_pnl_net, 2),
+        "avg_r_per_day": round(total_pnl_trades / total_days / risk_r, 4) if total_days > 0 and risk_r > 0 else 0,
+    }
+
+
+
+def _get_market_sessions_mask(
+    timestamps: pd.Series, 
+    sessions: list[str], 
+    custom_start: str | None = None, 
+    custom_end: str | None = None
+) -> np.ndarray:
+    if not sessions or "all" in sessions:
+        return np.ones(len(timestamps), dtype=bool)
+    
+    # Ensure timestamp is datetime
+    if not pd.api.types.is_datetime64_any_dtype(timestamps):
+        timestamps = pd.to_datetime(timestamps)
+    
+    total_mins = timestamps.dt.hour * 60 + timestamps.dt.minute
+    mask = np.zeros(len(timestamps), dtype=bool)
+    
+    import datetime
+    
+    for s in sessions:
+        if s == "pre":
+            # 04:00 - 09:30 (240 - 570)
+            mask |= (total_mins >= 240) & (total_mins < 570)
+        elif s == "rth":
+            # 09:30 - 16:00 (570 - 960)
+            mask |= (total_mins >= 570) & (total_mins < 960)
+        elif s == "post":
+            # 16:00 - 20:00 (960 - 1200)
+            mask |= (total_mins >= 960) & (total_mins < 1200)
+        elif s == "custom" and custom_start and custom_end:
+            try:
+                c_start = datetime.datetime.strptime(custom_start, "%H:%M")
+                c_end = datetime.datetime.strptime(custom_end, "%H:%M")
+                s_mins = c_start.hour * 60 + c_start.minute
+                e_mins = c_end.hour * 60 + c_end.minute
+                mask |= (total_mins >= s_mins) & (total_mins < e_mins)
+            except Exception:
+                pass
+                
+    return mask.values
+
+def _safe_float(val) -> float | None:
+    try:
+        v = float(val)
+        return v if not np.isnan(v) and not np.isinf(v) else None
+    except (TypeError, ValueError):
+        return None

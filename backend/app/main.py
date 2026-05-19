@@ -97,13 +97,15 @@ async def add_cors_headers_to_all_responses(request, call_next):
     return response
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
+from app.routers import optimization
 import logging
 
 # ... (logging setup if needed)
 
 app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(strategies.router, prefix="/api/strategies", tags=["Strategies"])
-app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
+app.include_router(backtest.router)
+app.include_router(optimization.router)
 app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)

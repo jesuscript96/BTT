@@ -324,3 +324,13 @@ def get_historical_ohlc(
     finally:
         if con:
             con.close()
+import numpy as np
+
+@router.post("/api/cache/refresh")
+async def refresh_cache():
+    from app.db.gcs_cache import sync_hot_tables
+    try:
+        sync_hot_tables(force=True)
+        return {"status": "ok", "message": "Cache refreshed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
