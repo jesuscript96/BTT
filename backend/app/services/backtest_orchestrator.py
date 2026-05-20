@@ -131,7 +131,9 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         date_to = filters.get("end_date") or filters.get("date_to")
 
         # ── PHASE 3: create streaming iterator ──
+        print(f"[DEBUG] calling get_intraday_stream with qualifying={len(qualifying)} rows, date_from={date_from}, date_to={date_to}")
         intraday_stream = get_intraday_stream(qualifying, date_from, date_to)
+        print(f"[DEBUG] intraday_stream created: type={type(intraday_stream)}")
 
         # ── PHASE 4: run backtest with streaming ──
         results = run_backtest(

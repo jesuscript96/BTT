@@ -515,6 +515,7 @@ def iter_intraday_groups_streamed(
     date_to: str,
 ):
     global _warned_raw_intraday_slow
+    print(f"[DEBUG] iter_intraday_streamed CALLED: empty={qualifying_df.empty}, shape={qualifying_df.shape}, date_from={date_from}, date_to={date_to}")
     if qualifying_df.empty:
         return
 
