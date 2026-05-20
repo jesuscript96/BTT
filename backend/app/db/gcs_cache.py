@@ -425,6 +425,8 @@ def _fetch_and_cache_month(
     tickers_month = valid_pairs_month["ticker"].unique().tolist()
     valid_dates = valid_pairs_month["date"].unique().tolist()
     
+    logger.info(f"[DEBUG] fetching month {y}-{m:02d}, tickers: {len(tickers_month)}, path: {path}")
+    
     cache_key = _get_cache_hash(y, m, path, tickers_month, valid_dates)
     cache_file = os.path.join(LOCAL_CACHE_DIR, f"{cache_key}.parquet")
     
@@ -491,6 +493,8 @@ def _fetch_and_cache_month(
 
         intraday = intraday.sort_values(["date", "ticker", "timestamp"])
         
+        logger.info(f"[DEBUG] month {y}-{m:02d} result shape: {intraday.shape}")
+        
         try:
             intraday.to_parquet(cache_file)
             logger.info(f"  [CACHE WRITE] Month {y}-{m:02d} saved to local disk")
@@ -516,6 +520,10 @@ def iter_intraday_groups_streamed(
 
     dates_pd = pd.to_datetime(qualifying_df["date"])
     ym_pairs = sorted(set(zip(dates_pd.dt.year, dates_pd.dt.month)))
+    
+    logger.info(f"[DEBUG] ym_pairs a procesar: {ym_pairs}")
+    logger.info(f"[DEBUG] qualifying_df shape: {qualifying_df.shape}")
+    logger.info(f"[DEBUG] qualifying_df sample dates: {qualifying_df['date'].head(5).tolist() if 'date' in qualifying_df.columns else 'NO DATE COLUMN'}")
     unique_tickers = qualifying_df["ticker"].unique().tolist()
     
     conn = get_connection()
