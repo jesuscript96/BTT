@@ -135,10 +135,19 @@ def get_dataset(dataset_id: str) -> dict | None:
             filters = row[2]
             if isinstance(filters, str):
                 filters = json.loads(filters)
+
+            start_date = filters.get("start_date") or filters.get("date_from")
+            end_date = filters.get("end_date") or filters.get("date_to")
+
             return {
                 "id": row[0],
                 "name": row[1],
-                "filters": filters
+                "filters": filters,
+                "start_date": start_date,
+                "end_date": end_date,
+                "min_date": start_date,
+                "max_date": end_date,
+                "pairs": []
             }
     except Exception as e:
         print(f"[WARN] Could not read dataset from users.duckdb: {e}")
