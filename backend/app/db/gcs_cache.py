@@ -404,7 +404,8 @@ def fetch_intraday_batch(
 
 # ---- COLD: intraday streaming with ticker sub-batching --------------------
 
-LOCAL_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), CACHE_DIR)
+CACHE_DIR = os.getenv("CACHE_DIR", "/tmp/btt_intraday_cache")
+LOCAL_CACHE_DIR = CACHE_DIR
 os.makedirs(LOCAL_CACHE_DIR, exist_ok=True)
 
 def _get_cache_hash(year: int, month: int, path: str, tickers: list[str], valid_dates: list[str]) -> str:
