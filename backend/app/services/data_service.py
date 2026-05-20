@@ -83,7 +83,14 @@ def get_strategy(strategy_id: str) -> dict | None:
         if df is not None and not df.empty:
             match = df[df["id"] == strategy_id]
             if not match.empty:
-                return match.iloc[0].to_dict()
+                import json
+                row = match.iloc[0].to_dict()
+                if isinstance(row.get("definition"), str):
+                    try:
+                        row["definition"] = json.loads(row["definition"])
+                    except Exception:
+                        pass
+                return row
     except Exception as e:
         print(f"[WARN] Could not read strategy from GCS cache: {e}")
 
@@ -158,7 +165,14 @@ def get_dataset(dataset_id: str) -> dict | None:
         if df is not None and not df.empty:
             match = df[df["id"] == dataset_id]
             if not match.empty:
-                return match.iloc[0].to_dict()
+                import json
+                row = match.iloc[0].to_dict()
+                if isinstance(row.get("filters"), str):
+                    try:
+                        row["filters"] = json.loads(row["filters"])
+                    except Exception:
+                        pass
+                return row
     except Exception as e:
         print(f"[WARN] Could not read dataset from GCS cache: {e}")
 
