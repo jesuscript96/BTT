@@ -300,10 +300,9 @@ def fetch_qualifying_data(
     # Run qualifying query directly on GCS
     df = query_qualifying_gcs(years, where_clause, filters)
 
-    import logging
-    logger = logging.getLogger("btt.data")
-    logger.info(f"[DEBUG] qualifying_df shape: {df.shape}, columns: {list(df.columns) if not df.empty else 'EMPTY'}")
-    logger.info(f"[DEBUG] dataset filters: {filters}")
+    print(f"[DEBUG] qualifying_df shape: {df.shape}, columns: {list(df.columns) if not df.empty else 'EMPTY'}")
+    print(f"[DEBUG] dataset filters: {filters}")
+    print(f"[DEBUG] years: {years}, where_clause: {where_clause}")
 
     if df.empty:
         return df
