@@ -109,6 +109,7 @@ def run_backtest(
 
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
+        _day_t_start = time.time()
         day_df = day_df.sort_values("timestamp").reset_index(drop=True)
         if len(day_df) < 5:
             continue
@@ -183,7 +184,11 @@ def run_backtest(
                 _parse_risk_management(risk, mini_df, daily_stats, {})
         else:
             try:
+                _t_t1 = time.time()
                 signals = translate_strategy(mini_df, strategy_def, daily_stats)
+                _t_t2 = time.time()
+                if days_with_entries == 0:
+                    print(f"[TIMING DAY] translate_strategy: {round(_t_t2 - _t_t1, 3)}s")
             except Exception:
                 del mini_df
                 continue
@@ -228,6 +233,7 @@ def run_backtest(
             continue
 
         try:
+            _t_s1 = time.time()
             sim_result = simulate(
                 close=arrays["close"],
                 open_=arrays["open"],
@@ -261,6 +267,10 @@ def run_backtest(
             continue
 
         del mini_df
+
+        _t_s2 = time.time()
+        if days_with_entries == 0:
+            print(f"[TIMING DAY] simulate: {round(_t_s2 - _t_s1, 3)}s")
 
         eq_vals = sim_result["equity"]
         raw_trades = sim_result["trades"]
@@ -322,8 +332,10 @@ def run_backtest(
         days_with_entries += 1
 
         if days_with_entries == 1:
-            t_first_day = time.time()
-            print(f"[TIMING] primer día procesado: {round(t_first_day - t_total, 2)}s")
+            _day_t_end = time.time()
+            print(f"[TIMING DAY] total day ({ticker} {date}): {round(_day_t_end - _day_t_start, 3)}s")
+            del sim_result, eq_vals, raw_trades, arrays, daily_stats
+            break
 
         del sim_result, eq_vals, raw_trades, arrays, daily_stats
 
