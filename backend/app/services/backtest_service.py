@@ -321,6 +321,10 @@ def run_backtest(
         day_results.append(stats)
         days_with_entries += 1
 
+        if days_with_entries == 1:
+            t_first_day = time.time()
+            print(f"[TIMING] primer día procesado: {round(t_first_day - t_total, 2)}s")
+
         del sim_result, eq_vals, raw_trades, arrays, daily_stats
 
         if days_with_entries % 200 == 0:
@@ -338,6 +342,9 @@ def run_backtest(
         del intraday_df
     gc.collect()
     _release_memory()
+    t_loop = time.time()
+    total_days = days_with_entries
+    print(f"[TIMING] loop completo ({total_days} días): {round(t_loop - t_total, 2)}s")
     logger.info(
         f"[STREAM] done: {days_with_entries} days with entries "
         f"({round(time.time()-t1, 2)}s)"
