@@ -60,14 +60,14 @@ const SidebarMetricRow = ({ label, value, suffix = "%" }: { label: string; value
     const safeValue = value ?? 0;
     const isNegative = safeValue < 0;
     const formatted = suffix === "%" ? `${safeValue.toFixed(2)}%` : `${safeValue.toFixed(2)}`;
-    const badgeColor = isNegative ? "bg-red-500/15 text-red-500" : "bg-emerald-500/15 text-emerald-500";
+    const badgeColor = isNegative ? "bg-ec-loss/15 text-ec-loss" : "bg-ec-profit/15 text-ec-profit";
     const badgeText = isNegative ? `${safeValue.toFixed(1)}%` : `+${safeValue.toFixed(1)}%`;
 
     return (
         <div className="flex items-center justify-between py-1.5 border-b border-border/20">
             <div className="flex flex-col">
                 <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">{label}</span>
-                <span className={`text-sm font-black tracking-tight leading-tight ${isNegative ? 'text-red-500' : 'text-foreground'}`}>
+                <span className={`text-sm font-black tracking-tight leading-tight ${isNegative ? 'text-ec-loss' : 'text-foreground'}`}>
                     {formatted}
                 </span>
             </div>

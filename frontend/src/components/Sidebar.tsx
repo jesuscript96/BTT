@@ -14,7 +14,7 @@ import { usePathname } from "next/navigation";
 
 const ISOTIPO = (
     <svg width="24" height="24" viewBox="0 0 90 90" className="flex-shrink-0">
-        <rect x="0" y="0" width="90" height="90" rx="8" fill="#D87A3D" />
+        <rect x="0" y="0" width="90" height="90" rx="8" fill="var(--color-ec-copper)" />
         <rect x="20" y="18" width="52" height="10" fill="#16181A" />
         <rect x="20" y="40" width="38" height="10" fill="#16181A" />
         <rect x="20" y="62" width="52" height="10" fill="#16181A" />
@@ -26,7 +26,7 @@ const wordmarkStyle: React.CSSProperties = {
     fontWeight: 700,
     fontSize: 17,
     letterSpacing: "-0.6px",
-    color: "#E4E2DF",
+    color: "var(--color-ec-text-high)",
 };
 
 export const Sidebar = () => {
@@ -44,8 +44,8 @@ export const Sidebar = () => {
 
     const linkActive = (href: string) =>
         isActive(href)
-            ? "bg-[#1C1E21] text-[#E4E2DF]"
-            : "text-[#8A8D92] hover:bg-[#1C1E21] hover:text-[#E4E2DF]";
+            ? "bg-ec-bg-surface text-ec-text-high"
+            : "text-ec-text-secondary hover:bg-ec-bg-surface hover:text-ec-text-high";
 
     const linkLayout = (collapsed: boolean) =>
         collapsed
@@ -64,8 +64,8 @@ export const Sidebar = () => {
             className="h-screen relative flex-shrink-0 flex flex-col overflow-hidden"
             style={{
                 width: isCollapsed ? 56 : 240,
-                backgroundColor: "#101213",
-                borderRight: "0.5px solid #2C2F33",
+                backgroundColor: "var(--color-ec-bg-sidebar)",
+                borderRight: "0.5px solid var(--color-ec-border)",
                 transition: "width 200ms ease",
             }}
         >
@@ -74,7 +74,7 @@ export const Sidebar = () => {
                 className="flex items-center px-4"
                 style={{
                     height: 56,
-                    borderBottom: "0.5px solid #2C2F33",
+                    borderBottom: "0.5px solid var(--color-ec-border)",
                     justifyContent: isCollapsed ? "center" : "flex-start",
                     gap: 10,
                 }}
@@ -94,7 +94,7 @@ export const Sidebar = () => {
                 {!isCollapsed && (
                     <div
                         className="px-2 py-2 uppercase tracking-widest"
-                        style={{ fontSize: 11, fontWeight: 700, color: "#6A6D72" }}
+                        style={{ fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-muted)" }}
                     >
                         MENU
                     </div>
@@ -115,7 +115,7 @@ export const Sidebar = () => {
                         onClick={() => setIsStrategiesOpen(!isStrategiesOpen)}
                         className={`w-full flex items-center ${
                             isCollapsed ? "justify-center px-0" : "justify-between px-2"
-                        } gap-2.5 py-1.5 rounded-md transition-all group text-left text-[#8A8D92] hover:bg-[#1C1E21] hover:text-[#E4E2DF]`}
+                        } gap-2.5 py-1.5 rounded-md transition-all group text-left text-ec-text-secondary hover:bg-ec-bg-surface hover:text-ec-text-high`}
                     >
                         <div className={`flex items-center ${isCollapsed ? "gap-0" : "gap-2.5"}`}>
                             <LineChart className="h-4 w-4 flex-shrink-0" />
@@ -135,8 +135,8 @@ export const Sidebar = () => {
                                 href="/strategies/new"
                                 className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all ${
                                     isActive("/strategies/new")
-                                        ? "text-[#E4E2DF] bg-[#1C1E21]"
-                                        : "text-[#6A6D72] hover:text-[#E4E2DF] hover:bg-[#1C1E21]"
+                                        ? "text-ec-text-high bg-ec-bg-surface"
+                                        : "text-ec-text-muted hover:text-ec-text-high hover:bg-ec-bg-surface"
                                 }`}
                             >
                                 <span className="text-sm">New Strategy</span>
@@ -145,8 +145,8 @@ export const Sidebar = () => {
                                 href="/database"
                                 className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all ${
                                     isActive("/database")
-                                        ? "text-[#E4E2DF] bg-[#1C1E21]"
-                                        : "text-[#6A6D72] hover:text-[#E4E2DF] hover:bg-[#1C1E21]"
+                                        ? "text-ec-text-high bg-ec-bg-surface"
+                                        : "text-ec-text-muted hover:text-ec-text-high hover:bg-ec-bg-surface"
                                 }`}
                             >
                                 <span className="text-sm">Database</span>
@@ -170,7 +170,7 @@ export const Sidebar = () => {
                         onClick={() => setIsTutorialsOpen(!isTutorialsOpen)}
                         className={`w-full flex items-center ${
                             isCollapsed ? "justify-center px-0" : "justify-between px-2"
-                        } gap-2.5 py-1.5 rounded-md transition-all group text-left text-[#8A8D92] hover:bg-[#1C1E21] hover:text-[#E4E2DF]`}
+                        } gap-2.5 py-1.5 rounded-md transition-all group text-left text-ec-text-secondary hover:bg-ec-bg-surface hover:text-ec-text-high`}
                     >
                         <div className={`flex items-center ${isCollapsed ? "gap-0" : "gap-2.5"}`}>
                             <BookOpen className="h-4 w-4 flex-shrink-0" />
@@ -190,8 +190,8 @@ export const Sidebar = () => {
                                 href="/tutorials"
                                 className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all ${
                                     isActive("/tutorials")
-                                        ? "text-[#E4E2DF] bg-[#1C1E21]"
-                                        : "text-[#6A6D72] hover:text-[#E4E2DF] hover:bg-[#1C1E21]"
+                                        ? "text-ec-text-high bg-ec-bg-surface"
+                                        : "text-ec-text-muted hover:text-ec-text-high hover:bg-ec-bg-surface"
                                 }`}
                             >
                                 <span className="text-sm">Crea tu estrategia</span>
@@ -204,22 +204,22 @@ export const Sidebar = () => {
             {/* Bottom Profile */}
             <div
                 className="p-3 mt-auto"
-                style={{ borderTop: "0.5px solid #2C2F33" }}
+                style={{ borderTop: "0.5px solid var(--color-ec-border)" }}
             >
                 <div
-                    className={`flex items-center rounded-md cursor-pointer transition-all hover:bg-[#1C1E21] py-2 ${
+                    className={`flex items-center rounded-md cursor-pointer transition-all hover:bg-ec-bg-surface py-2 ${
                         isCollapsed ? "justify-center px-0" : "gap-3 px-2"
                     }`}
                 >
                     <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-orange-400 to-red-500 shadow-sm flex-shrink-0" />
                     {!isCollapsed && (
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold truncate" style={{ color: "#E4E2DF" }}>
+                            <p className="text-sm font-bold truncate" style={{ color: "var(--color-ec-text-high)" }}>
                                 Tito el Man
                             </p>
                             <p
                                 className="uppercase tracking-tighter truncate"
-                                style={{ fontSize: 10, fontWeight: 500, color: "#6A6D72" }}
+                                style={{ fontSize: 10, fontWeight: 500, color: "var(--color-ec-text-muted)" }}
                             >
                                 Admin
                             </p>

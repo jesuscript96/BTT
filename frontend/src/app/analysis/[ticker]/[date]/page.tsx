@@ -183,7 +183,7 @@ export default function AnalysisPage() {
                         </div>
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
-                                <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                                <div className="w-2.5 h-2.5 rounded-full bg-ec-loss animate-pulse" />
                                 <h1 className="text-4xl font-black tracking-tighter text-white uppercase">{ticker}</h1>
                             </div>
                             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">Intraday Analysis</span>
@@ -192,10 +192,10 @@ export default function AnalysisPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-10 gap-y-4">
-                    <MetricItem label="PM HIGH" value={formatPct(metrics?.pmh_gap_pct)} color={metrics?.pmh_gap_pct >= 0 ? "text-green-400" : "text-red-400"} />
-                    <MetricItem label="PM FADE" value={formatPct(metrics?.pmh_fade_pct)} color={metrics?.pmh_fade_pct >= 0 ? "text-green-400" : "text-red-400"} />
-                    <MetricItem label="GAP" value={formatPct(metrics?.gap_at_open_pct)} color={metrics?.gap_at_open_pct >= 0 ? "text-green-400" : "text-red-400"} />
-                    <MetricItem label="FADE" value={formatPct(metrics?.rth_fade_pct)} color={metrics?.rth_fade_pct >= 0 ? "text-green-400" : "text-red-400"} />
+                    <MetricItem label="PM HIGH" value={formatPct(metrics?.pmh_gap_pct)} color={metrics?.pmh_gap_pct >= 0 ? "text-ec-profit" : "text-ec-loss"} />
+                    <MetricItem label="PM FADE" value={formatPct(metrics?.pmh_fade_pct)} color={metrics?.pmh_fade_pct >= 0 ? "text-ec-profit" : "text-ec-loss"} />
+                    <MetricItem label="GAP" value={formatPct(metrics?.gap_at_open_pct)} color={metrics?.gap_at_open_pct >= 0 ? "text-ec-profit" : "text-ec-loss"} />
+                    <MetricItem label="FADE" value={formatPct(metrics?.rth_fade_pct)} color={metrics?.rth_fade_pct >= 0 ? "text-ec-profit" : "text-ec-loss"} />
                     <MetricItem label="VOLUME" value={formatVol(metrics?.volume)} color="text-blue-400 underline decoration-2 underline-offset-4" />
                 </div>
             </div>

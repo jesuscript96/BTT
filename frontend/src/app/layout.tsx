@@ -1,34 +1,32 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
-import { ThemeProvider } from "@/components/ThemeProvider";
 
 export const metadata: Metadata = {
-  title: "Short Selling Backtester",
-  description: "Advanced backtesting platform",
+  title: "Edgecute",
+  description: "Trading strategy platform",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="bg-background text-foreground antialiased selection:bg-blue-100 dark:bg-zinc-950 dark:text-zinc-50 transition-colors duration-300">
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem
-          disableTransitionOnChange
-        >
-          <div className="flex">
-            <Sidebar />
-            <main className="flex-1 min-h-screen min-w-0">
-              {children}
-            </main>
-          </div>
-        </ThemeProvider>
+    <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..700&display=swap" rel="stylesheet" />
+        <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet" />
+      </head>
+      <body>
+        <div style={{ display: 'flex' }}>
+          <Sidebar />
+          <main style={{ flex: 1, minHeight: '100vh', minWidth: 0 }}>
+            {children}
+          </main>
+        </div>
       </body>
     </html>
   );

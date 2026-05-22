@@ -315,8 +315,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                     <button
                                         onClick={() => setBias('long')}
                                         className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'long'
-                                            ? 'bg-emerald-500/15 border-emerald-500 text-emerald-500 shadow-md shadow-emerald-500/10'
-                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-emerald-500/30 hover:text-emerald-400'
+                                            ? 'bg-ec-profit/15 border-ec-profit text-ec-profit shadow-md shadow-ec-profit/10'
+                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-ec-profit/30 hover:text-ec-profit'
                                             }`}
                                     >
                                         ↑ Long Bias
@@ -324,8 +324,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                     <button
                                         onClick={() => setBias('short')}
                                         className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'short'
-                                            ? 'bg-red-500/15 border-red-500 text-red-500 shadow-md shadow-red-500/10'
-                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-red-500/30 hover:text-red-400'
+                                            ? 'bg-ec-loss/15 border-ec-loss text-ec-loss shadow-md shadow-ec-loss/10'
+                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-ec-loss/30 hover:text-ec-loss'
                                             }`}
                                     >
                                         ↓ Short Bias
@@ -360,7 +360,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     {/* FULL-WIDTH: Risk Management */}
                     <section>
                         <div className="flex items-center gap-2 mb-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-ec-loss"></div>
                             <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Risk Management</h2>
                         </div>
                         <div className="bg-card/30 border border-border/40 rounded-xl p-4">
@@ -373,12 +373,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
             {/* RIGHT: JSON Preview Panel */}
             {showJson && (
-                <div className="w-[360px] border-l border-border/40 bg-zinc-950 overflow-y-auto font-mono text-xs p-4 transition-all animate-in slide-in-from-right-10">
-                    <div className="flex items-center justify-between mb-3 sticky top-0 bg-zinc-950 pb-2 border-b border-border/20">
+                <div className="w-[360px] border-l border-border/40 bg-ec-bg-base overflow-y-auto font-mono text-xs p-4 transition-all animate-in slide-in-from-right-10">
+                    <div className="flex items-center justify-between mb-3 sticky top-0 bg-ec-bg-base pb-2 border-b border-border/20">
                         <h3 className="text-muted-foreground font-bold uppercase tracking-wider text-[10px]">Live JSON Preview</h3>
                         <span className="px-2 py-0.5 rounded bg-blue-900/20 text-blue-400 text-[9px] font-bold">READ ONLY</span>
                     </div>
-                    <pre className="text-zinc-400 whitespace-pre-wrap break-all text-[11px]">
+                    <pre className="text-ec-text-secondary whitespace-pre-wrap break-all text-[11px]">
                         {JSON.stringify(constructStrategyPayload(), null, 2)}
                     </pre>
                 </div>

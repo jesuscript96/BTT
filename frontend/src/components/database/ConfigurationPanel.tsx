@@ -95,7 +95,7 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
             {/* Dataset Selection */}
             <div className="space-y-3">
                 <label className="flex items-center gap-2 text-sm font-medium text-foreground/80">
-                    <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                    <span className="w-2 h-2 rounded-full bg-ec-profit"></span>
                     Dataset
                 </label>
 
@@ -153,7 +153,7 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                 <button
                     onClick={handleRunSearch}
                     disabled={isRunning}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-muted disabled:text-muted-foreground text-white rounded-lg font-medium transition-colors shadow-sm"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-ec-copper hover:bg-ec-profit-bright disabled:bg-muted disabled:text-muted-foreground text-white rounded-lg font-medium transition-colors shadow-sm"
                 >
                     {isRunning ? (
                         <>

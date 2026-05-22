@@ -850,7 +850,7 @@ export const ConditionRow = ({
                 {renderInputs()}
             </div>
 
-            <button onClick={onDelete} className="text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={onDelete} className="text-muted-foreground hover:text-ec-loss opacity-0 group-hover:opacity-100 transition-opacity">
                 <Trash2 className="w-3.5 h-3.5" />
             </button>
         </div>
@@ -952,7 +952,7 @@ export const GroupDisplay = ({
                 )}
 
                 {onDelete && (
-                    <button onClick={onDelete} className="ml-auto text-muted-foreground/30 hover:text-red-500 transition-colors">
+                    <button onClick={onDelete} className="ml-auto text-muted-foreground/30 hover:text-ec-loss transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
                     </button>
                 )}

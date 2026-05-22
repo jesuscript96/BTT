@@ -15,7 +15,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
     React.useEffect(() => { setPage(0); }, [data]);
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center p-20 text-zinc-500">
+            <div className="flex items-center justify-center p-20 text-ec-text-secondary">
                 Loading data...
             </div>
         );
@@ -23,7 +23,7 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
 
     if (data.length === 0) {
         return (
-            <div className="flex items-center justify-center p-20 text-zinc-500">
+            <div className="flex items-center justify-center p-20 text-ec-text-secondary">
                 No records found.
             </div>
         );

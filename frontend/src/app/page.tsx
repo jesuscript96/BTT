@@ -254,7 +254,7 @@ export default function Home() {
               <span className="text-[10px] font-bold text-foreground/80">{rule.metric} {rule.operator} {rule.value}</span>
               <button
                 onClick={() => setActiveRules(prev => prev.filter(r => r.id !== rule.id))}
-                className="opacity-40 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                className="opacity-40 group-hover:opacity-100 hover:text-ec-loss transition-opacity"
               >
                 <XIcon className="h-3 w-3" />
               </button>

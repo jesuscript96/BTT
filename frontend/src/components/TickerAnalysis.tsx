@@ -194,9 +194,9 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         {/* Financial Stats */}
                         <div className="bg-transparent border-t border-border/40 py-6 relative">
-                            <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-red-500/20 rounded-full"></div>
+                            <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-ec-loss/20 rounded-full"></div>
                             <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-4 flex items-center gap-2 pl-3.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div> Financial Statistics
+                                <div className="w-1.5 h-1.5 rounded-full bg-ec-loss"></div> Financial Statistics
                             </h3>
                             <div className="space-y-3 pl-3.5">
                                 <StatRow label="Enterprise Value" value={formatNumber(data?.financials?.enterprise_value)} />
@@ -226,8 +226,8 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
 
                     {/* Section 6: Sparklines */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <SparklineCard title="Cash Trend (Quarterly)" value={formatNumber(data?.financials?.cash)} data={data?.charts?.cash_history} color="#22c55e" dotColor="bg-green-500" />
-                        <SparklineCard title="Debt Trend (Quarterly)" value={formatNumber(data?.financials?.total_debt)} data={data?.charts?.debt_history} color="#ef4444" dotColor="bg-red-500" />
+                        <SparklineCard title="Cash Trend (Quarterly)" value={formatNumber(data?.financials?.cash)} data={data?.charts?.cash_history} color="#22c55e" dotColor="bg-ec-profit" />
+                        <SparklineCard title="Debt Trend (Quarterly)" value={formatNumber(data?.financials?.total_debt)} data={data?.charts?.debt_history} color="#ef4444" dotColor="bg-ec-loss" />
                         <SparklineCard title="Working Capital" value={formatNumber(data?.financials?.working_capital)} data={data?.charts?.working_capital_history} color="#3b82f6" dotColor="bg-blue-500" />
                     </div>
 
@@ -294,7 +294,7 @@ const PerfCard = ({ label, value }: any) => {
 
     const isPos = value >= 0;
     return (
-        <div className={`rounded p-3 flex flex-col items-center justify-center border transition-all ${isPos ? 'bg-green-500/[0.03] border-green-500/20 text-green-500 shadow-sm shadow-green-500/5' : 'bg-red-500/[0.03] border-red-500/20 text-red-500 shadow-sm shadow-red-500/5'}`}>
+        <div className={`rounded p-3 flex flex-col items-center justify-center border transition-all ${isPos ? 'bg-ec-profit/[0.03] border-ec-profit/20 text-ec-profit shadow-sm shadow-ec-profit/5' : 'bg-ec-loss/[0.03] border-ec-loss/20 text-ec-loss shadow-sm shadow-ec-loss/5'}`}>
             <span className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">{label}</span>
             <div className="flex items-center gap-1 font-black font-mono text-sm tracking-tight">
                 {isPos ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}

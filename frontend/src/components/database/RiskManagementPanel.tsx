@@ -33,7 +33,7 @@ export default function RiskManagementPanel({ config, onChange }: RiskManagement
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
                     <label className="flex items-center gap-2 text-sm font-medium text-foreground/80">
-                        <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                        <span className="w-2 h-2 rounded-full bg-ec-loss"></span>
                         Stop Loss
                     </label>
                     <button
@@ -41,7 +41,7 @@ export default function RiskManagementPanel({ config, onChange }: RiskManagement
                             ...config,
                             stopLoss: { ...config.stopLoss, enabled: !config.stopLoss.enabled }
                         })}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${config.stopLoss.enabled ? 'bg-red-600' : 'bg-muted'
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${config.stopLoss.enabled ? 'bg-ec-loss' : 'bg-muted'
                             }`}
                     >
                         <span
@@ -86,7 +86,7 @@ export default function RiskManagementPanel({ config, onChange }: RiskManagement
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
                     <label className="flex items-center gap-2 text-sm font-medium text-foreground/80">
-                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                        <span className="w-2 h-2 rounded-full bg-ec-profit"></span>
                         Take Profit
                     </label>
                     <button
@@ -94,7 +94,7 @@ export default function RiskManagementPanel({ config, onChange }: RiskManagement
                             ...config,
                             takeProfit: { ...config.takeProfit, enabled: !config.takeProfit.enabled }
                         })}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${config.takeProfit.enabled ? 'bg-green-600' : 'bg-muted'
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${config.takeProfit.enabled ? 'bg-ec-copper' : 'bg-muted'
                             }`}
                     >
                         <span
@@ -226,11 +226,11 @@ export default function RiskManagementPanel({ config, onChange }: RiskManagement
                         </div>
 
                         {/* Total */}
-                        <div className={`p-3 rounded-lg ${totalPartials === 100 ? 'bg-green-500/10 border border-green-500/20' : 'bg-yellow-500/10 border border-yellow-500/20'
+                        <div className={`p-3 rounded-lg ${totalPartials === 100 ? 'bg-ec-profit/10 border-ec-profit/20' : 'bg-yellow-500/10 border border-yellow-500/20'
                             }`}>
                             <div className="flex items-center justify-between text-sm">
                                 <span className="font-medium text-foreground/80">Total</span>
-                                <span className={totalPartials === 100 ? 'text-green-500 font-semibold' : 'text-yellow-500 font-semibold'}>
+                                <span className={totalPartials === 100 ? 'text-ec-profit font-semibold' : 'text-yellow-500 font-semibold'}>
                                     {totalPartials}%
                                 </span>
                             </div>
@@ -309,7 +309,7 @@ export default function RiskManagementPanel({ config, onChange }: RiskManagement
                     </div>
                     <div className="flex justify-between">
                         <span>Risk of Ruin:</span>
-                        <span className="font-semibold text-red-500">2.3%</span>
+                        <span className="font-semibold text-ec-loss">2.3%</span>
                     </div>
                 </div>
             </div>

@@ -72,7 +72,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-green-500/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-ec-profit/50"></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Return (%)</span>
                                 <SortIcon field="total_return_pct" />
                             </div>
@@ -102,7 +102,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-red-500/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-ec-loss/50"></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Max DD</span>
                                 <SortIcon field="max_drawdown_pct" />
                             </div>
@@ -135,7 +135,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             <td className="px-5 py-4 text-xs text-muted-foreground font-black tracking-tighter group-hover:text-foreground transition-colors">
                                 {strategy.id.slice(0, 12)}...
                             </td>
-                            <td className={`px-5 py-4 text-sm font-black tracking-tight ${strategy.total_return_pct > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                            <td className={`px-5 py-4 text-sm font-black tracking-tight ${strategy.total_return_pct > 0 ? 'text-ec-profit' : 'text-ec-loss'}`}>
                                 {strategy.total_return_pct > 0 ? '+' : ''}{strategy.total_return_pct?.toFixed(2)}%
                             </td>
                             <td className="px-5 py-4 text-sm text-foreground font-black tracking-tight">
@@ -144,7 +144,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             <td className="px-5 py-4 text-sm text-foreground font-black tracking-tight opacity-70">
                                 {strategy.win_rate?.toFixed(1)}%
                             </td>
-                            <td className="px-5 py-4 text-sm text-red-500/80 font-black tracking-tight">
+                            <td className="px-5 py-4 text-sm text-ec-loss/80 font-black tracking-tight">
                                 -{strategy.max_drawdown_pct?.toFixed(2)}%
                             </td>
                             <td className="px-5 py-4 text-sm text-foreground/60 font-black tracking-tight">

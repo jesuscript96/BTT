@@ -69,7 +69,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
             <div className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                     <div className="relative">
-                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-zinc-400" />
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-ec-text-secondary" />
                         <input
                             type="text"
                             placeholder="Ticker..."
@@ -132,7 +132,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                 <div className="flex items-center gap-2">
                     <button
                         onClick={() => setIsExpanded(!isExpanded)}
-                        className="p-2 text-zinc-400 hover:text-zinc-600 transition-colors"
+                        className="p-2 text-ec-text-secondary hover:text-ec-text-primary transition-colors"
                     >
                         {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </button>
@@ -209,7 +209,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
 
 const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) => (
     <div className="flex flex-col gap-1">
-        <span className="text-[10px] text-zinc-400 uppercase font-black tracking-widest">{label}</span>
+        <span className="text-[10px] text-ec-text-secondary uppercase font-black tracking-widest">{label}</span>
         {isCheck ? (
             <input
                 type="checkbox"

@@ -78,7 +78,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.use_hard_stop !== false ? 'ON' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop !== false ? 'bg-red-500/70' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop !== false ? 'bg-ec-loss/70' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, use_hard_stop: risk.use_hard_stop === false })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_hard_stop !== false ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -113,7 +113,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.use_take_profit !== false ? 'ON' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit !== false ? 'bg-green-500/70' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit !== false ? 'bg-ec-profit/70' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, use_take_profit: risk.use_take_profit === false })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_take_profit !== false ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -165,11 +165,11 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                     {risk.partial_take_profits.map((partial, idx) => (
                                         <div key={idx} className="group relative bg-muted/10 border border-border/30 rounded-xl p-3 space-y-3 transition-all hover:border-green-500/30 hover:bg-muted/15">
                                             <div className="flex items-center justify-between">
-                                                <span className="text-[10px] font-black text-green-500/70 tracking-tighter">PARTIAL #{idx + 1}</span>
+                                                <span className="text-[10px] font-black text-ec-profit/70 tracking-tighter">PARTIAL #{idx + 1}</span>
                                                 {risk.partial_take_profits.length > 1 && (
                                                     <button
                                                         onClick={() => removePartial(idx)}
-                                                        className="p-1 text-muted-foreground hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                                        className="p-1 text-muted-foreground hover:text-ec-loss transition-colors opacity-0 group-hover:opacity-100"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" />
                                                     </button>
@@ -211,13 +211,13 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
 
                                 <button
                                     onClick={addPartial}
-                                    className="w-full py-2 border border-dashed border-border/60 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold text-muted-foreground hover:border-green-500/40 hover:text-green-500 hover:bg-green-500/5 transition-all"
+                                    className="w-full py-2 border border-dashed border-border/60 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold text-muted-foreground hover:border-ec-profit/40 text-ec-profit bg-ec-profit/5 transition-all"
                                 >
                                     <PlusCircle className="w-3.5 h-3.5" />
                                     <span>Add Partial Take Profit</span>
                                 </button>
 
-                                <div className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${Math.abs(totalPartialCapital - 100) < 0.01 ? 'bg-green-500/5 border-green-500/20 text-green-500/80' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'}`}>
+                                <div className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${Math.abs(totalPartialCapital - 100) < 0.01 ? 'bg-ec-profit/5 border-ec-profit/20 text-ec-profit/80' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'}`}>
                                     <Info className="w-3.5 h-3.5 shrink-0" />
                                     <div className="flex-1 text-[9px] font-bold leading-tight">
                                         Total Capital: <span className="font-black underline">{totalPartialCapital}%</span>

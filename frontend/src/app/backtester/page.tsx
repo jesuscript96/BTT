@@ -186,8 +186,8 @@ export default function Home() {
 
         <main className="flex-1 overflow-y-auto p-4 space-y-4">
           {error && (
-            <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg p-4">
-              <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+            <div className="bg-ec-loss/10 border border-ec-loss/30 rounded-lg p-4">
+              <p className="text-sm text-ec-loss">{error}</p>
             </div>
           )}
 
