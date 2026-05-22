@@ -38,7 +38,7 @@ def screen_market(
         # ── Hot Cache Fast Path ──
         hot_df = get_hot_daily_df()
         effective_gap = max(min_gap, min_gap_at_open_pct)
-        if hot_df is not None and effective_gap >= 20.0:
+        if hot_df is not None and effective_gap >= 10.0:
             result = hot_df.copy()
             if effective_gap:
                 result = result[result['gap_pct'] >= effective_gap]
@@ -261,7 +261,7 @@ def get_aggregate_intraday(
         hot_df = get_hot_daily_df()
         effective_gap = max(min_gap, min_gap_at_open_pct)
 
-        if hot_df is not None and effective_gap >= 20.0:
+        if hot_df is not None and effective_gap >= 10.0:
             result_df = hot_df.copy()
             if effective_gap:
                 result_df = result_df[result_df['gap_pct'] >= effective_gap]
