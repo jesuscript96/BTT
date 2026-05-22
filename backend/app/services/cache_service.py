@@ -100,7 +100,7 @@ def load_hot_daily_cache() -> None:
         print(f"[HOT CACHE] Missing columns: {missing}. Regenerating from daily_metrics...")
         try:
             all_cols = [
-                "ticker", "CAST(\"timestamp\" AS VARCHAR) AS timestamp", "year", "month",
+                "ticker", "timestamp", "year", "month",
                 "gap_pct", "open", "close", "high", "low", "volume",
                 "pm_volume", "pm_high", "pm_low", "pm_high_time", "pm_low_time",
                 "rth_volume", "rth_open", "rth_high", "rth_low", "rth_close",

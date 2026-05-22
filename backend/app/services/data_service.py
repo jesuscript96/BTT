@@ -318,6 +318,11 @@ def fetch_qualifying_data(
             result = result[result['gap_pct'] <= max_gap]
             if min_pm_vol:
                 result = result[result['pm_volume'] >= min_pm_vol]
+            if start_date or end_date:
+                if 'timestamp' in result.columns:
+                    result['timestamp'] = pd.to_datetime(result['timestamp'])
+                elif 'date' in result.columns:
+                    result['timestamp'] = pd.to_datetime(result['date'])
             if start_date:
                 result = result[result['timestamp'] >= pd.Timestamp(start_date)]
             if end_date:
