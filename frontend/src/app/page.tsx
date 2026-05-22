@@ -3,8 +3,6 @@
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
-  LineChart,
-  ScatterChart,
   Activity
 } from 'lucide-react';
 import { AdvancedFilterPanel } from "@/components/AdvancedFilterPanel";
@@ -12,8 +10,6 @@ import { Dashboard } from "@/components/Dashboard";
 import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
-import RollingAnalysisDashboard from "@/components/RollingAnalysisDashboard";
-import RegressionAnalysis from "@/components/RegressionAnalysis";
 import TickerAnalysis from "@/components/TickerAnalysis";
 
 import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
@@ -31,7 +27,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression' | 'ticker'>('screener');
+  const [activeTab, setActiveTab] = useState<'screener' | 'ticker'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [aggregateSeries, setAggregateSeries] = useState<any[] | null>([]);
@@ -281,26 +277,6 @@ export default function Home() {
           Screener & Summary
         </button>
         <button
-          onClick={() => setActiveTab('rolling')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'rolling'
-            ? 'border-primary text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <LineChart className="w-4 h-4" />
-          Rolling Analysis
-        </button>
-        <button
-          onClick={() => setActiveTab('regression')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'regression'
-            ? 'border-primary text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <ScatterChart className="w-4 h-4" />
-          Regression Analysis
-        </button>
-        <button
           onClick={() => setActiveTab('ticker')}
           className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'ticker'
             ? 'border-primary text-foreground'
@@ -347,28 +323,6 @@ export default function Home() {
                 isLoading={isLoading}
               />
             </div>
-          </div>
-        )}
-
-        {activeTab === 'rolling' && (
-          <div className="p-6 h-full">
-            {currentFilters.ticker ? (
-              <RollingAnalysisDashboard
-                ticker={currentFilters.ticker}
-                startDate={currentFilters.start_date}
-                endDate={currentFilters.end_date}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground border border-dashed border-border rounded-xl">
-                <p>Please select a Ticker in the Filter Panel to view Rolling Analysis.</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'regression' && (
-          <div className="p-6 h-full">
-            <RegressionAnalysis data={data} />
           </div>
         )}
 

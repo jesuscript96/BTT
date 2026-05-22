@@ -335,7 +335,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                     <div className="flex items-center gap-4">
                         {isAggregate ? (
                             <>
-                                <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
+                                <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. PM HIGH</h3>
                                 <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">(AGGREGATE)</span>
                             </>
                         ) : (

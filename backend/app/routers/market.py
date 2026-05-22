@@ -283,9 +283,9 @@ def get_aggregate_intraday(
             if not tickers:
                 return []
 
-            # daily_opens from hot cache
-            opens_df = result_df[result_df['timestamp'].dt.date == target_date][['ticker', 'open']].copy()
-            opens_df = opens_df.rename(columns={'open': 'day_open'})
+            # daily_opens from hot cache (using pm_high as reference)
+            opens_df = result_df[result_df['timestamp'].dt.date == target_date][['ticker', 'pm_high']].copy()
+            opens_df = opens_df.rename(columns={'pm_high': 'day_open'})
 
             # FASE 2: intraday_1m query (sin daily_opens CTE — el merge es en pandas)
             placeholders = ','.join(['?'] * len(tickers))
@@ -349,7 +349,7 @@ def get_aggregate_intraday(
 
         agg_query = f"""
             WITH daily_opens AS (
-                 SELECT ticker, open as day_open 
+                 SELECT ticker, pm_high as day_open 
                  FROM daily_metrics 
                  WHERE DATE_TRUNC('day', timestamp) = CAST(? AS DATE)
                  AND ticker IN ({placeholders})

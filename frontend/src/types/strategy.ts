@@ -90,16 +90,6 @@ export enum Comparator {
     DISTANCE_LT = "DISTANCE_LESS_THAN"
 }
 
-export enum CandlePattern {
-    RV = "RED_VOLUME",
-    RV_PLUS = "RED_VOLUME_PLUS",
-    GV = "GREEN_VOLUME",
-    GV_PLUS = "GREEN_VOLUME_PLUS",
-    DOJI = "DOJI",
-    HAMMER = "HAMMER",
-    SHOOTING_STAR = "SHOOTING_STAR"
-}
-
 export enum Timeframe {
     M1 = "1m",
     M5 = "5m",
@@ -187,16 +177,7 @@ export interface PriceLevelDistanceCondition {
     timeframe?: Timeframe;
 }
 
-export interface CandleCondition {
-    type: "candle_pattern";
-    pattern: CandlePattern;
-    lookback: number;
-    consecutive_count: number;
-    timeframe?: Timeframe;
-    calc_on_heikin?: boolean;
-}
-
-export type AnyCondition = ComparisonCondition | PriceLevelDistanceCondition | CandleCondition;
+export type AnyCondition = ComparisonCondition | PriceLevelDistanceCondition;
 
 // Recursive Logical Group
 export interface ConditionGroup {

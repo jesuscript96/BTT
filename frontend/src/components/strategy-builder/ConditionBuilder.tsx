@@ -4,7 +4,6 @@ import {
     AnyCondition,
     IndicatorType,
     Comparator,
-    CandlePattern,
     IndicatorConfig,
     Timeframe
 } from '@/types/strategy';
@@ -793,46 +792,8 @@ export const ConditionRow = ({
                         </div>
                     </>
                 );
-            case 'candle_pattern':
-                return (
-                    <>
-                        <select
-                            value={condition.pattern}
-                            onChange={(e) => onChange({ ...condition, pattern: e.target.value as CandlePattern })}
-                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-                        >
-                            {Object.values(CandlePattern).map(p => (
-                                <option key={p} value={p}>{p}</option>
-                            ))}
-                        </select>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">Streak:</span>
-                            <input
-                                type="number"
-                                value={condition.consecutive_count}
-                                onChange={(e) => onChange({ ...condition, consecutive_count: Number(e.target.value) })}
-                                className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
-                            />
-                        </div>
-
-                        {/* Heikin-Ashi Toggle for Patterns */}
-                        <div className="flex items-center gap-2 ml-2 border-l border-border/30 pl-3">
-                            <input
-                                type="checkbox"
-                                id={`ha-pattern-${condition.pattern}`}
-                                checked={condition.calc_on_heikin || false}
-                                onChange={(e) => onChange({ ...condition, calc_on_heikin: e.target.checked })}
-                                className="w-3.5 h-3.5 rounded border-border/50 bg-muted/20 text-blue-500 focus:ring-blue-500"
-                            />
-                            <label 
-                                htmlFor={`ha-pattern-${condition.pattern}`}
-                                className="text-[10px] font-bold text-blue-400 uppercase tracking-wider cursor-pointer select-none"
-                            >
-                                Use Heikin-Ashi
-                            </label>
-                        </div>
-                    </>
-                );
+            default:
+                return null;
         }
     };
 
@@ -875,21 +836,12 @@ export const ConditionRow = ({
                             value_pct: 2.0,
                             timeframe: currentTimeframe
                         });
-                    } else {
-                        onChange({
-                            type: 'candle_pattern',
-                            pattern: CandlePattern.RV,
-                            lookback: 1,
-                            consecutive_count: 3,
-                            timeframe: currentTimeframe
-                        });
                     }
                 }}
                 className="bg-transparent text-[10px] font-black uppercase tracking-wider text-muted-foreground focus:outline-none cursor-pointer"
             >
                 <option value="indicator_comparison">Indicator</option>
                 <option value="price_level_distance">Distance</option>
-                <option value="candle_pattern">Pattern</option>
             </select>
 
             <div className="h-4 w-px bg-border/40"></div>
