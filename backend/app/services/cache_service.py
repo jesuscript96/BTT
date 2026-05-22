@@ -90,7 +90,64 @@ def load_hot_daily_cache() -> None:
             .astype('float32')
         )
 
+    # Auto-expandir si faltan columnas críticas para el backtest
+    expanded_columns = [
+        "pm_high_time", "pm_low_time", "rth_open", "rth_close",
+        "close_1559", "last_close", "transactions",
+    ]
+    missing = [c for c in expanded_columns if c not in _hot_daily_cache.columns]
+    if missing:
+        print(f"[HOT CACHE] Missing columns: {missing}. Regenerating from daily_metrics...")
+        try:
+            all_cols = [
+                "ticker", "CAST(\"timestamp\" AS VARCHAR) AS timestamp", "year", "month",
+                "gap_pct", "open", "close", "high", "low", "volume",
+                "pm_volume", "pm_high", "pm_low", "pm_high_time", "pm_low_time",
+                "rth_volume", "rth_open", "rth_high", "rth_low", "rth_close",
+                "rth_run_pct", "day_return_pct", "rth_range_pct",
+                "pmh_gap_pct", "pmh_fade_pct", "rth_fade_pct",
+                "hod_time", "lod_time",
+                "m15_return_pct", "m30_return_pct", "m60_return_pct", "m180_return_pct",
+                "close_1559", "last_close", "prev_close", "eod_volume",
+                "transactions",
+            ]
+            _hot_daily_cache = con.execute(f"""
+                SELECT {", ".join(all_cols)}
+                FROM daily_metrics
+                WHERE gap_pct >= 10.0 AND gap_pct <= 500.0 AND open > 0.10
+            """).fetchdf()
+            for col in _hot_daily_cache.select_dtypes(include=['float64']).columns:
+                _hot_daily_cache[col] = _hot_daily_cache[col].astype('float32')
+            if 'ticker' in _hot_daily_cache.columns:
+                _hot_daily_cache['ticker'] = _hot_daily_cache['ticker'].astype('category')
+            mem_mb = _hot_daily_cache.memory_usage(deep=True).sum() / 1024 / 1024
+            print(f"[HOT CACHE] Regenerated: {len(_hot_daily_cache):,} rows, {mem_mb:.1f} MB")
+
+            # Guardar a GCS para futuros deploys
+            try:
+                from google.cloud import storage
+                key_file = os.getenv("GCS_KEY_FILE", "gcs-key.json")
+                if os.path.exists(key_file):
+                    local_tmp = "/tmp/hot_cache_daily_gaps.parquet"
+                    _hot_daily_cache.to_parquet(local_tmp, index=False)
+                    client = storage.Client.from_service_account_json(key_file)
+                    b = client.bucket(bucket)
+                    blob = b.blob("cold_storage/hot_cache/daily_metrics_gaps.parquet")
+                    blob.upload_from_filename(local_tmp)
+                    os.remove(local_tmp)
+                    print("[HOT CACHE] Uploaded expanded Parquet to GCS")
+            except Exception as e:
+                print(f"[HOT CACHE] Could not upload to GCS: {e}")
+        except Exception as e:
+            print(f"[HOT CACHE] Regeneration failed: {e}")
+
 def get_hot_daily_df() -> pd.DataFrame | None:
+    if _hot_daily_cache is None:
+        load_hot_daily_cache()
+    return _hot_daily_cache
+
+
+def get_hot_daily_cache() -> pd.DataFrame | None:
     if _hot_daily_cache is None:
         load_hot_daily_cache()
     return _hot_daily_cache

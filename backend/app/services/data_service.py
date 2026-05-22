@@ -294,11 +294,46 @@ def fetch_qualifying_data(
     req_end_date: str | None = None,
 ) -> pd.DataFrame:
     """
-    Fetch qualifying rows from daily_metrics via direct GCS query.
+    Fetch qualifying rows from daily_metrics via hot cache RAM or direct GCS query.
 
-    Uses filter pushdown so only matching row-groups are downloaded.
-    Returns ~3000 rows, not millions.
+    Uses hot cache when gap >= 10%; otherwise falls back to GCS.
     """
+    from app.services.cache_service import get_hot_daily_cache
+
+    hot_df = get_hot_daily_cache()
+    if hot_df is not None and not hot_df.empty:
+        filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+        if not filters:
+            return pd.DataFrame()
+
+        min_gap = filters.get("min_gap_pct", 0)
+        max_gap = filters.get("max_gap_pct", 500)
+        min_pm_vol = filters.get("min_pm_volume", 0)
+        start_date = filters.get("start_date")
+        end_date = filters.get("end_date")
+
+        if min_gap >= 10.0:
+            result = hot_df.copy()
+            result = result[result['gap_pct'] >= min_gap]
+            result = result[result['gap_pct'] <= max_gap]
+            if min_pm_vol:
+                result = result[result['pm_volume'] >= min_pm_vol]
+            if start_date:
+                result = result[result['timestamp'] >= pd.Timestamp(start_date)]
+            if end_date:
+                result = result[result['timestamp'] <= pd.Timestamp(end_date)]
+
+            if 'date' not in result.columns:
+                result = result.copy()
+                result['date'] = pd.to_datetime(result['timestamp']).dt.date
+
+            result = result.reset_index(drop=True)
+            print(f"[HOT CACHE] qualifying from RAM: {len(result)} rows")
+            print(f"[DEBUG] qualifying_df shape: {result.shape}, columns: {list(result.columns) if not result.empty else 'EMPTY'}")
+            print(f"[DEBUG] dataset filters: {filters}")
+            return result
+
+    # Fallback to GCS query
     filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
     if not filters:
         logger.error(f"Dataset {dataset_id} not found")

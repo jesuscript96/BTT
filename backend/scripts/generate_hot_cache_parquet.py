@@ -1,33 +1,48 @@
 import os
 import pandas as pd
+import duckdb
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.database import get_db_connection
+GCS_BUCKET = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+GCS_HMAC_KEY = os.getenv("GCS_HMAC_KEY", "")
+GCS_HMAC_SECRET = os.getenv("GCS_HMAC_SECRET", "")
 
 print("Conectando a GCS...")
-con = get_db_connection()
+con = duckdb.connect(":memory:")
+con.execute("INSTALL httpfs; LOAD httpfs;")
+con.execute(f"SET s3_access_key_id='{GCS_HMAC_KEY}';")
+con.execute(f"SET s3_secret_access_key='{GCS_HMAC_SECRET}';")
+con.execute("SET s3_endpoint='storage.googleapis.com';")
+con.execute("SET s3_region='us-east-1';")
+con.execute("SET s3_url_style='path';")
 
-print("Cargando gap days desde daily_metrics...")
-df = con.execute("""
+daily_path = f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/*/*/*.parquet"
+
+print(f"Cargando gap days desde {daily_path}...")
+t_start = pd.Timestamp.now()
+df = con.execute(f"""
     SELECT 
         ticker, timestamp, year, month,
         gap_pct, open, close, high, low, volume,
-        pm_volume, pm_high, pm_low, rth_volume,
-        rth_high, rth_low, rth_run_pct,
-        day_return_pct, rth_range_pct,
+        pm_volume, pm_high, pm_low, pm_high_time, pm_low_time,
+        rth_volume, rth_open, rth_high, rth_low, rth_close,
+        rth_run_pct, day_return_pct, rth_range_pct,
         pmh_gap_pct, pmh_fade_pct, rth_fade_pct,
         hod_time, lod_time,
-        m15_return_pct, m30_return_pct,
-        m60_return_pct, m180_return_pct,
-        prev_close, eod_volume
-    FROM daily_metrics
+        m15_return_pct, m30_return_pct, m60_return_pct, m180_return_pct,
+        close_1559, last_close, prev_close, eod_volume,
+        transactions
+    FROM read_parquet('{daily_path}', hive_partitioning=true)
     WHERE gap_pct >= 10.0
     AND gap_pct <= 500.0
     AND open > 0.10
 """).fetchdf()
+t_elapsed = (pd.Timestamp.now() - t_start).total_seconds()
 
 print(f"Filas: {len(df):,}")
+mem_mb = df.memory_usage(deep=True).sum() / 1024 / 1024
+print(f"Tamaño: {mem_mb:.1f} MB, Tiempo query: {t_elapsed:.1f}s")
 
 # Optimizar memoria
 for col in df.select_dtypes(include=['float64']).columns:
