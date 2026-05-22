@@ -22,10 +22,12 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <Sidebar />
-          <main className="ml-64 min-h-screen">
-            {children}
-          </main>
+          <div className="flex">
+            <Sidebar />
+            <main className="flex-1 min-h-screen min-w-0">
+              {children}
+            </main>
+          </div>
         </ThemeProvider>
       </body>
     </html>
