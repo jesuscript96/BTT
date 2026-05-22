@@ -94,12 +94,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 
     // Empty State: Show News Feed
     if (!stats || !stats.avg) return (
-        <div className="p-6 bg-background min-h-screen font-sans transition-colors duration-300">
-            <div className="flex flex-col h-full gap-6">
-                <div className="flex items-center justify-between border-b border-border/40 pb-4">
-                    <div className="flex flex-col gap-1">
-                        <h1 className="text-xl font-black tracking-tight text-foreground">MARKET INTELLIGENCE</h1>
-                        <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest">
+        <div style={{ minHeight: '100%', fontFamily: "'General Sans', sans-serif" }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 24 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '0.5px solid var(--color-ec-border)', padding: '20px 0 16px 0' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <h1 style={{
+                            fontFamily: "'Fraunces', serif",
+                            fontSize: 32,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-high)',
+                            letterSpacing: '-0.5px',
+                            marginBottom: 4,
+                        }}>MARKET INTELLIGENCE</h1>
+                        <span style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: 2,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>
                             WAITING FOR DATA... WHILE YOU WAIT, READ THE LATEST
                         </span>
                     </div>
@@ -112,7 +126,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
     );
 
     return (
-        <div className="p-6 bg-background min-h-screen font-sans transition-colors duration-300">
+        <div style={{ minHeight: '100%', fontFamily: "'General Sans', sans-serif" }}>
             {/* Top Row: Sidebar Metrics & Main Chart */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-0">
 

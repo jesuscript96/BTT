@@ -153,7 +153,7 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                 <button
                     onClick={handleRunSearch}
                     disabled={isRunning}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-ec-copper hover:bg-ec-profit-bright disabled:bg-muted disabled:text-muted-foreground text-white rounded-lg font-medium transition-colors shadow-sm"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper-bright)] disabled:bg-muted disabled:text-muted-foreground text-[var(--color-ec-copper-text)] rounded-[5px] font-medium transition-colors shadow-sm"
                 >
                     {isRunning ? (
                         <>

@@ -192,7 +192,19 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                         <button
                             onClick={handleTestInBacktester}
                             disabled={!canSubmit}
-                            className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-black uppercase tracking-widest text-[10px] shadow-lg shadow-amber-900/30 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex items-center gap-1.5 rounded-[5px]"
+                            style={{
+                                background: 'var(--color-ec-bg-surface)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                color: 'var(--color-ec-text-secondary)',
+                                padding: '9px 13px',
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 11,
+                                fontWeight: 600,
+                                letterSpacing: '1.2px',
+                                textTransform: 'uppercase',
+                                cursor: 'pointer',
+                            }}
                             title={!isTPValid ? "Partial TP sum must be 100%" : "Save as draft & preload in Backtester"}
                         >
                             {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
@@ -201,7 +213,19 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                         <button
                             onClick={handleSave}
                             disabled={!canSubmit}
-                            className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-black uppercase tracking-widest text-[10px] shadow-lg shadow-blue-900/40 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex items-center gap-1.5 rounded-[5px]"
+                            style={{
+                                background: 'var(--color-ec-copper)',
+                                color: 'var(--color-ec-copper-text)',
+                                border: 'none',
+                                padding: '9px 16px',
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                letterSpacing: '1.2px',
+                                textTransform: 'uppercase',
+                                cursor: 'pointer',
+                            }}
                             title={!isTPValid ? "Partial TP sum must be 100%" : "Save Strategy"}
                         >
                             {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}

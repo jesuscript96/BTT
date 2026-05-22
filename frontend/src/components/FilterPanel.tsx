@@ -81,18 +81,49 @@ export const FilterPanel: React.FC<FilterPanelProps> = ({ onFilter, onExport, is
                     <button
                         onClick={handleApply}
                         disabled={isLoading}
-                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50"
+                        style={{
+                            background: 'var(--color-ec-copper)',
+                            color: 'var(--color-ec-copper-text)',
+                            border: 'none',
+                            borderRadius: 5,
+                            padding: '9px 16px',
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: '1.2px',
+                            textTransform: 'uppercase',
+                            cursor: isLoading ? 'default' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            opacity: isLoading ? 0.5 : 1,
+                        }}
                     >
-                        {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+                        {isLoading ? <RefreshCw size={14} strokeWidth={1.5} className="animate-spin" /> : <Filter size={14} strokeWidth={1.5} />}
                         Filter
                     </button>
                     <button
                         onClick={onExport}
                         disabled={isLoading}
-                        className="flex items-center gap-2 bg-ec-bg-surface hover:bg-ec-bg-elevated text-ec-text-primary px-4 py-2 rounded text-sm font-medium border border-ec-bg-elevated transition-colors disabled:opacity-50"
+                        style={{
+                            background: 'var(--color-ec-bg-surface)',
+                            border: '0.5px solid var(--color-ec-border)',
+                            borderRadius: 5,
+                            padding: '9px 13px',
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            letterSpacing: '1.2px',
+                            color: 'var(--color-ec-text-secondary)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                        }}
                     >
-                        <Download className="h-4 w-4" />
-                        Export CSV
+                        <Download size={14} strokeWidth={1.5} />
+                        Export
                     </button>
                 </div>
             </div>

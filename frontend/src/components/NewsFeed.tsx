@@ -10,9 +10,52 @@ interface NewsItem {
     summary: string;
 }
 
+const CARD_STYLE: React.CSSProperties = {
+    background: 'var(--color-ec-bg-surface)',
+    border: '0.5px solid var(--color-ec-border)',
+    borderRadius: 7,
+    padding: '16px 18px',
+    transition: 'background 150ms ease',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 10,
+};
+
+const SOURCE_STYLE: React.CSSProperties = {
+    fontFamily: "'General Sans', sans-serif",
+    fontSize: 9,
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '2.5px',
+    color: 'var(--color-ec-copper)',
+};
+
+const TITLE_STYLE: React.CSSProperties = {
+    fontFamily: "'Fraunces', serif",
+    fontSize: 17,
+    fontWeight: 500,
+    color: 'var(--color-ec-text-high)',
+    lineHeight: 1.4,
+};
+
+const META_STYLE: React.CSSProperties = {
+    fontFamily: "'General Sans', sans-serif",
+    fontSize: 10,
+    fontWeight: 500,
+    color: 'var(--color-ec-text-muted)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+};
+
+const CARD_HOVER: React.CSSProperties = {
+    background: 'var(--color-ec-bg-elevated)',
+};
+
 export const NewsFeed: React.FC = () => {
     const [news, setNews] = useState<NewsItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
     useEffect(() => {
         const fetchNews = async () => {
@@ -33,8 +76,10 @@ export const NewsFeed: React.FC = () => {
         return (
             <div className="h-full w-full flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3 animate-pulse">
-                    <Newspaper className="w-8 h-8 text-muted-foreground/50" />
-                    <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground/50">Loading Market Intel...</span>
+                    <Newspaper className="w-8 h-8 text-[var(--color-ec-text-muted)]" style={{ opacity: 0.5 }} />
+                    <span className="text-xs font-bold uppercase tracking-widest text-[var(--color-ec-text-muted)]" style={{ opacity: 0.5 }}>
+                        Loading Market Intel...
+                    </span>
                 </div>
             </div>
         );
@@ -42,44 +87,59 @@ export const NewsFeed: React.FC = () => {
 
     return (
         <div className="h-full w-full overflow-y-auto pr-2 custom-scrollbar">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, padding: 20 }}>
                 {news.map((item, idx) => (
                     <a
                         key={idx}
                         href={item.link}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="group flex flex-col justify-between p-5 bg-background border border-border/40 hover:border-blue-500/50 transition-all duration-300 hover:bg-muted/5 rounded-sm relative overflow-hidden"
+                        style={{
+                            ...CARD_STYLE,
+                            ...(hoverIdx === idx ? CARD_HOVER : {}),
+                            textDecoration: 'none',
+                        }}
+                        onMouseEnter={() => setHoverIdx(idx)}
+                        onMouseLeave={() => setHoverIdx(null)}
                     >
-                        <div className="absolute top-0 left-0 w-0.5 h-full bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <span style={SOURCE_STYLE}>
+                            {item.source}
+                        </span>
 
-                        <div className="flex flex-col gap-3">
-                            <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-blue-500">{item.source}</span>
-                                <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                            </div>
+                        <h3 style={{
+                            ...TITLE_STYLE,
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                        }}>
+                            {item.title}
+                        </h3>
 
-                            <h3 className="text-sm font-bold text-foreground leading-snug group-hover:text-blue-500 transition-colors line-clamp-2">
-                                {item.title}
-                            </h3>
+                        <p style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 13,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-primary)',
+                            lineHeight: 1.5,
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: 'vertical',
+                        }}>
+                            {item.summary.replace(/<[^>]*>?/gm, '')}
+                        </p>
 
-                            <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed">
-                                {item.summary.replace(/<[^>]*>?/gm, '')}
-                            </p>
-                        </div>
-
-                        <div className="mt-4 pt-3 border-t border-border/20 flex items-center gap-2">
-                            <Clock className="w-3 h-3 text-muted-foreground" />
-                            <span className="text-[10px] text-muted-foreground font-medium truncate">
-                                {new Date(item.published).toLocaleString()}
-                            </span>
+                        <div style={META_STYLE}>
+                            <Clock size={13} color="var(--color-ec-text-muted)" />
+                            <span>{new Date(item.published).toLocaleString()}</span>
                         </div>
                     </a>
                 ))}
             </div>
 
             {news.length === 0 && (
-                <div className="flex h-full items-center justify-center text-muted-foreground text-xs">
+                <div className="flex h-full items-center justify-center text-[var(--color-ec-text-muted)] text-xs">
                     No news available at the moment.
                 </div>
             )}

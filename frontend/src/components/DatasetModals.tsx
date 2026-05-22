@@ -55,7 +55,7 @@ export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !name.trim()}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-xl text-sm font-black tracking-tight transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                        className="bg-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper-bright)] text-[var(--color-ec-copper-text)] px-8 py-2.5 rounded-[5px] text-sm font-black tracking-tight transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center gap-2"
                     >
                         <Save className="h-4 w-4" />
                         {isSaving ? "Saving..." : "Save Dataset"}

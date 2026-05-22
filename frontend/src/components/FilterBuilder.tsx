@@ -116,7 +116,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
         <div className="absolute top-4 left-6 z-[100] animate-in zoom-in-95 fade-in duration-150">
             <div className="bg-white border border-zinc-200 w-[600px] h-[520px] rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.1)] flex flex-col overflow-hidden transition-colors">
                 {/* Header */}
-                <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-[#F2F0ED]">
+                <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-[var(--color-ec-bg-surface)]">
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-blue-600 shadow-sm" />
                         <p className="text-[10px] text-ec-text-muted font-black uppercase tracking-widest">Rule Builder</p>
@@ -130,7 +130,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                     {step === "select" ? (
                         <>
                             {/* Sidebar */}
-                            <div className="w-48 border-r border-zinc-100 p-4 space-y-1 bg-[#F9F9F8]">
+                            <div className="w-48 border-r border-zinc-100 p-4 space-y-1 bg-[var(--color-ec-bg-elevated)]">
                                 {CATEGORIES.map((cat) => (
                                     <button
                                         key={cat.id}
@@ -180,7 +180,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                             className={cn(
                                                 "py-3 rounded-lg font-black text-xs border transition-all shadow-sm",
                                                 operator === op
-                                                    ? "bg-blue-600 border-blue-500 text-white shadow-md"
+                                                    ? "bg-[var(--color-ec-copper)] border-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] shadow-md"
                                                     : "bg-zinc-50 border-zinc-100 text-ec-text-secondary hover:border-zinc-300 hover:text-ec-text-primary"
                                             )}
                                         >
@@ -224,7 +224,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                 </button>
                                 <button
                                     onClick={handleSaveRule}
-                                    className="flex-[2] py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-md hover:shadow-lg transition-all active:scale-95"
+                                    className="flex-[2] py-3 bg-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper-bright)] text-[var(--color-ec-copper-text)] rounded-[5px] font-black text-[10px] uppercase tracking-widest shadow-md hover:shadow-lg transition-all active:scale-95"
                                 >
                                     Add Filter
                                 </button>

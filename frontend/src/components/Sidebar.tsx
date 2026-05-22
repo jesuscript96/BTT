@@ -24,7 +24,7 @@ const ISOTIPO = (
 const wordmarkStyle: React.CSSProperties = {
     fontFamily: "'General Sans', sans-serif",
     fontWeight: 700,
-    fontSize: 17,
+    fontSize: 15,
     letterSpacing: "-0.6px",
     color: "var(--color-ec-text-high)",
 };
@@ -42,20 +42,68 @@ export const Sidebar = () => {
         return pathname.startsWith(href);
     };
 
-    const linkActive = (href: string) =>
+    const linkActive = (href: string): React.CSSProperties =>
         isActive(href)
-            ? "bg-ec-bg-surface text-ec-text-high"
-            : "text-ec-text-secondary hover:bg-ec-bg-surface hover:text-ec-text-high";
+            ? { background: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-high)', fontWeight: 600 }
+            : { background: 'transparent', color: 'var(--color-ec-text-secondary)', fontWeight: 500 };
 
-    const linkLayout = (collapsed: boolean) =>
-        collapsed
-            ? "justify-center gap-0 px-0"
-            : "gap-2.5 px-2";
+    const linkBase = (collapsed: boolean): React.CSSProperties => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: collapsed ? 0 : 10,
+        padding: collapsed ? '7px 0' : '7px 8px',
+        borderRadius: 5,
+        fontSize: 13,
+        fontWeight: 500,
+        width: '100%',
+        textDecoration: 'none',
+        transition: 'background 150ms ease, color 150ms ease',
+        justifyContent: collapsed ? 'center' : undefined,
+        color: 'var(--color-ec-text-secondary)',
+        cursor: 'pointer',
+    });
 
-    const labelFade = (collapsed: boolean) =>
-        `text-sm overflow-hidden whitespace-nowrap transition-all duration-150 ${
-            collapsed ? "w-0 opacity-0" : "opacity-100"
-        }`;
+    const accordionBtnBase = (collapsed: boolean): React.CSSProperties => ({
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: collapsed ? 'center' : 'space-between',
+        gap: collapsed ? 0 : 10,
+        padding: collapsed ? '7px 0' : '7px 8px',
+        borderRadius: 5,
+        fontSize: 13,
+        fontWeight: 500,
+        width: '100%',
+        background: 'transparent',
+        border: 'none',
+        textAlign: 'left' as const,
+        transition: 'background 150ms ease, color 150ms ease',
+        cursor: 'pointer',
+    });
+
+    const subItemStyle = (active: boolean): React.CSSProperties => ({
+        display: 'flex',
+        alignItems: 'center',
+        padding: '5px 8px',
+        borderRadius: 4,
+        fontFamily: "'General Sans', sans-serif",
+        fontSize: 11,
+        fontWeight: 500,
+        color: active ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)',
+        background: active ? 'var(--color-ec-bg-surface)' : 'transparent',
+        transition: 'background 150ms ease, color 150ms ease',
+        textDecoration: 'none',
+        cursor: 'pointer',
+    });
+
+    const labelFade = (collapsed: boolean): React.CSSProperties => ({
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
+        transition: 'all 150ms ease',
+        width: collapsed ? 0 : undefined,
+        opacity: collapsed ? 0 : 1,
+        fontSize: 12,
+        fontWeight: 500,
+    });
 
     return (
         <aside
@@ -71,31 +119,40 @@ export const Sidebar = () => {
         >
             {/* Header */}
             <div
-                className="flex items-center px-4"
+                className="flex items-center"
                 style={{
-                    height: 56,
-                    borderBottom: "0.5px solid var(--color-ec-border)",
+                    height: 52,
+                    padding: '0 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    borderBottom: '0.5px solid var(--color-ec-border)',
                     justifyContent: isCollapsed ? "center" : "flex-start",
                     gap: 10,
                 }}
             >
                 {ISOTIPO}
                 <span
-                    className={labelFade(isCollapsed)}
-                    style={wordmarkStyle}
+                    style={{ ...wordmarkStyle, ...labelFade(isCollapsed) }}
                 >
                     Edgecute
                 </span>
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 px-3 py-2 space-y-1">
+            <nav style={{ flex: 1, padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {/* MENU label */}
                 {!isCollapsed && (
-                    <div
-                        className="px-2 py-2 uppercase tracking-widest"
-                        style={{ fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-muted)" }}
-                    >
+                    <div style={{
+                        fontFamily: "'General Sans', sans-serif",
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: 2,
+                        color: "var(--color-ec-text-muted)",
+                        padding: '0 8px',
+                        marginBottom: 4,
+                        marginTop: 0,
+                    }}>
                         MENU
                     </div>
                 )}
@@ -103,98 +160,116 @@ export const Sidebar = () => {
                 {/* Market Analysis */}
                 <Link
                     href="/"
-                    className={`flex items-center ${linkLayout(isCollapsed)} py-1.5 rounded-md transition-all group ${linkActive("/")}`}
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/"),
+                    }}
                 >
-                    <LayoutDashboard className="h-4 w-4 flex-shrink-0" />
-                    <span className={labelFade(isCollapsed)}>Market Analysis</span>
+                    <LayoutDashboard style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Market Analysis</span>
                 </Link>
 
                 {/* My Strategies Group */}
-                <div className="space-y-0.5">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <button
                         onClick={() => setIsStrategiesOpen(!isStrategiesOpen)}
-                        className={`w-full flex items-center ${
-                            isCollapsed ? "justify-center px-0" : "justify-between px-2"
-                        } gap-2.5 py-1.5 rounded-md transition-all group text-left text-ec-text-secondary hover:bg-ec-bg-surface hover:text-ec-text-high`}
+                        style={{
+                            ...accordionBtnBase(isCollapsed),
+                        }}
                     >
-                        <div className={`flex items-center ${isCollapsed ? "gap-0" : "gap-2.5"}`}>
-                            <LineChart className="h-4 w-4 flex-shrink-0" />
-                            <span className={labelFade(isCollapsed)}>My Strategies</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: isCollapsed ? 0 : 10 }}>
+                            <LineChart style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                            <span style={labelFade(isCollapsed)}>My Strategies</span>
                         </div>
                         {!isCollapsed &&
                             (isStrategiesOpen ? (
-                                <ChevronDown className="h-3 w-3 opacity-50 flex-shrink-0" />
+                                <ChevronDown style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
                             ) : (
-                                <ChevronRight className="h-3 w-3 opacity-50 flex-shrink-0" />
+                                <ChevronRight style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
                             ))}
                     </button>
 
                     {!isCollapsed && isStrategiesOpen && (
-                        <div className="pl-9 space-y-0.5 mt-0.5 border-l border-[#2C2F33] ml-4">
+                        <div style={{
+                            paddingLeft: 24,
+                            borderLeft: '0.5px solid var(--color-ec-border)',
+                            marginLeft: 15,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 1,
+                            marginTop: 2,
+                            marginBottom: 4,
+                        }}>
                             <Link
                                 href="/strategies/new"
-                                className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all ${
-                                    isActive("/strategies/new")
-                                        ? "text-ec-text-high bg-ec-bg-surface"
-                                        : "text-ec-text-muted hover:text-ec-text-high hover:bg-ec-bg-surface"
-                                }`}
+                                style={subItemStyle(isActive("/strategies/new"))}
                             >
-                                <span className="text-sm">New Strategy</span>
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500 }}>New Strategy</span>
                             </Link>
                             <Link
                                 href="/database"
-                                className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all ${
-                                    isActive("/database")
-                                        ? "text-ec-text-high bg-ec-bg-surface"
-                                        : "text-ec-text-muted hover:text-ec-text-high hover:bg-ec-bg-surface"
-                                }`}
+                                style={subItemStyle(isActive("/database"))}
                             >
-                                <span className="text-sm">Database</span>
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500 }}>Database</span>
                             </Link>
                         </div>
                     )}
                 </div>
 
+                {/* Separator */}
+                <div style={{ height: '0.5px', background: 'var(--color-ec-border)', margin: '8px 8px' }} />
+
                 {/* Backtester */}
                 <Link
                     href="/backtester"
-                    className={`flex items-center ${linkLayout(isCollapsed)} py-1.5 rounded-md transition-all group ${linkActive("/backtester")}`}
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/backtester"),
+                    }}
                 >
-                    <Play className="h-4 w-4 flex-shrink-0" />
-                    <span className={labelFade(isCollapsed)}>Backtester</span>
+                    <Play style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Backtester</span>
                 </Link>
 
+                {/* Separator */}
+                <div style={{ height: '0.5px', background: 'var(--color-ec-border)', margin: '8px 8px' }} />
+
                 {/* Tutoriales Group */}
-                <div className="space-y-0.5">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <button
                         onClick={() => setIsTutorialsOpen(!isTutorialsOpen)}
-                        className={`w-full flex items-center ${
-                            isCollapsed ? "justify-center px-0" : "justify-between px-2"
-                        } gap-2.5 py-1.5 rounded-md transition-all group text-left text-ec-text-secondary hover:bg-ec-bg-surface hover:text-ec-text-high`}
+                        style={{
+                            ...accordionBtnBase(isCollapsed),
+                        }}
                     >
-                        <div className={`flex items-center ${isCollapsed ? "gap-0" : "gap-2.5"}`}>
-                            <BookOpen className="h-4 w-4 flex-shrink-0" />
-                            <span className={labelFade(isCollapsed)}>Tutoriales</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: isCollapsed ? 0 : 10 }}>
+                            <BookOpen style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                            <span style={labelFade(isCollapsed)}>Tutoriales</span>
                         </div>
                         {!isCollapsed &&
                             (isTutorialsOpen ? (
-                                <ChevronDown className="h-3 w-3 opacity-50 flex-shrink-0" />
+                                <ChevronDown style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
                             ) : (
-                                <ChevronRight className="h-3 w-3 opacity-50 flex-shrink-0" />
+                                <ChevronRight style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
                             ))}
                     </button>
 
                     {!isCollapsed && isTutorialsOpen && (
-                        <div className="pl-9 space-y-0.5 mt-0.5 border-l border-[#2C2F33] ml-4">
+                        <div style={{
+                            paddingLeft: 24,
+                            borderLeft: '0.5px solid var(--color-ec-border)',
+                            marginLeft: 15,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 1,
+                            marginTop: 2,
+                            marginBottom: 4,
+                        }}>
                             <Link
                                 href="/tutorials"
-                                className={`flex items-center gap-2.5 py-1.5 px-2 rounded-md transition-all ${
-                                    isActive("/tutorials")
-                                        ? "text-ec-text-high bg-ec-bg-surface"
-                                        : "text-ec-text-muted hover:text-ec-text-high hover:bg-ec-bg-surface"
-                                }`}
+                                style={subItemStyle(isActive("/tutorials"))}
                             >
-                                <span className="text-sm">Crea tu estrategia</span>
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500 }}>Crea tu estrategia</span>
                             </Link>
                         </div>
                     )}
@@ -203,29 +278,58 @@ export const Sidebar = () => {
 
             {/* Bottom Profile */}
             <div
-                className="p-3 mt-auto"
-                style={{ borderTop: "0.5px solid var(--color-ec-border)" }}
+                style={{
+                    padding: '10px 8px',
+                    borderTop: '0.5px solid var(--color-ec-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                }}
             >
-                <div
-                    className={`flex items-center rounded-md cursor-pointer transition-all hover:bg-ec-bg-surface py-2 ${
-                        isCollapsed ? "justify-center px-0" : "gap-3 px-2"
-                    }`}
-                >
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-orange-400 to-red-500 shadow-sm flex-shrink-0" />
-                    {!isCollapsed && (
-                        <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold truncate" style={{ color: "var(--color-ec-text-high)" }}>
-                                Tito el Man
-                            </p>
-                            <p
-                                className="uppercase tracking-tighter truncate"
-                                style={{ fontSize: 10, fontWeight: 500, color: "var(--color-ec-text-muted)" }}
-                            >
-                                Admin
-                            </p>
-                        </div>
-                    )}
+                <div style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    background: 'var(--color-ec-copper)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                }}>
+                    <span style={{
+                        fontFamily: "'General Sans', sans-serif",
+        fontSize: 12,
+                        fontWeight: 700,
+                        color: 'var(--color-ec-copper-text)',
+                    }}>T</span>
                 </div>
+                {!isCollapsed && (
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-high)',
+                            margin: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        }}>
+                            Tito el Man
+                        </p>
+                        <p style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '1.5px',
+                            color: 'var(--color-ec-text-muted)',
+                            margin: 0,
+                        }}>
+                            Admin
+                        </p>
+                    </div>
+                )}
             </div>
         </aside>
     );

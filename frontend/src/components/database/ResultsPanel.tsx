@@ -96,7 +96,22 @@ export default function ResultsPanel({
                     <button
                         onClick={handleExport}
                         disabled={strategies.length === 0}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-muted disabled:text-muted-foreground text-white rounded-lg text-sm font-medium transition-colors shadow-md"
+                        style={{
+                            background: 'var(--color-ec-copper)',
+                            color: 'var(--color-ec-copper-text)',
+                            border: 'none',
+                            borderRadius: 5,
+                            padding: '9px 16px',
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            letterSpacing: '1.2px',
+                            textTransform: 'uppercase',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                        }}
                     >
                         <Download className="w-4 h-4" />
                         Export

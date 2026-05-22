@@ -456,7 +456,20 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
       <button
         onClick={handleRun}
         disabled={loading || !selectedDataset || !selectedStrategy}
-        className="w-full bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 rounded-md text-sm transition-colors shadow-sm"
+        style={{
+            background: 'var(--color-ec-copper)',
+            color: 'var(--color-ec-copper-text)',
+            border: 'none',
+            borderRadius: 5,
+            padding: '9px 16px',
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: '1.2px',
+            textTransform: 'uppercase',
+            cursor: 'pointer',
+            width: '100%',
+        }}
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">
