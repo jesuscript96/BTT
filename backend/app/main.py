@@ -14,6 +14,19 @@ from app.init_db import init_db
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Write gcs-key.json from env var if present
+    import base64, json as _json, os as _os
+    gcs_key_b64 = _os.getenv("GCS_KEY_B64")
+    if gcs_key_b64:
+        try:
+            key_path = _os.getenv("GCS_KEY_FILE", "gcs-key.json")
+            key_bytes = base64.b64decode(gcs_key_b64)
+            with open(key_path, "wb") as f:
+                f.write(key_bytes)
+            print(f"[INFO] gcs-key.json written from GCS_KEY_B64 env var")
+        except Exception as e:
+            print(f"[WARN] Could not write gcs-key.json: {e}")
+
     # Startup: Connect to DB so first request is fast. If DB fails, app still starts (avoids 502 on cold start).
     print("Startup: Connecting to database...")
     from app.gcs_sync import download_user_db, upload_user_db
