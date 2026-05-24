@@ -21,14 +21,18 @@ export default function RootLayout({
         <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet" />
       </head>
       <body>
-        <div style={{ display: 'flex' }}>
+        <div style={{ 
+          display: 'flex',
+          height: '100dvh',
+          overflow: 'hidden',
+        }}>
           <Sidebar />
           <main style={{ 
             flex: 1, 
-            minHeight: '100vh', 
+            minHeight: '100dvh', 
             minWidth: 0,
             backgroundColor: 'var(--color-ec-bg-base)',
-            overflow: 'hidden'
+            overflow: 'auto'
           }}>
             {children}
           </main>

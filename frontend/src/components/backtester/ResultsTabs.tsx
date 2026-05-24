@@ -51,17 +51,53 @@ export default function ResultsTabs({
 
   return (
     <div className="transition-colors">
-      <div className="overflow-x-auto" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div style={{
+        borderBottom: '0.5px solid var(--color-ec-border)',
+        overflowX: 'auto',
+        scrollbarWidth: 'none',
+      }}>
         <nav className="flex min-w-max">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] whitespace-nowrap transition-colors
-                ${activeTab === tab.id
-                  ? "text-[var(--foreground)] border-b-2 border-[var(--foreground)]"
-                  : "text-[var(--muted)] hover:text-[var(--foreground)] border-b-2 border-transparent"
-                }`}
+              style={activeTab === tab.id ? {
+                padding: '0 14px',
+                height: 36,
+                display: 'flex',
+                alignItems: 'center',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--color-ec-text-high)',
+                background: 'transparent',
+                border: 'none',
+                borderBottom: '2px solid var(--color-ec-copper)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              } : {
+                padding: '0 14px',
+                height: 36,
+                display: 'flex',
+                alignItems: 'center',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--color-ec-text-muted)',
+                borderBottom: '2px solid transparent',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => { if (activeTab !== tab.id) e.currentTarget.style.color = 'var(--color-ec-text-secondary)'; }}
+              onMouseLeave={(e) => { if (activeTab !== tab.id) e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}
             >
               {tab.label}
             </button>

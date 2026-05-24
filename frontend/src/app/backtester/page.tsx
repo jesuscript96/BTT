@@ -153,26 +153,67 @@ export default function Home() {
   );
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] transition-colors duration-200">
-      <header className="border-b border-[var(--border)] bg-[var(--card-bg)] px-6 py-3 flex items-center justify-between shadow-sm">
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100dvh',
+      backgroundColor: 'var(--color-ec-bg-base)',
+      overflow: 'hidden',
+    }}>
+      <header style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 20px',
+        height: 52,
+        borderBottom: '0.5px solid var(--color-ec-border)',
+        backgroundColor: 'var(--color-ec-bg-sidebar)',
+        flexShrink: 0,
+      }}>
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold text-[var(--foreground)]">BacktesterJaume</h1>
-          <span className="text-xs px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-100 font-medium">
+          <h1 style={{
+            fontFamily: 'var(--color-ec-serif)',
+            fontSize: 20,
+            fontWeight: 600,
+            color: 'var(--color-ec-text-high)',
+            letterSpacing: '-0.3px',
+          }}>Backtester</h1>
+          <span style={{
+            fontSize: 9,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+            padding: '2px 7px',
+            borderRadius: 3,
+            backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 15%, transparent)',
+            color: 'var(--color-ec-copper)',
+            fontFamily: 'var(--color-ec-sans)',
+          }}>
             VectorBT
           </span>
         </div>
-
-        <button
-          onClick={toggleDarkMode}
-          className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 border border-[var(--border)] transition-colors"
-          title={isDarkMode ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-        >
-          {isDarkMode ? "☀️" : "🌙"}
-        </button>
       </header>
 
-      <div className="flex h-[calc(100vh-53px)]">
-        <aside className="w-80 min-w-80 border-r border-[var(--border)] p-4 overflow-y-auto space-y-4 bg-[var(--sidebar-bg)]">
+      <div style={{
+        display: 'flex',
+        flex: 1,
+        overflow: 'hidden',
+        minHeight: 0,
+      }}>
+        <aside style={{
+          width: 280,
+          flexShrink: 0,
+          borderRight: '0.5px solid var(--color-ec-border)',
+          backgroundColor: 'var(--color-ec-bg-sidebar)',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '16px 12px',
+          paddingBottom: 24,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          scrollbarWidth: 'none',
+        }}>
           <BacktestPanel onRun={handleRun} loading={loading} isDarkMode={isDarkMode} />
 
           {result && (
@@ -184,7 +225,17 @@ export default function Home() {
           )}
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-4 space-y-4">
+        <main style={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '20px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          backgroundColor: 'var(--color-ec-bg-base)',
+          minWidth: 0,
+        }}>
           {error && (
             <div className="bg-ec-loss/10 border border-ec-loss/30 rounded-lg p-4">
               <p className="text-sm text-ec-loss">{error}</p>
@@ -192,13 +243,24 @@ export default function Home() {
           )}
 
           {!result && !loading && !error && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center space-y-2">
-                <div className="text-5xl opacity-20">📊</div>
-                <p className="text-[var(--muted)] text-sm">
-                  Selecciona un dataset y una estrategia para ejecutar el backtest
-                </p>
-              </div>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flex: 1,
+              gap: 12,
+              color: 'var(--color-ec-text-muted)',
+            }}>
+              <p style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-muted)',
+                textAlign: 'center',
+              }}>
+                Selecciona un dataset y una estrategia para ejecutar el backtest
+              </p>
             </div>
           )}
 
@@ -238,18 +300,38 @@ export default function Home() {
                     
                     <div className="flex flex-col items-center justify-center gap-2 py-3 px-1">
                     <button
-                      className="w-full px-4 py-2 text-[11px] font-bold uppercase tracking-[0.08em] rounded
-                        bg-[var(--foreground)] text-[var(--background)]
-                        hover:opacity-80 transition-opacity cursor-pointer shadow-sm"
+                      style={{
+                        width: '100%',
+                        padding: '7px 0',
+                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        letterSpacing: '1.2px',
+                        color: 'var(--color-ec-text-secondary)',
+                        cursor: 'pointer',
+                        transition: 'color 150ms ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
                     >
                       Guardar estrategia
                     </button>
                     <label className="flex items-center gap-1.5 cursor-pointer select-none">
                       <input
                         type="checkbox"
-                        className="w-3 h-3 rounded-sm border border-[var(--border)] accent-[var(--foreground)]"
+                        className="w-3 h-3 rounded-sm border border-[var(--color-ec-border)]"
                       />
-                      <span className="text-[9px] text-[var(--muted)] font-mono">
+                      <span style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 10,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-muted)',
+                        letterSpacing: '0.05em',
+                      }}>
                         Enviar con configuración del What if
                       </span>
                     </label>

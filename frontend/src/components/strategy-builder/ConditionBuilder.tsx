@@ -218,7 +218,19 @@ export const IndicatorSelector = ({
         <select
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs min-w-[120px] w-auto"
+            style={{
+                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '5px 10px',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-primary)',
+                fontFamily: 'var(--color-ec-sans)',
+                minWidth: 130,
+                outline: 'none',
+                cursor: 'pointer',
+            }}
         >
             {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
                 const filtered = indicators.filter(t => 
@@ -274,7 +286,18 @@ export const IndicatorParams = ({
                                 value={value.period || ''}
                                 onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
                                 placeholder="P"
-                                className="w-14 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs"
+                                style={{
+                                    width: 64,
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 8px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                }}
                                 title="Period"
                             />
                         );
@@ -577,14 +600,32 @@ export const IndicatorParams = ({
             })()}
             {/* Global Offset Param for all indicators (Close-X, etc) */}
             <div className="flex items-center gap-1.5 ml-1 border-l border-border/30 pl-2">
-                <span className="text-[10px] text-[var(--color-ec-copper)] uppercase font-black tracking-tighter">Bars Back (X):</span>
+                <span style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.1em',
+                    color: 'var(--color-ec-copper)',
+                    fontFamily: 'var(--color-ec-sans)',
+                }}>Bars Back (X):</span>
                 <input
                     type="number"
                     min="0"
                     value={value.offset || 0}
                     onChange={(e) => onChange({ ...value, offset: Math.max(0, Number(e.target.value)) })}
                     placeholder="0"
-                    className="w-12 bg-[var(--color-ec-copper)]/10 border border-[var(--color-ec-copper)]/30 rounded px-1.5 py-0.5 text-[11px] text-[var(--color-ec-copper)] font-black"
+                    style={{
+                        width: 52,
+                        backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 10%, transparent)',
+                        border: '0.5px solid color-mix(in srgb, var(--color-ec-copper) 30%, transparent)',
+                        borderRadius: 4,
+                        padding: '4px 8px',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: 'var(--color-ec-copper)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        outline: 'none',
+                    }}
                     title="Offset: 0 = current bar, 1 = previous bar, etc."
                 />
             </div>
@@ -667,7 +708,18 @@ export const TargetInput = ({
                     value={value as number}
                     onChange={(e) => onChange(Number(e.target.value))}
                     placeholder="Value"
-                    className="w-16 bg-muted/20 border border-amber-500/40 rounded px-2 py-1 text-xs text-amber-400 font-bold"
+                    style={{
+                        width: 72,
+                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '5px 8px',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-primary)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        outline: 'none',
+                    }}
                 />
             )}
         </div>
@@ -798,14 +850,43 @@ export const ConditionRow = ({
     };
 
     return (
-        <div className="flex items-center gap-3 p-2 bg-card border border-border/40 rounded hover:border-border/80 transition-all group">
+        <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 12px',
+            backgroundColor: 'var(--color-ec-bg-elevated)',
+            border: '0.5px solid var(--color-ec-border)',
+            borderRadius: 5,
+            transition: 'border-color 150ms ease',
+        }} className="group"
+            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-copper)')}
+            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-border)')}
+        >
             {/* Timeframe Selector */}
-            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-muted/30 rounded border border-border/30">
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '3px 8px',
+                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 4,
+            }}>
                 <Clock className="w-3 h-3 text-[var(--color-ec-copper)]" />
                 <select
                     value={currentTimeframe}
                     onChange={(e) => onChange({ ...condition, timeframe: e.target.value as Timeframe })}
-                    className="bg-transparent text-[10px] font-bold text-[var(--color-ec-copper)] focus:outline-none cursor-pointer"
+                    style={{
+                        background: 'transparent',
+                        border: 'none',
+                        outline: 'none',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: 'var(--color-ec-copper)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        cursor: 'pointer',
+                    }}
                 >
                     {Object.values(Timeframe).map(tf => (
                         <option key={tf} value={tf}>{tf}</option>
@@ -813,7 +894,12 @@ export const ConditionRow = ({
                 </select>
             </div>
 
-            <div className="h-4 w-px bg-border/40"></div>
+            <div style={{
+                width: 1,
+                height: 16,
+                backgroundColor: 'var(--color-ec-border)',
+                flexShrink: 0,
+            }}></div>
 
             <select
                 value={condition.type}
@@ -838,13 +924,29 @@ export const ConditionRow = ({
                         });
                     }
                 }}
-                className="bg-transparent text-[10px] font-black uppercase tracking-wider text-muted-foreground focus:outline-none cursor-pointer"
+                style={{
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    color: 'var(--color-ec-text-secondary)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    cursor: 'pointer',
+                }}
             >
                 <option value="indicator_comparison">Indicator</option>
                 <option value="price_level_distance">Distance</option>
             </select>
 
-            <div className="h-4 w-px bg-border/40"></div>
+            <div style={{
+                width: 1,
+                height: 16,
+                backgroundColor: 'var(--color-ec-border)',
+                flexShrink: 0,
+            }}></div>
 
             <div className="flex items-center gap-2 flex-1 flex-wrap">
                 {renderInputs()}
@@ -914,23 +1016,6 @@ export const GroupDisplay = ({
         onChange({ ...group, conditions: newConditions });
     };
 
-    const colorMap = {
-        blue: {
-            and: 'bg-[var(--color-ec-copper)]/10 text-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper)]/20',
-            or: 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'
-        },
-        rose: {
-            and: 'bg-rose-500/10 text-rose-500 hover:bg-rose-500/20',
-            or: 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'
-        },
-        amber: {
-            and: 'bg-amber-500/10 text-amber-500 hover:bg-amber-500/20',
-            or: 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'
-        }
-    };
-
-    const colors = colorMap[accentColor];
-
     return (
         <div className={`
             flex flex-col gap-3 relative
@@ -938,10 +1023,32 @@ export const GroupDisplay = ({
         `}>
             {/* Group Header */}
             <div className="flex items-center gap-3">
-                <div className={`
-                    px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest cursor-pointer select-none transition-colors
-                    ${group.operator === 'AND' ? colors.and : colors.or}
-                 `}
+                <div
+                    style={group.operator === 'AND' ? {
+                        backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 15%, transparent)',
+                        color: 'var(--color-ec-copper)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                        padding: '3px 10px',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        border: 'none',
+                    } : {
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                        padding: '3px 10px',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        border: 'none',
+                        color: 'var(--color-ec-text-secondary)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        backgroundColor: 'transparent',
+                    }}
                     onClick={() => onChange({ ...group, operator: group.operator === 'AND' ? 'OR' : 'AND' })}
                 >
                     {group.operator}
@@ -987,14 +1094,46 @@ export const GroupDisplay = ({
             <div className="flex gap-2 mt-1">
                 <button
                     onClick={addCondition}
-                    className="flex items-center gap-1 px-2 py-1 rounded border border-border/40 hover:bg-muted/50 text-[10px] font-bold text-muted-foreground transition-colors"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '5px 12px',
+                        backgroundColor: 'transparent',
+                        border: '0.5px dashed var(--color-ec-border)',
+                        borderRadius: 5,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--color-ec-text-muted)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        cursor: 'pointer',
+                        transition: 'border-color 150ms ease, color 150ms ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-copper)'; e.currentTarget.style.color = 'var(--color-ec-copper)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-border)'; e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}
                 >
                     <Plus className="w-3 h-3" />
                     Condition
                 </button>
                 <button
                     onClick={addGroup}
-                    className="flex items-center gap-1 px-2 py-1 rounded border border-border/40 hover:bg-muted/50 text-[10px] font-bold text-muted-foreground transition-colors"
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '5px 12px',
+                        backgroundColor: 'transparent',
+                        border: '0.5px dashed var(--color-ec-border)',
+                        borderRadius: 5,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--color-ec-text-muted)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        cursor: 'pointer',
+                        transition: 'border-color 150ms ease, color 150ms ease',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-copper)'; e.currentTarget.style.color = 'var(--color-ec-copper)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-border)'; e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}
                 >
                     <GitBranch className="w-3 h-3" />
                     Logic Group
@@ -1023,20 +1162,66 @@ export const LogicBuilder = ({
     accentColor?: 'blue' | 'rose' | 'amber';
 }) => {
     return (
-        <div className="flex flex-col gap-6 p-6 bg-card border border-border/40 rounded-sm">
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+            padding: '16px 20px',
+            backgroundColor: 'var(--color-ec-bg-surface)',
+            border: '0.5px solid var(--color-ec-border)',
+            borderRadius: 7,
+        }}>
             {/* Header with Title and Global Timeframe */}
-            <div className="flex items-center justify-between pb-4 border-b border-border/40">
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingBottom: 12,
+                borderBottom: '0.5px solid var(--color-ec-border)',
+                marginBottom: 4,
+            }}>
                 <div className="flex flex-col gap-1">
-                    <h2 className="text-sm font-black uppercase tracking-widest text-foreground">{title}</h2>
-                    <span className="text-[10px] text-muted-foreground">Define logic conditions and timeframe execution</span>
+                    <h2 style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 13,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        color: 'var(--color-ec-text-high)',
+                    }}>{title}</h2>
+                    <span style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 10,
+                        fontWeight: 400,
+                        color: 'var(--color-ec-text-muted)',
+                        marginTop: 2,
+                    }}>Define logic conditions and timeframe execution</span>
                 </div>
                 
                 <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground">Global TF:</span>
+                    <span style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.12em',
+                        color: 'var(--color-ec-text-muted)',
+                    }}>Global TF:</span>
                     <select
                         value={timeframe}
                         onChange={(e) => onTimeframeChange(e.target.value as Timeframe)}
-                        className="bg-muted/30 border border-[var(--color-ec-copper)]/30 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-black cursor-pointer hover:border-[var(--color-ec-copper)]/60 transition-colors"
+                        style={{
+                            backgroundColor: 'var(--color-ec-bg-elevated)',
+                            border: '0.5px solid var(--color-ec-copper)',
+                            borderRadius: 4,
+                            padding: '3px 8px',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            outline: 'none',
+                            cursor: 'pointer',
+                        }}
                     >
                         {Object.values(Timeframe).map(tf => (
                             <option key={tf} value={tf}>{tf}</option>

@@ -109,12 +109,16 @@ export const Sidebar = () => {
         <aside
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
-            className="h-screen relative flex-shrink-0 flex flex-col overflow-hidden"
+            className="relative flex-shrink-0 flex flex-col"
             style={{
                 width: isCollapsed ? 56 : 240,
                 backgroundColor: "var(--color-ec-bg-sidebar)",
                 borderRight: "0.5px solid var(--color-ec-border)",
                 transition: "width 200ms ease",
+                height: '100dvh',
+                minHeight: 0,
+                overflowY: 'hidden',
+                overflowX: 'hidden',
             }}
         >
             {/* Header */}
@@ -139,7 +143,18 @@ export const Sidebar = () => {
             </div>
 
             {/* Navigation */}
-            <nav style={{ flex: 1, padding: '12px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <nav style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                padding: '12px 8px',
+                gap: 2,
+                display: 'flex',
+                flexDirection: 'column',
+                scrollbarWidth: 'none',
+                msOverflowStyle: 'none',
+            }}>
                 {/* MENU label */}
                 {!isCollapsed && (
                     <div style={{
@@ -279,6 +294,7 @@ export const Sidebar = () => {
             {/* Bottom Profile */}
             <div
                 style={{
+                    flexShrink: 0,
                     padding: '10px 8px',
                     borderTop: '0.5px solid var(--color-ec-border)',
                     display: 'flex',

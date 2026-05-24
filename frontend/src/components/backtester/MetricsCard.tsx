@@ -30,8 +30,21 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
   if (vertical) {
     return (
       <div className="transition-colors">
-      <div className="px-1 flex items-center h-[30px] mb-2" style={{ borderBottom: '1px solid var(--border)' }}>
-        <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+      <div style={{
+        borderBottom: '0.5px solid var(--color-ec-border)',
+        height: 32,
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 12px',
+      }}>
+        <span style={{
+          fontFamily: 'var(--color-ec-sans)',
+          fontSize: 9,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.15em',
+          color: 'var(--color-ec-text-muted)',
+        }}>
           Aggregate Results
         </span>
       </div>
@@ -42,10 +55,23 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
               className="flex items-baseline justify-between py-2 transition-colors"
               style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
             >
-              <span className="text-[9px] font-medium text-[var(--muted)] uppercase tracking-tight">
+              <span style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--color-ec-text-muted)',
+              }}>
                 {row.label}
               </span>
-              <span className="text-[12px] font-bold font-mono text-[var(--text-data)]">
+              <span style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 13,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-primary)',
+                letterSpacing: '-0.2px',
+              }}>
                 {row.value}
               </span>
             </div>
@@ -57,8 +83,22 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
 
   return (
     <div className="transition-colors">
-      <div className="px-1 flex items-center h-[30px] mb-3" style={{ borderBottom: '1px solid var(--border)' }}>
-        <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+      <div style={{
+        borderBottom: '0.5px solid var(--color-ec-border)',
+        height: 32,
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 12px',
+        marginBottom: 12,
+      }}>
+        <span style={{
+          fontFamily: 'var(--color-ec-sans)',
+          fontSize: 9,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.15em',
+          color: 'var(--color-ec-text-muted)',
+        }}>
           Aggregate Results
         </span>
       </div>
@@ -67,12 +107,26 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
           <div
             key={idx}
             className="flex items-baseline justify-between py-2.5 transition-colors"
-            style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
+            style={{ borderBottom: '0.5px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)' }}
           >
-            <span className="text-[9px] font-medium text-[var(--muted)] uppercase tracking-tight mr-2">
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 9,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--color-ec-text-muted)',
+              marginRight: 8,
+            }}>
               {row.label}
             </span>
-            <span className="text-[12px] font-bold font-mono text-[var(--text-data)]">
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 13,
+              fontWeight: 700,
+              color: 'var(--color-ec-text-primary)',
+              letterSpacing: '-0.2px',
+            }}>
               {row.value}
             </span>
           </div>

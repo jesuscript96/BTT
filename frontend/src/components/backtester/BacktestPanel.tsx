@@ -132,19 +132,47 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
   return (
-    <div className="space-y-4">
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}>
       {/* CONFIGURACIÓN */}
-      <div className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 20,
+    }}>
+        <h2 style={{
+          fontFamily: 'var(--color-ec-sans)',
+          fontSize: 9,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.15em',
+          color: 'var(--color-ec-text-muted)',
+          marginBottom: 12,
+        }}>
           Configuración
         </h2>
 
         {loadError && (
-          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-            <span className="text-xs text-red-600 flex-1">Error al conectar con el servidor</span>
+          <div className="flex items-center gap-2" style={{
+            backgroundColor: 'color-mix(in srgb, var(--color-ec-loss) 10%, transparent)',
+            border: '0.5px solid color-mix(in srgb, var(--color-ec-loss) 30%, transparent)',
+            borderRadius: 5,
+            padding: '8px 12px',
+            marginBottom: 4,
+          }}>
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 11,
+              color: 'var(--color-ec-loss)',
+              flex: 1,
+            }}>Error al conectar con el servidor</span>
             <button
               onClick={loadData}
-              className="text-xs font-medium text-red-700 underline hover:no-underline"
+              className="text-xs font-medium underline hover:no-underline cursor-pointer"
+              style={{ color: 'var(--color-ec-loss)' }}
             >
               Reintentar
             </button>
@@ -153,7 +181,16 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium mb-1 text-[var(--muted)]">
+            <label style={{
+              display: 'block',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 9,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              color: 'var(--color-ec-text-muted)',
+              marginBottom: 5,
+            }}>
               Dataset
             </label>
             {loadingData ? (
@@ -162,7 +199,19 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
               <select
                 value={selectedDataset}
                 onChange={(e) => setSelectedDataset(e.target.value)}
-                className="w-full border border-[var(--border)] rounded-md px-3 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '7px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  width: '100%',
+                  cursor: 'pointer',
+                }}
               >
                 {datasets.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -174,7 +223,16 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
           </div>
 
           <div>
-            <label className="block text-xs font-medium mb-1 text-[var(--muted)]">
+            <label style={{
+              display: 'block',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 9,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              color: 'var(--color-ec-text-muted)',
+              marginBottom: 5,
+            }}>
               Estrategia
             </label>
             {loadingData ? (
@@ -183,7 +241,19 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
               <select
                 value={selectedStrategy}
                 onChange={(e) => setSelectedStrategy(e.target.value)}
-                className="w-full border border-[var(--border)] rounded-md px-3 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '7px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  width: '100%',
+                  cursor: 'pointer',
+                }}
               >
                 {strategies.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -197,27 +267,74 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mb-2">
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 8,
+            marginBottom: 8,
+          }}>
             <div>
-              <label className="block text-xs font-medium mb-1 text-[var(--muted)]">
+              <label style={{
+                display: 'block',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                color: 'var(--color-ec-text-muted)',
+                marginBottom: 5,
+              }}>
                 Capital ($)
               </label>
               <input
                 type="number"
                 value={initCash}
                 onChange={(e) => setInitCash(Number(e.target.value))}
-                className="w-full border border-[var(--border)] rounded-md px-3 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '7px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  width: '100%',
+                }}
               />
             </div>
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-medium text-[var(--muted)] truncate pr-2">
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 5,
+              }}>
+                <label style={{
+                  display: 'block',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                  color: 'var(--color-ec-text-muted)',
+                }}>
                   Riesgo 1R
                 </label>
                 <select
                   value={riskType}
                   onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT" | "KELLY" | "FIXED_RATIO")}
-                  className="text-[10px] bg-transparent text-[var(--muted)] hover:text-[var(--foreground)] outline-none cursor-pointer"
+                  style={{
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 9,
+                    fontWeight: 600,
+                    color: 'var(--color-ec-copper)',
+                    cursor: 'pointer',
+                  }}
                 >
                   <option value="FIXED">Fijo ($)</option>
                   <option value="PERCENT">% Eq</option>
@@ -231,7 +348,18 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                   step={riskType === "PERCENT" ? "0.1" : "1"}
                   value={riskR}
                   onChange={(e) => setRiskR(Number(e.target.value))}
-                  className="w-full border border-[var(--border)] rounded-md px-3 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '7px 10px',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-primary)',
+                    outline: 'none',
+                    width: '100%',
+                  }}
                 />
                 {riskType === "FIXED_RATIO" && (
                   <input
@@ -241,23 +369,60 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                     value={fixedRatioDelta}
                     onChange={(e) => setFixedRatioDelta(Number(e.target.value))}
                     title="Delta ($) requerido para +1 unidad de riesgo"
-                    className="w-20 border border-[var(--border)] rounded-md px-2 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '7px 10px',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-primary)',
+                    outline: 'none',
+                    width: 80,
+                  }}
                   />
                 )}
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 8,
+          }}>
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-medium text-[var(--muted)]">
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 5,
+              }}>
+                <label style={{
+                  display: 'block',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.12em',
+                  color: 'var(--color-ec-text-muted)',
+                }}>
                   Fees {feeType === "PERCENT" ? "(%)" : "($)"}
                 </label>
                 <select
                   value={feeType}
                   onChange={(e) => setFeeType(e.target.value as "PERCENT" | "FLAT")}
-                  className="text-[10px] bg-transparent text-[var(--muted)] hover:text-[var(--foreground)] outline-none cursor-pointer"
+                  style={{
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 9,
+                    fontWeight: 600,
+                    color: 'var(--color-ec-copper)',
+                    cursor: 'pointer',
+                  }}
                 >
                   <option value="PERCENT">%</option>
                   <option value="FLAT">$</option>
@@ -268,11 +433,31 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                 step="0.01"
                 value={fees}
                 onChange={(e) => setFees(Number(e.target.value))}
-                className="w-full border border-[var(--border)] rounded-md px-3 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '7px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  width: '100%',
+                }}
               />
             </div>
             <div>
-              <label className="block text-xs font-medium mb-1 text-[var(--muted)]">
+              <label style={{
+                display: 'block',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                color: 'var(--color-ec-text-muted)',
+                marginBottom: 5,
+              }}>
                 Slippage (%)
               </label>
               <input
@@ -280,13 +465,35 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                 step="0.01"
                 value={slippage}
                 onChange={(e) => setSlippage(Number(e.target.value))}
-                className="w-full border border-[var(--border)] rounded-md px-3 py-2 text-sm bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '7px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  width: '100%',
+                }}
               />
             </div>
           </div>
 
-          <div className="pt-1 space-y-3">
-            <div className="flex items-center justify-between">
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            padding: '10px 0',
+            borderTop: '0.5px solid var(--color-ec-border)',
+            borderBottom: '0.5px solid var(--color-ec-border)',
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -294,7 +501,12 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                   onChange={() => setUseLocates(!useLocates)}
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
-                <span className="text-xs font-medium text-[var(--muted)]">Locates $/100</span>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-secondary)',
+                }}>Locates $/100</span>
               </label>
               {useLocates && (
                 <input
@@ -302,12 +514,25 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                   step="0.01"
                   value={locatesCost}
                   onChange={(e) => setLocatesCost(Number(e.target.value))}
-                  className="w-20 border border-[var(--border)] rounded-md px-2 py-1 text-xs bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  className="w-20 border border-[var(--color-ec-border)]"
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    borderRadius: 5,
+                    padding: '6px 8px',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    color: 'var(--color-ec-text-primary)',
+                    outline: 'none',
+                  }}
                 />
               )}
             </div>
 
-            <div className="flex items-center justify-between">
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -315,7 +540,12 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                   onChange={() => setUseMonthlyExpenses(!useMonthlyExpenses)}
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
-                <span className="text-xs font-medium text-[var(--muted)]">Gastos fijos mensuales ($)</span>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-secondary)',
+                }}>Gastos fijos mensuales ($)</span>
               </label>
               {useMonthlyExpenses && (
                 <input
@@ -323,12 +553,26 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                   step="1"
                   value={monthlyExpenses}
                   onChange={(e) => setMonthlyExpenses(Number(e.target.value))}
-                  className="w-20 border border-[var(--border)] rounded-md px-2 py-1 text-xs bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                  className="w-20 border border-[var(--color-ec-border)]"
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    borderRadius: 5,
+                    padding: '6px 8px',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    color: 'var(--color-ec-text-primary)',
+                    outline: 'none',
+                  }}
                 />
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-1">
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              paddingTop: 4,
+            }}>
               <div className="flex flex-col">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -337,7 +581,12 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                     onChange={() => setSizeBySl(!sizeBySl)}
                     className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                   />
-                  <span className="text-xs font-medium text-[var(--muted)]">Size por Distancia al SL</span>
+                  <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-secondary)',
+                  }}>Size por Distancia al SL</span>
                 </label>
                 <span className="text-[10px] text-[var(--muted)] mt-1 ml-6 leading-tight">
                   Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
@@ -345,7 +594,14 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 mt-1 border-t border-[var(--border)]">
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              paddingTop: 8,
+              marginTop: 4,
+              borderTop: '0.5px solid var(--color-ec-border)',
+            }}>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -353,7 +609,12 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                   onChange={() => setLookAheadPrevention(!lookAheadPrevention)}
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
-                <span className="text-xs font-medium text-[var(--muted)]">Look Ahead Prevention</span>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-secondary)',
+                }}>Look Ahead Prevention</span>
               </label>
               <span className="text-[10px] text-[var(--muted)]">
                 {lookAheadPrevention ? "ON" : "OFF"}
@@ -364,13 +625,40 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
       </div>
 
       {/* RANGO DE FECHAS */}
-      <div className="space-y-1.5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+        paddingTop: 4,
+        borderTop: '0.5px solid var(--color-ec-border)',
+      }}>
+        <h2 style={{
+          fontFamily: 'var(--color-ec-sans)',
+          fontSize: 9,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.15em',
+          color: 'var(--color-ec-text-muted)',
+          marginBottom: 12,
+        }}>
           Rango de fechas
         </h2>
-        <div className="grid grid-cols-2 gap-2">
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 8,
+        }}>
           <div>
-            <label className="block text-[10px] font-medium mb-1 text-[var(--muted)]">
+            <label style={{
+              display: 'block',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 9,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              color: 'var(--color-ec-text-muted)',
+              marginBottom: 5,
+            }}>
               Desde
             </label>
             <input
@@ -379,11 +667,31 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
               min={selectedDs?.min_date}
               max={endDate || selectedDs?.max_date}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full border border-[var(--border)] rounded-md px-2 py-1.5 text-xs bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              className="w-full border border-[var(--color-ec-border)]"
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                borderRadius: 5,
+                padding: '6px 8px',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                fontWeight: 400,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+              }}
             />
           </div>
           <div>
-            <label className="block text-[10px] font-medium mb-1 text-[var(--muted)]">
+            <label style={{
+              display: 'block',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 9,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              color: 'var(--color-ec-text-muted)',
+              marginBottom: 5,
+            }}>
               Hasta
             </label>
             <input
@@ -392,15 +700,40 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
               min={startDate || selectedDs?.min_date}
               max={selectedDs?.max_date}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full border border-[var(--border)] rounded-md px-2 py-1.5 text-xs bg-[var(--card-muted-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              className="w-full border border-[var(--color-ec-border)]"
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                borderRadius: 5,
+                padding: '6px 8px',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                fontWeight: 400,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+              }}
             />
           </div>
         </div>
       </div>
 
       {/* SESIÓN DE MERCADO */}
-      <div className="pt-1.5 space-y-1.5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        paddingTop: 4,
+        borderTop: '0.5px solid var(--color-ec-border)',
+      }}>
+        <h2 style={{
+          fontFamily: 'var(--color-ec-sans)',
+          fontSize: 9,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.15em',
+          color: 'var(--color-ec-text-muted)',
+          marginBottom: 12,
+        }}>
           Sesión de mercado
         </h2>
         <div className="space-y-2">
@@ -411,7 +744,12 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
             { id: "custom", label: "Horas personalizadas (ET)", time: "" },
           ].map((session) => (
             <div key={session.id} className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+              }}>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -419,10 +757,20 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
                     onChange={() => toggleSession(session.id)}
                     className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                   />
-                  <span className="text-xs text-[var(--muted)]">{session.label}</span>
+                  <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-secondary)',
+                  }}>{session.label}</span>
                 </label>
                 {session.time && (
-                  <span className="text-[10px] text-[var(--muted)]">{session.time}</span>
+                  <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    fontWeight: 400,
+                    color: 'var(--color-ec-text-muted)',
+                  }}>{session.time}</span>
                 )}
               </div>
 
@@ -469,7 +817,8 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
             textTransform: 'uppercase',
             cursor: 'pointer',
             width: '100%',
-        }}
+            marginTop: 8,
+          }}
       >
         {loading ? (
           <span className="flex items-center justify-center gap-2">

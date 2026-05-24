@@ -171,15 +171,15 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     };
 
     return (
-        <div className="flex h-[calc(100vh-80px)] overflow-hidden">
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
             {/* LEFT: Builder Form */}
-            <div className={`flex-1 overflow-y-auto px-5 py-3 font-sans text-foreground transition-all duration-300`}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0' }} className="font-sans text-foreground transition-all duration-300">
 
                 {/* Header */}
-                <div className="flex items-center justify-between mb-3 sticky top-0 z-10 bg-background/95 backdrop-blur py-2 border-b border-[var(--color-ec-border)]">
+                <div style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'var(--color-ec-bg-base)', borderBottom: '0.5px solid var(--color-ec-border)', padding: '20px 20px 16px 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                     <div>
-                        <h1 style={{ fontFamily: 'Fraunces, serif', fontSize: 32, fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.5px', textTransform: 'uppercase' }}>New Strategy</h1>
-                        <p style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500, color: 'var(--color-ec-text-muted)' }}>Algorithmic Strategy Designer</p>
+                        <h1 style={{ fontFamily: 'var(--color-ec-serif)', fontSize: 32, fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.5px', lineHeight: 1.1 }}>New Strategy</h1>
+                        <p style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)', marginTop: 4 }}>Algorithmic Strategy Designer</p>
                     </div>
                     <div className="flex gap-2">
                         <button
@@ -234,13 +234,13 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     </div>
                 </div>
 
-                <div className="space-y-4 pb-4">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: '20px 20px 60px 20px' }}>
 
                     {/* ROW 1: Metadata + Dataset + Bias */}
-                    <section className="grid grid-cols-12 gap-4">
+                    <section style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: 16 }}>
                         {/* Metadata */}
                         <div className="col-span-12 lg:col-span-5 space-y-3">
-                            <div className="flex items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
                                 <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
                                 <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Metadata</h2>
                             </div>
@@ -251,7 +251,19 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                         type="text"
                                         value={name}
                                         onChange={(e) => setName(e.target.value)}
-                                        className="w-full bg-[var(--color-ec-bg-sidebar)] border-[0.5px] border-[var(--color-ec-border)] rounded px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-[var(--color-ec-copper)]/50"
+                                        style={{
+                                            background: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '8px 11px',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontSize: 12,
+                                            fontWeight: 400,
+                                            color: 'var(--color-ec-text-primary)',
+                                            outline: 'none',
+                                            width: '100%'
+                                        }}
+                                        className="focus:border-[var(--color-ec-copper)]"
                                         placeholder="My Strategy Name"
                                     />
                                 </div>
@@ -261,7 +273,20 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                         value={description}
                                         onChange={(e) => setDescription(e.target.value)}
                                         rows={2}
-                                        className="w-full bg-[var(--color-ec-bg-sidebar)] border-[0.5px] border-[var(--color-ec-border)] rounded px-3 py-1.5 text-sm font-medium resize-none focus:ring-1 focus:ring-[var(--color-ec-copper)]/50"
+                                        style={{
+                                            background: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '8px 11px',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontSize: 12,
+                                            fontWeight: 400,
+                                            color: 'var(--color-ec-text-primary)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            resize: 'none'
+                                        }}
+                                        className="focus:border-[var(--color-ec-copper)]"
                                         placeholder="Description..."
                                     />
                                 </div>
@@ -270,7 +295,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
                         {/* Dataset Selector */}
                         <div className="col-span-12 lg:col-span-7">
-                            <div className="flex items-center gap-2 mb-2">
+                            <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
                                 <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
                                 <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Dataset (Saved Query)</h2>
                             </div>
@@ -331,7 +356,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
                             {/* Long / Short Bias Toggle */}
                             <div className="mt-3">
-                                <div className="flex items-center gap-2 mb-2">
+                                <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
                                     <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
                                     <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Direction Bias</h2>
                                 </div>
@@ -360,36 +385,45 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     </section>
 
                     {/* FULL-WIDTH: Entry Logic */}
-                    <section>
-                        <div className="flex items-center gap-2 mb-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
-                            <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Entry Logic</h2>
+                    <section style={{
+                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 7,
+                        padding: '16px 20px'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                            <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Entry Logic</h2>
                         </div>
-                        <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4">
-                            <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
-                        </div>
+                        <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
                     </section>
 
                     {/* FULL-WIDTH: Exit Logic */}
-                    <section>
-                        <div className="flex items-center gap-2 mb-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
-                            <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Exit Logic</h2>
+                    <section style={{
+                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 7,
+                        padding: '16px 20px'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                            <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Exit Logic</h2>
                         </div>
-                        <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4">
-                            <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
-                        </div>
+                        <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
                     </section>
 
                     {/* FULL-WIDTH: Risk Management */}
-                    <section>
-                        <div className="flex items-center gap-2 mb-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-ec-loss"></div>
-                            <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Risk Management</h2>
+                    <section style={{
+                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 7,
+                        padding: '16px 20px'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                            <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Risk Management</h2>
                         </div>
-                        <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4">
-                            <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
-                        </div>
+                        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
                     </section>
 
                 </div>
