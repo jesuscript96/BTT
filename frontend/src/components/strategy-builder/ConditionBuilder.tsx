@@ -577,14 +577,14 @@ export const IndicatorParams = ({
             })()}
             {/* Global Offset Param for all indicators (Close-X, etc) */}
             <div className="flex items-center gap-1.5 ml-1 border-l border-border/30 pl-2">
-                <span className="text-[10px] text-blue-400 uppercase font-black tracking-tighter">Bars Back (X):</span>
+                <span className="text-[10px] text-[var(--color-ec-copper)] uppercase font-black tracking-tighter">Bars Back (X):</span>
                 <input
                     type="number"
                     min="0"
                     value={value.offset || 0}
                     onChange={(e) => onChange({ ...value, offset: Math.max(0, Number(e.target.value)) })}
                     placeholder="0"
-                    className="w-12 bg-blue-500/10 border border-blue-500/30 rounded px-1.5 py-0.5 text-[11px] text-blue-400 font-black"
+                    className="w-12 bg-[var(--color-ec-copper)]/10 border border-[var(--color-ec-copper)]/30 rounded px-1.5 py-0.5 text-[11px] text-[var(--color-ec-copper)] font-black"
                     title="Offset: 0 = current bar, 1 = previous bar, etc."
                 />
             </div>
@@ -731,7 +731,7 @@ export const ConditionRow = ({
                         <select
                             value={condition.comparator}
                             onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
-                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-blue-400"
+                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-[var(--color-ec-copper)]"
                         >
                             {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
                                 <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
@@ -758,7 +758,7 @@ export const ConditionRow = ({
                         <select
                             value={condition.comparator}
                             onChange={(e) => onChange({ ...condition, comparator: e.target.value as 'DISTANCE_GT' | 'DISTANCE_LT' })}
-                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-blue-400"
+                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-[var(--color-ec-copper)]"
                         >
                             <option value="DISTANCE_GT">&gt; than</option>
                             <option value="DISTANCE_LT">&lt; than</option>
@@ -768,7 +768,7 @@ export const ConditionRow = ({
                                 type="number"
                                 value={condition.value_pct}
                                 onChange={(e) => onChange({ ...condition, value_pct: Number(e.target.value) })}
-                                className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-blue-400 font-mono"
+                                className="w-12 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-mono"
                             />
                             <span className="text-[10px] text-muted-foreground">%</span>
                         </div>
@@ -783,7 +783,7 @@ export const ConditionRow = ({
                             <select
                                 value={condition.position || 'any'}
                                 onChange={(e) => onChange({ ...condition, position: e.target.value as 'above' | 'below' | 'any' })}
-                                className="bg-muted/20 border border-border/50 rounded px-1.5 py-0.5 text-[10px] text-blue-400 font-bold"
+                                className="bg-muted/20 border border-border/50 rounded px-1.5 py-0.5 text-[10px] text-[var(--color-ec-copper)] font-bold"
                             >
                                 <option value="any">Any</option>
                                 <option value="above">Above Level</option>
@@ -801,11 +801,11 @@ export const ConditionRow = ({
         <div className="flex items-center gap-3 p-2 bg-card border border-border/40 rounded hover:border-border/80 transition-all group">
             {/* Timeframe Selector */}
             <div className="flex items-center gap-1.5 px-2 py-0.5 bg-muted/30 rounded border border-border/30">
-                <Clock className="w-3 h-3 text-blue-400" />
+                <Clock className="w-3 h-3 text-[var(--color-ec-copper)]" />
                 <select
                     value={currentTimeframe}
                     onChange={(e) => onChange({ ...condition, timeframe: e.target.value as Timeframe })}
-                    className="bg-transparent text-[10px] font-bold text-blue-400 focus:outline-none cursor-pointer"
+                    className="bg-transparent text-[10px] font-bold text-[var(--color-ec-copper)] focus:outline-none cursor-pointer"
                 >
                     {Object.values(Timeframe).map(tf => (
                         <option key={tf} value={tf}>{tf}</option>
@@ -916,7 +916,7 @@ export const GroupDisplay = ({
 
     const colorMap = {
         blue: {
-            and: 'bg-blue-500/10 text-blue-500 hover:bg-blue-500/20',
+            and: 'bg-[var(--color-ec-copper)]/10 text-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper)]/20',
             or: 'bg-orange-500/10 text-orange-500 hover:bg-orange-500/20'
         },
         rose: {
@@ -1036,7 +1036,7 @@ export const LogicBuilder = ({
                     <select
                         value={timeframe}
                         onChange={(e) => onTimeframeChange(e.target.value as Timeframe)}
-                        className="bg-muted/30 border border-blue-500/30 rounded px-2 py-1 text-xs text-blue-400 font-black cursor-pointer hover:border-blue-500/60 transition-colors"
+                        className="bg-muted/30 border border-[var(--color-ec-copper)]/30 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-black cursor-pointer hover:border-[var(--color-ec-copper)]/60 transition-colors"
                     >
                         {Object.values(Timeframe).map(tf => (
                             <option key={tf} value={tf}>{tf}</option>

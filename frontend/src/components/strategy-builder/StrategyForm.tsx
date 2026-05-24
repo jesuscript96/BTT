@@ -176,15 +176,15 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             <div className={`flex-1 overflow-y-auto px-5 py-3 font-sans text-foreground transition-all duration-300`}>
 
                 {/* Header */}
-                <div className="flex items-center justify-between mb-3 sticky top-0 z-10 bg-background/95 backdrop-blur py-2 border-b border-border/40">
+                <div className="flex items-center justify-between mb-3 sticky top-0 z-10 bg-background/95 backdrop-blur py-2 border-b border-[var(--color-ec-border)]">
                     <div>
-                        <h1 className="text-lg font-black text-foreground tracking-tight uppercase">New Strategy</h1>
-                        <p className="text-[10px] text-muted-foreground font-medium">Algorithmic Strategy Designer</p>
+                        <h1 style={{ fontFamily: 'Fraunces, serif', fontSize: 32, fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.5px', textTransform: 'uppercase' }}>New Strategy</h1>
+                        <p style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500, color: 'var(--color-ec-text-muted)' }}>Algorithmic Strategy Designer</p>
                     </div>
                     <div className="flex gap-2">
                         <button
                             onClick={() => setShowJson(!showJson)}
-                            className={`px-2.5 py-1.5 rounded-lg border transition-all text-xs ${showJson ? 'bg-blue-500/10 border-blue-500 text-blue-500' : 'bg-card border-border text-muted-foreground hover:bg-muted'}`}
+                            className={`px-2.5 py-1.5 rounded border transition-all text-xs ${showJson ? 'bg-[var(--color-ec-copper)]/10 border-[var(--color-ec-copper)] text-[var(--color-ec-copper)]' : 'bg-card border-border text-[var(--color-ec-text-muted)] hover:bg-muted'}`}
                             title="Toggle JSON Preview"
                         >
                             <Code className="w-3.5 h-3.5" />
@@ -241,27 +241,27 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                         {/* Metadata */}
                         <div className="col-span-12 lg:col-span-5 space-y-3">
                             <div className="flex items-center gap-2 mb-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
-                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Metadata</h2>
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                                <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Metadata</h2>
                             </div>
                             <div className="space-y-2">
                                 <div>
-                                    <label className="block text-[9px] font-bold text-muted-foreground uppercase mb-1">Name</label>
+                                    <label className="block text-[9px] font-bold text-[var(--color-ec-text-muted)] uppercase mb-1">Name</label>
                                     <input
                                         type="text"
                                         value={name}
                                         onChange={(e) => setName(e.target.value)}
-                                        className="w-full bg-muted/10 border border-border/50 rounded-lg px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-indigo-500/50"
+                                        className="w-full bg-[var(--color-ec-bg-sidebar)] border-[0.5px] border-[var(--color-ec-border)] rounded px-3 py-1.5 text-sm font-bold focus:ring-1 focus:ring-[var(--color-ec-copper)]/50"
                                         placeholder="My Strategy Name"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[9px] font-bold text-muted-foreground uppercase mb-1">Description</label>
+                                    <label className="block text-[9px] font-bold text-[var(--color-ec-text-muted)] uppercase mb-1">Description</label>
                                     <textarea
                                         value={description}
                                         onChange={(e) => setDescription(e.target.value)}
                                         rows={2}
-                                        className="w-full bg-muted/10 border border-border/50 rounded-lg px-3 py-1.5 text-sm font-medium resize-none focus:ring-1 focus:ring-indigo-500/50"
+                                        className="w-full bg-[var(--color-ec-bg-sidebar)] border-[0.5px] border-[var(--color-ec-border)] rounded px-3 py-1.5 text-sm font-medium resize-none focus:ring-1 focus:ring-[var(--color-ec-copper)]/50"
                                         placeholder="Description..."
                                     />
                                 </div>
@@ -271,16 +271,16 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                         {/* Dataset Selector */}
                         <div className="col-span-12 lg:col-span-7">
                             <div className="flex items-center gap-2 mb-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-cyan-500"></div>
-                                <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Dataset (Saved Query)</h2>
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                                <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Dataset (Saved Query)</h2>
                             </div>
-                            <div className="bg-card/30 border border-border/40 rounded-xl p-4 space-y-3">
+                            <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4 space-y-3">
                                 <div className="flex items-center gap-2">
                                     <Database className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
                                     <select
                                         value={selectedDatasetId}
                                         onChange={(e) => setSelectedDatasetId(e.target.value)}
-                                        className="flex-1 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:ring-1 focus:ring-cyan-500/50 outline-none"
+                                        className="flex-1 bg-[var(--color-ec-bg-sidebar)] border-[0.5px] border-[var(--color-ec-border)] rounded px-3 py-1.5 text-sm text-foreground focus:ring-1 focus:ring-[var(--color-ec-copper)]/50 outline-none"
                                     >
                                         <option value="">No dataset (Full Universe)</option>
                                         {loadingDatasets ? (
@@ -294,7 +294,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                     {selectedDatasetId && (
                                         <button
                                             onClick={() => setSelectedDatasetId("")}
-                                            className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                                            className="p-1 rounded hover:bg-muted transition-colors text-[var(--color-ec-text-muted)] hover:text-foreground"
                                         >
                                             <X className="w-3.5 h-3.5" />
                                         </button>
@@ -310,20 +310,20 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                             return (
                                                 <span
                                                     key={key}
-                                                    className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[10px] font-bold"
+                                                    className="inline-flex items-center px-2 py-0.5 rounded-md bg-[var(--color-ec-copper)]/10 border border-[var(--color-ec-copper)]/20 text-[var(--color-ec-copper)] text-[10px] font-bold"
                                                 >
                                                     {formatted}
                                                 </span>
                                             );
                                         })}
                                         {Object.entries(selectedDataset.filters).every(([k, v]) => !formatFilterValue(k, v)) && (
-                                            <span className="text-[10px] text-muted-foreground/50 italic">No active filters</span>
+                                            <span className="text-[10px] text-[var(--color-ec-text-muted)]/50 italic">No active filters</span>
                                         )}
                                     </div>
                                 )}
 
                                 {!selectedDatasetId && (
-                                    <p className="text-[10px] text-muted-foreground/40 font-medium">
+                                    <p className="text-[10px] text-[var(--color-ec-text-muted)]/40 font-medium">
                                         Select a saved query to use as the backtest dataset
                                     </p>
                                 )}
@@ -332,24 +332,24 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                             {/* Long / Short Bias Toggle */}
                             <div className="mt-3">
                                 <div className="flex items-center gap-2 mb-2">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
-                                    <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Direction Bias</h2>
+                                    <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                                    <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Direction Bias</h2>
                                 </div>
                                 <div className="flex gap-2">
                                     <button
                                         onClick={() => setBias('long')}
-                                        className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'long'
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all border ${bias === 'long'
                                             ? 'bg-ec-profit/15 border-ec-profit text-ec-profit shadow-md shadow-ec-profit/10'
-                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-ec-profit/30 hover:text-ec-profit'
+                                            : 'bg-[var(--color-ec-bg-surface)] border-[var(--color-ec-border)] text-[var(--color-ec-text-muted)] hover:border-ec-profit/30 hover:text-ec-profit'
                                             }`}
                                     >
                                         ↑ Long Bias
                                     </button>
                                     <button
                                         onClick={() => setBias('short')}
-                                        className={`flex-1 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all border ${bias === 'short'
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all border ${bias === 'short'
                                             ? 'bg-ec-loss/15 border-ec-loss text-ec-loss shadow-md shadow-ec-loss/10'
-                                            : 'bg-card/30 border-border/40 text-muted-foreground hover:border-ec-loss/30 hover:text-ec-loss'
+                                            : 'bg-[var(--color-ec-bg-surface)] border-[var(--color-ec-border)] text-[var(--color-ec-text-muted)] hover:border-ec-loss/30 hover:text-ec-loss'
                                             }`}
                                     >
                                         ↓ Short Bias
@@ -362,10 +362,10 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     {/* FULL-WIDTH: Entry Logic */}
                     <section>
                         <div className="flex items-center gap-2 mb-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Entry Logic</h2>
+                            <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                            <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Entry Logic</h2>
                         </div>
-                        <div className="bg-card/30 border border-border/40 rounded-xl p-4">
+                        <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4">
                             <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
                         </div>
                     </section>
@@ -373,10 +373,10 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     {/* FULL-WIDTH: Exit Logic */}
                     <section>
                         <div className="flex items-center gap-2 mb-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-rose-500"></div>
-                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Exit Logic</h2>
+                            <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                            <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Exit Logic</h2>
                         </div>
-                        <div className="bg-card/30 border border-border/40 rounded-xl p-4">
+                        <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4">
                             <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
                         </div>
                     </section>
@@ -385,9 +385,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     <section>
                         <div className="flex items-center gap-2 mb-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-ec-loss"></div>
-                            <h2 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Risk Management</h2>
+                            <h2 className="text-[10px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Risk Management</h2>
                         </div>
-                        <div className="bg-card/30 border border-border/40 rounded-xl p-4">
+                        <div className="bg-[var(--color-ec-bg-surface)] border-[0.5px] border-[var(--color-ec-border)] rounded p-4">
                             <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
                         </div>
                     </section>
@@ -397,10 +397,10 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
             {/* RIGHT: JSON Preview Panel */}
             {showJson && (
-                <div className="w-[360px] border-l border-border/40 bg-ec-bg-base overflow-y-auto font-mono text-xs p-4 transition-all animate-in slide-in-from-right-10">
+                <div className="w-[360px] border-l border-[var(--color-ec-border)] bg-ec-bg-base overflow-y-auto font-mono text-xs p-4 transition-all animate-in slide-in-from-right-10">
                     <div className="flex items-center justify-between mb-3 sticky top-0 bg-ec-bg-base pb-2 border-b border-border/20">
-                        <h3 className="text-muted-foreground font-bold uppercase tracking-wider text-[10px]">Live JSON Preview</h3>
-                        <span className="px-2 py-0.5 rounded bg-blue-900/20 text-blue-400 text-[9px] font-bold">READ ONLY</span>
+                        <h3 className="text-[var(--color-ec-text-muted)] font-bold uppercase tracking-wider text-[10px]">Live JSON Preview</h3>
+                        <span className="px-2 py-0.5 rounded bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-muted)] text-[9px] font-bold">READ ONLY</span>
                     </div>
                     <pre className="text-ec-text-secondary whitespace-pre-wrap break-all text-[11px]">
                         {JSON.stringify(constructStrategyPayload(), null, 2)}

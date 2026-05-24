@@ -3,7 +3,7 @@
   "provider": {
     "deepseek": {
       "options": {
-        "apiKey": "{env:DEEPSEEK_API_KEY_EDGECUTE}"
+        "apiKey": "sk-213ba5fca62f407d9302a370ce0b29d3"
       }
     }
   }

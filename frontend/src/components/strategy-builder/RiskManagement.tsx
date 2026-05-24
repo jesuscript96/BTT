@@ -90,7 +90,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                         <select
                             value={risk.hard_stop.type}
                             onChange={(e) => updateRiskSetting('hard_stop', 'type', e.target.value)}
-                            className="bg-muted/20 border border-border/50 rounded-lg px-2 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-red-500/30 w-1/3"
+                            className="bg-muted/20 border border-border/50 rounded-lg px-2 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--color-ec-loss)]/30 w-1/3"
                         >
                             {Object.values(RiskType).map(type => (
                                 <option key={type} value={type}>{type}</option>
@@ -100,7 +100,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                             type="number"
                             value={risk.hard_stop.value}
                             onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
-                            className="bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-red-500/30 flex-1"
+                            className="bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--color-ec-loss)]/30 flex-1"
                         />
                     </div>
                 )}
@@ -143,7 +143,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                 <select
                                     value={risk.take_profit.type}
                                     onChange={(e) => updateRiskSetting('take_profit', 'type', e.target.value)}
-                                    className="bg-muted/20 border border-border/50 rounded-lg px-2 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 w-1/3"
+                                    className="bg-muted/20 border border-border/50 rounded-lg px-2 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--color-ec-profit)]/30 w-1/3"
                                 >
                                     {Object.values(RiskType).map(type => (
                                         <option key={type} value={type}>{type}</option>
@@ -154,7 +154,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                         type="number"
                                         value={risk.take_profit.value}
                                         onChange={(e) => updateRiskSetting('take_profit', 'value', Number(e.target.value))}
-                                        className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30"
+                                        className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--color-ec-profit)]/30"
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
                                 </div>
@@ -185,7 +185,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                                             step="0.1"
                                                             value={partial.distance_pct}
                                                             onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                                            className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-green-500/30"
+                                                            className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-[var(--color-ec-profit)]/30"
                                                         />
                                                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/30">%</span>
                                                     </div>
@@ -201,7 +201,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                                         max="100"
                                                         value={partial.capital_pct}
                                                         onChange={(e) => updatePartial(idx, 'capital_pct', Number(e.target.value))}
-                                                        className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-green-500"
+                                                        className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-[var(--color-ec-profit)]"
                                                     />
                                                 </div>
                                             </div>
@@ -217,7 +217,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                     <span>Add Partial Take Profit</span>
                                 </button>
 
-                                <div className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${Math.abs(totalPartialCapital - 100) < 0.01 ? 'bg-ec-profit/5 border-ec-profit/20 text-ec-profit/80' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'}`}>
+                                <div className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${Math.abs(totalPartialCapital - 100) < 0.01 ? 'bg-ec-profit/5 border-ec-profit/20 text-ec-profit/80' : 'bg-[var(--color-ec-copper)]/5 border-[var(--color-ec-copper)]/20 text-[var(--color-ec-copper)]'}`}>
                                     <Info className="w-3.5 h-3.5 shrink-0" />
                                     <div className="flex-1 text-[9px] font-bold leading-tight">
                                         Total Capital: <span className="font-black underline">{totalPartialCapital}%</span>
@@ -242,7 +242,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-indigo-500' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -258,7 +258,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-blue-500' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
                             onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.trailing_stop.active ? 'left-4.5' : 'left-0.5'}`}></div>
