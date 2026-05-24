@@ -65,9 +65,9 @@ const SidebarMetricRow = ({ label, value, suffix = "%" }: { label: string; value
 
     return (
         <div className="flex items-center justify-between py-1.5 border-b border-border/20">
-            <div className="flex flex-col">
-                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">{label}</span>
-                <span className={`text-sm font-black tracking-tight leading-tight ${isNegative ? 'text-ec-loss' : 'text-foreground'}`}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: 1.5 }}>{label}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: isNegative ? 'var(--color-ec-loss)' : 'var(--color-ec-text-high)' }}>
                     {formatted}
                 </span>
             </div>
@@ -146,7 +146,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                                 <span
                                     key={m}
                                     onClick={() => setMode(m)}
-                                    className={`cursor-pointer transition-all ${mode === m ? 'text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded' : 'text-muted-foreground/50 hover:text-foreground'}`}
+                                    className={`cursor-pointer transition-all`}
+                                    style={{
+                                        color: mode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                                        background: mode === m ? 'rgba(216,122,61,0.1)' : 'transparent',
+                                        padding: mode === m ? '1.5px 6px' : undefined,
+                                        borderRadius: mode === m ? 3 : undefined,
+                                        fontSize: 8,
+                                        fontWeight: 700,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: 1.5,
+                                    }}
                                 >
                                     {m === 'avg' ? 'AVG' : m === 'p25' ? '25th' : m === 'p50' ? 'MED' : '75th'}
                                 </span>
@@ -349,12 +359,12 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                     <div className="flex items-center gap-4">
                         {isAggregate ? (
                             <>
-                                <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. PM HIGH</h3>
+                                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>CHANGE VS. PM HIGH</h3>
                                 <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">(AGGREGATE)</span>
                             </>
                         ) : (
                             <>
-                                <h3 className="text-lg font-black text-foreground tracking-tight">{activeTicker}</h3>
+                                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{activeTicker}</h3>
                                 <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">INTRADAY ACTION</span>
                             </>
                         )}
@@ -386,8 +396,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, pre: e.target.checked }))}
                                     className="hidden"
                                 />
-                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.pre ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
-                                <span className={`text-[10px] font-bold uppercase ${sessions.pre ? 'text-foreground' : 'text-muted-foreground'}`}>Pre</span>
+                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.pre ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.pre ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.pre ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Pre</span>
                             </label>
                             <label className="flex items-center gap-2 cursor-pointer group">
                                 <input
@@ -396,8 +406,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, market: e.target.checked }))}
                                     className="hidden"
                                 />
-                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.market ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
-                                <span className={`text-[10px] font-bold uppercase ${sessions.market ? 'text-foreground' : 'text-muted-foreground'}`}>Market</span>
+                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.market ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.market ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.market ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Market</span>
                             </label>
                             <label className="flex items-center gap-2 cursor-pointer group">
                                 <input
@@ -406,8 +416,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, post: e.target.checked }))}
                                     className="hidden"
                                 />
-                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.post ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
-                                <span className={`text-[10px] font-bold uppercase ${sessions.post ? 'text-foreground' : 'text-muted-foreground'}`}>Post</span>
+                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.post ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.post ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.post ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Post</span>
                             </label>
                         </div>
                     </div>

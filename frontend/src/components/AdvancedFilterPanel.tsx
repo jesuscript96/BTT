@@ -80,7 +80,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                         display: 'flex', alignItems: 'center', gap: 6,
                         background: 'var(--color-ec-bg-sidebar)',
                         border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5, padding: '0 10px', height: 30, width: 120,
+                        borderRadius: 5, padding: '0 10px', height: 30, width: 160,
                     }}>
                         <Search size={13} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
                         <input
@@ -228,7 +228,7 @@ const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) 
                     background: 'transparent', border: 'none', outline: 'none',
                     fontFamily: "'General Sans', sans-serif", fontSize: 13, fontWeight: 600,
                     letterSpacing: '-0.3px', color: 'var(--color-ec-text-primary)',
-                    width: 60, padding: 0, lineHeight: 1,
+                    width: 80, padding: 0, lineHeight: 1,
                 }}
             />
         )}
