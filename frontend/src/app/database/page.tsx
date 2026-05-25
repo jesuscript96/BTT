@@ -35,9 +35,22 @@ export default function DatabasePage() {
     })
 
     return (
-        <div className="flex h-screen bg-background overflow-hidden transition-colors duration-300">
+        <div style={{
+      display: 'flex',
+      height: '100dvh',
+      backgroundColor: 'var(--color-ec-bg-base)',
+      overflow: 'hidden',
+    }}>
             {/* Left Panel - Configuration */}
-            <div className="w-80 border-r border-border flex-shrink-0 overflow-y-auto bg-sidebar/30">
+            <div style={{
+              width: 280,
+              flexShrink: 0,
+              borderRight: '0.5px solid var(--color-ec-border)',
+              backgroundColor: 'var(--color-ec-bg-sidebar)',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              scrollbarWidth: 'none',
+            }}>
                 <ConfigurationPanel
                     config={searchConfig}
                     onChange={setSearchConfig}
@@ -45,7 +58,13 @@ export default function DatabasePage() {
             </div>
 
             {/* Center Panel - Results */}
-            <div className="flex-1 overflow-y-auto bg-background/50">
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              backgroundColor: 'var(--color-ec-bg-base)',
+              minWidth: 0,
+            }}>
                 <ResultsPanel
                     searchConfig={searchConfig}
                     passCriteria={passCriteria}
@@ -54,7 +73,15 @@ export default function DatabasePage() {
             </div>
 
             {/* Right Panel - Risk Management */}
-            <div className="w-80 border-l border-border flex-shrink-0 overflow-y-auto bg-sidebar/30">
+            <div style={{
+              width: 280,
+              flexShrink: 0,
+              borderLeft: '0.5px solid var(--color-ec-border)',
+              backgroundColor: 'var(--color-ec-bg-sidebar)',
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              scrollbarWidth: 'none',
+            }}>
                 <RiskManagementPanel
                     config={riskConfig}
                     onChange={setRiskConfig}
