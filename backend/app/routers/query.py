@@ -5,6 +5,7 @@ from uuid import uuid4
 from datetime import datetime
 import json
 import threading
+import pandas as pd
 from app.database import get_user_db_connection, get_user_db_lock
 
 router = APIRouter()
@@ -16,31 +17,21 @@ class SavedQuery(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-def _precache_dataset_intraday(dataset_id: str) -> None:
-    """Pre-cache intraday data for a dataset in background thread."""
+def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
+    """Pre-cache intraday data for a dataset in background thread.
+    Receives pairs_df in memory — does NOT open users.duckdb."""
     try:
+        import pandas as pd
         from app.db.gcs_cache import iter_intraday_groups_streamed
 
-        pre_con = get_user_db_connection()
-        try:
-            pairs = pre_con.execute(
-                "SELECT ticker, CAST(date AS VARCHAR) as date FROM dataset_pairs WHERE dataset_id = ?",
-                [dataset_id]
-            ).fetchdf()
-        finally:
-            pre_con.close()
-        
-        if pairs.empty:
+        if pairs_df.empty:
             print(f"[PRECACHE] Dataset {dataset_id}: no pairs to cache")
             return
         
-        date_from = pairs['date'].min()
-        date_to = pairs['date'].max()
-        
-        print(f"[PRECACHE] Starting intraday pre-cache for dataset {dataset_id}: {len(pairs)} pairs, {date_from} -> {date_to}")
+        print(f"[PRECACHE] Starting for dataset {dataset_id}: {len(pairs_df)} pairs, {date_from} -> {date_to}")
         
         count = 0
-        for _ in iter_intraday_groups_streamed(pairs, date_from, date_to):
+        for _ in iter_intraday_groups_streamed(pairs_df, date_from, date_to):
             count += 1
         
         print(f"[PRECACHE] Completed: {count} day-groups cached for dataset {dataset_id}")
@@ -68,6 +59,9 @@ def create_saved_query(query: SavedQuery):
             )
             
             # 3. Handle ticker-day combinations persistence
+            pairs_df = pd.DataFrame()
+            date_from = ""
+            date_to = ""
             try:
                 from app.services.query_service import build_screener_query
                 
@@ -83,16 +77,28 @@ def create_saved_query(query: SavedQuery):
                 con.execute(insert_sql, [query_id] + params)
                 print(f"Saved combinations for dataset {query_id}")
                 
+                # Fetch pairs in-memory BEFORE closing the connection (for pre-cache)
+                pairs_df = con.execute(
+                    "SELECT ticker, CAST(date AS VARCHAR) as date FROM dataset_pairs WHERE dataset_id = ?",
+                    [query_id]
+                ).fetchdf()
+                if not pairs_df.empty:
+                    date_from = pairs_df['date'].min()
+                    date_to = pairs_df['date'].max()
+                else:
+                    date_from = ""
+                    date_to = ""
+                
             except Exception as e:
                 print(f"Warning: Could not save dataset combinations: {e}")
             
         finally:
             con.close()
     
-    # Launch intraday pre-cache in background thread (uses its own connection)
+    # Launch intraday pre-cache in background thread (receives data in memory)
     threading.Thread(
         target=_precache_dataset_intraday,
-        args=(query_id,),
+        args=(pairs_df, date_from, date_to, query_id),
         daemon=True
     ).start()
     print(f"[PRECACHE] Background pre-cache started for dataset {query_id}")

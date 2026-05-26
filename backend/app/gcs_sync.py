@@ -50,32 +50,47 @@ def download_user_db() -> bool:
         return False
 
 def upload_user_db() -> bool:
-    """Upload users.duckdb to GCS."""
-    if os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
+    """Upload users.duckdb to GCS with retry on lock."""
+    import time
+    import os as _os
+    
+    if _os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
         return False
         
     local_file = "users.duckdb"
-    if not os.path.exists(local_file):
+    if not _os.path.exists(local_file):
         print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False
-        
-    client = get_gcs_client()
-    if not client:
-        return False
-        
-    bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+    
+    bucket_name = _os.getenv("GCS_BUCKET", "strategybuilderbbdd")
     object_name = "users.duckdb"
     
-    print(f"[INFO] Uploading {local_file} to gs://{bucket_name}/{object_name}...")
-    try:
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(object_name)
-        blob.upload_from_filename(local_file)
-        print("[INFO] Successfully uploaded users.duckdb to GCS")
-        return True
-    except Exception as e:
-        print(f"[ERROR] Error uploading to GCS: {e}")
-        return False
+    for attempt in range(3):
+        try:
+            key_file = _os.getenv("GCS_KEY_FILE", "gcs-key.json")
+            if not _os.path.exists(key_file):
+                print(f"[WARN] GCS key file not found at {key_file}")
+                return False
+            
+            from google.cloud import storage
+            client = storage.Client.from_service_account_json(key_file)
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(object_name)
+            blob.upload_from_filename(local_file)
+            print(f"[INFO] Successfully uploaded users.duckdb to GCS")
+            return True
+        except PermissionError:
+            if attempt < 2:
+                print(f"[WARN] users.duckdb locked, retrying in 2s...")
+                time.sleep(2)
+            else:
+                print(f"[ERROR] Could not upload users.duckdb after 3 attempts (file locked)")
+                return False
+        except Exception as e:
+            print(f"[ERROR] Error uploading to GCS: {e}")
+            return False
+    
+    return False
 
 # For manual testing
 if __name__ == "__main__":
