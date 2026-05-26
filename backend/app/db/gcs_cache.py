@@ -429,7 +429,10 @@ def _fetch_and_cache_month(
     
     cache_key = _get_cache_hash(y, m, path, tickers_month, valid_dates)
     cache_file = os.path.join(LOCAL_CACHE_DIR, f"{cache_key}.parquet")
-    
+    logger.info(f"[CACHE KEY] {y}-{m:02d}: key={cache_key}, file_exists={os.path.exists(cache_file)}")
+    logger.info(f"[CACHE KEY] tickers sample: {sorted(tickers_month)[:3]}")
+    logger.info(f"[CACHE KEY] dates sample: {sorted(valid_dates)[:3]}")
+
     if os.path.exists(cache_file):
         try:
             df = pd.read_parquet(cache_file)
