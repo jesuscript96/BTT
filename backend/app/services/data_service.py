@@ -256,22 +256,47 @@ def _build_where_clause(filters: dict) -> str:
 
 def _resolve_filters(dataset_id: str, req_start: str | None, req_end: str | None) -> dict:
     """Load saved_query filters and overlay request-level date overrides."""
-    df = get_saved_queries_df()
-    if df.empty:
-        return {}
-    match = df[df["id"] == dataset_id]
-    if match.empty:
-        return {}
-
-    raw = match.iloc[0].get("filters")
-    if raw and not isinstance(raw, dict):
-        raw = json.loads(raw)
-    filters = raw or {}
-
+    filters = {}
+    
+    # Primero: buscar en users.duckdb local
+    try:
+        from app.database import get_user_db_connection, get_user_db_lock
+        import json
+        with get_user_db_lock():
+            con = get_user_db_connection()
+            try:
+                row = con.execute(
+                    "SELECT filters FROM saved_queries WHERE id = ?",
+                    [dataset_id]
+                ).fetchone()
+                if row:
+                    f = row[0]
+                    filters = json.loads(f) if isinstance(f, str) else f
+            finally:
+                con.close()
+    except Exception as e:
+        print(f"[WARN] _resolve_filters local DB error: {e}")
+    
+    # Fallback: GCS hot cache
+    if not filters:
+        try:
+            df = get_saved_queries_df()
+            if df is not None and not df.empty:
+                match = df[df["id"] == dataset_id]
+                if not match.empty:
+                    row = match.iloc[0]
+                    filters = row.get("filters", {})
+                    if isinstance(filters, str):
+                        filters = json.loads(filters)
+        except Exception as e:
+            print(f"[WARN] _resolve_filters GCS error: {e}")
+    
+    # Aplicar overrides de fechas si se proporcionan
     if req_start:
         filters["start_date"] = req_start
     if req_end:
         filters["end_date"] = req_end
+    
     return filters
 
 

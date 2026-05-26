@@ -57,6 +57,15 @@ async def lifespan(app: FastAPI):
             t0 = time.time()
             load_hot_daily_cache()
             print(f"[TIMING] hot cache: {round(time.time()-t0, 2)}s")
+
+            # Log intraday disk cache status
+            cache_dir = os.getenv("CACHE_DIR", ".cache/intraday")
+            if os.path.exists(cache_dir):
+                cache_files = len(os.listdir(cache_dir))
+                total_mb = sum(os.path.getsize(os.path.join(cache_dir, f)) for f in os.listdir(cache_dir) if os.path.isfile(os.path.join(cache_dir, f))) / 1024 / 1024
+                print(f"[CACHE] intraday disk cache: {cache_files} files, {total_mb:.1f} MB in {cache_dir}")
+            else:
+                print(f"[CACHE] intraday disk cache dir not found: {cache_dir}")
             print("[INFO] Hot daily cache loaded at startup")
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")

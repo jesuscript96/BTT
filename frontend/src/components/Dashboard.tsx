@@ -131,15 +131,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
             <div className="grid grid-cols-1 md:grid-cols-12 gap-0">
 
                 {/* ═══ LEFT COLUMN: Compact 2-Col Metrics ═══ */}
-                <div className="md:col-span-3 border-r border-border/40 pr-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)' }}>
+                <div className="md:col-span-3 pr-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)', borderRight: '0.5px solid var(--color-ec-border)' }}>
                     {/* Header: Sample + Mode Selector */}
                     <div className="flex items-center justify-between py-2 border-b border-border/40 mb-1">
                         <div className="flex flex-col">
                             <div className="flex items-center gap-1.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">Total Sample</span>
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                                <span className="text-[8px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Total Sample</span>
                             </div>
-                            <span className="text-base font-black text-foreground tracking-tight">{stats.count} RECORDS</span>
+                            <span className="text-base font-bold text-[var(--color-ec-text-high)] tracking-tight">{stats.count} RECORDS</span>
                         </div>
                         <div className="flex gap-1.5 text-[8px] font-black uppercase tracking-widest items-center">
                             {(['avg', 'p25', 'p50', 'p75'] as const).map((m) => (
@@ -149,7 +149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                                     className={`cursor-pointer transition-all`}
                                     style={{
                                         color: mode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
-                                        background: mode === m ? 'rgba(216,122,61,0.1)' : 'transparent',
+                                        background: mode === m ? 'color-mix(in srgb, var(--color-ec-copper) 10%, transparent)' : 'transparent',
                                         padding: mode === m ? '1.5px 6px' : undefined,
                                         borderRadius: mode === m ? 3 : undefined,
                                         fontSize: 8,
@@ -369,16 +369,16 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                             </>
                         )}
                     </div>
-                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-muted-foreground">
+                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--color-ec-text-muted)]">
                         {isAggregate ? (
                             <>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> AVERAGE</div>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-blue-400 border-dashed" /> MEDIAN</div>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2563eb]" /> AVERAGE</div>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-[#60a5fa] border-dashed" /> MEDIAN</div>
                             </>
                         ) : (
                             <>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
-                                {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2563eb]" /> Price</div>
+                                {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#a855f7]" /> PM High</div>}
                             </>
                         )}
                     </div>
@@ -430,7 +430,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                             max="20"
                             value={smoothing}
                             onChange={(e) => setSmoothing(parseInt(e.target.value))}
-                            className="w-24 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-blue-600"
+                            className="w-24 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-[var(--color-ec-copper)]"
                         />
                         <span className="text-[10px] font-bold text-foreground w-4">{smoothing}</span>
                     </div>
@@ -440,7 +440,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
             <div className="flex-1 min-h-0 relative">
                 {isChartLoading ? (
                     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-background/50 backdrop-blur-sm">
-                        <div className="w-8 h-8 border-4 border-blue-500 border-solid rounded-full border-t-transparent animate-spin mb-4"></div>
+                        <div className="w-8 h-8 border-4 border-[var(--color-ec-copper)] border-solid rounded-full border-t-transparent animate-spin mb-4"></div>
                         <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-widest">
                             {isLoadingAggregate ? "Aggregating Intraday Data..." : "Loading Chart..."}
                         </div>
@@ -472,7 +472,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                 contentStyle={{
                                     backgroundColor: 'var(--card)',
                                     border: '1px solid var(--border)',
-                                    borderRadius: '8px',
+                                    borderRadius: '5px',
                                     fontSize: '11px',
                                     color: 'var(--foreground)'
                                 }}
@@ -487,7 +487,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                 <ReferenceArea x1="09:30" x2="16:00" fill="currentColor" fillOpacity={0.01} className="text-blue-500" />
                             )}
                             {sessions.post && (
-                                <ReferenceArea x1="16:00" x2="20:00" fill="currentColor" fillOpacity={0.03} className="text-orange-500" />
+                                <ReferenceArea x1="16:00" x2="20:00" fill="currentColor" fillOpacity={0.03} className="text-[var(--color-ec-copper)]" />
                             )}
 
                             {isAggregate ? (

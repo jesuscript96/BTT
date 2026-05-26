@@ -8,6 +8,7 @@ import { createQuery, getQueries, deleteQuery } from '@/lib/api';
 export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
     const [name, setName] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const [savedMessage, setSavedMessage] = useState("");
 
     if (!isOpen) return null;
 
@@ -19,11 +20,14 @@ export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
                 name,
                 filters: { ...filters, rules }
             });
-            onClose();
-            setName("");
+            setSavedMessage("Saved! Pre-caching intraday data for fast backtests...");
+            setTimeout(() => {
+                onClose();
+                setName("");
+                setSavedMessage("");
+            }, 2000);
         } catch (error) {
             console.error("Error saving dataset:", error);
-        } finally {
             setIsSaving(false);
         }
     };
@@ -51,15 +55,23 @@ export const SaveDatasetModal = ({ isOpen, onClose, filters, rules }: any) => {
                     </div>
                 </div>
                 <div className="p-6 bg-zinc-50 border-t border-zinc-100 flex justify-end gap-3">
-                    <button onClick={onClose} className="px-6 py-2.5 text-sm font-bold text-ec-text-muted hover:text-ec-text-primary transition-colors">Cancel</button>
-                    <button
-                        onClick={handleSave}
-                        disabled={isSaving || !name.trim()}
-                        className="bg-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper-bright)] text-[var(--color-ec-copper-text)] px-8 py-2.5 rounded-[5px] text-sm font-black tracking-tight transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center gap-2"
-                    >
-                        <Save className="h-4 w-4" />
-                        {isSaving ? "Saving..." : "Save Dataset"}
-                    </button>
+                    {savedMessage ? (
+                        <div className="flex-1 flex items-center justify-center py-2 px-4 bg-ec-profit/10 border border-ec-profit/20 rounded-lg">
+                            <p className="text-[11px] font-bold text-ec-profit text-center">{savedMessage}</p>
+                        </div>
+                    ) : (
+                        <>
+                            <button onClick={onClose} className="px-6 py-2.5 text-sm font-bold text-ec-text-muted hover:text-ec-text-primary transition-colors">Cancel</button>
+                            <button
+                                onClick={handleSave}
+                                disabled={isSaving || !name.trim()}
+                                className="bg-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper-bright)] text-[var(--color-ec-copper-text)] px-8 py-2.5 rounded-[5px] text-sm font-black tracking-tight transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                            >
+                                <Save className="h-4 w-4" />
+                                {isSaving ? "Saving..." : "Save Dataset"}
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
         </div>
