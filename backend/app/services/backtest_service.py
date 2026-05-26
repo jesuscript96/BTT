@@ -864,6 +864,9 @@ def _get_market_sessions_mask(
     import datetime
     
     for s in sessions:
+        s = s.lower().strip()
+        if s in ("regular", "market"):
+            s = "rth"
         if s == "pre":
             # 04:00 - 09:30 (240 - 570)
             mask |= (total_mins >= 240) & (total_mins < 570)
