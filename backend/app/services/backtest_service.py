@@ -382,7 +382,7 @@ def _build_qualifying_lookup(qualifying_df: pd.DataFrame) -> dict:
     # Vectorized: avoid slow iterrows() — convert entire DataFrame at once
     records = qualifying_df.to_dict(orient="records")
     return {
-        (r["ticker"], r["date"]): r
+        (r["ticker"], str(r["date"])[:10]): r
         for r in records
     }
 
