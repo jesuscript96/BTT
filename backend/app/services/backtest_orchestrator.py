@@ -144,6 +144,7 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         print(f"[DEBUG ORCH] strategy_def keys: {strategy_def.keys() if isinstance(strategy_def, dict) else 'NOT A DICT'}")
         print(f"[DEBUG ORCH] bias: {strategy_def.get('bias') if isinstance(strategy_def, dict) else 'N/A'}")
         results = run_backtest(
+            qualifying_df=qualifying,
             strategy_def=strategy_def,
             init_cash=req.init_cash,
             risk_r=req.risk_r,
