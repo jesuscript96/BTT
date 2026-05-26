@@ -474,6 +474,17 @@ def _pivot_points(daily_stats: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
+# Normalize frontend indicator names to backend names
+INDICATOR_NAME_MAP = {
+    "Bar Close": "Close",
+    "Bar Open": "Open",
+    "High Bar": "High",
+    "Low Bar": "Low",
+}
+
+def normalize_indicator_name(name: str) -> str:
+    return INDICATOR_NAME_MAP.get(name, name)
+
 def compute_indicator(
     name: str,
     df: pd.DataFrame,
@@ -491,6 +502,7 @@ def compute_indicator(
     daily_stats: dict | None = None,
     cache: dict | None = None,
 ) -> pd.Series:
+    name = normalize_indicator_name(name)
     cache_key = (name, period, period2, period3, std_dev, multiplier, offset,
                  days_lookback, calc_on_heikin, time_hour, time_minute, time_condition)
     if cache is not None and cache_key in cache:
