@@ -577,13 +577,17 @@ def iter_intraday_groups_streamed(
     # Sequential iteration to strictly keep correct chronological time series
     for future, y, m in futures:
         month_intraday = future.result()
+        print(f"[STREAM] month {y}-{m}: month_intraday shape={month_intraday.shape if month_intraday is not None else None}")
         if month_intraday is None or month_intraday.empty:
             continue
 
         grouped = month_intraday.groupby(["date", "ticker"])
-        for key, day_df in grouped:
+        n_groups = len(grouped)
+        print(f"[STREAM] month {y}-{m}: n_groups={n_groups}")
+        for (date, ticker), day_df in grouped:
             total_groups += 1
-            yield key, day_df
+            print(f"[STREAM] yielding group: ticker={ticker}, date={date}")
+            yield (date, ticker), day_df
 
         del month_intraday, grouped
         gc.collect()
