@@ -107,7 +107,6 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
             return {
                 "aggregate_metrics": {},
                 "day_results": [],
-                "day_results": [],
                 "trades": [],
                 "equity_curves": [],
                 "global_equity": [],
