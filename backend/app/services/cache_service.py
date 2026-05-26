@@ -126,8 +126,9 @@ def load_hot_daily_cache() -> None:
             # Guardar a GCS para futuros deploys
             try:
                 from google.cloud import storage
-                key_file = os.getenv("GCS_KEY_FILE", "gcs-key.json")
-                if os.path.exists(key_file):
+                from app.gcs_sync import _get_key_file
+                key_file = _get_key_file()
+                if key_file:
                     local_tmp = "/tmp/hot_cache_daily_gaps.parquet"
                     _hot_daily_cache.to_parquet(local_tmp, index=False)
                     client = storage.Client.from_service_account_json(key_file)
