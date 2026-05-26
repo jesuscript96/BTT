@@ -17,39 +17,46 @@ def create_strategy(strategy: StrategyCreate):
         try:
             new_id = str(uuid4())
             now = datetime.now()
-            
+
             full_strategy = Strategy(
                 **strategy.model_dump(),
                 id=new_id,
                 created_at=now.isoformat()
             )
-            
+
+            definition_json = json.dumps({
+                "bias": strategy.bias,
+                "universe_filters": strategy.universe_filters.model_dump() if strategy.universe_filters else None,
+                "entry_logic": strategy.entry_logic.model_dump() if strategy.entry_logic else None,
+                "exit_logic": strategy.exit_logic.model_dump() if strategy.exit_logic else None,
+                "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
+            })
+
             con.execute(
                 """
                 INSERT INTO strategies (id, name, description, created_at, updated_at, definition)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    new_id, 
-                    strategy.name, 
-                    strategy.description, 
-                    now, 
-                    now, 
-                    json.dumps(full_strategy.model_dump())
+                    new_id,
+                    strategy.name,
+                    strategy.description,
+                    now,
+                    now,
+                    definition_json,
                 )
             )
-            
-            return full_strategy
         finally:
             con.close()
-    
-    # Upload users.duckdb to GCS synchronously (ensure persistence before response)
-    from app.gcs_sync import upload_user_db
+
     try:
+        from app.gcs_sync import upload_user_db
         upload_user_db()
-        print(f"[GCS] users.duckdb uploaded after strategy save")
+        print("[GCS] users.duckdb uploaded after strategy save")
     except Exception as e:
         print(f"[WARN] GCS upload failed: {e}")
+
+    return full_strategy
 
 @router.get("/", response_model=List[Strategy])
 def list_strategies():
@@ -102,14 +109,14 @@ def delete_strategy(strategy_id: str):
             if not row:
                 raise HTTPException(status_code=404, detail="Strategy not found")
             con.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
-            return {"status": "success", "message": "Strategy deleted"}
         finally:
             con.close()
-    
-    # Upload users.duckdb to GCS synchronously (ensure persistence before response)
-    from app.gcs_sync import upload_user_db
+
     try:
+        from app.gcs_sync import upload_user_db
         upload_user_db()
-        print(f"[GCS] users.duckdb uploaded after strategy save")
+        print("[GCS] users.duckdb uploaded after strategy delete")
     except Exception as e:
         print(f"[WARN] GCS upload failed: {e}")
+
+    return {"status": "success", "message": "Strategy deleted"}
