@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["optimization"])
 
 
 class ParametersRequest(BaseModel):
-    strategy_id: str
+    strategy_id: str | None = None
 
 
 class ParamConfig(BaseModel):
@@ -60,9 +60,9 @@ class SurfaceRequest(BaseModel):
 @router.post("/optimization/parameters")
 def get_optimization_parameters(req: ParametersRequest):
     logger.info(f"Extracting parameters for strategy {req.strategy_id}")
-    # Mock strategy has no optimizable parameters
-    if req.strategy_id == "mock_strat_1":
-        return {"parameters": [], "strategy_name": "Mock Strategy (Temporal)"}
+    # Mock and draft strategies have no optimizable parameters
+    if req.strategy_id in ("mock_strat_1", "draft") or req.strategy_id is None:
+        return {"parameters": [], "strategy_name": "Draft Strategy"}
     strategy = get_strategy(req.strategy_id)
     if not strategy:
         logger.error(f"Strategy {req.strategy_id} not found")

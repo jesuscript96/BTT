@@ -29,11 +29,10 @@ export interface Draft {
 
 interface Props {
   onTest: (draft: Draft) => void;
-  onSave: (draft: Draft) => void;
   onBack: () => void;
 }
 
-export default function InlineStrategyBuilder({ onTest, onSave, onBack }: Props) {
+export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
@@ -75,12 +74,6 @@ export default function InlineStrategyBuilder({ onTest, onSave, onBack }: Props)
       setDrafts(updated);
     } catch {}
     onTest(draft);
-  };
-
-  const handleSave = () => {
-    const draft = buildDraft();
-    onSave(draft);
-    resetForm();
   };
 
   const handleLoadDraft = (draft: Draft) => {
@@ -291,21 +284,19 @@ export default function InlineStrategyBuilder({ onTest, onSave, onBack }: Props)
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
       </div>
 
-      {/* Footer buttons */}
+      {/* Footer */}
       <div
         style={{
           flexShrink: 0,
           padding: "12px 16px",
           borderTop: "0.5px solid var(--color-ec-border)",
           backgroundColor: "var(--color-ec-bg-base)",
-          display: "flex",
-          gap: 8,
         }}
       >
         <button
           onClick={handleTest}
           style={{
-            flex: 2,
+            width: "100%",
             padding: "8px 0",
             borderRadius: 5,
             fontSize: 11,
@@ -320,25 +311,6 @@ export default function InlineStrategyBuilder({ onTest, onSave, onBack }: Props)
           }}
         >
           ▶ Probar
-        </button>
-        <button
-          onClick={handleSave}
-          style={{
-            flex: 1,
-            padding: "8px 0",
-            borderRadius: 5,
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: 1.2,
-            textTransform: "uppercase",
-            cursor: "pointer",
-            backgroundColor: "var(--color-ec-bg-surface)",
-            border: "0.5px solid var(--color-ec-border)",
-            color: "var(--color-ec-text-secondary)",
-            fontFamily: "var(--color-ec-sans)",
-          }}
-        >
-          Guardar
         </button>
       </div>
     </div>

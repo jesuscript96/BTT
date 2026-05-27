@@ -20,6 +20,8 @@ import {
 export default function Home() {
   const [mode, setMode] = useState<"config" | "builder">("config");
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveName, setSaveName] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,22 +116,6 @@ export default function Home() {
     }
   };
 
-  const handleSaveDraft = async (draft: Draft) => {
-    try {
-      await createStrategy({
-        name: draft.name,
-        description: "",
-        bias: draft.bias,
-        entry_logic: draft.entry_logic,
-        exit_logic: draft.exit_logic,
-        risk_management: draft.risk_management,
-      });
-      setMode("config");
-    } catch (err) {
-      console.error("Error guardando estrategia:", err);
-    }
-  };
-
   const handleRun = async (params: {
     dataset_id: string;
     strategy_id: string;
@@ -149,6 +135,7 @@ export default function Home() {
     setResult(null);
     setSelectedDay(0);
     setDayCandles(null);
+    setDraftStrategy(null);
     initCashRef.current = params.init_cash;
     riskRRef.current = params.risk_r;
     datasetIdRef.current = params.dataset_id;
@@ -262,11 +249,9 @@ export default function Home() {
           <InlineStrategyBuilder
             onBack={() => setMode('config')}
             onTest={async (draft) => {
+              setDraftStrategy(draft);
               setMode('config');
               await handleRunWithDraft(draft);
-            }}
-            onSave={async (draft) => {
-              await handleSaveDraft(draft);
             }}
           />
         </div>
@@ -435,44 +420,32 @@ export default function Home() {
                     <div className="w-1/3 flex flex-col px-1 h-[675px]">
                       <div>
                         <MetricsCard metrics={result.aggregate_metrics} vertical />
-                        <div className="flex flex-col items-center justify-center gap-2 py-3 px-1">
-                          <button
-                            style={{
-                              width: '100%',
-                              padding: '7px 0',
-                              backgroundColor: 'var(--color-ec-bg-surface)',
-                              border: '0.5px solid var(--color-ec-border)',
-                              borderRadius: 5,
-                              fontFamily: 'var(--color-ec-sans)',
-                              fontSize: 11,
-                              fontWeight: 600,
-                              textTransform: 'uppercase',
-                              letterSpacing: '1.2px',
-                              color: 'var(--color-ec-text-secondary)',
-                              cursor: 'pointer',
-                              transition: 'color 150ms ease',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
-                          >
-                            Guardar estrategia
-                          </button>
-                          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              className="w-3 h-3 rounded-sm border border-[var(--color-ec-border)]"
-                            />
-                            <span style={{
-                              fontFamily: 'var(--color-ec-sans)',
-                              fontSize: 10,
-                              fontWeight: 500,
-                              color: 'var(--color-ec-text-muted)',
-                              letterSpacing: '0.05em',
-                            }}>
-                              Enviar con configuración del What if
-                            </span>
-                          </label>
-                        </div>
+                        {draftStrategy && (
+                          <div style={{ padding: '8px 4px 4px 4px' }}>
+                            <button
+                              onClick={() => { setSaveName(draftStrategy.name); setShowSaveModal(true); }}
+                              style={{
+                                width: '100%',
+                                padding: '7px 0',
+                                backgroundColor: 'var(--color-ec-bg-surface)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.2px',
+                                color: 'var(--color-ec-text-secondary)',
+                                cursor: 'pointer',
+                                transition: 'color 150ms ease',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
+                              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
+                            >
+                              Guardar estrategia
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="h-[290px] w-full mt-auto mb-[-14px]">
                         <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
@@ -494,6 +467,91 @@ export default function Home() {
                     backtestParams={backtestParamsRef.current}
                   />
                 </>
+              )}
+              {/* Modal — guardar draft como estrategia */}
+              {showSaveModal && (
+                <div style={{
+                  position: 'fixed', inset: 0, zIndex: 100,
+                  backgroundColor: 'rgba(0,0,0,0.6)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <div style={{
+                    backgroundColor: 'var(--color-ec-bg-surface)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 7,
+                    padding: 24,
+                    width: 340,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-serif)' }}>
+                      Guardar estrategia
+                    </div>
+                    <input
+                      value={saveName}
+                      onChange={(e) => setSaveName(e.target.value)}
+                      placeholder="Nombre de la estrategia"
+                      autoFocus
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '8px 11px',
+                        fontSize: 12,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
+                        fontFamily: 'var(--color-ec-sans)',
+                      }}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setShowSaveModal(false); }}
+                    />
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => setShowSaveModal(false)}
+                        style={{
+                          flex: 1, padding: '7px 0', borderRadius: 5,
+                          fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                          textTransform: 'uppercase', cursor: 'pointer',
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          color: 'var(--color-ec-text-muted)',
+                          fontFamily: 'var(--color-ec-sans)',
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        disabled={!saveName.trim()}
+                        onClick={async () => {
+                          if (!saveName.trim() || !draftStrategy) return;
+                          await createStrategy({
+                            name: saveName.trim(),
+                            description: "",
+                            bias: draftStrategy.bias,
+                            entry_logic: draftStrategy.entry_logic,
+                            exit_logic: draftStrategy.exit_logic,
+                            risk_management: draftStrategy.risk_management,
+                          });
+                          setShowSaveModal(false);
+                          setDraftStrategy(null);
+                        }}
+                        style={{
+                          flex: 2, padding: '7px 0', borderRadius: 5,
+                          fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                          textTransform: 'uppercase', cursor: 'pointer',
+                          backgroundColor: 'var(--color-ec-copper)',
+                          border: 'none',
+                          color: 'var(--color-ec-copper-text)',
+                          fontFamily: 'var(--color-ec-sans)',
+                          opacity: saveName.trim() ? 1 : 0.4,
+                        }}
+                      >
+                        Guardar
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </main>
           </div>
