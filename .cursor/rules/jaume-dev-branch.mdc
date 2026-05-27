@@ -1,0 +1,24 @@
+---
+description: "Reglas de rama Git para Jaume (jaimefh90@gmail.com). Solo push a jaumen-rama-desarrollo, nunca a develop ni main."
+globs: []
+alwaysApply: false
+---
+
+# Git Branch Rules — Jaume
+
+Aplica SOLO cuando el usuario es Jaume (jaimefh90@gmail.com).
+
+## Rama de trabajo
+Siempre trabajar en: `jaumen-rama-desarrollo`
+
+## Prohibido
+- Push a `develop`
+- Push a `main`
+- Merge a `develop` o `main`
+
+## Flujo obligatorio
+1. `git branch --show-current` — verificar rama
+2. Si no está en `jaumen-rama-desarrollo`: `git checkout jaumen-rama-desarrollo`
+3. Hacer cambios y commit
+4. Antes de push, preguntar: "¿Confirmas push a jaumen-rama-desarrollo?"
+5. Solo tras confirmación: `git push origin jaumen-rama-desarrollo`
