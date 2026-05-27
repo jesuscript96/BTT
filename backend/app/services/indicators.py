@@ -480,6 +480,8 @@ INDICATOR_NAME_MAP = {
     "Bar Open": "Open",
     "High Bar": "High",
     "Low Bar": "Low",
+    "High of last X days": "Max of last X days",
+    "Low of last X days": "Min of last X days",
 }
 
 def normalize_indicator_name(name: str) -> str:

@@ -36,6 +36,7 @@ export enum IndicatorType {
     RVOL = "RVOL",
     AVOLUME = "Accumulated Volume",
     SMA_VOLUME = "SMA Volume",
+    YESTERDAY_VOLUME = "Yesterday Volume",
 
     // Price Variables
     BAR_CLOSE = "Bar Close",
@@ -44,6 +45,8 @@ export enum IndicatorType {
     LOW_BAR = "Low Bar",
     PMH = "Pre-Market High",
     PML = "Pre-Market Low",
+    PM_OPEN = "PM Open",
+    AM_OPEN = "AM Open",
     RTH_HIGH = "RTH High",
     RTH_LOW = "RTH Low",
     RTH_OPEN = "RTH Open",
@@ -51,8 +54,10 @@ export enum IndicatorType {
     Y_LOW = "Yesterday Low",
     Y_OPEN = "Yesterday Open",
     Y_CLOSE = "Yesterday Close",
-    MAX_X_DAYS = "Max of last X days",
-    MIN_X_DAYS = "Min of last X days",
+    YESTERDAY_AM_HIGH = "Yesterday AM High",
+    YESTERDAY_AM_LOW = "Yesterday AM Low",
+    MAX_X_DAYS = "High of last X days",
+    MIN_X_DAYS = "Low of last X days",
 
     // Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs",
@@ -66,6 +71,8 @@ export enum IndicatorType {
     OPENING_RANGE_AM_PLUS = "Opening Range AM +",
     OPENING_RANGE_AM_MINUS = "Opening Range AM -",
     HEIKIN_ASHI = "Heikin-Ashi",
+    CANDLE_RANGE_PCT = "Candle Range %",
+    ELAPSED_TIME_LAST_HIGH = "Elapsed Time from Last High",
 
     // Time / Others
     TIME_OF_DAY = "Time of Day",

@@ -90,13 +90,16 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     ],
     "Volume": [
         IndicatorType.OBV, IndicatorType.VOLUME, IndicatorType.RVOL,
-        IndicatorType.AVOLUME, IndicatorType.SMA_VOLUME
+        IndicatorType.AVOLUME, IndicatorType.SMA_VOLUME,
+        IndicatorType.YESTERDAY_VOLUME
     ],
     "Price Variables": [
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN, IndicatorType.HIGH_BAR,
         IndicatorType.LOW_BAR, IndicatorType.PMH, IndicatorType.PML,
+        IndicatorType.PM_OPEN, IndicatorType.AM_OPEN,
         IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW, IndicatorType.RTH_OPEN,
         IndicatorType.Y_HIGH, IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
         IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
     ],
     "Behavior & Patterns": [
@@ -105,7 +108,9 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS,
         IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
         IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
-        IndicatorType.HEIKIN_ASHI
+        IndicatorType.HEIKIN_ASHI,
+        IndicatorType.CANDLE_RANGE_PCT,
+        IndicatorType.ELAPSED_TIME_LAST_HIGH
     ],
     "Time & Others": [
         IndicatorType.TIME_OF_DAY, IndicatorType.RANGE_OF_TIME,
@@ -159,6 +164,7 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.RVOL]: "RVOL",
     [IndicatorType.AVOLUME]: "Accumulated Volume",
     [IndicatorType.SMA_VOLUME]: "SMA Volume",
+    [IndicatorType.YESTERDAY_VOLUME]: "Yesterday Volume",
     // Variables
     [IndicatorType.BAR_CLOSE]: "Bar Close",
     [IndicatorType.BAR_OPEN]: "Bar Open",
@@ -166,6 +172,8 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.LOW_BAR]: "Low Bar",
     [IndicatorType.PMH]: "PM High",
     [IndicatorType.PML]: "PM Low",
+    [IndicatorType.PM_OPEN]: "PM Open",
+    [IndicatorType.AM_OPEN]: "AM Open",
     [IndicatorType.RTH_HIGH]: "RTH High",
     [IndicatorType.RTH_LOW]: "RTH Low",
     [IndicatorType.RTH_OPEN]: "RTH Open",
@@ -173,8 +181,10 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.Y_LOW]: "Yesterday Low",
     [IndicatorType.Y_OPEN]: "Yesterday Open",
     [IndicatorType.Y_CLOSE]: "Yesterday Close",
-    [IndicatorType.MAX_X_DAYS]: "Max of last X days",
-    [IndicatorType.MIN_X_DAYS]: "Min of last X days",
+    [IndicatorType.YESTERDAY_AM_HIGH]: "Yesterday AM High",
+    [IndicatorType.YESTERDAY_AM_LOW]: "Yesterday AM Low",
+    [IndicatorType.MAX_X_DAYS]: "High of last X days",
+    [IndicatorType.MIN_X_DAYS]: "Low of last X days",
     // Behavior
     [IndicatorType.CONSECUTIVE_HIGHER_HIGHS]: "Consec Higher Highs",
     [IndicatorType.CONSECUTIVE_LOWER_LOWS]: "Consec Lower Lows",
@@ -187,6 +197,8 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.OPENING_RANGE_AM_PLUS]: "Opening Range AM +",
     [IndicatorType.OPENING_RANGE_AM_MINUS]: "Opening Range AM -",
     [IndicatorType.HEIKIN_ASHI]: "Heikin-Ashi",
+    [IndicatorType.CANDLE_RANGE_PCT]: "Candle Range %",
+    [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Elapsed Time from Last High",
     // Time & Others
     [IndicatorType.TIME_OF_DAY]: "Time of Day",
     [IndicatorType.RANGE_OF_TIME]: "Range of Time",
