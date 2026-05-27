@@ -476,12 +476,58 @@ def _pivot_points(daily_stats: dict) -> dict:
 
 # Normalize frontend indicator names to backend names
 INDICATOR_NAME_MAP = {
+    # Price Variables — nuevos nombres del frontend
     "Bar Close": "Close",
     "Bar Open": "Open",
     "High Bar": "High",
     "Low Bar": "Low",
+    "PM Open": "PM Open",
+    "PM High": "Pre-Market High",
+    "PM Low": "Pre-Market Low",
+    "RTH Open": "RTH Open",
+    "RTH High": "RTH High",
+    "RTH Low": "RTH Low",
+    "AM Open": "AM Open",
+    "Previous max": "Previous max",
+    "Previous min": "Previous min",
+    "Yesterday Open": "Yesterday Open",
+    "Yesterday Close": "Yesterday Close",
+    "Yesterday High": "Yesterday High",
+    "Yesterday Low": "Yesterday Low",
+    "Yesterday AM High": "Yesterday AM High",
+    "Yesterday AM Low": "Yesterday AM Low",
     "High of last X days": "Max of last X days",
     "Low of last X days": "Min of last X days",
+
+    # Behaviour & Patterns
+    "Consecutive higher highs": "Consecutive Higher Highs",
+    "Consecutive lower lows": "Consecutive Lower Lows",
+    "Consecutive lower highs": "Consecutive Lower Highs",
+    "Consecutive higher lows": "Consecutive Higher Lows",
+    "Consecutive green candles": "Consecutive Green Candles",
+    "Consecutive red candles": "Consecutive Red Candles",
+    "Candle Range %": "Candle Range %",
+    "Range of time": "Range of time",
+    "Opening range +": "Opening Range +",
+    "Opening range -": "Opening Range -",
+    "Opening range AM +": "Opening Range AM +",
+    "Opening range AM -": "Opening Range AM -",
+    "Elapsed time from last High": "Elapsed Time from Last High",
+
+    # Indicators
+    "Donchian": "Donchian Channels",
+    "Bollinger Bands": "Bollinger Bands",
+    "Accumulated Volume": "Accumulated Volume",
+    "Yesterday Accumulated Volume": "Yesterday Accumulated Volume",
+    "Yesterday Volume": "Yesterday Volume",
+    "RVOL": "RVOL",
+
+    # Legacy aliases (compatibilidad con estrategias antiguas)
+    "Max of last X days": "Max of last X days",
+    "Min of last X days": "Min of last X days",
+    "Bollinger Upper": "Bollinger Upper",
+    "Bollinger Lower": "Bollinger Lower",
+    "Bollinger Middle": "Bollinger Middle",
 }
 
 def normalize_indicator_name(name: str) -> str:
