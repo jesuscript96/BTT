@@ -499,6 +499,8 @@ def compute_indicator(
     time_hour: int | None = None,
     time_minute: int | None = None,
     time_condition: str | None = None,
+    band_line: str | None = None,
+    orb_minutes: int | None = None,
     daily_stats: dict | None = None,
     cache: dict | None = None,
 ) -> pd.Series:
@@ -729,9 +731,15 @@ def _compute_raw(
         return pd.Series(np.nan, index=close.index)
 
     if name == "Bollinger Bands" or name == "Bollinger Upper":
+        period = period or 20
         sd = std_dev or 2.0
-        upper, middle, lower = _bollinger_bands(close.values.astype(np.float64), period or 20, sd)
-        return pd.Series(upper, index=close.index)
+        upper, middle, lower = _bollinger_bands(close.values.astype(np.float64), period, sd)
+        if band_line == "Lower":
+            return pd.Series(lower, index=close.index)
+        elif band_line == "Basis":
+            return pd.Series(middle, index=close.index)
+        else:  # Upper es default
+            return pd.Series(upper, index=close.index)
 
     if name == "Bollinger Middle":
         sd = std_dev or 2.0
@@ -742,6 +750,18 @@ def _compute_raw(
         sd = std_dev or 2.0
         _, _, lower = _bollinger_bands(close.values.astype(np.float64), period or 20, sd)
         return pd.Series(lower, index=close.index)
+
+    if name == "Donchian Channels":
+        period = period or 20
+        upper = high.rolling(period).max()
+        lower = low.rolling(period).min()
+        mid = (upper + lower) / 2
+        if band_line == "Lower":
+            return lower
+        elif band_line == "Basis":
+            return mid
+        else:  # Upper es default
+            return upper
 
     if name == "Parabolic SAR":
         if _talib is not None:
@@ -871,14 +891,29 @@ def _compute_raw(
         pivots = _pivot_points(ds)
         return pd.Series(pivots.get("S2", np.nan), index=close.index)
 
-    if name == "Opening Range":
-        # First 5 minutes high/low range (approximation)
-        if len(high) >= 5:
-            or_high = high.iloc[:5].max()
-            or_low = low.iloc[:5].min()
-            or_mid = (or_high + or_low) / 2
-            return pd.Series(or_mid, index=close.index)
-        return pd.Series(np.nan, index=close.index)
+    if name in ("Opening Range +", "Opening Range", "Opening Range Plus"):
+        n = int(orb_minutes) if orb_minutes else 30
+        if len(high) >= n:
+            return pd.Series(high.iloc[:n].max(), index=close.index)
+        return pd.Series(high.max(), index=close.index)
+
+    if name in ("Opening Range -", "Opening Range Minus"):
+        n = int(orb_minutes) if orb_minutes else 30
+        if len(low) >= n:
+            return pd.Series(low.iloc[:n].min(), index=close.index)
+        return pd.Series(low.min(), index=close.index)
+
+    if name in ("Opening Range AM +", "Opening Range AM Plus"):
+        n = int(orb_minutes) if orb_minutes else 30
+        if len(high) >= n:
+            return pd.Series(high.iloc[:n].max(), index=close.index)
+        return pd.Series(high.max(), index=close.index)
+
+    if name in ("Opening Range AM -", "Opening Range AM Minus"):
+        n = int(orb_minutes) if orb_minutes else 30
+        if len(low) >= n:
+            return pd.Series(low.iloc[:n].min(), index=close.index)
+        return pd.Series(low.min(), index=close.index)
 
     return pd.Series(np.nan, index=close.index)
 
