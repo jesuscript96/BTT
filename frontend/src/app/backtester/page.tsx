@@ -254,249 +254,251 @@ export default function Home() {
   );
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100dvh',
-      backgroundColor: 'var(--color-ec-bg-base)',
-      overflow: 'hidden',
-    }}>
-      <header style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 20px',
-        height: 52,
-        borderBottom: '0.5px solid var(--color-ec-border)',
-        backgroundColor: 'var(--color-ec-bg-sidebar)',
-        flexShrink: 0,
-      }}>
-        <div className="flex items-center gap-3">
-          <h1 style={{
-            fontFamily: 'var(--color-ec-serif)',
-            fontSize: 20,
-            fontWeight: 600,
-            color: 'var(--color-ec-text-high)',
-            letterSpacing: '-0.3px',
-          }}>Backtester</h1>
-          <span style={{
-            fontSize: 9,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.12em',
-            padding: '2px 7px',
-            borderRadius: 3,
-            backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 15%, transparent)',
-            color: 'var(--color-ec-copper)',
-            fontFamily: 'var(--color-ec-sans)',
-          }}>
-            VectorBT
-          </span>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden', backgroundColor: 'var(--color-ec-bg-base)' }}>
+
+      {/* Modo Builder — pantalla completa */}
+      {mode === 'builder' ? (
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <InlineStrategyBuilder
+            onBack={() => setMode('config')}
+            onTest={async (draft) => {
+              setMode('config');
+              await handleRunWithDraft(draft);
+            }}
+            onSave={async (draft) => {
+              await handleSaveDraft(draft);
+            }}
+          />
         </div>
-      </header>
-
-      <div style={{
-        display: 'flex',
-        flex: 1,
-        overflow: 'hidden',
-        minHeight: 0,
-      }}>
-        <aside style={{
-          width: mode === 'builder' ? 360 : 280,
-          flexShrink: 0,
-          borderRight: '0.5px solid var(--color-ec-border)',
-          backgroundColor: 'var(--color-ec-bg-sidebar)',
-          overflowY: mode === 'builder' ? 'hidden' : 'auto',
-          overflowX: 'hidden',
-          padding: mode === 'builder' ? 0 : '16px 12px',
-          paddingBottom: mode === 'builder' ? 0 : 24,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: mode === 'builder' ? 0 : 16,
-          scrollbarWidth: 'none',
-        }}>
-          {mode === 'builder' ? (
-            <InlineStrategyBuilder
-              onBack={() => setMode('config')}
-              onTest={async (draft) => {
-                setDraftStrategy(draft);
-                setMode('config');
-                await handleRunWithDraft(draft);
-              }}
-              onSave={handleSaveDraft}
-            />
-          ) : (
-            <>
-              <button
-                onClick={() => setMode('builder')}
-                style={{
-                  width: '100%',
-                  padding: '8px 0',
-                  borderRadius: 5,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  letterSpacing: 1.2,
-                  textTransform: 'uppercase',
-                  cursor: 'pointer',
-                  border: '0.5px solid var(--color-ec-copper)',
-                  backgroundColor: 'transparent',
-                  color: 'var(--color-ec-copper)',
-                  fontFamily: 'var(--color-ec-sans)',
-                }}
-              >
-                + Nueva Estrategia
-              </button>
-
-              <BacktestPanel onRun={handleRun} onParamsChange={handlePanelParamsChange} loading={loading} isDarkMode={isDarkMode} />
-
-              {result && (
-                <DaySelector
-                  days={result.day_results}
-                  selectedIdx={selectedDay}
-                  onSelect={setSelectedDay}
-                />
-              )}
-            </>
-          )}
-        </aside>
-
-        <main style={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          padding: '20px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
-          backgroundColor: 'var(--color-ec-bg-base)',
-          minWidth: 0,
-        }}>
-          {error && (
-            <div className="bg-ec-loss/10 border border-ec-loss/30 rounded-lg p-4">
-              <p className="text-sm text-ec-loss">{error}</p>
+      ) : (
+        /* Layout normal — dos paneles */
+        <>
+          <header style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 20px',
+            height: 52,
+            borderBottom: '0.5px solid var(--color-ec-border)',
+            backgroundColor: 'var(--color-ec-bg-sidebar)',
+            flexShrink: 0,
+          }}>
+            <div className="flex items-center gap-3">
+              <h1 style={{
+                fontFamily: 'var(--color-ec-serif)',
+                fontSize: 20,
+                fontWeight: 600,
+                color: 'var(--color-ec-text-high)',
+                letterSpacing: '-0.3px',
+              }}>Backtester</h1>
+              <span style={{
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                padding: '2px 7px',
+                borderRadius: 3,
+                backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 15%, transparent)',
+                color: 'var(--color-ec-copper)',
+                fontFamily: 'var(--color-ec-sans)',
+              }}>
+                VectorBT
+              </span>
             </div>
-          )}
+          </header>
 
-          {!result && !loading && !error && (
-            <div style={{
+          <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            {/* Panel izquierdo */}
+            <aside style={{
+              width: 280,
+              flexShrink: 0,
+              borderRight: '0.5px solid var(--color-ec-border)',
+              backgroundColor: 'var(--color-ec-bg-sidebar)',
+              overflowY: 'auto',
+              overflowX: 'hidden',
               display: 'flex',
               flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flex: 1,
-              gap: 12,
-              color: 'var(--color-ec-text-muted)',
+              scrollbarWidth: 'none',
             }}>
-              <p style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-muted)',
-                textAlign: 'center',
-              }}>
-                Selecciona un dataset y una estrategia para ejecutar el backtest
-              </p>
-            </div>
-          )}
-
-          {loading && (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-center space-y-3">
-                <svg className="animate-spin h-8 w-8 text-[var(--accent)] mx-auto" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                <p className="text-sm text-[var(--muted)]">
-                  Ejecutando backtest con VectorBT...
-                </p>
+              <div style={{ padding: '12px 12px 8px 12px', borderBottom: '0.5px solid var(--color-ec-border)' }}>
+                <button
+                  onClick={() => setMode('builder')}
+                  style={{
+                    width: '100%',
+                    padding: '8px 0',
+                    borderRadius: 5,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: 1.2,
+                    textTransform: 'uppercase',
+                    cursor: 'pointer',
+                    border: '0.5px solid var(--color-ec-copper)',
+                    backgroundColor: 'transparent',
+                    color: 'var(--color-ec-copper)',
+                    fontFamily: 'var(--color-ec-sans)',
+                  }}
+                >
+                  + Nueva Estrategia
+                </button>
               </div>
-            </div>
-          )}
 
-          {result && (
-            <>
-              {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3) */}
-              <div className="flex gap-4 items-stretch">
-                <div className="w-2/3">
-                  <EquityCurveTab
-                      globalEquity={result.global_equity}
-                      globalDrawdown={result.global_drawdown}
-                      trades={result.trades}
-                      metrics={result.aggregate_metrics}
-                      initCash={initCashRef.current}
-                      riskR={riskRRef.current}
-                      monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
-                      isDarkMode={isDarkMode}
-                    />
+              <div style={{ padding: '16px 12px 24px 12px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <BacktestPanel
+                  onRun={handleRun}
+                  onParamsChange={handlePanelParamsChange}
+                  loading={loading}
+                  isDarkMode={isDarkMode}
+                />
+                {result && (
+                  <DaySelector
+                    days={result.day_results}
+                    selectedIdx={selectedDay}
+                    onSelect={setSelectedDay}
+                  />
+                )}
+              </div>
+            </aside>
+
+            {/* Panel derecho */}
+            <main style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              padding: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+              backgroundColor: 'var(--color-ec-bg-base)',
+              minWidth: 0,
+            }}>
+              {error && (
+                <div className="bg-ec-loss/10 border border-ec-loss/30 rounded-lg p-4">
+                  <p className="text-sm text-ec-loss">{error}</p>
                 </div>
-                <div className="w-1/3 flex flex-col px-1 h-[675px]">
-                  <div>
-                    <MetricsCard metrics={result.aggregate_metrics} vertical />
-                    
-                    <div className="flex flex-col items-center justify-center gap-2 py-3 px-1">
-                    <button
-                      style={{
-                        width: '100%',
-                        padding: '7px 0',
-                        backgroundColor: 'var(--color-ec-bg-surface)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5,
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '1.2px',
-                        color: 'var(--color-ec-text-secondary)',
-                        cursor: 'pointer',
-                        transition: 'color 150ms ease',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
-                    >
-                      Guardar estrategia
-                    </button>
-                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="w-3 h-3 rounded-sm border border-[var(--color-ec-border)]"
+              )}
+
+              {!result && !loading && !error && (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '100%',
+                  gap: 12,
+                  color: 'var(--color-ec-text-muted)',
+                }}>
+                  <div style={{ fontSize: 32 }}>◎</div>
+                  <div style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    textAlign: 'center',
+                    maxWidth: 300,
+                    lineHeight: 1.6,
+                    fontFamily: 'var(--color-ec-sans)',
+                    color: 'var(--color-ec-text-muted)',
+                  }}>
+                    Selecciona un dataset y una estrategia<br />para ejecutar el backtest
+                  </div>
+                </div>
+              )}
+
+              {loading && (
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-center space-y-3">
+                    <svg className="animate-spin h-8 w-8 text-[var(--accent)] mx-auto" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <p className="text-sm text-[var(--muted)]">
+                      Ejecutando backtest con VectorBT...
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {result && (
+                <>
+                  {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3) */}
+                  <div className="flex gap-4 items-stretch">
+                    <div className="w-2/3">
+                      <EquityCurveTab
+                        globalEquity={result.global_equity}
+                        globalDrawdown={result.global_drawdown}
+                        trades={result.trades}
+                        metrics={result.aggregate_metrics}
+                        initCash={initCashRef.current}
+                        riskR={riskRRef.current}
+                        monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
+                        isDarkMode={isDarkMode}
                       />
-                      <span style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 10,
-                        fontWeight: 500,
-                        color: 'var(--color-ec-text-muted)',
-                        letterSpacing: '0.05em',
-                      }}>
-                        Enviar con configuración del What if
-                      </span>
-                    </label>
+                    </div>
+                    <div className="w-1/3 flex flex-col px-1 h-[675px]">
+                      <div>
+                        <MetricsCard metrics={result.aggregate_metrics} vertical />
+                        <div className="flex flex-col items-center justify-center gap-2 py-3 px-1">
+                          <button
+                            style={{
+                              width: '100%',
+                              padding: '7px 0',
+                              backgroundColor: 'var(--color-ec-bg-surface)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              borderRadius: 5,
+                              fontFamily: 'var(--color-ec-sans)',
+                              fontSize: 11,
+                              fontWeight: 600,
+                              textTransform: 'uppercase',
+                              letterSpacing: '1.2px',
+                              color: 'var(--color-ec-text-secondary)',
+                              cursor: 'pointer',
+                              transition: 'color 150ms ease',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
+                          >
+                            Guardar estrategia
+                          </button>
+                          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="w-3 h-3 rounded-sm border border-[var(--color-ec-border)]"
+                            />
+                            <span style={{
+                              fontFamily: 'var(--color-ec-sans)',
+                              fontSize: 10,
+                              fontWeight: 500,
+                              color: 'var(--color-ec-text-muted)',
+                              letterSpacing: '0.05em',
+                            }}>
+                              Enviar con configuración del What if
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="h-[290px] w-full mt-auto mb-[-14px]">
+                        <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
+                      </div>
+                    </div>
                   </div>
-                  </div>
-                  
-                  <div className="h-[290px] w-full mt-auto mb-[-14px]">
-                    <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
-                  </div>
-                </div>
-              </div>
 
-              <ResultsTabs
-                result={result}
-                initCash={initCashRef.current}
-                riskR={riskRRef.current}
-                dayCandles={dayCandles}
-                candlesLoading={candlesLoading}
-                currentTrades={currentTrades || []}
-                currentEquity={currentEquity?.equity || []}
-                isDarkMode={isDarkMode}
-                strategyId={strategyIdRef.current}
-                datasetId={datasetIdRef.current}
-                backtestParams={backtestParamsRef.current}
-              />
-            </>
-          )}
-
-        </main>
-      </div>
+                  <ResultsTabs
+                    result={result}
+                    initCash={initCashRef.current}
+                    riskR={riskRRef.current}
+                    dayCandles={dayCandles}
+                    candlesLoading={candlesLoading}
+                    currentTrades={currentTrades || []}
+                    currentEquity={currentEquity?.equity || []}
+                    isDarkMode={isDarkMode}
+                    strategyId={strategyIdRef.current}
+                    datasetId={datasetIdRef.current}
+                    backtestParams={backtestParamsRef.current}
+                  />
+                </>
+              )}
+            </main>
+          </div>
+        </>
+      )}
     </div>
   );
 }

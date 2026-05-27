@@ -49,6 +49,14 @@ export default function InlineStrategyBuilder({ onTest, onSave, onBack }: Props)
     } catch {}
   }, []);
 
+  const resetForm = () => {
+    setName("Nueva Estrategia");
+    setBias("long");
+    setEntryLogic(initialEntryLogic);
+    setExitLogic(initialExitLogic);
+    setRiskManagement(initialRiskManagement);
+  };
+
   const buildDraft = (): Draft => ({
     id: `draft_${Date.now()}`,
     name,
@@ -70,7 +78,9 @@ export default function InlineStrategyBuilder({ onTest, onSave, onBack }: Props)
   };
 
   const handleSave = () => {
-    onSave(buildDraft());
+    const draft = buildDraft();
+    onSave(draft);
+    resetForm();
   };
 
   const handleLoadDraft = (draft: Draft) => {
