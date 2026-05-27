@@ -22,6 +22,7 @@ export default function Home() {
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -331,6 +332,7 @@ export default function Home() {
                 <BacktestPanel
                   onRun={handleRun}
                   onParamsChange={handlePanelParamsChange}
+                  refreshTrigger={strategiesRefresh}
                   loading={loading}
                   isDarkMode={isDarkMode}
                 />
@@ -533,6 +535,7 @@ export default function Home() {
                             exit_logic: draftStrategy.exit_logic,
                             risk_management: draftStrategy.risk_management,
                           });
+                          setStrategiesRefresh((prev) => prev + 1);
                           setShowSaveModal(false);
                           setDraftStrategy(null);
                         }}

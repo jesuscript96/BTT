@@ -25,6 +25,7 @@ export interface BacktestPanelParams {
 }
 
 interface BacktestPanelProps {
+  refreshTrigger?: number;
   onRun: (params: {
     dataset_id: string;
     strategy_id: string;
@@ -50,7 +51,7 @@ interface BacktestPanelProps {
   isDarkMode?: boolean;
 }
 
-export default function BacktestPanel({ onRun, onParamsChange, loading, isDarkMode = false }: BacktestPanelProps) {
+export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, loading, isDarkMode = false }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedDataset, setSelectedDataset] = useState("");
@@ -116,6 +117,13 @@ export default function BacktestPanel({ onRun, onParamsChange, loading, isDarkMo
       if (ds.max_date) setEndDate(ds.max_date);
     }
   }, [selectedDataset, datasets]);
+
+  useEffect(() => {
+    if (!refreshTrigger) return;
+    fetchStrategies()
+      .then((s) => setStrategies(s))
+      .catch((e) => console.error("Error refreshing strategies:", e));
+  }, [refreshTrigger]);
 
   useEffect(() => {
     onParamsChange?.({
