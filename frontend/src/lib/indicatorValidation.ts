@@ -23,15 +23,18 @@ const VOLATILITY: IndicatorType[] = [
 
 const VOLUME: IndicatorType[] = [
     IndicatorType.OBV, IndicatorType.VOLUME, IndicatorType.RVOL,
-    IndicatorType.AVOLUME, IndicatorType.SMA_VOLUME
+    IndicatorType.AVOLUME, IndicatorType.SMA_VOLUME,
+    IndicatorType.YESTERDAY_VOLUME
 ];
 
 const PRICE_VARIABLES: IndicatorType[] = [
     IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
     IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
     IndicatorType.PMH, IndicatorType.PML,
+    IndicatorType.PM_OPEN, IndicatorType.AM_OPEN,
     IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW, IndicatorType.RTH_OPEN,
     IndicatorType.Y_HIGH, IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
     IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
 ];
 
@@ -41,7 +44,9 @@ const BEHAVIOR_PATTERNS: IndicatorType[] = [
     IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS,
     IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
     IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
-    IndicatorType.HEIKIN_ASHI
+    IndicatorType.HEIKIN_ASHI,
+    IndicatorType.CANDLE_RANGE_PCT,
+    IndicatorType.ELAPSED_TIME_LAST_HIGH
 ];
 
 const TIME_AND_OTHERS: IndicatorType[] = [
@@ -50,11 +55,13 @@ const TIME_AND_OTHERS: IndicatorType[] = [
     IndicatorType.RET_PCT_PM, IndicatorType.RET_PCT_RTH
 ];
 
-// Consecutives-only subset (only Fixed Value as target)
-const CONSECUTIVES: IndicatorType[] = [
+// Consecutives + standalone-only subset (only Fixed Value as target)
+const STANDALONE: IndicatorType[] = [
     IndicatorType.CONSECUTIVE_HIGHER_HIGHS, IndicatorType.CONSECUTIVE_LOWER_LOWS,
     IndicatorType.CONSECUTIVE_RED_CANDLES, IndicatorType.CONSECUTIVE_GREEN_CANDLES,
-    IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS
+    IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS,
+    IndicatorType.CANDLE_RANGE_PCT,
+    IndicatorType.ELAPSED_TIME_LAST_HIGH
 ];
 
 // Overlay-compatible: indicators that live on the price axis
@@ -116,8 +123,8 @@ export function getAllowedTargets(source: IndicatorType, isDistance: boolean = f
         allowed = []; // OBV, RVOL, Accumulated Volume → only Fixed Value
     }
 
-    // ── Consecutives → only Fixed Value ─────────────────────
-    else if (CONSECUTIVES.includes(source)) {
+    // ── Standalone (Consecutives, Candle Range%, Elapsed Time) → only Fixed Value
+    else if (STANDALONE.includes(source)) {
         allowed = [];
     }
 
@@ -146,6 +153,25 @@ export function getAllowedTargets(source: IndicatorType, isDistance: boolean = f
         allowed = [...OVERLAY_TARGETS];
     }
 
+    // ── PM Open: targets Yesterday + High/Low of last X days ──
+    else if (source === IndicatorType.PM_OPEN) {
+        allowed = [
+            IndicatorType.Y_HIGH, IndicatorType.Y_LOW,
+            IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+            IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
+        ];
+    }
+
+    // ── AM Open: targets PM + RTH + Yesterday + Indicators ──
+    else if (source === IndicatorType.AM_OPEN) {
+        allowed = [
+            IndicatorType.PMH, IndicatorType.PML, IndicatorType.PM_OPEN,
+            IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+            IndicatorType.Y_HIGH, IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+            ...TREND_MA
+        ];
+    }
+
     // ── Price Variables (Bar Close, PMH, Y_High, Max X Days, etc.) ─
     else if (PRICE_VARIABLES.includes(source)) {
         allowed = [...OVERLAY_TARGETS];
@@ -161,7 +187,7 @@ export function getAllowedTargets(source: IndicatorType, isDistance: boolean = f
         const DISTANCE_EXCLUDE: IndicatorType[] = [
             ...MOMENTUM, ...VOLUME, ...TIME_AND_OTHERS,
             IndicatorType.ATR, IndicatorType.ADX,
-            IndicatorType.HEIKIN_ASHI, ...CONSECUTIVES
+            IndicatorType.HEIKIN_ASHI, ...STANDALONE
         ];
         allowed = allowed.filter(a => !DISTANCE_EXCLUDE.includes(a));
     }
@@ -181,5 +207,5 @@ export function getAllowedTargets(source: IndicatorType, isDistance: boolean = f
 export const DISTANCE_SOURCE_EXCLUDES: IndicatorType[] = [
     ...MOMENTUM, ...VOLUME, ...TIME_AND_OTHERS,
     IndicatorType.ATR, IndicatorType.ADX,
-    IndicatorType.HEIKIN_ASHI, ...CONSECUTIVES
+    IndicatorType.HEIKIN_ASHI, ...STANDALONE
 ];
