@@ -46,6 +46,7 @@ export enum IndicatorType {
     DONCHIAN = "Donchian",
     BOLLINGER_BANDS = "Bollinger Bands",
     ACCUMULATED_VOLUME = "Accumulated Volume",
+    YESTERDAY_ACCUMULATED_VOLUME = "Yesterday Accumulated Volume",
     YESTERDAY_VOLUME = "Yesterday Volume",
     RVOL = "RVOL",
     VOLUME = "Volume",
@@ -114,6 +115,8 @@ export interface IndicatorConfig {
     time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
     days_lookback?: number;    // "Max/Min of last X days"
     calc_on_heikin?: boolean;
+    ap_session?: "ap.PM" | "ap.RTH" | "ap.AM";
+    elapsed_minutes?: number;
 
     // Added specific parameters for new indicator rules
     macd_line?: "Signal" | "MACD Line" | "Histogram";

@@ -114,7 +114,8 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.BOLLINGER_BANDS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // Volume — standalone o valor fijo
-    [IndicatorType.ACCUMULATED_VOLUME]: [],
+    [IndicatorType.ACCUMULATED_VOLUME]: [IndicatorType.YESTERDAY_ACCUMULATED_VOLUME],
+    [IndicatorType.YESTERDAY_ACCUMULATED_VOLUME]: [],
     [IndicatorType.YESTERDAY_VOLUME]: [],
     [IndicatorType.RVOL]: [],
     [IndicatorType.VOLUME]: [IndicatorType.VOLUME],

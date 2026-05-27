@@ -27,6 +27,11 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.HIGH_X_DAYS:
         case IndicatorType.LOW_X_DAYS:
             return { days_lookback: 5 };
+        case IndicatorType.PREVIOUS_MAX:
+        case IndicatorType.PREVIOUS_MIN:
+            return { ap_session: "ap.RTH" };
+        case IndicatorType.ELAPSED_TIME_LAST_HIGH:
+            return { elapsed_minutes: 20 };
         case IndicatorType.OPENING_RANGE_PLUS:
         case IndicatorType.OPENING_RANGE_MINUS:
         case IndicatorType.OPENING_RANGE_AM_PLUS:
@@ -58,7 +63,8 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
         IndicatorType.DONCHIAN, IndicatorType.BOLLINGER_BANDS,
-        IndicatorType.ACCUMULATED_VOLUME, IndicatorType.YESTERDAY_VOLUME,
+        IndicatorType.ACCUMULATED_VOLUME, IndicatorType.YESTERDAY_ACCUMULATED_VOLUME,
+        IndicatorType.YESTERDAY_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
     ],
 };
@@ -118,6 +124,7 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.DONCHIAN]: "Donchian",
     [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
     [IndicatorType.ACCUMULATED_VOLUME]: "Accum. Volume",
+    [IndicatorType.YESTERDAY_ACCUMULATED_VOLUME]: "Yesterday Accum. Volume",
     [IndicatorType.YESTERDAY_VOLUME]: "Yesterday Volume",
     [IndicatorType.RVOL]: "RVOL",
     [IndicatorType.VOLUME]: "Volume",
@@ -282,6 +289,61 @@ export const IndicatorParams = ({
                                     title="Number of Days Back"
                                 />
                                 <span className="text-[10px] text-muted-foreground whitespace-nowrap">days</span>
+                            </div>
+                        );
+                    case IndicatorType.PREVIOUS_MAX:
+                    case IndicatorType.PREVIOUS_MIN:
+                        return (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700,
+                                    color: 'var(--color-ec-text-muted)',
+                                    textTransform: 'uppercase', letterSpacing: 1 }}>
+                                    Desde:
+                                </span>
+                                <select
+                                    value={value.ap_session || "ap.RTH"}
+                                    onChange={(e) => onChange({ ...value, ap_session: e.target.value as "ap.PM" | "ap.RTH" | "ap.AM" })}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        padding: '3px 6px',
+                                        fontSize: 11,
+                                        color: 'var(--color-ec-copper)',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    <option value="ap.PM">ap.PM</option>
+                                    <option value="ap.RTH">ap.RTH</option>
+                                    <option value="ap.AM">ap.AM</option>
+                                </select>
+                            </div>
+                        );
+                    case IndicatorType.ELAPSED_TIME_LAST_HIGH:
+                        return (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700,
+                                    color: 'var(--color-ec-text-muted)',
+                                    textTransform: 'uppercase', letterSpacing: 1 }}>
+                                    Mins:
+                                </span>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={value.elapsed_minutes || 20}
+                                    onChange={(e) => onChange({ ...value, elapsed_minutes: Number(e.target.value) })}
+                                    style={{
+                                        width: 50,
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        padding: '3px 6px',
+                                        fontSize: 11,
+                                        color: 'var(--color-ec-text-primary)',
+                                        textAlign: 'center',
+                                        outline: 'none',
+                                    }}
+                                />
                             </div>
                         );
                     default:
