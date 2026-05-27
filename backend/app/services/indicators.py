@@ -535,7 +535,7 @@ def compute_indicator(
         name, close, high, low, open_, volume,
         period, period2, period3, std_dev, multiplier,
         days_lookback, time_hour, time_minute, time_condition,
-        daily_stats, df,
+        band_line, orb_minutes, daily_stats, df,
     )
 
     if offset and offset != 0:
@@ -563,6 +563,8 @@ def _compute_raw(
     time_hour: int | None,
     time_minute: int | None,
     time_condition: str | None,
+    band_line: str | None,
+    orb_minutes: int | None,
     daily_stats: dict | None,
     df: pd.DataFrame,
 ) -> pd.Series:
