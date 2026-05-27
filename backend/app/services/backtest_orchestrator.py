@@ -22,7 +22,8 @@ logger = logging.getLogger("backtester.orchestrator")
 
 class BacktestRequest(BaseModel):
     dataset_id: str
-    strategy_id: str
+    strategy_id: str | None = None
+    strategy_definition: dict | None = None
     init_cash: float = 10000.0
     risk_r: float = 100.0
     risk_type: str = "FIXED"
@@ -77,12 +78,24 @@ def generate_mock_candles(ticker: str, date: str) -> dict:
 
 def run_backtest_orchestrator(req: BacktestRequest) -> dict:
     t0 = time.time()
-    logger.info(f"BACKTEST START dataset={req.dataset_id} strategy={req.strategy_id}")
+    logger.info(f"BACKTEST START dataset={req.dataset_id} strategy={req.strategy_id or 'inline'}")
 
     # ── STRATEGY LOAD + VALIDATION ──
-    strategy = get_strategy(req.strategy_id)
-    if not strategy:
-        raise HTTPException(status_code=404, detail="Strategy not found")
+    if req.strategy_id:
+        strategy = get_strategy(req.strategy_id)
+        if not strategy:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+    elif req.strategy_definition:
+        strategy = {
+            "id": "draft",
+            "name": req.strategy_definition.get("name", "Draft"),
+            "definition": req.strategy_definition,
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="strategy_id or strategy_definition required",
+        )
 
     if req.size_by_sl:
         rm = strategy["definition"].get("risk_management", {})

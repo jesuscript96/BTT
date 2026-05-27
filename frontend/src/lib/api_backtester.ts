@@ -213,10 +213,10 @@ export async function runBacktest(params: {
   strategy_id: string;
   init_cash: number;
   risk_r: number;
-  risk_type?: string;     // "FIXED" or "PERCENT"
-  size_by_sl?: boolean;   // true if sizing by stop loss distance
+  risk_type?: string;
+  size_by_sl?: boolean;
   fees: number;
-  fee_type?: string;      // "PERCENT" or "FLAT"
+  fee_type?: string;
   slippage: number;
   start_date?: string;
   end_date?: string;
@@ -225,6 +225,30 @@ export async function runBacktest(params: {
   custom_end_time?: string;
   locates_cost?: number;
   look_ahead_prevention?: boolean;
+}): Promise<BacktestResult> {
+  const { data } = await api.post("/backtest", params);
+  return data;
+}
+
+export async function runBacktestWithDefinition(params: {
+  dataset_id: string;
+  strategy_definition: Record<string, unknown>;
+  init_cash: number;
+  risk_r: number;
+  risk_type?: string;
+  fixed_ratio_delta?: number;
+  size_by_sl?: boolean;
+  fees: number;
+  fee_type?: string;
+  slippage: number;
+  start_date?: string;
+  end_date?: string;
+  market_sessions?: string[];
+  custom_start_time?: string;
+  custom_end_time?: string;
+  locates_cost?: number;
+  look_ahead_prevention?: boolean;
+  monthly_expenses?: number;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
   return data;

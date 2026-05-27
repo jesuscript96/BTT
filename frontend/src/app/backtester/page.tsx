@@ -1,20 +1,28 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import BacktestPanel from "@/components/backtester/BacktestPanel";
+import BacktestPanel, { type BacktestPanelParams } from "@/components/backtester/BacktestPanel";
+import InlineStrategyBuilder, { type Draft } from "@/components/backtester/InlineStrategyBuilder";
 import MetricsCard from "@/components/backtester/MetricsCard";
 import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
 import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
+import { createStrategy } from "@/lib/api";
 import {
   runBacktest,
+  runBacktestWithDefinition,
   fetchDayCandles,
   type BacktestResult,
   type DayCandles,
 } from "@/lib/api_backtester";
 
 export default function Home() {
+  const [mode, setMode] = useState<"config" | "builder">("config");
+  const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,9 +33,89 @@ export default function Home() {
   const datasetIdRef = useRef("");
   const strategyIdRef = useRef("");
   const backtestParamsRef = useRef<Record<string, unknown>>({});
+  const panelParamsRef = useRef<BacktestPanelParams | null>(null);
+  const handlePanelParamsChange = useCallback((params: BacktestPanelParams) => {
+    panelParamsRef.current = params;
+  }, []);
 
   const [dayCandles, setDayCandles] = useState<DayCandles | null>(null);
   const [candlesLoading, setCandlesLoading] = useState(false);
+
+  const handleRunWithDraft = async (draft: Draft) => {
+    const p = panelParamsRef.current;
+    if (!p?.dataset_id) {
+      setError("Selecciona un dataset en el panel de configuración antes de probar el draft.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setSelectedDay(0);
+    setDayCandles(null);
+    initCashRef.current = p.init_cash;
+    riskRRef.current = p.risk_r;
+    datasetIdRef.current = p.dataset_id;
+    strategyIdRef.current = "draft";
+    backtestParamsRef.current = {
+      init_cash: p.init_cash,
+      risk_r: p.risk_r,
+      fees: p.fees,
+      slippage: p.slippage,
+      start_date: p.start_date,
+      end_date: p.end_date,
+      market_sessions: p.market_sessions,
+      monthly_expenses: p.monthly_expenses,
+    };
+
+    try {
+      const data = await runBacktestWithDefinition({
+        dataset_id: p.dataset_id,
+        strategy_definition: {
+          name: draft.name,
+          bias: draft.bias,
+          entry_logic: draft.entry_logic,
+          exit_logic: draft.exit_logic,
+          risk_management: draft.risk_management,
+        },
+        init_cash: p.init_cash,
+        risk_r: p.risk_r,
+        risk_type: p.risk_type,
+        fixed_ratio_delta: p.fixed_ratio_delta,
+        size_by_sl: p.size_by_sl,
+        fees: p.fees,
+        fee_type: p.fee_type,
+        slippage: p.slippage,
+        start_date: p.start_date || undefined,
+        end_date: p.end_date || undefined,
+        market_sessions: p.market_sessions,
+        custom_start_time: p.custom_start_time || undefined,
+        custom_end_time: p.custom_end_time || undefined,
+        locates_cost: p.locates_cost,
+        monthly_expenses: p.monthly_expenses,
+        look_ahead_prevention: p.look_ahead_prevention,
+      });
+      setResult(data);
+    } catch (err: unknown) {
+      let msg = "Error desconocido";
+      if (err && typeof err === "object" && "response" in err) {
+        const axiosErr = err as { response?: { data?: { detail?: string } } };
+        msg = axiosErr.response?.data?.detail || "Error del servidor";
+      } else if (err && typeof err === "object" && "message" in err) {
+        const errMsg = (err as { message: string }).message;
+        if (errMsg.includes("timeout")) {
+          msg = "Timeout: el backtest tardo demasiado. Prueba con un dataset mas pequeno.";
+        } else if (errMsg.includes("Network")) {
+          msg = "Error de red: verifica que el backend este corriendo.";
+        } else {
+          msg = errMsg;
+        }
+      }
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleRun = async (params: {
     dataset_id: string;
@@ -48,6 +136,7 @@ export default function Home() {
     setResult(null);
     setSelectedDay(0);
     setDayCandles(null);
+    setDraftStrategy(null);
     initCashRef.current = params.init_cash;
     riskRRef.current = params.risk_r;
     datasetIdRef.current = params.dataset_id;
@@ -153,215 +242,324 @@ export default function Home() {
   );
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      height: '100dvh',
-      backgroundColor: 'var(--color-ec-bg-base)',
-      overflow: 'hidden',
-    }}>
-      <header style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 20px',
-        height: 52,
-        borderBottom: '0.5px solid var(--color-ec-border)',
-        backgroundColor: 'var(--color-ec-bg-sidebar)',
-        flexShrink: 0,
-      }}>
-        <div className="flex items-center gap-3">
-          <h1 style={{
-            fontFamily: 'var(--color-ec-serif)',
-            fontSize: 20,
-            fontWeight: 600,
-            color: 'var(--color-ec-text-high)',
-            letterSpacing: '-0.3px',
-          }}>Backtester</h1>
-          <span style={{
-            fontSize: 9,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.12em',
-            padding: '2px 7px',
-            borderRadius: 3,
-            backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 15%, transparent)',
-            color: 'var(--color-ec-copper)',
-            fontFamily: 'var(--color-ec-sans)',
-          }}>
-            VectorBT
-          </span>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden', backgroundColor: 'var(--color-ec-bg-base)' }}>
+
+      {/* Modo Builder — pantalla completa */}
+      {mode === 'builder' ? (
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <InlineStrategyBuilder
+            onBack={() => setMode('config')}
+            onTest={async (draft) => {
+              setDraftStrategy(draft);
+              setMode('config');
+              await handleRunWithDraft(draft);
+            }}
+          />
         </div>
-      </header>
-
-      <div style={{
-        display: 'flex',
-        flex: 1,
-        overflow: 'hidden',
-        minHeight: 0,
-      }}>
-        <aside style={{
-          width: 280,
-          flexShrink: 0,
-          borderRight: '0.5px solid var(--color-ec-border)',
-          backgroundColor: 'var(--color-ec-bg-sidebar)',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          padding: '16px 12px',
-          paddingBottom: 24,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
-          scrollbarWidth: 'none',
-        }}>
-          <BacktestPanel onRun={handleRun} loading={loading} isDarkMode={isDarkMode} />
-
-          {result && (
-            <DaySelector
-              days={result.day_results}
-              selectedIdx={selectedDay}
-              onSelect={setSelectedDay}
-            />
-          )}
-        </aside>
-
-        <main style={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          padding: '20px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 16,
-          backgroundColor: 'var(--color-ec-bg-base)',
-          minWidth: 0,
-        }}>
-          {error && (
-            <div className="bg-ec-loss/10 border border-ec-loss/30 rounded-lg p-4">
-              <p className="text-sm text-ec-loss">{error}</p>
+      ) : (
+        /* Layout normal — dos paneles */
+        <>
+          <header style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 20px',
+            height: 52,
+            borderBottom: '0.5px solid var(--color-ec-border)',
+            backgroundColor: 'var(--color-ec-bg-sidebar)',
+            flexShrink: 0,
+          }}>
+            <div className="flex items-center gap-3">
+              <h1 style={{
+                fontFamily: 'var(--color-ec-serif)',
+                fontSize: 20,
+                fontWeight: 600,
+                color: 'var(--color-ec-text-high)',
+                letterSpacing: '-0.3px',
+              }}>Backtester</h1>
+              <span style={{
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                padding: '2px 7px',
+                borderRadius: 3,
+                backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 15%, transparent)',
+                color: 'var(--color-ec-copper)',
+                fontFamily: 'var(--color-ec-sans)',
+              }}>
+                VectorBT
+              </span>
             </div>
-          )}
+          </header>
 
-          {!result && !loading && !error && (
-            <div style={{
+          <div style={{ display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            {/* Panel izquierdo */}
+            <aside style={{
+              width: 280,
+              flexShrink: 0,
+              borderRight: '0.5px solid var(--color-ec-border)',
+              backgroundColor: 'var(--color-ec-bg-sidebar)',
+              overflowY: 'auto',
+              overflowX: 'hidden',
               display: 'flex',
               flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flex: 1,
-              gap: 12,
-              color: 'var(--color-ec-text-muted)',
+              scrollbarWidth: 'none',
             }}>
-              <p style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-muted)',
-                textAlign: 'center',
-              }}>
-                Selecciona un dataset y una estrategia para ejecutar el backtest
-              </p>
-            </div>
-          )}
-
-          {loading && (
-            <div className="flex items-center justify-center h-64">
-              <div className="text-center space-y-3">
-                <svg className="animate-spin h-8 w-8 text-[var(--accent)] mx-auto" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                <p className="text-sm text-[var(--muted)]">
-                  Ejecutando backtest con VectorBT...
-                </p>
+              <div style={{ padding: '12px 12px 8px 12px', borderBottom: '0.5px solid var(--color-ec-border)' }}>
+                <button
+                  onClick={() => setMode('builder')}
+                  style={{
+                    width: '100%',
+                    padding: '8px 0',
+                    borderRadius: 5,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: 1.2,
+                    textTransform: 'uppercase',
+                    cursor: 'pointer',
+                    border: '0.5px solid var(--color-ec-copper)',
+                    backgroundColor: 'transparent',
+                    color: 'var(--color-ec-copper)',
+                    fontFamily: 'var(--color-ec-sans)',
+                  }}
+                >
+                  + Nueva Estrategia
+                </button>
               </div>
-            </div>
-          )}
 
-          {result && (
-            <>
-              {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3) */}
-              <div className="flex gap-4 items-stretch">
-                <div className="w-2/3">
-                  <EquityCurveTab
-                      globalEquity={result.global_equity}
-                      globalDrawdown={result.global_drawdown}
-                      trades={result.trades}
-                      metrics={result.aggregate_metrics}
-                      initCash={initCashRef.current}
-                      riskR={riskRRef.current}
-                      monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
-                      isDarkMode={isDarkMode}
-                    />
+              <div style={{ padding: '16px 12px 24px 12px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <BacktestPanel
+                  onRun={handleRun}
+                  onParamsChange={handlePanelParamsChange}
+                  refreshTrigger={strategiesRefresh}
+                  loading={loading}
+                  isDarkMode={isDarkMode}
+                />
+                {result && (
+                  <DaySelector
+                    days={result.day_results}
+                    selectedIdx={selectedDay}
+                    onSelect={setSelectedDay}
+                  />
+                )}
+              </div>
+            </aside>
+
+            {/* Panel derecho */}
+            <main style={{
+              flex: 1,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              padding: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+              backgroundColor: 'var(--color-ec-bg-base)',
+              minWidth: 0,
+            }}>
+              {error && (
+                <div className="bg-ec-loss/10 border border-ec-loss/30 rounded-lg p-4">
+                  <p className="text-sm text-ec-loss">{error}</p>
                 </div>
-                <div className="w-1/3 flex flex-col px-1 h-[675px]">
-                  <div>
-                    <MetricsCard metrics={result.aggregate_metrics} vertical />
-                    
-                    <div className="flex flex-col items-center justify-center gap-2 py-3 px-1">
-                    <button
+              )}
+
+              {!result && !loading && !error && (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '100%',
+                  gap: 12,
+                  color: 'var(--color-ec-text-muted)',
+                }}>
+                  <div style={{ fontSize: 32 }}>◎</div>
+                  <div style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    textAlign: 'center',
+                    maxWidth: 300,
+                    lineHeight: 1.6,
+                    fontFamily: 'var(--color-ec-sans)',
+                    color: 'var(--color-ec-text-muted)',
+                  }}>
+                    Selecciona un dataset y una estrategia<br />para ejecutar el backtest
+                  </div>
+                </div>
+              )}
+
+              {loading && (
+                <div className="flex items-center justify-center h-64">
+                  <div className="text-center space-y-3">
+                    <svg className="animate-spin h-8 w-8 text-[var(--accent)] mx-auto" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <p className="text-sm text-[var(--muted)]">
+                      Ejecutando backtest con VectorBT...
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {result && (
+                <>
+                  {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3) */}
+                  <div className="flex gap-4 items-stretch">
+                    <div className="w-2/3">
+                      <EquityCurveTab
+                        globalEquity={result.global_equity}
+                        globalDrawdown={result.global_drawdown}
+                        trades={result.trades}
+                        metrics={result.aggregate_metrics}
+                        initCash={initCashRef.current}
+                        riskR={riskRRef.current}
+                        monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
+                        isDarkMode={isDarkMode}
+                      />
+                    </div>
+                    <div className="w-1/3 flex flex-col px-1 h-[675px]">
+                      <div>
+                        <MetricsCard metrics={result.aggregate_metrics} vertical />
+                        {draftStrategy && (
+                          <div style={{ padding: '8px 4px 4px 4px' }}>
+                            <button
+                              onClick={() => { setSaveName(draftStrategy.name); setShowSaveModal(true); }}
+                              style={{
+                                width: '100%',
+                                padding: '7px 0',
+                                backgroundColor: 'var(--color-ec-bg-surface)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.2px',
+                                color: 'var(--color-ec-text-secondary)',
+                                cursor: 'pointer',
+                                transition: 'color 150ms ease',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
+                              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
+                            >
+                              Guardar estrategia
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="h-[290px] w-full mt-auto mb-[-14px]">
+                        <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <ResultsTabs
+                    result={result}
+                    initCash={initCashRef.current}
+                    riskR={riskRRef.current}
+                    dayCandles={dayCandles}
+                    candlesLoading={candlesLoading}
+                    currentTrades={currentTrades || []}
+                    currentEquity={currentEquity?.equity || []}
+                    isDarkMode={isDarkMode}
+                    strategyId={strategyIdRef.current}
+                    datasetId={datasetIdRef.current}
+                    backtestParams={backtestParamsRef.current}
+                  />
+                </>
+              )}
+              {/* Modal — guardar draft como estrategia */}
+              {showSaveModal && (
+                <div style={{
+                  position: 'fixed', inset: 0, zIndex: 100,
+                  backgroundColor: 'rgba(0,0,0,0.6)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <div style={{
+                    backgroundColor: 'var(--color-ec-bg-surface)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 7,
+                    padding: 24,
+                    width: 340,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-serif)' }}>
+                      Guardar estrategia
+                    </div>
+                    <input
+                      value={saveName}
+                      onChange={(e) => setSaveName(e.target.value)}
+                      placeholder="Nombre de la estrategia"
+                      autoFocus
                       style={{
-                        width: '100%',
-                        padding: '7px 0',
-                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        backgroundColor: 'var(--color-ec-bg-sidebar)',
                         border: '0.5px solid var(--color-ec-border)',
                         borderRadius: 5,
+                        padding: '8px 11px',
+                        fontSize: 12,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
                         fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '1.2px',
-                        color: 'var(--color-ec-text-secondary)',
-                        cursor: 'pointer',
-                        transition: 'color 150ms ease',
                       }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
-                    >
-                      Guardar estrategia
-                    </button>
-                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="w-3 h-3 rounded-sm border border-[var(--color-ec-border)]"
-                      />
-                      <span style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 10,
-                        fontWeight: 500,
-                        color: 'var(--color-ec-text-muted)',
-                        letterSpacing: '0.05em',
-                      }}>
-                        Enviar con configuración del What if
-                      </span>
-                    </label>
-                  </div>
-                  </div>
-                  
-                  <div className="h-[290px] w-full mt-auto mb-[-14px]">
-                    <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
+                      onKeyDown={(e) => { if (e.key === 'Escape') setShowSaveModal(false); }}
+                    />
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => setShowSaveModal(false)}
+                        style={{
+                          flex: 1, padding: '7px 0', borderRadius: 5,
+                          fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                          textTransform: 'uppercase', cursor: 'pointer',
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          color: 'var(--color-ec-text-muted)',
+                          fontFamily: 'var(--color-ec-sans)',
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        disabled={!saveName.trim()}
+                        onClick={async () => {
+                          if (!saveName.trim() || !draftStrategy) return;
+                          await createStrategy({
+                            name: saveName.trim(),
+                            description: "",
+                            bias: draftStrategy.bias,
+                            entry_logic: draftStrategy.entry_logic,
+                            exit_logic: draftStrategy.exit_logic,
+                            risk_management: draftStrategy.risk_management,
+                          });
+                          setStrategiesRefresh((prev) => prev + 1);
+                          setShowSaveModal(false);
+                          setDraftStrategy(null);
+                        }}
+                        style={{
+                          flex: 2, padding: '7px 0', borderRadius: 5,
+                          fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                          textTransform: 'uppercase', cursor: 'pointer',
+                          backgroundColor: 'var(--color-ec-copper)',
+                          border: 'none',
+                          color: 'var(--color-ec-copper-text)',
+                          fontFamily: 'var(--color-ec-sans)',
+                          opacity: saveName.trim() ? 1 : 0.4,
+                        }}
+                      >
+                        Guardar
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              <ResultsTabs
-                result={result}
-                initCash={initCashRef.current}
-                riskR={riskRRef.current}
-                dayCandles={dayCandles}
-                candlesLoading={candlesLoading}
-                currentTrades={currentTrades || []}
-                currentEquity={currentEquity?.equity || []}
-                isDarkMode={isDarkMode}
-                strategyId={strategyIdRef.current}
-                datasetId={datasetIdRef.current}
-                backtestParams={backtestParamsRef.current}
-              />
-            </>
-          )}
-
-        </main>
-      </div>
+              )}
+            </main>
+          </div>
+        </>
+      )}
     </div>
   );
 }

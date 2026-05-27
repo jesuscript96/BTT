@@ -4,7 +4,28 @@ import { useEffect, useState } from "react";
 import type { Dataset, Strategy } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
 
+export interface BacktestPanelParams {
+  dataset_id: string;
+  init_cash: number;
+  risk_r: number;
+  risk_type: string;
+  fixed_ratio_delta: number;
+  size_by_sl: boolean;
+  fees: number;
+  fee_type: string;
+  slippage: number;
+  start_date: string;
+  end_date: string;
+  market_sessions: string[];
+  custom_start_time: string;
+  custom_end_time: string;
+  locates_cost: number;
+  monthly_expenses: number;
+  look_ahead_prevention: boolean;
+}
+
 interface BacktestPanelProps {
+  refreshTrigger?: number;
   onRun: (params: {
     dataset_id: string;
     strategy_id: string;
@@ -25,11 +46,12 @@ interface BacktestPanelProps {
     monthly_expenses?: number;
     fixed_ratio_delta?: number;
   }) => void;
+  onParamsChange?: (params: BacktestPanelParams) => void;
   loading: boolean;
   isDarkMode?: boolean;
 }
 
-export default function BacktestPanel({ onRun, loading, isDarkMode = false }: BacktestPanelProps) {
+export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, loading, isDarkMode = false }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedDataset, setSelectedDataset] = useState("");
@@ -95,6 +117,41 @@ export default function BacktestPanel({ onRun, loading, isDarkMode = false }: Ba
       if (ds.max_date) setEndDate(ds.max_date);
     }
   }, [selectedDataset, datasets]);
+
+  useEffect(() => {
+    if (!refreshTrigger) return;
+    fetchStrategies()
+      .then((s) => setStrategies(s))
+      .catch((e) => console.error("Error refreshing strategies:", e));
+  }, [refreshTrigger]);
+
+  useEffect(() => {
+    onParamsChange?.({
+      dataset_id: selectedDataset,
+      init_cash: initCash,
+      risk_r: riskR,
+      risk_type: riskType,
+      fixed_ratio_delta: fixedRatioDelta,
+      size_by_sl: sizeBySl,
+      fees: feeType === "PERCENT" ? fees / 100 : fees,
+      fee_type: feeType,
+      slippage: slippage / 100,
+      start_date: startDate,
+      end_date: endDate,
+      market_sessions: marketSessions,
+      custom_start_time: customStartTime,
+      custom_end_time: customEndTime,
+      locates_cost: useLocates ? locatesCost : 0,
+      monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
+      look_ahead_prevention: lookAheadPrevention,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedDataset, initCash, riskR, riskType, fixedRatioDelta, sizeBySl,
+    fees, feeType, slippage, startDate, endDate, marketSessions,
+    customStartTime, customEndTime, useLocates, locatesCost,
+    useMonthlyExpenses, monthlyExpenses, lookAheadPrevention,
+  ]);
 
   const handleRun = () => {
     if (!selectedDataset || !selectedStrategy) return;
