@@ -1,211 +1,205 @@
 import { IndicatorType } from '@/types/strategy';
 
-// ─────────────────────────────────────────────────────────────
-// Group definitions (internal, used by getAllowedTargets)
-// ─────────────────────────────────────────────────────────────
+// ─── GRUPOS DE TARGETS ───────────────────────────────
 
-const TREND_MA: IndicatorType[] = [
-    IndicatorType.SMA, IndicatorType.EMA, IndicatorType.WMA,
-    IndicatorType.VWAP, IndicatorType.VWAP_SD_PLUS, IndicatorType.VWAP_SD_MINUS,
-    IndicatorType.LINEAR_REGRESSION, IndicatorType.ZIG_ZAG, IndicatorType.ICHIMOKU
-];
-
-const MOMENTUM: IndicatorType[] = [
-    IndicatorType.RSI, IndicatorType.MACD, IndicatorType.STOCHASTIC,
-    IndicatorType.MOMENTUM, IndicatorType.CCI, IndicatorType.ROC,
-    IndicatorType.DMI_PLUS, IndicatorType.DMI_MINUS, IndicatorType.WILLIAMS_R
-];
-
-const VOLATILITY: IndicatorType[] = [
-    IndicatorType.ATR, IndicatorType.ADX, IndicatorType.BOLLINGER_BANDS,
-    IndicatorType.DONCHIAN, IndicatorType.PARABOLIC_SAR
-];
-
-const VOLUME: IndicatorType[] = [
-    IndicatorType.OBV, IndicatorType.VOLUME, IndicatorType.RVOL,
-    IndicatorType.AVOLUME, IndicatorType.SMA_VOLUME,
-    IndicatorType.YESTERDAY_VOLUME
-];
-
-const PRICE_VARIABLES: IndicatorType[] = [
+const ALL_PRICE_VARIABLES = [
     IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
     IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
-    IndicatorType.PMH, IndicatorType.PML,
-    IndicatorType.PM_OPEN, IndicatorType.AM_OPEN,
-    IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW, IndicatorType.RTH_OPEN,
-    IndicatorType.Y_HIGH, IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
+    IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+    IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+    IndicatorType.AM_OPEN,
+    IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN,
+    IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+    IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
     IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
-    IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
+    IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ];
 
-const BEHAVIOR_PATTERNS: IndicatorType[] = [
-    IndicatorType.CONSECUTIVE_HIGHER_HIGHS, IndicatorType.CONSECUTIVE_LOWER_LOWS,
-    IndicatorType.CONSECUTIVE_RED_CANDLES, IndicatorType.CONSECUTIVE_GREEN_CANDLES,
-    IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS,
+const ALL_BEHAVIOUR = [
     IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
     IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
-    IndicatorType.HEIKIN_ASHI,
-    IndicatorType.CANDLE_RANGE_PCT,
-    IndicatorType.ELAPSED_TIME_LAST_HIGH
 ];
 
-const TIME_AND_OTHERS: IndicatorType[] = [
-    IndicatorType.TIME_OF_DAY, IndicatorType.RANGE_OF_TIME,
-    IndicatorType.HIGH_LOW_FROM_TIME, IndicatorType.HIGH_LOW_FROM_HOUR_TIME,
-    IndicatorType.RET_PCT_PM, IndicatorType.RET_PCT_RTH
+const ALL_INDICATORS = [
+    IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
+    IndicatorType.DONCHIAN, IndicatorType.BOLLINGER_BANDS,
 ];
 
-// Consecutives + standalone-only subset (only Fixed Value as target)
-const STANDALONE: IndicatorType[] = [
-    IndicatorType.CONSECUTIVE_HIGHER_HIGHS, IndicatorType.CONSECUTIVE_LOWER_LOWS,
-    IndicatorType.CONSECUTIVE_RED_CANDLES, IndicatorType.CONSECUTIVE_GREEN_CANDLES,
-    IndicatorType.CONSECUTIVE_HIGHER_LOWS, IndicatorType.CONSECUTIVE_LOWER_HIGHS,
-    IndicatorType.CANDLE_RANGE_PCT,
-    IndicatorType.ELAPSED_TIME_LAST_HIGH
+const YESTERDAY_VARS = [
+    IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+    IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+    IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ];
 
-// Overlay-compatible: indicators that live on the price axis
-const OVERLAY_TARGETS: IndicatorType[] = [
-    ...TREND_MA,
-    IndicatorType.BOLLINGER_BANDS, IndicatorType.DONCHIAN, IndicatorType.PARABOLIC_SAR,
-    ...PRICE_VARIABLES
+const PM_RTH_YESTERDAY = [
+    IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH,
+    IndicatorType.AM_OPEN,
+    IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+    IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ];
 
-// ─────────────────────────────────────────────────────────────
-// getAllowedTargets
-// Returns the list of IndicatorTypes that can appear as "Target"
-// when `source` is selected. An empty array means only Fixed Value.
-// ─────────────────────────────────────────────────────────────
+const RTH_YESTERDAY_INDICATORS = [
+    IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+    IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+    IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    ...ALL_INDICATORS,
+];
 
-export function getAllowedTargets(source: IndicatorType, isDistance: boolean = false): IndicatorType[] {
-    let allowed: IndicatorType[] = [];
+// ─── INDICADOR DE CRUCE — TARGETS POR SOURCE ─────────
 
-    // ── Trend / MA ──────────────────────────────────────────
-    if (TREND_MA.includes(source)) {
-        allowed = [...OVERLAY_TARGETS];
-    }
+export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
+    // Price Variables — Full
+    [IndicatorType.BAR_CLOSE]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.BAR_OPEN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.HIGH_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.LOW_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
-    // ── Momentum & Oscillators ──────────────────────────────
-    // DMI+, DMI-, ADX can cross-compare
-    else if (source === IndicatorType.DMI_PLUS) {
-        allowed = [IndicatorType.DMI_MINUS, IndicatorType.ADX];
-    }
-    else if (source === IndicatorType.DMI_MINUS) {
-        allowed = [IndicatorType.DMI_PLUS, IndicatorType.ADX];
-    }
-    else if (source === IndicatorType.ADX) {
-        allowed = [IndicatorType.DMI_PLUS, IndicatorType.DMI_MINUS];
-    }
-    // All other momentum → only Fixed Value
-    else if (MOMENTUM.includes(source)) {
-        allowed = [];
-    }
+    // PM variables
+    [IndicatorType.PM_OPEN]: [...YESTERDAY_VARS],
+    [IndicatorType.PM_HIGH]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
+    [IndicatorType.PM_LOW]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
 
-    // ── Volatility ──────────────────────────────────────────
-    else if (source === IndicatorType.ATR) {
-        allowed = []; // Only Fixed Value
-    }
-    else if (source === IndicatorType.BOLLINGER_BANDS || source === IndicatorType.DONCHIAN) {
-        allowed = [...TREND_MA, IndicatorType.PARABOLIC_SAR, IndicatorType.BOLLINGER_BANDS, IndicatorType.DONCHIAN, ...PRICE_VARIABLES];
-    }
-    else if (source === IndicatorType.PARABOLIC_SAR) {
-        allowed = [...TREND_MA, IndicatorType.BOLLINGER_BANDS, IndicatorType.DONCHIAN, IndicatorType.PARABOLIC_SAR, ...PRICE_VARIABLES];
-    }
+    // RTH variables
+    [IndicatorType.RTH_OPEN]: [...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_HIGH]: [...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_LOW]: [...RTH_YESTERDAY_INDICATORS],
 
-    // ── Volume ──────────────────────────────────────────────
-    else if (source === IndicatorType.VOLUME) {
-        allowed = [IndicatorType.SMA_VOLUME];
-    }
-    else if (source === IndicatorType.SMA_VOLUME) {
-        allowed = [IndicatorType.VOLUME];
-    }
-    else if (VOLUME.includes(source)) {
-        allowed = []; // OBV, RVOL, Accumulated Volume → only Fixed Value
-    }
+    // AM Open
+    [IndicatorType.AM_OPEN]: [
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        ...ALL_INDICATORS,
+    ],
 
-    // ── Standalone (Consecutives, Candle Range%, Elapsed Time) → only Fixed Value
-    else if (STANDALONE.includes(source)) {
-        allowed = [];
-    }
+    // Solo aparecen como targets, no como source con cruces
+    [IndicatorType.PREVIOUS_MAX]: [],
+    [IndicatorType.PREVIOUS_MIN]: [],
+    [IndicatorType.YESTERDAY_OPEN]: [],
+    [IndicatorType.YESTERDAY_CLOSE]: [],
+    [IndicatorType.YESTERDAY_HIGH]: [],
+    [IndicatorType.YESTERDAY_LOW]: [],
+    [IndicatorType.YESTERDAY_AM_HIGH]: [],
+    [IndicatorType.YESTERDAY_AM_LOW]: [],
+    [IndicatorType.HIGH_X_DAYS]: [],
+    [IndicatorType.LOW_X_DAYS]: [],
 
-    // ── Time & Returns ──────────────────────────────────────
-    else if (source === IndicatorType.TIME_OF_DAY || source === IndicatorType.RANGE_OF_TIME) {
-        allowed = []; // Self-contained → only Fixed Value
-    }
-    else if (source === IndicatorType.RET_PCT_PM) {
-        allowed = []; // Only Fixed Value
-    }
-    else if (source === IndicatorType.RET_PCT_RTH) {
-        allowed = [IndicatorType.RET_PCT_PM];
-    }
-    else if (source === IndicatorType.HIGH_LOW_FROM_TIME || source === IndicatorType.HIGH_LOW_FROM_HOUR_TIME) {
-        allowed = [...TREND_MA, ...PRICE_VARIABLES];
-    }
+    // Behaviour & Patterns — standalone (sin cruces)
+    [IndicatorType.CONSEC_HIGHER_HIGHS]: [],
+    [IndicatorType.CONSEC_LOWER_LOWS]: [],
+    [IndicatorType.CONSEC_LOWER_HIGHS]: [],
+    [IndicatorType.CONSEC_HIGHER_LOWS]: [],
+    [IndicatorType.CONSEC_GREEN_CANDLES]: [],
+    [IndicatorType.CONSEC_RED_CANDLES]: [],
+    [IndicatorType.CANDLE_RANGE_PCT]: [],
+    [IndicatorType.RANGE_OF_TIME]: [],
+    [IndicatorType.OPENING_RANGE_PLUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.OPENING_RANGE_MINUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.OPENING_RANGE_AM_PLUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.OPENING_RANGE_AM_MINUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.ELAPSED_TIME_LAST_HIGH]: [],
 
-    // ── Behavior (Opening Range, Heikin-Ashi) ───────────────
-    else if (source === IndicatorType.HEIKIN_ASHI) {
-        allowed = [...TREND_MA, ...PRICE_VARIABLES];
-    }
-    else if ([
-        IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
-        IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS
-    ].includes(source)) {
-        allowed = [...OVERLAY_TARGETS];
-    }
+    // Indicators — Full
+    [IndicatorType.SMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.EMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.VWAP]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.DONCHIAN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.BOLLINGER_BANDS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
-    // ── PM Open: targets Yesterday + High/Low of last X days ──
-    else if (source === IndicatorType.PM_OPEN) {
-        allowed = [
-            IndicatorType.Y_HIGH, IndicatorType.Y_LOW,
-            IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
-            IndicatorType.MAX_X_DAYS, IndicatorType.MIN_X_DAYS
-        ];
+    // Volume — standalone o valor fijo
+    [IndicatorType.ACCUMULATED_VOLUME]: [IndicatorType.YESTERDAY_ACCUMULATED_VOLUME],
+    [IndicatorType.YESTERDAY_ACCUMULATED_VOLUME]: [],
+    [IndicatorType.YESTERDAY_VOLUME]: [],
+    [IndicatorType.RVOL]: [],
+    [IndicatorType.VOLUME]: [IndicatorType.VOLUME],
+    [IndicatorType.ATR]: [IndicatorType.ATR],
+};
+
+// ─── INDICADOR DE DISTANCIA — TARGETS POR SOURCE ─────
+
+export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
+    [IndicatorType.BAR_CLOSE]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.BAR_OPEN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.HIGH_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.LOW_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PM_HIGH]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
+    [IndicatorType.PM_LOW]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
+    [IndicatorType.RTH_OPEN]: [...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_HIGH]: [...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_LOW]: [...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.AM_OPEN]: [
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        ...ALL_INDICATORS,
+    ],
+    [IndicatorType.PREVIOUS_MAX]: [
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
+        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
+        IndicatorType.PM_OPEN, IndicatorType.PREVIOUS_MIN,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.VWAP,
+    ],
+    [IndicatorType.PREVIOUS_MIN]: [
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
+        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
+        IndicatorType.PM_OPEN, IndicatorType.PREVIOUS_MIN,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.VWAP,
+    ],
+    [IndicatorType.SMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.EMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.VWAP]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.DONCHIAN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.BOLLINGER_BANDS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.ATR]: [IndicatorType.ATR],
+};
+
+// ─── HELPERS ─────────────────────────────────────────
+
+export function getAllowedTargets(
+    sourceIndicator: IndicatorType,
+    conditionType: "indicator_comparison" | "price_level_distance"
+): IndicatorType[] {
+    if (conditionType === "price_level_distance") {
+        return DISTANCE_TARGETS[sourceIndicator] ?? [];
     }
-
-    // ── AM Open: targets PM + RTH + Yesterday + Indicators ──
-    else if (source === IndicatorType.AM_OPEN) {
-        allowed = [
-            IndicatorType.PMH, IndicatorType.PML, IndicatorType.PM_OPEN,
-            IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
-            IndicatorType.Y_HIGH, IndicatorType.Y_LOW, IndicatorType.Y_OPEN, IndicatorType.Y_CLOSE,
-            ...TREND_MA
-        ];
-    }
-
-    // ── Price Variables (Bar Close, PMH, Y_High, Max X Days, etc.) ─
-    else if (PRICE_VARIABLES.includes(source)) {
-        allowed = [...OVERLAY_TARGETS];
-    }
-
-    // ── Fallback ────────────────────────────────────────────
-    else {
-        allowed = [];
-    }
-
-    // ── Distance exclusions ─────────────────────────────────
-    if (isDistance) {
-        const DISTANCE_EXCLUDE: IndicatorType[] = [
-            ...MOMENTUM, ...VOLUME, ...TIME_AND_OTHERS,
-            IndicatorType.ATR, IndicatorType.ADX,
-            IndicatorType.HEIKIN_ASHI, ...STANDALONE
-        ];
-        allowed = allowed.filter(a => !DISTANCE_EXCLUDE.includes(a));
-    }
-
-    // Always remove the source itself (can't compare X vs X without params difference)
-    // Actually some indicators CAN compare to themselves (e.g. SMA(20) vs SMA(50))
-    // so we keep self-references for parameterized indicators
-
-    return allowed;
+    return INDICATOR_TARGETS[sourceIndicator] ?? [];
 }
 
-// ─────────────────────────────────────────────────────────────
-// DISTANCE_SOURCE_EXCLUDES
-// Indicators that CANNOT be used as source in a Distance condition
-// ─────────────────────────────────────────────────────────────
+export function isStandalone(indicator: IndicatorType): boolean {
+    return (INDICATOR_TARGETS[indicator] ?? []).length === 0;
+}
 
-export const DISTANCE_SOURCE_EXCLUDES: IndicatorType[] = [
-    ...MOMENTUM, ...VOLUME, ...TIME_AND_OTHERS,
-    IndicatorType.ATR, IndicatorType.ADX,
-    IndicatorType.HEIKIN_ASHI, ...STANDALONE
-];
+const ONLY_TARGET_INDICATORS = new Set([
+    IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+    IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+]);
+
+export function isOnlyTarget(indicator: IndicatorType): boolean {
+    return ONLY_TARGET_INDICATORS.has(indicator);
+}
+
+export function getSourceIndicators(): IndicatorType[] {
+    return Object.values(IndicatorType).filter(
+        ind => !isOnlyTarget(ind)
+    );
+}
