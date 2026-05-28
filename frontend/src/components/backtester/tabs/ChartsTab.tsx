@@ -421,10 +421,10 @@ export default function ChartsTab({
           <div className="flex-1 pr-6 pb-4 overflow-y-auto custom-scrollbar" style={{ paddingLeft: '40px', scrollbarWidth: 'none' }}>
             <table className="w-full text-[10px] font-mono" style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <colgroup>
-                <col style={{ width: '31%' }} />
-                <col style={{ width: '23%' }} />
-                <col style={{ width: '23%' }} />
-                <col style={{ width: '23%' }} />
+                <col style={{ width: '43%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
               </colgroup>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--color-ec-border)' }}>
