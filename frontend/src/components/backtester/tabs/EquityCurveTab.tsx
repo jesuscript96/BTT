@@ -530,8 +530,8 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
             </div>
           </div>
         ) : (          <div key="whatif-tab" className="flex h-full overflow-hidden">            {/* LEFT COLUMN: SIMULATION SETTINGS */}
-            <div className="w-1/2 flex flex-col border-r border-[var(--color-ec-border)]" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
-              <div className="flex-1 overflow-y-auto pt-5 pb-5 pl-5 pr-7 custom-scrollbar space-y-6">
+            <div className="w-1/2 flex flex-col border-r border-[var(--color-ec-border)] pr-8" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
+              <div className="flex-1 overflow-y-auto pt-5 pb-5 pl-5 pr-2 custom-scrollbar space-y-6">
                 {/* Temporal Settings */}
                 <div className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
                   <button 
