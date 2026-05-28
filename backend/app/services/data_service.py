@@ -378,9 +378,12 @@ def fetch_qualifying_data(
 
     hot_df = get_hot_daily_cache()
     if hot_df is not None and not hot_df.empty:
-        min_gap = filters.get("min_gap_pct", 0)
-        max_gap = filters.get("max_gap_pct", 500)
-        min_pm_vol = filters.get("min_pm_volume", 0)
+        min_gap_raw = filters.get("min_gap_pct")
+        min_gap = float(min_gap_raw) if min_gap_raw is not None else 0.0
+        max_gap_raw = filters.get("max_gap_pct")
+        max_gap = float(max_gap_raw) if max_gap_raw is not None else 999999.0
+        min_pm_vol_raw = filters.get("min_pm_volume")
+        min_pm_vol = float(min_pm_vol_raw) if min_pm_vol_raw is not None else 0.0
         start_date = filters.get("start_date")
         end_date = filters.get("end_date")
 

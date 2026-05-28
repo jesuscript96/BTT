@@ -1,5 +1,5 @@
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Union, Literal
 from uuid import uuid4
 from enum import Enum
@@ -138,6 +138,16 @@ class UniverseFilters(BaseModel):
 class IndicatorConfig(BaseModel):
     name: IndicatorType
     period: Optional[int] = None  # For SMA, EMA, RSI, etc.
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, v):
+        if isinstance(v, str):
+            val_lower = v.lower()
+            for item in IndicatorType:
+                if item.value.lower() == val_lower:
+                    return item
+        return v
     period2: Optional[int] = None # Fast period, signal period, etc.
     period3: Optional[int] = None # Slow period, etc.
     stdDev: Optional[float] = None # Standard Deviation for BB
