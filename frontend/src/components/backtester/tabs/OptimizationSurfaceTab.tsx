@@ -289,12 +289,12 @@ export default function OptimizationSurfaceTab({
         {/* Mode toggle */}
         <div>
           <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Modo</label>
-          <div className="flex bg-[var(--color-ec-bg-sidebar)] p-0.5 rounded border border-[var(--color-ec-border)]">
+          <div className="flex bg-[var(--color-ec-bg-sidebar)] rounded border border-[var(--color-ec-border)]">
             {(["2D", "3D"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`flex-1 px-3 py-1 text-[10px] font-mono font-bold rounded transition-colors cursor-pointer ${
+                className={`flex-1 px-3 py-1.5 text-[11px] font-mono font-bold rounded transition-colors cursor-pointer ${
                   mode === m
                     ? "bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)] shadow-sm"
                     : "text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)]"
@@ -367,7 +367,7 @@ export default function OptimizationSurfaceTab({
           <button
             onClick={handleRun}
             disabled={loading || !paramX || !paramY}
-            className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-2 rounded text-[10px] font-mono font-bold uppercase tracking-[0.1em] transform active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-1.5 rounded text-[11px] font-mono font-bold uppercase tracking-[0.1em] transform active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading ? "..." : "Ejecutar"}
           </button>
