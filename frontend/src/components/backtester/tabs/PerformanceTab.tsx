@@ -247,7 +247,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       // For trades histogram, we'll show actual count of trades on that specific day
       const dayTradesCount = sortedTrades.filter(t => t.exit_time!.startsWith(dateStr)).length;
       if (dayTradesCount > 0) {
-        trData.push({ time, value: dayTradesCount, color: isDarkMode ? "rgba(148,163,184,0.12)" : "rgba(120,113,108,0.1)" });
+        trData.push({ time, value: dayTradesCount, color: isDarkMode ? "rgba(148,163,184,0.4)" : "rgba(120,113,108,0.35)" });
       }
     }
 
@@ -292,7 +292,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
     // Series 1: Trades (Left Axis, Histogram)
     const trSeries = chart.addSeries(HistogramSeries, {
       priceScaleId: 'left',
-      color: isDarkMode ? 'rgba(148,163,184,0.12)' : 'rgba(120,113,108,0.1)',
+      color: isDarkMode ? 'rgba(148,163,184,0.4)' : 'rgba(120,113,108,0.35)',
     });
     trSeries.setData(chartData.trData);
 
@@ -348,7 +348,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
           <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--color-ec-text-primary)' }}>
             Monthly Returns
           </span>
-          <div className="flex items-center gap-0.5 text-[10px]">
+          <div className="flex items-center gap-2.5 text-[10px]">
             {(["PnL %", "PnL $", "PnL R", "Win Rate", "Trades", "Profit Factor"] as GridMetric[]).map((m) => (
               <button
                 key={m}
@@ -418,7 +418,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       </div>
 
       {/* ROLLING METRICS — no card wrapper */}
-      <div className="pt-14" style={{ borderTop: '0.5px solid var(--color-ec-border)' }}>
+      <div className="pt-14 mt-12" style={{ borderTop: '0.5px solid var(--color-ec-border)' }}>
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-6">
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--color-ec-text-primary)' }}>
@@ -426,7 +426,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
             </span>
             <div className="flex items-center gap-4 text-[9px] font-mono">
               <span className="flex items-center gap-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
-                <span className="inline-block w-3 h-[2px] rounded-full" style={{ backgroundColor: isDarkMode ? 'rgba(148,163,184,0.3)' : 'rgba(120,113,108,0.2)' }}></span>
+                <span className="inline-block w-3 h-[2px] rounded-full" style={{ backgroundColor: isDarkMode ? 'rgba(148,163,184,0.6)' : 'rgba(120,113,108,0.5)' }}></span>
                 trades/d
               </span>
               <span className="flex items-center gap-1.5" style={{ color: '#10b981' }}>
