@@ -529,9 +529,11 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                <div ref={ddContainerRef} className="h-[120px] w-full" />
             </div>
           </div>
-        ) : (          <div key="whatif-tab" className="flex h-full overflow-hidden">            {/* LEFT COLUMN: SIMULATION SETTINGS */}
-            <div className="w-1/2 flex flex-col border-r border-[var(--color-ec-border)] pr-8" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
-              <div className="flex-1 overflow-y-auto pt-5 pb-5 pl-5 pr-2 custom-scrollbar space-y-6">
+        ) : (
+          <div key="whatif-tab" className="flex h-full overflow-hidden">
+            {/* LEFT COLUMN: SIMULATION SETTINGS */}
+            <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
+              <div className="flex-1 overflow-y-auto pt-5 pb-5 pl-5 pr-5 custom-scrollbar space-y-6">
                 {/* Temporal Settings */}
                 <div className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
                   <button 
@@ -776,9 +778,12 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 </div>
               </div>
             </div>
- 
+
+            {/* VERTICAL SEPARATOR */}
+            <div className="w-px self-stretch" style={{ backgroundColor: 'var(--color-ec-border)', flexShrink: 0, marginTop: 8, marginBottom: 8 }}></div>
+
             {/* RIGHT COLUMN: SIMULATION RESULTS */}
-            <div className="w-1/2 h-full overflow-y-auto p-6 custom-scrollbar" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
+            <div className="flex-1 h-full overflow-y-auto pl-6 pr-6 pt-6 pb-6 custom-scrollbar" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
                <h4 className="text-[10px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-5 flex items-center gap-2 font-mono tracking-[0.12em]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
                 Resultados Simulados
