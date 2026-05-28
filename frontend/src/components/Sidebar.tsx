@@ -161,8 +161,6 @@ export const Sidebar = () => {
                     <span style={labelFade(isCollapsed)}>Backtester</span>
                 </Link>
 
-                {/* Separator */}
-                <div style={{ height: '0.5px', background: 'var(--color-ec-border)', margin: '8px 8px' }} />
 
                 {/* Baúl */}
                 <Link
@@ -173,7 +171,7 @@ export const Sidebar = () => {
                     }}
                 >
                     <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Baúl</span>
+                    <span style={labelFade(isCollapsed)}>Trunk</span>
                 </Link>
             </nav>
 
