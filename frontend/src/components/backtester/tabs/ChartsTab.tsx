@@ -334,7 +334,7 @@ export default function ChartsTab({
       </div>
 
       {/* ROW 2: Distributions side by side — no card wrappers */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 mt-10">
         {/* PnL Distribution */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2">
@@ -411,127 +411,58 @@ export default function ChartsTab({
           </div>
         </div>
 
-        {/* Gap % vs PnL % Scatter */}
-        <div className="flex flex-col h-[280px]">
-          <div className="px-3 py-2 flex items-center justify-between">
+        {/* Descriptive Statistics Table */}
+        <div className="flex flex-col h-[280px]" style={{ paddingLeft: 12 }}>
+          <div className="px-3 py-2">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
-              Gap % vs PnL %
+              Descriptive Statistics
             </span>
-            {gapRegression && (
-              <span className="text-[9px] font-mono text-[var(--color-ec-text-secondary)]">
-                R² = {(gapRegression.r2 * 100).toFixed(1)}%
-              </span>
-            )}
           </div>
-          <div className="flex-1 px-1 pb-1 relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 8, right: 8, left: -20, bottom: 8 }}>
-                <CartesianGrid stroke={gridColor} />
-                <XAxis
-                  type="number"
-                  dataKey="x"
-                  name="Gap %"
-                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
-                  tickFormatter={(v: number) => `${v.toFixed(0)}%`}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="y"
-                  name="PnL %"
-                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
-                  tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  cursor={{ strokeDasharray: '3 3' }}
-                  contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
-                  formatter={(value: any, name: any) => {
-                    const numValue = typeof value === 'number' ? value : Number(value);
-                    return [`${numValue.toFixed(2)}%`, name === 'x' ? 'Gap' : 'PnL'];
-                  }}
-                />
-                <ReferenceLine y={0} stroke={isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"} strokeWidth={1} />
-                <ReferenceLine x={0} stroke={isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"} strokeWidth={1} />
-                <Scatter
-                  name="Trades"
-                  data={gapVsPnl}
-                  shape={(props: { cx?: number; cy?: number }) => {
-                    if (!props.cx || !props.cy) return <></>;
-                    return <circle cx={props.cx} cy={props.cy} r={2} stroke="#E89C6A" fill="transparent" strokeWidth={1} />;
-                  }}
-                  isAnimationActive={false}
-                />
-                {gapRegressionLine && (
-                  <Scatter
-                    data={gapRegressionLine}
-                    shape={() => <></>}
-                    line={{
-                      stroke: '#D87A3D',
-                      strokeDasharray: '3 3',
-                      strokeWidth: 1.5
-                    }}
-                    tooltipType="none"
-                    isAnimationActive={false}
-                  />
-                )}
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: Combined Statistics — single terminal-style table */}
-      <div className="pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-        <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] block mb-3">
-          Descriptive Statistics
-        </span>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[11px] font-mono" style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th className="text-left py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">metric</th>
-                <th className="text-right py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">PnL %</th>
-                <th className="text-right py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">Streaks (W)</th>
-                <th className="text-right py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">Streaks (L)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                { label: "N", pnl: pnlDistribution.stats?.n ?? 0, w: consecutiveRuns.winStats?.n ?? 0, l: consecutiveRuns.lossStats?.n ?? 0, isPct: false, isInt: true },
-                { label: "Mean", pnl: pnlDistribution.stats?.mean ?? 0, w: consecutiveRuns.winStats?.mean ?? 0, l: consecutiveRuns.lossStats?.mean ?? 0, isPct: true },
-                { label: "Median", pnl: pnlDistribution.stats?.median ?? 0, w: consecutiveRuns.winStats?.median ?? 0, l: consecutiveRuns.lossStats?.median ?? 0, isPct: true },
-                { label: "Std Dev", pnl: pnlDistribution.stats?.stdDev ?? 0, w: consecutiveRuns.winStats?.stdDev ?? 0, l: consecutiveRuns.lossStats?.stdDev ?? 0, isPct: true },
-                { label: "Q1 (25%)", pnl: pnlDistribution.stats?.q1 ?? 0, w: consecutiveRuns.winStats?.q1 ?? 0, l: consecutiveRuns.lossStats?.q1 ?? 0, isPct: true },
-                { label: "Q3 (75%)", pnl: pnlDistribution.stats?.q3 ?? 0, w: consecutiveRuns.winStats?.q3 ?? 0, l: consecutiveRuns.lossStats?.q3 ?? 0, isPct: true },
-                { label: "Max", pnl: pnlDistribution.stats?.max ?? 0, w: consecutiveRuns.winStats?.max ?? 0, l: consecutiveRuns.lossStats?.max ?? 0, isPct: true },
-                { label: "Min", pnl: pnlDistribution.stats?.min ?? 0, w: consecutiveRuns.winStats?.min ?? 0, l: consecutiveRuns.lossStats?.min ?? 0, isPct: true },
-                { label: "Range", pnl: pnlDistribution.stats?.range ?? 0, w: consecutiveRuns.winStats?.range ?? 0, l: consecutiveRuns.lossStats?.range ?? 0, isPct: true },
-                { label: "IQR", pnl: pnlDistribution.stats?.iqr ?? 0, w: consecutiveRuns.winStats?.iqr ?? 0, l: consecutiveRuns.lossStats?.iqr ?? 0, isPct: true },
-                { label: "Skewness", pnl: pnlDistribution.stats?.skewness ?? 0, w: consecutiveRuns.winStats?.skewness ?? 0, l: consecutiveRuns.lossStats?.skewness ?? 0, isPct: false, prec: 3 },
-                { label: "Kurtosis", pnl: pnlDistribution.stats?.kurtosis ?? 0, w: consecutiveRuns.winStats?.kurtosis ?? 0, l: consecutiveRuns.lossStats?.kurtosis ?? 0, isPct: false, prec: 3 },
-              ].map((row, idx) => (
-                <tr
-                  key={idx}
-                  className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
-                  style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
-                >
-                  <td className="py-1.5 px-2" style={{ color: 'var(--color-ec-text-primary)' }}>{row.label}</td>
-                  <td className="py-1.5 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
-                    {row.isInt ? row.pnl : (row.pnl).toFixed(row.prec ?? 2)}{row.isPct && !row.isInt ? '%' : ''}
-                  </td>
-                  <td className="py-1.5 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
-                    {row.isInt ? row.w : (row.w).toFixed(row.prec ?? 2)}
-                  </td>
-                  <td className="py-1.5 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
-                    {row.isInt ? row.l : (row.l).toFixed(row.prec ?? 2)}
-                  </td>
+          <div className="flex-1 px-3 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
+            <table className="w-full text-[10px] font-mono" style={{ borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-ec-border)' }}>
+                  <th className="text-left py-1 px-1 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">metric</th>
+                  <th className="text-right py-1 px-1 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">PnL %</th>
+                  <th className="text-right py-1 px-1 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (W)</th>
+                  <th className="text-right py-1 px-1 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (L)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[
+                  { label: "N", pnl: pnlDistribution.stats?.n ?? 0, w: consecutiveRuns.winStats?.n ?? 0, l: consecutiveRuns.lossStats?.n ?? 0, isPct: false, isInt: true },
+                  { label: "Mean", pnl: pnlDistribution.stats?.mean ?? 0, w: consecutiveRuns.winStats?.mean ?? 0, l: consecutiveRuns.lossStats?.mean ?? 0, isPct: true },
+                  { label: "Median", pnl: pnlDistribution.stats?.median ?? 0, w: consecutiveRuns.winStats?.median ?? 0, l: consecutiveRuns.lossStats?.median ?? 0, isPct: true },
+                  { label: "Std Dev", pnl: pnlDistribution.stats?.stdDev ?? 0, w: consecutiveRuns.winStats?.stdDev ?? 0, l: consecutiveRuns.lossStats?.stdDev ?? 0, isPct: true },
+                  { label: "Q1 (25%)", pnl: pnlDistribution.stats?.q1 ?? 0, w: consecutiveRuns.winStats?.q1 ?? 0, l: consecutiveRuns.lossStats?.q1 ?? 0, isPct: true },
+                  { label: "Q3 (75%)", pnl: pnlDistribution.stats?.q3 ?? 0, w: consecutiveRuns.winStats?.q3 ?? 0, l: consecutiveRuns.lossStats?.q3 ?? 0, isPct: true },
+                  { label: "Max", pnl: pnlDistribution.stats?.max ?? 0, w: consecutiveRuns.winStats?.max ?? 0, l: consecutiveRuns.lossStats?.max ?? 0, isPct: true },
+                  { label: "Min", pnl: pnlDistribution.stats?.min ?? 0, w: consecutiveRuns.winStats?.min ?? 0, l: consecutiveRuns.lossStats?.min ?? 0, isPct: true },
+                  { label: "Range", pnl: pnlDistribution.stats?.range ?? 0, w: consecutiveRuns.winStats?.range ?? 0, l: consecutiveRuns.lossStats?.range ?? 0, isPct: true },
+                  { label: "IQR", pnl: pnlDistribution.stats?.iqr ?? 0, w: consecutiveRuns.winStats?.iqr ?? 0, l: consecutiveRuns.lossStats?.iqr ?? 0, isPct: true },
+                  { label: "Skewness", pnl: pnlDistribution.stats?.skewness ?? 0, w: consecutiveRuns.winStats?.skewness ?? 0, l: consecutiveRuns.lossStats?.skewness ?? 0, isPct: false, prec: 3 },
+                  { label: "Kurtosis", pnl: pnlDistribution.stats?.kurtosis ?? 0, w: consecutiveRuns.winStats?.kurtosis ?? 0, l: consecutiveRuns.lossStats?.kurtosis ?? 0, isPct: false, prec: 3 },
+                ].map((row, idx) => (
+                  <tr
+                    key={idx}
+                    className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
+                    style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)' }}
+                  >
+                    <td className="py-1 px-1" style={{ color: 'var(--color-ec-text-primary)' }}>{row.label}</td>
+                    <td className="py-1 px-1 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                      {row.isInt ? row.pnl : (row.pnl).toFixed(row.prec ?? 2)}{row.isPct && !row.isInt ? '%' : ''}
+                    </td>
+                    <td className="py-1 px-1 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                      {row.isInt ? row.w : (row.w).toFixed(row.prec ?? 2)}
+                    </td>
+                    <td className="py-1 px-1 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                      {row.isInt ? row.l : (row.l).toFixed(row.prec ?? 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
