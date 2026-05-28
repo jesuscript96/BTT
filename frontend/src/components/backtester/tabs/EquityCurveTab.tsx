@@ -530,15 +530,28 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
             </div>
           </div>
         ) : (
-          <div key="whatif-tab" className="flex h-full overflow-hidden">
+          <div key="whatif-tab" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
             {/* LEFT COLUMN: SIMULATION SETTINGS */}
-            <div className="flex-1 flex flex-col" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
-              <div className="flex-1 overflow-y-auto pt-5 pb-5 pl-5 pr-5 custom-scrollbar space-y-6">
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>
                 {/* Temporal Settings */}
-                <div className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
+                <div style={{ marginBottom: '24px' }} className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
                   <button 
                     onClick={() => toggleSection("temporal")}
-                    className="w-full pl-5 pr-5 pt-5 pb-3 flex items-center justify-between hover:bg-[var(--color-ec-bg-elevated)] transition-colors rounded-t-lg group"
+                    style={{
+                      width: '100%',
+                      paddingLeft: '24px',
+                      paddingRight: '24px',
+                      paddingTop: '24px',
+                      paddingBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                    className="hover:bg-[var(--color-ec-bg-elevated)] transition-colors rounded-t-lg group"
                   >
                     <div className="flex items-center gap-2">
                        <span className="text-[10px] font-bold text-[var(--color-ec-text-primary)] uppercase tracking-wider">1) Espacios Temporales</span>
@@ -547,7 +560,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                   </button>
                   
                   {openSections.includes("temporal") && (
-                    <div className="pl-5 pr-6 pb-5 pt-3 space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingLeft: '24px', paddingRight: '24px', paddingBottom: '24px', paddingTop: '12px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div>
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Días de la Semana</label>
                         <div className="flex gap-1.5">
@@ -633,10 +646,23 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 </div>
  
                 {/* Daily Limit */}
-                <div className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
+                <div style={{ marginBottom: '24px' }} className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
                   <button 
                     onClick={() => toggleSection("limit")}
-                    className="w-full pl-5 pr-5 pt-5 pb-3 flex items-center justify-between hover:bg-[var(--color-ec-bg-elevated)] transition-colors rounded-t-lg"
+                    style={{
+                      width: '100%',
+                      paddingLeft: '24px',
+                      paddingRight: '24px',
+                      paddingTop: '24px',
+                      paddingBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                    className="hover:bg-[var(--color-ec-bg-elevated)] transition-colors rounded-t-lg"
                   >
                     <div className="flex items-center gap-2">
                        <span className="text-[10px] font-bold text-[var(--color-ec-text-primary)] uppercase tracking-wider">2) Límite operaciones</span>
@@ -645,7 +671,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                   </button>
                   
                   {openSections.includes("limit") && (
-                    <div className="pl-5 pr-6 pb-5 pt-3 space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingLeft: '24px', paddingRight: '24px', paddingBottom: '24px', paddingTop: '12px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-[var(--color-ec-text-secondary)]">Máx. trades/día:</span>
                         <input
@@ -671,10 +697,23 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 </div>
  
                 {/* Stress Test & Black Swan */}
-                <div className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
+                <div style={{ marginBottom: '24px' }} className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg overflow-hidden transition-all">
                   <button 
                     onClick={() => toggleSection("stress")}
-                    className="w-full pl-5 pr-5 pt-5 pb-3 flex items-center justify-between hover:bg-[var(--color-ec-bg-elevated)] transition-colors rounded-t-lg"
+                    style={{
+                      width: '100%',
+                      paddingLeft: '24px',
+                      paddingRight: '24px',
+                      paddingTop: '24px',
+                      paddingBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                    }}
+                    className="hover:bg-[var(--color-ec-bg-elevated)] transition-colors rounded-t-lg"
                   >
                     <div className="flex items-center gap-2">
                        <span className="text-[10px] font-bold text-[var(--color-ec-text-primary)] uppercase tracking-wider">3) Peor escenario y Black Swan</span>
@@ -683,7 +722,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                   </button>
  
                   {openSections.includes("stress") && (
-                    <div className="pl-5 pr-6 pb-5 pt-3 space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingLeft: '24px', paddingRight: '24px', paddingBottom: '24px', paddingTop: '12px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="text-[10px] text-[var(--color-ec-text-secondary)] block mb-1">Omitir mejores trades (%):</label>
@@ -747,7 +786,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
  
                 {/* Include Expenses Checkbox */}
                 {!!monthlyExpenses && monthlyExpenses > 0 && (
-                  <div className="pl-5 pr-6 py-4 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg">
+                  <div style={{ marginBottom: '24px', paddingLeft: '24px', paddingRight: '24px', paddingTop: '16px', paddingBottom: '16px' }} className="bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg">
                     <label className="flex items-center gap-2.5 cursor-pointer group">
                       <input
                         type="checkbox"
@@ -763,7 +802,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 )}
  
                 {/* Final Execution Button */}
-                <div className="pt-4 pb-8 pr-1">
+                <div style={{ paddingTop: '16px', paddingBottom: '32px', paddingRight: '4px' }}>
                   <button 
                     onClick={handleRunWhatIf}
                     disabled={simLoading}
@@ -780,10 +819,10 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
             </div>
 
             {/* VERTICAL SEPARATOR */}
-            <div className="w-px self-stretch" style={{ backgroundColor: 'var(--color-ec-border)', flexShrink: 0, marginTop: 8, marginBottom: 8 }}></div>
+            <div style={{ width: '1px', alignSelf: 'stretch', backgroundColor: 'var(--color-ec-border)', flexShrink: 0, marginTop: '16px', marginBottom: '16px' }} />
 
             {/* RIGHT COLUMN: SIMULATION RESULTS */}
-            <div className="flex-1 h-full overflow-y-auto pl-6 pr-6 pt-6 pb-6 custom-scrollbar" style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
+            <div className="flex-1 h-full overflow-y-auto custom-scrollbar" style={{ backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '24px', paddingBottom: '24px', boxSizing: 'border-box' }}>
                <h4 className="text-[10px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-5 flex items-center gap-2 font-mono tracking-[0.12em]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
                 Resultados Simulados
@@ -813,7 +852,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                         <div key={idx} className="flex items-baseline justify-between py-1.5 text-[11px] border-b border-[var(--color-ec-border)] border-dashed last:border-b-0">
                            <span className="text-[var(--color-ec-text-secondary)] font-medium tracking-tight mr-4">{m.label}:</span>
                            <div className="flex items-center gap-3 font-mono">
-                              <span className="text-[10px] text-[var(--color-ec-text-secondary)] opacity-70">{m.base}</span>
+                              <span className="text-[10px] text-[var(--color-ec-text-primary)] font-medium">{m.base}</span>
                               <span className={m.danger && m.sim !== "---" ? "text-[var(--color-ec-loss)] font-bold" : "text-[var(--color-ec-copper-bright)] font-bold"}>
                                 {m.sim}
                               </span>
