@@ -238,7 +238,7 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 400,
-      layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "var(--color-ec-text-secondary)" },
+      layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "#ffffff" },
       grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
       crosshair: { mode: 0 },
       rightPriceScale: { borderColor: "#2C2F33" },
@@ -438,7 +438,7 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
     const createSubChart = (container: HTMLDivElement, height: number = 120): IChartApi => {
       const subChart = createChart(container, {
         width: container.clientWidth, height,
-        layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "var(--color-ec-text-secondary)", fontSize: 10 },
+        layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "#ffffff", fontSize: 10 },
         grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
         crosshair: { mode: 0 },
         rightPriceScale: { borderColor: "#2C2F33" },

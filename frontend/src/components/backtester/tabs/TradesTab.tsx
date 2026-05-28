@@ -31,7 +31,7 @@ interface SortHeaderProps {
 
 const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, className = "" }: SortHeaderProps) => (
   <th
-    className={`px-2 py-2 text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-wider cursor-pointer hover:text-[var(--color-ec-text-high)] select-none transition-colors font-mono ${className}`}
+    className={`px-4 py-2 text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-wider cursor-pointer hover:text-[var(--color-ec-text-high)] select-none transition-colors font-mono ${className}`}
     style={{ textAlign: align, borderBottom: '0.5px solid var(--color-ec-border)' }}
     onClick={() => onSort(field)}
   >
@@ -139,14 +139,14 @@ export default function TradesTab({ trades }: TradesTabProps) {
               <SortHeader label="Fecha" field="date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Entrada" field="entry_time" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Salida" field="exit_time" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Entry $" field="entry_price" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Exit $" field="exit_price" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Size" field="size" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="PnL" field="pnl" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="R" field="r_multiple" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="MAE%" field="mae" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="MFE%" field="mfe" align="right" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Exit" field="exit_reason" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="pl-6" />
+              <SortHeader label="Entry $" field="entry_price" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Exit $" field="exit_price" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Size" field="size" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="PnL" field="pnl" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="R" field="r_multiple" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="MAE%" field="mae" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="MFE%" field="mfe" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Exit" field="exit_reason" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
@@ -156,36 +156,36 @@ export default function TradesTab({ trades }: TradesTabProps) {
                 className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
                 style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
               >
-                <td className="px-2 py-1.5 font-semibold" style={{ color: 'var(--color-ec-text-high)' }}>{t.ticker}</td>
-                <td className="px-2 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>{t.date}</td>
-                <td className="px-2 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
+                <td className="px-4 py-1.5 font-semibold" style={{ color: 'var(--color-ec-text-high)' }}>{t.ticker}</td>
+                <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>{t.date}</td>
+                <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                   {t.entry_time.split(" ").pop()?.slice(0, 8)}
                 </td>
-                <td className="px-2 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
+                <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                   {t.exit_time.split(" ").pop()?.slice(0, 8)}
                 </td>
-                <td className="px-2 py-1.5 text-right" style={{ color: 'var(--color-ec-text-primary)' }}>
+                <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                   ${t.entry_price.toFixed(2)}
                 </td>
-                <td className="px-2 py-1.5 text-right" style={{ color: 'var(--color-ec-text-primary)' }}>
+                <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                   ${t.exit_price.toFixed(2)}
                 </td>
-                <td className="px-2 py-1.5 text-right" style={{ color: 'var(--color-ec-text-primary)' }}>
+                <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                   {t.size.toFixed(2)}
                 </td>
-                <td className={`px-2 py-1.5 text-right font-semibold ${t.pnl >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
+                <td className={`px-4 py-1.5 font-semibold ${t.pnl >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
                   {t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(2)}
                 </td>
-                <td className={`px-2 py-1.5 text-right ${(t.r_multiple || 0) >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
+                <td className={`px-4 py-1.5 ${(t.r_multiple || 0) >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
                   {t.r_multiple !== null ? `${t.r_multiple.toFixed(2)}R` : "—"}
                 </td>
-                <td className="px-2 py-1.5 text-right text-[var(--danger)]">
+                <td className="px-4 py-1.5 text-[var(--danger)]">
                   {t.mae != null ? `${t.mae.toFixed(2)}%` : "—"}
                 </td>
-                <td className="px-2 py-1.5 text-right text-[var(--success)]">
+                <td className="px-4 py-1.5 text-[var(--success)]">
                   {t.mfe != null ? `${t.mfe.toFixed(2)}%` : "—"}
                 </td>
-                <td className="px-2 py-1.5 pl-6">
+                <td className="px-4 py-1.5">
                   {(() => {
                     const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
                     return (
