@@ -405,7 +405,6 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
               textTransform: 'uppercase' as const,
               letterSpacing: '0.15em',
               color: activeMainTab === "equity" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
-              borderBottom: activeMainTab === "equity" ? '2px solid var(--color-ec-text-high)' : '2px solid transparent',
               background: 'transparent',
               border: 'none',
               borderBottomWidth: 2,
