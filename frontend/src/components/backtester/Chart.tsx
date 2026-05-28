@@ -682,22 +682,22 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
   }, [aggregatedCandles, trades, equity, activeIndicators, panelGroups, timeframe]);
 
   return (
-    <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] overflow-hidden">
+    <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] overflow-hidden" style={{ marginTop: 24 }}>
 
       {/* TOOLBAR */}
-      <div className="px-4 py-2 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--sidebar-bg)]">
+      <div className="px-4 py-2 border-b border-[var(--color-ec-border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--color-ec-bg-sidebar)]">
         <div className="flex items-center gap-3">
-          <span className="font-semibold text-sm">{ticker}</span>
-          <span className="text-xs text-[var(--muted)]">{date}</span>
-          <div className="flex gap-0.5 bg-gray-100 rounded p-0.5">
+          <span className="font-semibold text-[15px]" style={{ color: 'var(--color-ec-text-high)' }}>{ticker}</span>
+          <span className="text-[13px]" style={{ color: 'var(--color-ec-text-primary)' }}>{date}</span>
+          <div className="flex gap-2 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-md p-1">
             {(["1m", "5m", "15m", "1h"] as Timeframe[]).map(tf => (
               <button
                 key={tf}
                 onClick={() => setTimeframe(tf)}
-                className={`text-xs px-2 py-0.5 rounded font-medium transition-colors ${
+                className={`text-[13px] px-2.5 py-0.5 rounded font-medium transition-colors ${
                   timeframe === tf
-                    ? "bg-[var(--accent)] text-white shadow-sm"
-                    : "text-gray-600 hover:bg-gray-200"
+                    ? "bg-[var(--color-ec-copper)] text-white shadow-sm"
+                    : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] hover:bg-[var(--color-ec-bg-elevated)]"
                 }`}
               >
                 {tf}
