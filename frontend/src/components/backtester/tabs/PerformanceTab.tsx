@@ -418,7 +418,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       </div>
 
       {/* ROLLING METRICS — no card wrapper */}
-      <div className="pt-16 mt-12" style={{ borderTop: '0.5px solid var(--color-ec-border)' }}>
+      <div style={{ borderTop: '0.5px solid var(--color-ec-border)', paddingTop: 36, marginTop: 36 }}>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-6">
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--color-ec-text-primary)' }}>
