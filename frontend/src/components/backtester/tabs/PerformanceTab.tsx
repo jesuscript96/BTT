@@ -418,8 +418,8 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       </div>
 
       {/* ROLLING METRICS — no card wrapper */}
-      <div className="pt-14 mt-12" style={{ borderTop: '0.5px solid var(--color-ec-border)' }}>
-        <div className="flex items-center justify-between mb-6">
+      <div className="pt-16 mt-12" style={{ borderTop: '0.5px solid var(--color-ec-border)' }}>
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-6">
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--color-ec-text-primary)' }}>
               Rolling {rollingWindow}d
@@ -455,7 +455,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
             <span className="text-[10px] font-bold font-mono min-w-[28px] text-right" style={{ color: 'var(--color-ec-text-high)' }}>{rollingWindow}</span>
           </div>
         </div>
-        <div ref={chartContainerRef} style={{ width: "100%", height: "280px", marginTop: 24 }} />
+        <div ref={chartContainerRef} style={{ width: "100%", height: "280px", marginTop: 8 }} />
       </div>
 
     </div>
