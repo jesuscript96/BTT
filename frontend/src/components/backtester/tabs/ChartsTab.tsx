@@ -287,9 +287,9 @@ export default function ChartsTab({
           <div className="px-3 py-2 flex items-center">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">EV por Tiempo (30m)</span>
           </div>
-          <div className="flex-1 px-1 pb-1 min-h-0">
+          <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evByTime30Min} margin={{ top: 5, right: 8, bottom: 0, left: -28 }}>
+              <BarChart data={evByTime30Min} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis dataKey="time" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
@@ -312,9 +312,9 @@ export default function ChartsTab({
           <div className="px-3 py-2 flex items-center">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">EV por Dia</span>
           </div>
-          <div className="flex-1 px-1 pb-1 min-h-0">
+          <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evByDay} margin={{ top: 5, right: 8, bottom: 0, left: -28 }}>
+              <BarChart data={evByDay} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis dataKey="day" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
@@ -342,9 +342,9 @@ export default function ChartsTab({
               Distribucion de Retornos (PnL %)
             </span>
           </div>
-          <div className="flex-1 px-1 pb-1">
+          <div className="flex-1 px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={pnlDistribution.data} margin={{ top: 8, right: 8, left: -28, bottom: 8 }}>
+              <BarChart data={pnlDistribution.data} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -385,9 +385,9 @@ export default function ChartsTab({
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-red-500 rounded-sm"></span>L</span>
             </div>
           </div>
-          <div className="flex-1 px-1 pb-1">
+          <div className="flex-1 px-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={consecutiveRuns.data} margin={{ top: 8, right: 8, left: -28, bottom: 4 }}>
+              <BarChart data={consecutiveRuns.data} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="length"
@@ -412,13 +412,13 @@ export default function ChartsTab({
         </div>
 
         {/* Descriptive Statistics Table */}
-        <div className="flex flex-col h-[280px]" style={{ paddingLeft: 12 }}>
+        <div className="flex flex-col h-[280px]">
           <div className="px-3 py-2">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
               Descriptive Statistics
             </span>
           </div>
-          <div className="flex-1 px-3 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
+          <div className="flex-1 px-4 pb-4 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
             <table className="w-full text-[10px] font-mono" style={{ borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--color-ec-border)' }}>

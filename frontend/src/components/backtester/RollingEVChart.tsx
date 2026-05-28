@@ -112,7 +112,13 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 vertLines: { color: gridColor },
                 horzLines: { color: gridColor },
             },
-            rightPriceScale: { borderVisible: false },
+            rightPriceScale: {
+                borderVisible: false,
+                scaleMargins: {
+                    top: 0.15,
+                    bottom: 0.15,
+                },
+            },
             timeScale: { borderVisible: false, timeVisible: true },
             crosshair: { mode: 0 },
         });
@@ -160,7 +166,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     return (
         <div className="flex flex-col h-full transition-colors">
             <div className="px-3 py-2 flex items-center justify-between">
-                <span className="text-[9px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.15em]">
+                <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
                     Rolling EV
                 </span>
                 <div className="flex items-center gap-3">
@@ -192,7 +198,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                     </div>
                 </div>
             </div>
-            <div ref={containerRef} className="flex-1" style={{ minHeight: 100 }} />
+            <div ref={containerRef} className="flex-1 px-4 pb-4" style={{ minHeight: 100 }} />
         </div>
     );
 }
