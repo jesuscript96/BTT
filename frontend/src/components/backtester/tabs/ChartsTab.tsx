@@ -285,7 +285,7 @@ export default function ChartsTab({
         {/* EV por Tiempo (30m) */}
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">EV por Tiempo (30m)</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">EV por Tiempo (30m)</span>
           </div>
           <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
@@ -310,7 +310,7 @@ export default function ChartsTab({
         {/* EV por Día */}
         <div className="flex flex-col h-full">
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">EV por Dia</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">EV por Dia</span>
           </div>
           <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
@@ -342,9 +342,9 @@ export default function ChartsTab({
               Distribucion de Retornos (PnL %)
             </span>
           </div>
-          <div className="flex-1 px-4 pb-4">
+          <div className="flex-1 pl-1 pr-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={pnlDistribution.data} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
+              <BarChart data={pnlDistribution.data} margin={{ top: 16, right: 16, bottom: 16, left: -20 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="label"
@@ -377,7 +377,7 @@ export default function ChartsTab({
         {/* Consecutive Runs */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
               Consecutive Runs
             </span>
             <div className="flex gap-3 text-[8px] font-mono text-[var(--color-ec-text-secondary)]">
@@ -414,11 +414,11 @@ export default function ChartsTab({
         {/* Descriptive Statistics Table */}
         <div className="flex flex-col h-[280px]">
           <div className="px-3 py-2">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
               Descriptive Statistics
             </span>
           </div>
-          <div className="flex-1 px-4 pb-4 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
+          <div className="flex-1 pl-8 pr-4 pb-4 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
             <table className="w-full text-[10px] font-mono" style={{ borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--color-ec-border)' }}>

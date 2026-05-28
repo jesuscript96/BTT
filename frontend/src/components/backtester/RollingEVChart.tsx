@@ -119,8 +119,24 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                     bottom: 0.15,
                 },
             },
-            timeScale: { borderVisible: false, timeVisible: true },
+            timeScale: { borderVisible: false, timeVisible: false },
             crosshair: { mode: 0 },
+            localization: {
+                timeFormatter: (time: Time) => {
+                    if (typeof time === "string") return time;
+                    if (typeof time === "object" && time !== null) {
+                        const t = time as any;
+                        if ("year" in t && "month" in t && "day" in t) {
+                            return `${t.year}-${String(t.month).padStart(2, "0")}-${String(t.day).padStart(2, "0")}`;
+                        }
+                    }
+                    if (typeof time === "number") {
+                        const date = new Date(time * 1000);
+                        return date.toISOString().split("T")[0];
+                    }
+                    return String(time);
+                },
+            },
         });
         chartRef.current = chart;
 
@@ -166,7 +182,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     return (
         <div className="flex flex-col h-full transition-colors">
             <div className="px-3 py-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
+                <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
                     Rolling EV
                 </span>
                 <div className="flex items-center gap-3">
