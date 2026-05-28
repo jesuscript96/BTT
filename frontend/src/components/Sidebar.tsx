@@ -3,11 +3,8 @@
 import React, { useState } from "react";
 import {
     LayoutDashboard,
-    ChevronDown,
-    ChevronRight,
     Play,
-    LineChart,
-    BookOpen,
+    Briefcase,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -32,8 +29,6 @@ const wordmarkStyle: React.CSSProperties = {
 export const Sidebar = () => {
     const pathname = usePathname();
     const [isHovered, setIsHovered] = useState(false);
-    const [isStrategiesOpen, setIsStrategiesOpen] = useState(true);
-    const [isTutorialsOpen, setIsTutorialsOpen] = useState(true);
 
     const isCollapsed = !isHovered;
 
@@ -63,37 +58,7 @@ export const Sidebar = () => {
         cursor: 'pointer',
     });
 
-    const accordionBtnBase = (collapsed: boolean): React.CSSProperties => ({
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: collapsed ? 'center' : 'space-between',
-        gap: collapsed ? 0 : 10,
-        padding: collapsed ? '7px 0' : '7px 8px',
-        borderRadius: 5,
-        fontSize: 13,
-        fontWeight: 500,
-        width: '100%',
-        background: 'transparent',
-        border: 'none',
-        textAlign: 'left' as const,
-        transition: 'background 150ms ease, color 150ms ease',
-        cursor: 'pointer',
-    });
 
-    const subItemStyle = (active: boolean): React.CSSProperties => ({
-        display: 'flex',
-        alignItems: 'center',
-        padding: '5px 8px',
-        borderRadius: 4,
-        fontFamily: "'General Sans', sans-serif",
-        fontSize: 11,
-        fontWeight: 500,
-        color: active ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)',
-        background: active ? 'var(--color-ec-bg-surface)' : 'transparent',
-        transition: 'background 150ms ease, color 150ms ease',
-        textDecoration: 'none',
-        cursor: 'pointer',
-    });
 
     const labelFade = (collapsed: boolean): React.CSSProperties => ({
         overflow: 'hidden',
@@ -184,56 +149,6 @@ export const Sidebar = () => {
                     <span style={labelFade(isCollapsed)}>Market Analysis</span>
                 </Link>
 
-                {/* My Strategies Group */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <button
-                        onClick={() => setIsStrategiesOpen(!isStrategiesOpen)}
-                        style={{
-                            ...accordionBtnBase(isCollapsed),
-                        }}
-                    >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: isCollapsed ? 0 : 10 }}>
-                            <LineChart style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                            <span style={labelFade(isCollapsed)}>My Strategies</span>
-                        </div>
-                        {!isCollapsed &&
-                            (isStrategiesOpen ? (
-                                <ChevronDown style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
-                            ) : (
-                                <ChevronRight style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
-                            ))}
-                    </button>
-
-                    {!isCollapsed && isStrategiesOpen && (
-                        <div style={{
-                            paddingLeft: 24,
-                            borderLeft: '0.5px solid var(--color-ec-border)',
-                            marginLeft: 15,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 1,
-                            marginTop: 2,
-                            marginBottom: 4,
-                        }}>
-                            <Link
-                                href="/strategies/new"
-                                style={subItemStyle(isActive("/strategies/new"))}
-                            >
-                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500 }}>New Strategy</span>
-                            </Link>
-                            <Link
-                                href="/database"
-                                style={subItemStyle(isActive("/database"))}
-                            >
-                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500 }}>Database</span>
-                            </Link>
-                        </div>
-                    )}
-                </div>
-
-                {/* Separator */}
-                <div style={{ height: '0.5px', background: 'var(--color-ec-border)', margin: '8px 8px' }} />
-
                 {/* Backtester */}
                 <Link
                     href="/backtester"
@@ -249,46 +164,17 @@ export const Sidebar = () => {
                 {/* Separator */}
                 <div style={{ height: '0.5px', background: 'var(--color-ec-border)', margin: '8px 8px' }} />
 
-                {/* Tutoriales Group */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <button
-                        onClick={() => setIsTutorialsOpen(!isTutorialsOpen)}
-                        style={{
-                            ...accordionBtnBase(isCollapsed),
-                        }}
-                    >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: isCollapsed ? 0 : 10 }}>
-                            <BookOpen style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                            <span style={labelFade(isCollapsed)}>Tutoriales</span>
-                        </div>
-                        {!isCollapsed &&
-                            (isTutorialsOpen ? (
-                                <ChevronDown style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
-                            ) : (
-                                <ChevronRight style={{ width: 12, height: 12, strokeWidth: 1.5, marginLeft: 'auto', color: 'var(--color-ec-text-muted)' }} />
-                            ))}
-                    </button>
-
-                    {!isCollapsed && isTutorialsOpen && (
-                        <div style={{
-                            paddingLeft: 24,
-                            borderLeft: '0.5px solid var(--color-ec-border)',
-                            marginLeft: 15,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 1,
-                            marginTop: 2,
-                            marginBottom: 4,
-                        }}>
-                            <Link
-                                href="/tutorials"
-                                style={subItemStyle(isActive("/tutorials"))}
-                            >
-                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 500 }}>Crea tu estrategia</span>
-                            </Link>
-                        </div>
-                    )}
-                </div>
+                {/* Baúl */}
+                <Link
+                    href="/database"
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/database"),
+                    }}
+                >
+                    <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Baúl</span>
+                </Link>
             </nav>
 
             {/* Bottom Profile */}
