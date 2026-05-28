@@ -125,7 +125,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
 
   // Render a specific cell based on the selected metric
   const renderCell = (cell: CellData) => {
-    if (cell.dailyReturns.length === 0 && cell.trades === 0) return { text: "—", color: "transparent", tColor: "var(--muted)" };
+    if (cell.dailyReturns.length === 0 && cell.trades === 0) return { text: "—", color: "transparent", tColor: "var(--color-ec-text-muted)" };
 
     let val = 0;
     let text = "";
@@ -260,7 +260,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
 
     const bgColor = "#16181A";
     const gridColor = "#2C2F33";
-    const textColor = "#8A8D92";
+    const textColor = "#A0A3A8";
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
@@ -340,23 +340,22 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
   const years = Array.from(gridData.keys()).sort((a, b) => parseInt(b) - parseInt(a)); // Descending years
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-12" style={{ paddingTop: 24 }}>
 
       {/* MONTHLY RETURNS — no card wrapper */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+        <div className="flex items-center justify-between mb-5">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--color-ec-text-primary)' }}>
             Monthly Returns
           </span>
           <div className="flex items-center gap-0.5 text-[10px]">
             {(["PnL %", "PnL $", "PnL R", "Win Rate", "Trades", "Profit Factor"] as GridMetric[]).map((m) => (
               <button
-
                 key={m}
                 onClick={() => setMetric(m)}
                 className={`px-2.5 py-1 rounded-sm transition-all font-mono ${metric === m
                   ? "bg-[var(--foreground)] text-[var(--background)] font-semibold"
-                  : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                  : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)]"
                 }`}
               >
                 {m}
@@ -369,11 +368,11 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
           <table className="w-full text-center" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
             <thead>
               <tr>
-                <th className="px-2 py-2 text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider text-left" style={{ borderBottom: '1px solid var(--border)' }}>Year</th>
+                <th className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-left" style={{ borderBottom: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-primary)' }}>Year</th>
                 {MONTH_NAMES.map(m => (
-                  <th key={m} className="px-1 py-2 text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider" style={{ borderBottom: '1px solid var(--border)' }}>{m}</th>
+                  <th key={m} className="px-1 py-2 text-[10px] font-semibold uppercase tracking-wider" style={{ borderBottom: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-primary)' }}>{m}</th>
                 ))}
-                <th className="px-2 py-2 text-[10px] font-bold text-[var(--foreground)] uppercase tracking-wider" style={{ borderBottom: '1px solid var(--border)', borderLeft: '1px solid var(--border)' }}>YTD</th>
+                <th className="px-2 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ borderBottom: '0.5px solid var(--color-ec-border)', borderLeft: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-high)' }}>YTD</th>
               </tr>
             </thead>
             <tbody>
@@ -382,7 +381,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
                 const ytdCell = renderCell(mMap.get("YTD")!);
                 return (
                   <tr key={year} className="group">
-                    <td className="px-2 py-2.5 text-[12px] font-bold font-mono text-[var(--foreground)] text-left" style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 40%, transparent)' }}>{year}</td>
+                    <td className="px-2 py-2.5 text-[12px] font-bold font-mono text-left" style={{ borderBottom: '0.5px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)', color: 'var(--color-ec-text-high)' }}>{year}</td>
                     {MONTHS.map(m => {
                       const c = renderCell(mMap.get(m)!);
                       return (
@@ -392,7 +391,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
                           style={{
                             backgroundColor: c.color,
                             color: c.tColor,
-                            borderBottom: '1px solid color-mix(in srgb, var(--border) 40%, transparent)',
+                            borderBottom: '0.5px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)',
                           }}
                         >
                           {c.text}
@@ -404,8 +403,8 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
                       style={{
                         backgroundColor: ytdCell.color,
                         color: ytdCell.tColor,
-                        borderLeft: '1px solid var(--border)',
-                        borderBottom: '1px solid color-mix(in srgb, var(--border) 40%, transparent)',
+                        borderLeft: '0.5px solid var(--color-ec-border)',
+                        borderBottom: '0.5px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)',
                       }}
                     >
                       {ytdCell.text}
@@ -419,14 +418,14 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       </div>
 
       {/* ROLLING METRICS — no card wrapper */}
-      <div className="pt-6" style={{ borderTop: '1px solid var(--border)' }}>
-        <div className="flex items-center justify-between mb-4">
+      <div className="pt-14" style={{ borderTop: '0.5px solid var(--color-ec-border)' }}>
+        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-6">
-            <span className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--color-ec-text-primary)' }}>
               Rolling {rollingWindow}d
             </span>
             <div className="flex items-center gap-4 text-[9px] font-mono">
-              <span className="flex items-center gap-1.5 text-[var(--muted)]">
+              <span className="flex items-center gap-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                 <span className="inline-block w-3 h-[2px] rounded-full" style={{ backgroundColor: isDarkMode ? 'rgba(148,163,184,0.3)' : 'rgba(120,113,108,0.2)' }}></span>
                 trades/d
               </span>
@@ -442,7 +441,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[9px] text-[var(--muted)] font-mono uppercase">window</span>
+            <span className="text-[9px] font-mono uppercase" style={{ color: 'var(--color-ec-text-primary)' }}>window</span>
             <input
               type="range"
               min="7"
@@ -453,10 +452,10 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
               className="w-24 accent-[var(--foreground)] h-[2px]"
               style={{ opacity: 0.6 }}
             />
-            <span className="text-[10px] font-bold font-mono text-[var(--foreground)] min-w-[28px] text-right">{rollingWindow}</span>
+            <span className="text-[10px] font-bold font-mono min-w-[28px] text-right" style={{ color: 'var(--color-ec-text-high)' }}>{rollingWindow}</span>
           </div>
         </div>
-        <div ref={chartContainerRef} style={{ width: "100%", height: "280px" }} />
+        <div ref={chartContainerRef} style={{ width: "100%", height: "280px", marginTop: 24 }} />
       </div>
 
     </div>
