@@ -174,9 +174,9 @@ export default function OptimizationSurfaceTab({
     const p = result.params;
     const metricLabel = METRIC_OPTIONS.find((m) => m.value === result.metric)?.label || result.metric;
 
-    const bg = isDarkMode ? "#18181a" : "#fafaf7";
-    const fg = isDarkMode ? "#cbd5e1" : "#44403c";
-    const gridColor = isDarkMode ? "#303033" : "#f0eeea";
+    const bg = "#16181A";
+    const fg = "#D4D2CF";
+    const gridColor = "#2C2F33";
 
     if (mode === "2D" && p.length === 2) {
       const z = result.grid;
@@ -263,7 +263,7 @@ export default function OptimizationSurfaceTab({
   if (!strategyId || !datasetId) {
     return (
       <div className="flex items-center justify-center h-40">
-        <p className="text-[11px] text-[var(--muted)] font-mono">
+        <p className="text-[11px] text-[var(--color-ec-text-secondary)] font-mono">
           Ejecuta un backtest para acceder a la Optimization Surface
         </p>
       </div>
@@ -271,15 +271,15 @@ export default function OptimizationSurfaceTab({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" style={{ paddingTop: '20px' }}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-[11px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+          <span className="text-[11px] font-semibold text-[var(--color-ec-text-secondary)] uppercase tracking-[0.12em]">
             Optimization Surface
           </span>
           {strategyName && (
-            <span className="text-[10px] text-[var(--muted)] font-mono opacity-60">{strategyName}</span>
+            <span className="text-[10px] text-[var(--color-ec-text-muted)] font-mono opacity-80">{strategyName}</span>
           )}
         </div>
       </div>
@@ -288,18 +288,17 @@ export default function OptimizationSurfaceTab({
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
         {/* Mode toggle */}
         <div>
-          <label className="text-[9px] text-[var(--muted)] block mb-1.5 font-mono uppercase">Modo</label>
-          <div className="flex">
+          <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Modo</label>
+          <div className="flex bg-[var(--color-ec-bg-sidebar)] p-0.5 rounded border border-[var(--color-ec-border)]">
             {(["2D", "3D"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`flex-1 px-3 py-1.5 text-[10px] font-mono font-semibold transition-colors ${
+                className={`flex-1 px-3 py-1 text-[10px] font-mono font-bold rounded transition-colors cursor-pointer ${
                   mode === m
-                    ? "bg-[var(--foreground)] text-[var(--background)]"
-                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                    ? "bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)] shadow-sm"
+                    : "text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)]"
                 }`}
-                style={{ borderBottom: mode === m ? 'none' : '1px solid var(--border)' }}
               >
                 {m}
               </button>
@@ -309,60 +308,56 @@ export default function OptimizationSurfaceTab({
 
         {/* Metric */}
         <div>
-          <label className="text-[9px] text-[var(--muted)] block mb-1.5 font-mono uppercase">Metrica</label>
+          <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Metrica</label>
           <select
             value={metric}
             onChange={(e) => setMetric(e.target.value)}
-            className="w-full px-2 py-1.5 text-[11px] font-mono bg-transparent text-[var(--text-data)] focus:outline-none"
-            style={{ borderBottom: '1px solid var(--border)' }}
+            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
           >
             {METRIC_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{o.label}</option>
             ))}
           </select>
         </div>
 
         {/* Param X */}
         <div>
-          <label className="text-[9px] text-[var(--muted)] block mb-1.5 font-mono uppercase">Eje X</label>
+          <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Eje X</label>
           <select
             value={paramX}
             onChange={(e) => setParamX(e.target.value)}
-            className="w-full px-2 py-1.5 text-[11px] font-mono bg-transparent text-[var(--text-data)] focus:outline-none"
-            style={{ borderBottom: '1px solid var(--border)' }}
+            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
           >
             {params.filter((p) => p.id !== paramY).map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
+              <option key={p.id} value={p.id} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{p.label}</option>
             ))}
           </select>
         </div>
 
         {/* Param Y */}
         <div>
-          <label className="text-[9px] text-[var(--muted)] block mb-1.5 font-mono uppercase">Eje Y</label>
+          <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Eje Y</label>
           <select
             value={paramY}
             onChange={(e) => setParamY(e.target.value)}
-            className="w-full px-2 py-1.5 text-[11px] font-mono bg-transparent text-[var(--text-data)] focus:outline-none"
-            style={{ borderBottom: '1px solid var(--border)' }}
+            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
           >
             {params.filter((p) => p.id !== paramX).map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
+              <option key={p.id} value={p.id} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{p.label}</option>
             ))}
           </select>
         </div>
 
         {/* Grid steps */}
         <div>
-          <label className="text-[9px] text-[var(--muted)] block mb-1.5 font-mono uppercase">Resolución</label>
+          <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Resolución</label>
           <select
             value={gridSteps}
             onChange={(e) => setGridSteps(Number(e.target.value))}
-            className="w-full px-2 py-1.5 text-[11px] font-mono bg-transparent text-[var(--text-data)] focus:outline-none"
-            style={{ borderBottom: '1px solid var(--border)' }}
+            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
           >
             {[5, 8, 10, 12, 15, 20].map((n) => (
-              <option key={n} value={n}>{n}×{n} ({n*n} pts)</option>
+              <option key={n} value={n} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{n}×{n} ({n*n} pts)</option>
             ))}
           </select>
         </div>
@@ -372,7 +367,7 @@ export default function OptimizationSurfaceTab({
           <button
             onClick={handleRun}
             disabled={loading || !paramX || !paramY}
-            className="w-full px-4 py-1.5 text-[10px] font-mono font-semibold uppercase tracking-wider bg-[var(--foreground)] text-[var(--background)] hover:opacity-80 disabled:opacity-30 transition-all"
+            className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-2 rounded text-[10px] font-mono font-bold uppercase tracking-[0.1em] transform active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading ? "..." : "Ejecutar"}
           </button>
@@ -412,26 +407,26 @@ export default function OptimizationSurfaceTab({
       {loading && (
         <div className="flex items-center justify-center h-64">
           <div className="text-center space-y-4 w-full max-w-xs px-6">
-            <svg className="animate-spin h-5 w-5 text-[var(--muted)] mx-auto" viewBox="0 0 24 24">
+            <svg className="animate-spin h-5 w-5 text-[var(--color-ec-text-secondary)] mx-auto" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             <div className="space-y-3">
               <div className="flex justify-between items-end mb-1">
-                <p className="text-[11px] font-mono text-[var(--text-data)]">
+                <p className="text-[11px] font-mono text-[var(--color-ec-text-primary)]">
                   optimizing...
                 </p>
-                <span className="text-[11px] font-mono text-[var(--foreground)] font-bold">
+                <span className="text-[11px] font-mono text-[var(--color-ec-text-high)] font-bold">
                   {progress}%
                 </span>
               </div>
-              <div className="h-[2px] w-full bg-[var(--border)] overflow-hidden">
+              <div className="h-[2px] w-full bg-[var(--color-ec-border)] overflow-hidden">
                 <div
-                  className="h-full bg-[var(--foreground)] transition-all duration-300 ease-out"
+                  className="h-full bg-[var(--color-ec-copper)] transition-all duration-300 ease-out"
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="text-[9px] text-[var(--muted)] uppercase tracking-wider font-mono">
+              <p className="text-[9px] text-[var(--color-ec-text-muted)] uppercase tracking-wider font-mono">
                 {gridSteps * gridSteps} backtests
               </p>
             </div>
@@ -464,7 +459,7 @@ export default function OptimizationSurfaceTab({
           {/* Analysis panel */}
           <div className="lg:w-1/3 space-y-4">
             {/* Elapsed */}
-            <div className="text-[10px] text-[var(--muted)] text-right font-mono">
+            <div className="text-[10px] text-[var(--color-ec-text-secondary)] text-right font-mono">
               {result.elapsed_seconds}s / {result.shape.reduce((a: number, b: number) => a * b, 1)} runs
             </div>
 
@@ -544,19 +539,19 @@ export default function OptimizationSurfaceTab({
       {/* Empty state */}
       {loadingParams && (
         <div className="flex items-center justify-center h-40">
-          <p className="text-[11px] text-[var(--muted)] animate-pulse font-mono">
+          <p className="text-[11px] text-[var(--color-ec-text-secondary)] animate-pulse font-mono">
             detecting parameters...
           </p>
         </div>
       )}
 
       {!result && !loading && !loadingParams && params.length > 0 && (
-        <div className="flex items-center justify-center h-40" style={{ borderTop: '1px dashed var(--border)' }}>
+        <div className="flex items-center justify-center h-40" style={{ borderTop: '1px dashed var(--color-ec-border)' }}>
           <div className="text-center space-y-1">
-            <p className="text-[11px] text-[var(--muted)] font-mono">
+            <p className="text-[11px] text-[var(--color-ec-text-secondary)] font-mono">
               Select parameters and run optimization
             </p>
-            <p className="text-[9px] text-[var(--muted)] font-mono opacity-60">
+            <p className="text-[9px] text-[var(--color-ec-text-muted)] font-mono opacity-80">
               {params.length} parameters detected
             </p>
           </div>
@@ -565,7 +560,7 @@ export default function OptimizationSurfaceTab({
 
       {!loadingParams && params.length === 0 && (
         <div className="flex items-center justify-center h-40">
-          <p className="text-[11px] text-[var(--muted)] font-mono">
+          <p className="text-[11px] text-[var(--color-ec-text-secondary)] font-mono">
             No optimizable parameters detected
           </p>
         </div>
@@ -592,28 +587,26 @@ function RangeSlider({
   const step = param?.step || 1;
   return (
     <div>
-      <label className="text-[9px] text-[var(--muted)] block mb-1.5 font-mono uppercase">{label}</label>
+      <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">{label}</label>
       <div className="flex items-center gap-2">
         <input
           type="number"
           value={value[0]}
           step={step}
           onChange={(e) => onChange([Number(e.target.value), value[1]])}
-          className="w-20 px-2 py-1 text-[11px] font-mono bg-transparent text-[var(--text-data)] focus:outline-none"
-          style={{ borderBottom: '1px solid var(--border)' }}
+          className="w-20 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
         />
-        <span className="text-[9px] text-[var(--muted)] font-mono">→</span>
+        <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono">→</span>
         <input
           type="number"
           value={value[1]}
           step={step}
           onChange={(e) => onChange([value[0], Number(e.target.value)])}
-          className="w-20 px-2 py-1 text-[11px] font-mono bg-transparent text-[var(--text-data)] focus:outline-none"
-          style={{ borderBottom: '1px solid var(--border)' }}
+          className="w-20 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
         />
       </div>
       {param && (
-        <p className="text-[9px] text-[var(--muted)] mt-1 font-mono opacity-50">
+        <p className="text-[9px] text-[var(--color-ec-text-muted)] mt-1 font-mono opacity-60">
           current: {param.current_value} | step: {step}
         </p>
       )}
@@ -633,20 +626,20 @@ function AnalysisCard({
   isDarkMode?: boolean;
 }) {
   return (
-    <div className="py-2" style={{ borderTop: '1px solid var(--border)' }}>
-      <p className="text-[10px] font-semibold text-[var(--foreground)] uppercase tracking-[0.1em] mb-0.5 font-mono">{title}</p>
+    <div className="py-2" style={{ borderTop: '1px solid var(--color-ec-border)' }}>
+      <p className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.1em] mb-0.5 font-mono">{title}</p>
       {subtitle && (
-        <p className="text-[9px] text-[var(--muted)] mb-2 font-mono opacity-60">{subtitle}</p>
+        <p className="text-[9px] text-[var(--color-ec-text-muted)] mb-2 font-mono opacity-80">{subtitle}</p>
       )}
       <div className="space-y-0.5">
         {items.map((item, i) => (
           <div key={i} className="flex justify-between items-center py-0.5">
-            <span className="text-[10px] text-[var(--muted)] font-mono">{item.label}</span>
+            <span className="text-[10px] text-[var(--color-ec-text-secondary)] font-mono">{item.label}</span>
             <span
               className={`text-[11px] font-mono ${
                 item.highlight
-                  ? "text-amber-500 font-semibold"
-                  : "text-[var(--text-data)]"
+                  ? "text-[var(--color-ec-copper-bright)] font-semibold"
+                  : "text-[var(--color-ec-text-primary)]"
               }`}
             >
               {item.value}
