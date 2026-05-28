@@ -413,19 +413,19 @@ export default function ChartsTab({
 
         {/* Descriptive Statistics Table */}
         <div className="flex flex-col h-[280px]">
-          <div className="px-3 py-2">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
+          <div className="pl-14 py-2">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
               Descriptive Statistics
             </span>
           </div>
-          <div className="flex-1 pl-8 pr-4 pb-4 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
-            <table className="w-fit ml-4 text-[10px] font-mono" style={{ borderCollapse: 'collapse' }}>
+          <div className="flex-1 pl-14 pr-4 pb-4 overflow-y-auto custom-scrollbar" style={{ scrollbarWidth: 'none' }}>
+            <table className="w-full text-[10px] font-mono" style={{ borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--color-ec-border)' }}>
-                  <th className="text-left py-1 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">metric</th>
-                  <th className="text-right py-1 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">PnL %</th>
-                  <th className="text-right py-1 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (W)</th>
-                  <th className="text-right py-1 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (L)</th>
+                  <th className="text-left py-1 px-2 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">metric</th>
+                  <th className="text-right py-1 px-2 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">PnL %</th>
+                  <th className="text-right py-1 px-2 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (W)</th>
+                  <th className="text-right py-1 px-2 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (L)</th>
                 </tr>
               </thead>
               <tbody>
@@ -448,14 +448,14 @@ export default function ChartsTab({
                     className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
                     style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)' }}
                   >
-                    <td className="py-1 px-3" style={{ color: 'var(--color-ec-text-primary)' }}>{row.label}</td>
-                    <td className="py-1 px-3 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                    <td className="py-1 px-2" style={{ color: 'var(--color-ec-text-primary)' }}>{row.label}</td>
+                    <td className="py-1 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
                       {row.isInt ? row.pnl : (row.pnl).toFixed(row.prec ?? 2)}{row.isPct && !row.isInt ? '%' : ''}
                     </td>
-                    <td className="py-1 px-3 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                    <td className="py-1 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
                       {row.isInt ? row.w : (row.w).toFixed(row.prec ?? 2)}
                     </td>
-                    <td className="py-1 px-3 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                    <td className="py-1 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
                       {row.isInt ? row.l : (row.l).toFixed(row.prec ?? 2)}
                     </td>
                   </tr>
