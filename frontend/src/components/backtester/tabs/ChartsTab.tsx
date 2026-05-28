@@ -83,13 +83,13 @@ export default function ChartsTab({
   isDarkMode = false,
 }: ChartsTabProps) {
 
-  const gridColor = isDarkMode ? "#303033" : "#f0eeea";
-  const tickColor = isDarkMode ? "#94a3b8" : "#a8a29e";
-  const tooltipBg = isDarkMode ? "#303033" : "#fafaf7";
-  const barPositiveFill = isDarkMode ? "#3b82f6" : "#f1f5f9";
-  const barPositiveStroke = isDarkMode ? "transparent" : "#1c1917";
-  const barNegativeFill = isDarkMode ? "#e2e8f0" : "#18181a";
-  const barNegativeStroke = isDarkMode ? "transparent" : "transparent";
+  const gridColor = "#2C2F33";
+  const tickColor = "#ffffff";
+  const tooltipBg = "#1C1E21";
+  const barPositiveFill = "#10b981";
+  const barPositiveStroke = "transparent";
+  const barNegativeFill = "#ef4444";
+  const barNegativeStroke = "transparent";
 
   const pnlDistribution = useMemo(() => {
     const pnlPctCoords = trades.map(t => t.return_pct).filter((v): v is number => v !== undefined && v !== null);
@@ -272,7 +272,7 @@ export default function ChartsTab({
   const fmt = (v: number, pct = false) => `${v.toFixed(2)}${pct ? '%' : ''}`;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-12" style={{ paddingTop: 24 }}>
 
       {/* ROW 1: Rolling EV + EV by Time + EV by Day — borderless triptych */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 h-[280px] lg:h-[300px]" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -285,20 +285,20 @@ export default function ChartsTab({
         {/* EV por Tiempo (30m) */}
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">EV por Tiempo (30m)</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">EV por Tiempo (30m)</span>
           </div>
           <div className="flex-1 px-1 pb-1 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={evByTime30Min} margin={{ top: 5, right: 8, bottom: 0, left: -28 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                <XAxis dataKey="time" tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                <CartesianGrid stroke={gridColor} vertical={false} />
+                <XAxis dataKey="time" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
                   formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
-                <ReferenceLine y={0} stroke={tickColor} strokeWidth={0.5} />
+                <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
                 <Bar dataKey="ev" radius={[1, 1, 0, 0]}>
                   {evByTime30Min.map((entry, idx) => <Cell key={idx} fill={entry.ev >= 0 ? barPositiveFill : barNegativeFill} stroke={entry.ev >= 0 ? barPositiveStroke : barNegativeStroke} fillOpacity={isDarkMode ? 0.75 : 1} />)}
                 </Bar>
@@ -310,20 +310,20 @@ export default function ChartsTab({
         {/* EV por Día */}
         <div className="flex flex-col h-full">
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">EV por Dia</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">EV por Dia</span>
           </div>
           <div className="flex-1 px-1 pb-1 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={evByDay} margin={{ top: 5, right: 8, bottom: 0, left: -28 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                <XAxis dataKey="day" tick={{ fontSize: 9, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                <CartesianGrid stroke={gridColor} vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
                   formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
-                <ReferenceLine y={0} stroke={tickColor} strokeWidth={0.5} />
+                <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
                 <Bar dataKey="ev" radius={[1, 1, 0, 0]}>
                   {evByDay.map((entry, idx) => <Cell key={idx} fill={entry.ev >= 0 ? barPositiveFill : barNegativeFill} stroke={entry.ev >= 0 ? barPositiveStroke : barNegativeStroke} fillOpacity={isDarkMode ? 0.75 : 1} />)}
                 </Bar>
@@ -338,23 +338,23 @@ export default function ChartsTab({
         {/* PnL Distribution */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
               Distribucion de Retornos (PnL %)
             </span>
           </div>
           <div className="flex-1 px-1 pb-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={pnlDistribution.data} margin={{ top: 8, right: 8, left: -28, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 7, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                   interval="preserveStartEnd"
                 />
                 <YAxis
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -363,7 +363,7 @@ export default function ChartsTab({
                   contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
-                <ReferenceLine x="0.00%" stroke={tickColor} strokeDasharray="3 3" strokeWidth={0.5} />
+                <ReferenceLine x="0.00%" stroke="#6A6D72" strokeDasharray="3 3" strokeWidth={0.5} />
                 <Bar dataKey="value" radius={[1, 1, 0, 0]}>
                   {pnlDistribution.data.map((entry, index) => (
                     <Cell key={index} fill={entry.num > 0 ? barPositiveFill : entry.num < 0 ? barNegativeFill : tickColor} stroke={entry.num > 0 ? barPositiveStroke : entry.num < 0 ? barNegativeStroke : 'transparent'} fillOpacity={isDarkMode ? 0.7 : 1} />
@@ -377,10 +377,10 @@ export default function ChartsTab({
         {/* Consecutive Runs */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
               Consecutive Runs
             </span>
-            <div className="flex gap-3 text-[8px] font-mono text-[var(--muted)]">
+            <div className="flex gap-3 text-[8px] font-mono text-[var(--color-ec-text-secondary)]">
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-emerald-500 rounded-sm"></span>W</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-red-500 rounded-sm"></span>L</span>
             </div>
@@ -388,15 +388,15 @@ export default function ChartsTab({
           <div className="flex-1 px-1 pb-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={consecutiveRuns.data} margin={{ top: 8, right: 8, left: -28, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+                <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="length"
-                  tick={{ fontSize: 9, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -414,11 +414,11 @@ export default function ChartsTab({
         {/* Gap % vs PnL % Scatter */}
         <div className="flex flex-col h-[280px]">
           <div className="px-3 py-2 flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
               Gap % vs PnL %
             </span>
             {gapRegression && (
-              <span className="text-[9px] font-mono text-[var(--muted)]">
+              <span className="text-[9px] font-mono text-[var(--color-ec-text-secondary)]">
                 R² = {(gapRegression.r2 * 100).toFixed(1)}%
               </span>
             )}
@@ -426,12 +426,12 @@ export default function ChartsTab({
           <div className="flex-1 px-1 pb-1 relative">
             <ResponsiveContainer width="100%" height="100%">
               <ScatterChart margin={{ top: 8, right: 8, left: -20, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                <CartesianGrid stroke={gridColor} />
                 <XAxis
                   type="number"
                   dataKey="x"
                   name="Gap %"
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   tickFormatter={(v: number) => `${v.toFixed(0)}%`}
                   axisLine={false}
                   tickLine={false}
@@ -440,7 +440,7 @@ export default function ChartsTab({
                   type="number"
                   dataKey="y"
                   name="PnL %"
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   tickFormatter={(v: number) => `${v.toFixed(1)}%`}
                   axisLine={false}
                   tickLine={false}
@@ -460,7 +460,7 @@ export default function ChartsTab({
                   data={gapVsPnl}
                   shape={(props: { cx?: number; cy?: number }) => {
                     if (!props.cx || !props.cy) return <></>;
-                    return <circle cx={props.cx} cy={props.cy} r={2} stroke={isDarkMode ? '#e2e8f0' : '#1c1917'} fill="transparent" strokeWidth={1} />;
+                    return <circle cx={props.cx} cy={props.cy} r={2} stroke="#E89C6A" fill="transparent" strokeWidth={1} />;
                   }}
                   isAnimationActive={false}
                 />
@@ -469,7 +469,7 @@ export default function ChartsTab({
                     data={gapRegressionLine}
                     shape={() => <></>}
                     line={{
-                      stroke: isDarkMode ? '#e2e8f0' : '#1c1917',
+                      stroke: '#D87A3D',
                       strokeDasharray: '3 3',
                       strokeWidth: 1.5
                     }}
@@ -485,17 +485,17 @@ export default function ChartsTab({
 
       {/* ROW 3: Combined Statistics — single terminal-style table */}
       <div className="pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-        <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em] block mb-3">
+        <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] block mb-3">
           Descriptive Statistics
         </span>
         <div className="overflow-x-auto">
           <table className="w-full text-[11px] font-mono" style={{ borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th className="text-left py-1.5 px-2 text-[var(--muted)] font-normal">metric</th>
-                <th className="text-right py-1.5 px-2 text-[var(--muted)] font-normal">PnL %</th>
-                <th className="text-right py-1.5 px-2 text-[var(--muted)] font-normal">Streaks (W)</th>
-                <th className="text-right py-1.5 px-2 text-[var(--muted)] font-normal">Streaks (L)</th>
+                <th className="text-left py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">metric</th>
+                <th className="text-right py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">PnL %</th>
+                <th className="text-right py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">Streaks (W)</th>
+                <th className="text-right py-1.5 px-2 text-[var(--color-ec-text-secondary)] font-normal">Streaks (L)</th>
               </tr>
             </thead>
             <tbody>
@@ -518,14 +518,14 @@ export default function ChartsTab({
                   className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
                   style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
                 >
-                  <td className="py-1.5 px-2 text-[var(--muted)]">{row.label}</td>
-                  <td className="py-1.5 px-2 text-right text-[var(--text-data)]">
+                  <td className="py-1.5 px-2" style={{ color: 'var(--color-ec-text-primary)' }}>{row.label}</td>
+                  <td className="py-1.5 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
                     {row.isInt ? row.pnl : (row.pnl).toFixed(row.prec ?? 2)}{row.isPct && !row.isInt ? '%' : ''}
                   </td>
-                  <td className="py-1.5 px-2 text-right text-[var(--text-data)]">
+                  <td className="py-1.5 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
                     {row.isInt ? row.w : (row.w).toFixed(row.prec ?? 2)}
                   </td>
-                  <td className="py-1.5 px-2 text-right text-[var(--text-data)]">
+                  <td className="py-1.5 px-2 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
                     {row.isInt ? row.l : (row.l).toFixed(row.prec ?? 2)}
                   </td>
                 </tr>

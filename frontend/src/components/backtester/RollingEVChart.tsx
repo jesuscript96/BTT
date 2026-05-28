@@ -97,7 +97,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
 
         const bgColor = "#16181A";
         const gridColor = "#2C2F33";
-        const textColor = "#8A8D92";
+        const textColor = "#ffffff";
 
         const chart = createChart(containerRef.current, {
             width: containerRef.current.clientWidth,
@@ -121,12 +121,12 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         // BaselineSeries with gradient fill above/below zero — like equity/drawdown
         const series = chart.addSeries(BaselineSeries, {
             baseValue: { type: "price", price: 0 },
-            topLineColor: "#ffffff",
-            topFillColor1: "rgba(255,255,255,0.15)",
-            topFillColor2: "rgba(255,255,255,0.01)",
-            bottomLineColor: "#ffffff",
-            bottomFillColor1: "rgba(255,255,255,0.01)",
-            bottomFillColor2: "rgba(255,255,255,0.15)",
+            topLineColor: "#10b981",
+            topFillColor1: "rgba(16,185,129,0.18)",
+            topFillColor2: "rgba(16,185,129,0.01)",
+            bottomLineColor: "#ef4444",
+            bottomFillColor1: "rgba(239,68,68,0.01)",
+            bottomFillColor2: "rgba(239,68,68,0.18)",
             lineWidth: 2,
             priceFormat: { type: "price", precision: 2, minMove: 0.01 },
         });
@@ -160,7 +160,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     return (
         <div className="flex flex-col h-full transition-colors">
             <div className="px-3 py-2 flex items-center justify-between">
-                <span className="text-[9px] font-semibold text-[var(--muted)] uppercase tracking-[0.15em]">
+                <span className="text-[9px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.15em]">
                     Rolling EV
                 </span>
                 <div className="flex items-center gap-3">
@@ -170,8 +170,8 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                                 key={val}
                                 onClick={() => setBasis(val)}
                                 className={`px-1.5 py-0.5 transition-colors ${basis === val
-                                    ? "text-[var(--foreground)] font-bold"
-                                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                                    ? "text-[var(--color-ec-text-primary)] font-bold"
+                                    : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)]"
                                     }`}
                             >
                                 {label}
@@ -179,7 +179,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                         ))}
                     </div>
                     <div className="flex items-center gap-1">
-                        <span className="text-[8px] text-[var(--muted)] font-mono">W</span>
+                        <span className="text-[8px] text-[var(--color-ec-text-secondary)] font-mono">W</span>
                         <input
                             type="number"
                             min={5}
@@ -187,7 +187,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                             value={rollingWindow}
                             onChange={(e) => setRollingWindow(Math.max(5, Math.min(500, parseInt(e.target.value) || 50)))}
                             className="w-10 text-[10px] border-none bg-transparent text-center font-mono text-[var(--foreground)] outline-none"
-                            style={{ borderBottom: '1px solid var(--border)' }}
+                            style={{ borderBottom: '1px solid var(--color-ec-border)' }}
                         />
                     </div>
                 </div>
