@@ -89,6 +89,8 @@ export default function BacktestPanel({
   const [sizeBySl, setSizeBySl] = useState(false);
   const [feeType, setFeeType] = useState<"PERCENT" | "FLAT">("PERCENT");
   const [loadingData, setLoadingData] = useState(true);
+  const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+  const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   const loadData = async () => {
@@ -301,6 +303,10 @@ export default function BacktestPanel({
           <button
             type="button"
             onClick={onNewDataset}
+            onMouseEnter={() => setHoveredBtn("dataset")}
+            onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+            onMouseDown={() => setActiveBtn("dataset")}
+            onMouseUp={() => setActiveBtn(null)}
             style={{
               width: '100%',
               padding: '8px 0',
@@ -310,12 +316,15 @@ export default function BacktestPanel({
               letterSpacing: '1px',
               textTransform: 'uppercase',
               cursor: 'pointer',
-              border: '0.5px solid var(--color-ec-copper)',
-              backgroundColor: 'transparent',
-              color: 'var(--color-ec-copper)',
+              border: hoveredBtn === "dataset" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
+              backgroundColor: hoveredBtn === "dataset" ? 'var(--color-ec-copper)' : 'transparent',
+              color: hoveredBtn === "dataset" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
               fontFamily: 'var(--color-ec-sans)',
               marginTop: 6,
               marginBottom: 2,
+              boxShadow: hoveredBtn === "dataset" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
+              transform: activeBtn === "dataset" ? 'scale(0.98)' : hoveredBtn === "dataset" ? 'scale(1.015)' : 'scale(1)',
+              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
             }}
           >
             + NUEVO DATASET
@@ -376,6 +385,10 @@ export default function BacktestPanel({
           <button
             type="button"
             onClick={onNewStrategy}
+            onMouseEnter={() => setHoveredBtn("strategy")}
+            onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+            onMouseDown={() => setActiveBtn("strategy")}
+            onMouseUp={() => setActiveBtn(null)}
             style={{
               width: '100%',
               padding: '8px 0',
@@ -385,12 +398,15 @@ export default function BacktestPanel({
               letterSpacing: '1px',
               textTransform: 'uppercase',
               cursor: 'pointer',
-              border: '0.5px solid var(--color-ec-copper)',
-              backgroundColor: 'transparent',
-              color: 'var(--color-ec-copper)',
+              border: hoveredBtn === "strategy" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
+              backgroundColor: hoveredBtn === "strategy" ? 'var(--color-ec-copper)' : 'transparent',
+              color: hoveredBtn === "strategy" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
               fontFamily: 'var(--color-ec-sans)',
               marginTop: 4,
               marginBottom: 8,
+              boxShadow: hoveredBtn === "strategy" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
+              transform: activeBtn === "strategy" ? 'scale(0.98)' : hoveredBtn === "strategy" ? 'scale(1.015)' : 'scale(1)',
+              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
             }}
           >
             + Nueva Estrategia
@@ -862,23 +878,61 @@ export default function BacktestPanel({
               </div>
 
               {session.id === "custom" && marketSessions.includes("custom") && (
-                <div className="grid grid-cols-2 gap-2 mt-2 pl-6">
+                <div className="grid grid-cols-2 gap-2 mt-3 pl-6">
                   <div>
-                    <label className="block text-[10px] font-medium mb-1 text-[var(--muted)]">Desde</label>
+                    <label style={{
+                      display: "block",
+                      fontFamily: "var(--color-ec-sans)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-secondary)",
+                      fontStyle: "italic",
+                      marginBottom: 4,
+                    }}>Desde</label>
                     <input
                       type="time"
                       value={customStartTime}
                       onChange={(e) => setCustomStartTime(e.target.value)}
-                      className="w-full border border-[var(--border)] rounded-md px-2 py-1 text-[10px] bg-[var(--card-muted-bg)]"
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '6px 10px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
+                      }}
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-medium mb-1 text-[var(--muted)]">Hasta</label>
+                    <label style={{
+                      display: "block",
+                      fontFamily: "var(--color-ec-sans)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-secondary)",
+                      fontStyle: "italic",
+                      marginBottom: 4,
+                    }}>Hasta</label>
                     <input
                       type="time"
                       value={customEndTime}
                       onChange={(e) => setCustomEndTime(e.target.value)}
-                      className="w-full border border-[var(--border)] rounded-md px-2 py-1 text-[10px] bg-[var(--card-muted-bg)]"
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '6px 10px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
+                      }}
                     />
                   </div>
                 </div>
@@ -891,8 +945,12 @@ export default function BacktestPanel({
       <button
         onClick={handleRun}
         disabled={loading || !selectedDataset || !selectedStrategy}
+        onMouseEnter={() => setHoveredBtn("run")}
+        onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+        onMouseDown={() => setActiveBtn("run")}
+        onMouseUp={() => setActiveBtn(null)}
         style={{
-            background: 'var(--color-ec-copper)',
+            backgroundColor: 'var(--color-ec-copper)',
             color: 'var(--color-ec-copper-text)',
             border: 'none',
             borderRadius: 5,
@@ -902,9 +960,13 @@ export default function BacktestPanel({
             fontWeight: 700,
             letterSpacing: '1.2px',
             textTransform: 'uppercase',
-            cursor: 'pointer',
+            cursor: loading || !selectedDataset || !selectedStrategy ? 'not-allowed' : 'pointer',
             width: '100%',
             marginTop: 8,
+            opacity: loading || !selectedDataset || !selectedStrategy ? 0.5 : 1,
+            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(1.015)' : 'scale(1)',
+            transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
       >
         {loading ? (

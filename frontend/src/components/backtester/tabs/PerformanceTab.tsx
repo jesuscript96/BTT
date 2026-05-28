@@ -5,6 +5,7 @@ import {
   createChart,
   LineSeries,
   HistogramSeries,
+  ColorType,
   type IChartApi,
   type Time,
 } from "lightweight-charts";
@@ -257,15 +258,15 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    const bgColor = isDarkMode ? "#18181a" : "#fafaf7";
-    const gridColor = isDarkMode ? "#303033" : "#f0eeea";
-    const textColor = isDarkMode ? "#94a3b8" : "#a8a29e";
+    const bgColor = "#16181A";
+    const gridColor = "#2C2F33";
+    const textColor = "#8A8D92";
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 280,
       layout: {
-        background: { color: bgColor },
+        background: { type: ColorType.Solid, color: bgColor },
         textColor: textColor,
         fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
         fontSize: 10,

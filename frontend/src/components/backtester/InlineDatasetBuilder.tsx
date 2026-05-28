@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 
 interface Props {
   onSave: (name: string, filters: any) => Promise<void>;
@@ -16,15 +16,26 @@ interface ParameterConfig {
 }
 
 const SECTION_PARAMS: ParameterConfig[] = [
-  { key: "rth_close", label: "Min Close price", unit: "$", placeholder: "0.00" },
+  { key: "rth_close", label: "Min Open price", unit: "$", placeholder: "0.00" },
   { key: "pmh_gap_pct_min", label: "PM High Gap min", unit: "%", placeholder: "10.0", min: 10 },
   { key: "pmh_gap_pct_max", label: "PM High Gap max", unit: "%", placeholder: "0.0" },
   { key: "pm_volume", label: "Premarket total volume", unit: "M", placeholder: "0.0" },
-  { key: "gap_pct_min", label: "Gap mín", unit: "%", placeholder: "10.0", min: 10 },
+  { key: "gap_pct_min", label: "Gap min", unit: "%", placeholder: "10.0", min: 10 },
   { key: "gap_pct_max", label: "Gap max", unit: "%", placeholder: "0.0" },
   { key: "rth_volume", label: "RTH Total Volume", unit: "%", placeholder: "0.0" },
-  { key: "rth_range_pct", label: "Bar Range", unit: "%", placeholder: "0.0" },
+  { key: "rth_range_pct", label: "Bar RTH Range", unit: "%", placeholder: "0.0" },
 ];
+
+const PARAM_DESCRIPTIONS: Record<string, string> = {
+  rth_close: "Precio mínimo de la acción en la apertura de mercado",
+  pmh_gap_pct_min: "Precio mínimo de la sesión de premarket",
+  pmh_gap_pct_max: "Precio máximo de la sesión de premarket",
+  pm_volume: "Volumen total acumulado durante el premarket",
+  gap_pct_min: "% de Gap mínimo",
+  gap_pct_max: "% de Gap máximo",
+  rth_volume: "Volumen total durante la sesión de mercado",
+  rth_range_pct: "Rango de la vela en temporalidad diaria, es decir, el % de subida o bajada que ha hecho la vela este día (se permite buscar tanto para +% como para -%)",
+};
 
 type SectionId = "gap_day" | "gap_1_day" | "gap_2_day";
 
@@ -44,6 +55,9 @@ interface IncludedCondition {
 
 export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
   const [name, setName] = useState("Nuevo Dataset");
+  const [dateFrom, setDateFrom] = useState("2024-01-01");
+  const [dateTo, setDateTo] = useState("2024-12-31");
+  const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [values, setValues] = useState<Record<SectionId, Record<string, string>>>({
     gap_day: {},
     gap_1_day: {},
@@ -56,6 +70,15 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
     gap_1_day: true,
     gap_2_day: true,
   });
+
+  const [activeTooltip, setActiveTooltip] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    width: number;
+  } | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const handleInputChange = (section: SectionId, paramKey: string, val: string) => {
     setValues((prev) => ({
@@ -105,7 +128,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
       );
     } else {
       // Add it
-      const labelText = param.label === "Bar Range" && section !== "gap_day" ? "Bar RTH Range" : param.label;
+      const labelText = param.label;
       setIncludedConditions((prev) => [
         ...prev,
         {
@@ -190,10 +213,10 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
     });
 
     const filters = {
-      date_from: "2024-01-01",
-      date_to: "2024-12-31",
-      start_date: "2024-01-01",
-      end_date: "2024-12-31",
+      date_from: dateFrom,
+      date_to: dateTo,
+      start_date: dateFrom,
+      end_date: dateTo,
       min_gap_pct,
       max_gap_pct,
       min_pm_volume,
@@ -205,7 +228,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div ref={containerRef} style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
       {/* Header */}
       <div
         style={{
@@ -250,6 +273,71 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
 
       {/* Main Content Area */}
       <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Date Range Selector Card */}
+        <div
+          style={{
+            border: "0.5px solid var(--color-ec-border)",
+            borderRadius: 6,
+            backgroundColor: "var(--color-ec-bg-sidebar)",
+            padding: "12px 14px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              fontFamily: "var(--color-ec-sans)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              color: "var(--color-ec-text-high)",
+              textTransform: "uppercase",
+            }}
+          >
+            RANGO DE FECHAS GLOBAL
+          </span>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 9, fontFamily: "var(--color-ec-sans)", fontWeight: 600, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Desde</span>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                style={{
+                  backgroundColor: "var(--color-ec-bg-elevated)",
+                  border: "0.5px solid var(--color-ec-border)",
+                  borderRadius: 5,
+                  padding: "6px 8px",
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 11,
+                  color: "var(--color-ec-text-primary)",
+                  outline: "none",
+                }}
+              />
+            </div>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={{ fontSize: 9, fontFamily: "var(--color-ec-sans)", fontWeight: 600, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Hasta</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                style={{
+                  backgroundColor: "var(--color-ec-bg-elevated)",
+                  border: "0.5px solid var(--color-ec-border)",
+                  borderRadius: 5,
+                  padding: "6px 8px",
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 11,
+                  color: "var(--color-ec-text-primary)",
+                  outline: "none",
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
         {(["gap_day", "gap_1_day", "gap_2_day"] as SectionId[]).map((sectionId) => {
           const isExpanded = expandedSections[sectionId];
           return (
@@ -260,6 +348,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
                 borderRadius: 6,
                 backgroundColor: "var(--color-ec-bg-sidebar)",
                 overflow: "hidden",
+                flexShrink: 0,
               }}
             >
               {/* Section Header */}
@@ -293,38 +382,106 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
 
               {/* Section Body */}
               {isExpanded && (
-                <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ padding: "12px 12px 20px 12px", display: "flex", flexDirection: "column", gap: 10, maxHeight: "200px", overflowY: "auto", overscrollBehaviorY: "contain" }}>
                   {SECTION_PARAMS.map((param) => {
                     const val = values[sectionId][param.key] || "";
                     const validationErr = getValidationError(param, val);
                     const included = isConditionIncluded(sectionId, param.key);
-                    const labelText = param.label === "Bar Range" && sectionId !== "gap_day" ? "Bar RTH Range" : param.label;
+                    const labelText = param.label;
 
+                    const isHovered = hoveredRow === `${sectionId}_${param.key}`;
                     return (
                       <div
                         key={param.key}
+                        onMouseEnter={() => setHoveredRow(`${sectionId}_${param.key}`)}
+                        onMouseLeave={() => setHoveredRow(null)}
                         style={{
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
                           gap: 12,
+                          flexShrink: 0,
+                          padding: "6px 8px",
+                          margin: "0 -8px",
+                          borderRadius: 4,
+                          transition: "background-color 150ms ease",
+                          backgroundColor: isHovered ? "var(--color-ec-bg-elevated)" : "transparent",
                         }}
                       >
                         {/* Parameter Label */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
                           <span
                             style={{
                               fontFamily: "var(--color-ec-sans)",
                               fontSize: 11,
                               fontWeight: 500,
                               color: "var(--color-ec-text-secondary)",
-                              display: "block",
                               whiteSpace: "nowrap",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                             }}
                           >
                             {labelText}
+                          </span>
+                          <span
+                            onMouseEnter={(e) => {
+                              if (!containerRef.current) return;
+                              const containerRect = containerRef.current.getBoundingClientRect();
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              
+                              const text = PARAM_DESCRIPTIONS[param.key];
+                              // Estimar el ancho del tooltip basado en el largo del texto (entre 100px y 220px)
+                              const estimatedWidth = Math.min(Math.max(text.length * 6.5 + 24, 100), 220);
+                              const halfWidth = estimatedWidth / 2;
+                              
+                              let tooltipX = rect.left - containerRect.left + rect.width / 2;
+                              const tooltipY = rect.top - containerRect.top - 6;
+                              
+                              const minMargin = 16;
+                              if (tooltipX - halfWidth < minMargin) {
+                                tooltipX = minMargin + halfWidth;
+                              }
+                              
+                              const maxRight = containerRect.width - minMargin;
+                              if (tooltipX + halfWidth > maxRight) {
+                                tooltipX = maxRight - halfWidth;
+                              }
+                              
+                              setActiveTooltip({
+                                text,
+                                x: tooltipX,
+                                y: tooltipY,
+                                width: estimatedWidth,
+                              });
+                              e.currentTarget.style.color = "var(--color-ec-text-primary)";
+                              e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
+                              e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
+                            }}
+                            onMouseLeave={(e) => {
+                              setActiveTooltip(null);
+                              e.currentTarget.style.color = "var(--color-ec-text-muted)";
+                              e.currentTarget.style.borderColor = "var(--color-ec-border)";
+                              e.currentTarget.style.backgroundColor = "var(--color-ec-bg-elevated)";
+                            }}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 14,
+                              height: 14,
+                              borderRadius: "50%",
+                              backgroundColor: "var(--color-ec-bg-elevated)",
+                              border: "0.5px solid var(--color-ec-border)",
+                              color: "var(--color-ec-text-muted)",
+                              fontSize: 9,
+                              fontWeight: 700,
+                              cursor: "help",
+                              flexShrink: 0,
+                              userSelect: "none",
+                              transition: "all 150ms ease",
+                            }}
+                          >
+                            ?
                           </span>
                         </div>
 
@@ -439,7 +596,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
         })}
 
         {/* Included Conditions Tag Summary */}
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 8, flexShrink: 0 }}>
           <span
             style={{
               fontFamily: "var(--color-ec-sans)",
@@ -454,66 +611,76 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
           >
             Resumen de Condiciones ({includedConditions.length})
           </span>
-          {includedConditions.length === 0 ? (
-            <span
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {/* Date Range Tag */}
+            <div
               style={{
-                fontFamily: "var(--color-ec-sans)",
-                fontSize: 11,
-                fontStyle: "italic",
-                color: "var(--color-ec-text-muted)",
+                display: "flex",
+                alignItems: "center",
+                backgroundColor: "rgba(216, 122, 61, 0.08)",
+                border: "0.5px solid var(--color-ec-copper)",
+                borderRadius: 4,
+                padding: "4px 8px",
               }}
             >
-              Ninguna condición incluida. Escribe un valor e inclúyelo arriba.
-            </span>
-          ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {includedConditions.map((c) => {
-                const sectLabel = SECTION_LABELS[c.section];
-                return (
-                  <div
-                    key={`${c.section}_${c.paramKey}`}
+              <span
+                style={{
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--color-ec-copper)",
+                }}
+              >
+                Rango de dataset: <strong style={{ color: "var(--color-ec-text-primary)" }}>{dateFrom}</strong> a <strong style={{ color: "var(--color-ec-text-primary)" }}>{dateTo}</strong>
+              </span>
+            </div>
+
+            {includedConditions.map((c) => {
+              const sectLabel = SECTION_LABELS[c.section];
+              return (
+                <div
+                  key={`${c.section}_${c.paramKey}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    backgroundColor: "var(--color-ec-bg-elevated)",
+                    border: "0.5px solid var(--color-ec-border)",
+                    borderRadius: 4,
+                    padding: "4px 8px",
+                  }}
+                >
+                  <span
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                      backgroundColor: "var(--color-ec-bg-elevated)",
-                      border: "0.5px solid var(--color-ec-border)",
-                      borderRadius: 4,
-                      padding: "4px 8px",
+                      fontFamily: "var(--color-ec-sans)",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "var(--color-ec-text-secondary)",
                     }}
                   >
-                    <span
-                      style={{
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 10,
-                        fontWeight: 600,
-                        color: "var(--color-ec-text-secondary)",
-                      }}
-                    >
-                      <strong style={{ color: "var(--color-ec-copper)" }}>{sectLabel}</strong>:{" "}
-                      {c.label} {c.paramKey.includes("max") ? "≤" : "≥"}{" "}
-                      {c.unit === "$" ? `$${c.value}` : `${c.value}${c.unit}`}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeCondition(c.section, c.paramKey)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: "var(--color-ec-text-muted)",
-                        cursor: "pointer",
-                        fontSize: 12,
-                        lineHeight: 1,
-                        padding: "0 2px",
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                    <strong style={{ color: "var(--color-ec-copper)" }}>{sectLabel}</strong>:{" "}
+                    {c.label} {c.paramKey.includes("max") ? "≤" : "≥"}{" "}
+                    {c.unit === "$" ? `$${c.value}` : `${c.value}${c.unit}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeCondition(c.section, c.paramKey)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--color-ec-text-muted)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      lineHeight: 1,
+                      padding: "0 2px",
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -548,6 +715,32 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
           Guardar y Probar
         </button>
       </div>
+      {activeTooltip && (
+        <div
+          style={{
+            position: "absolute",
+            top: activeTooltip.y,
+            left: activeTooltip.x,
+            transform: "translate(-50%, -100%)",
+            backgroundColor: "var(--color-ec-bg-sidebar)",
+            color: "var(--color-ec-text-primary)",
+            border: "0.5px solid var(--color-ec-border)",
+            borderRadius: 6,
+            padding: "8px 12px",
+            fontSize: 10,
+            fontStyle: "italic",
+            lineHeight: 1.4,
+            width: activeTooltip.width,
+            zIndex: 9999,
+            pointerEvents: "none",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
+            fontFamily: "var(--color-ec-sans)",
+            transition: "opacity 150ms ease",
+          }}
+        >
+          {activeTooltip.text}
+        </div>
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import {
     createChart,
     BaselineSeries,
+    ColorType,
     type IChartApi,
     type Time,
 } from "lightweight-charts";
@@ -94,15 +95,15 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     useEffect(() => {
         if (!containerRef.current || !evData.length) return;
 
-        const bgColor = isDarkMode ? "#18181a" : "#fafaf7";
-        const gridColor = isDarkMode ? "#303033" : "#f0eeea";
-        const textColor = isDarkMode ? "#475569" : "#a8a29e";
+        const bgColor = "#16181A";
+        const gridColor = "#2C2F33";
+        const textColor = "#8A8D92";
 
         const chart = createChart(containerRef.current, {
             width: containerRef.current.clientWidth,
             height: containerRef.current.clientHeight || 120,
             layout: {
-                background: { color: bgColor },
+                background: { type: ColorType.Solid, color: bgColor },
                 textColor: textColor,
                 fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
                 fontSize: 10,
@@ -120,12 +121,12 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         // BaselineSeries with gradient fill above/below zero — like equity/drawdown
         const series = chart.addSeries(BaselineSeries, {
             baseValue: { type: "price", price: 0 },
-            topLineColor: isDarkMode ? "#ffffff" : "#000000",
-            topFillColor1: isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
-            topFillColor2: isDarkMode ? "rgba(255,255,255,0.01)" : "rgba(0,0,0,0.01)",
-            bottomLineColor: isDarkMode ? "#ffffff" : "#000000",
-            bottomFillColor1: isDarkMode ? "rgba(255,255,255,0.01)" : "rgba(0,0,0,0.01)",
-            bottomFillColor2: isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)",
+            topLineColor: "#ffffff",
+            topFillColor1: "rgba(255,255,255,0.15)",
+            topFillColor2: "rgba(255,255,255,0.01)",
+            bottomLineColor: "#ffffff",
+            bottomFillColor1: "rgba(255,255,255,0.01)",
+            bottomFillColor2: "rgba(255,255,255,0.15)",
             lineWidth: 2,
             priceFormat: { type: "price", precision: 2, minMove: 0.01 },
         });

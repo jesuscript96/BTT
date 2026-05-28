@@ -8,6 +8,7 @@ import {
   BaselineSeries,
   LineSeries,
   LineStyle,
+  ColorType,
   type IChartApi,
   type ISeriesApi,
   type Time,
@@ -91,6 +92,8 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
         monthly_expenses: includeExpensesInWhatIf ? (monthlyExpenses || 0) : 0,
       };
 
+      localStorage.setItem("current_whatif_params", JSON.stringify(params));
+
       const result = await runWhatIf({
         trades,
         init_cash: initCash,
@@ -142,31 +145,43 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
 
 
   useEffect(() => {
-    if (!containerRef.current || !globalEquity.length) return;
+    if (!containerRef.current || !ddContainerRef.current || !globalEquity.length) return;
 
-    // Split container into two divs for the two charts
-    containerRef.current.innerHTML = `
-      <div id="equity-chart-container" style="width: 100%; height: 400px; margin-bottom: 1rem;"></div>
-      <div id="dd-chart-container" style="width: 100%; height: 150px;"></div>
-    `;
+    containerRef.current.innerHTML = "";
+    ddContainerRef.current.innerHTML = "";
 
-    const equityContainer = containerRef.current.querySelector("#equity-chart-container") as HTMLElement;
-    const ddContainer = containerRef.current.querySelector("#dd-chart-container") as HTMLElement;
+    const equityContainer = containerRef.current;
+    const ddContainer = ddContainerRef.current;
+
+    // Common time formatter for showing only date
+    const timeFormatter = (time: any) => {
+      if (typeof time === "number") {
+        const date = new Date(time * 1000);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      return String(time);
+    };
 
     // --- Equity Chart ---
     const chart = createChart(equityContainer, {
       width: equityContainer.clientWidth,
-      height: 400,
+      height: 370,
       layout: {
-        background: { color: isDarkMode ? "#18181a" : "#fafaf7" },
-        textColor: isDarkMode ? "#f8fafc" : "#333"
+        background: { type: ColorType.Solid, color: "#16181A" },
+        textColor: "#8A8D92",
       },
       grid: {
-        vertLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
-        horzLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
+        vertLines: { color: "#2C2F33" },
+        horzLines: { color: "#2C2F33" },
       },
-      rightPriceScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0" },
-      timeScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0", timeVisible: true },
+      rightPriceScale: { borderColor: "#2C2F33" },
+      timeScale: { borderColor: "#2C2F33", timeVisible: false },
+      localization: {
+        timeFormatter,
+      },
     });
     chartRef.current = chart;
 
@@ -226,9 +241,6 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
       posSeries.setData(openPositions);
     }
 
-
-
-
     // --- Drawdown Chart ---
     let ddChart: IChartApi | null = null;
     let drawdownSeries: ISeriesApi<"Baseline"> | null = null;
@@ -236,17 +248,20 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
     if (globalDrawdown && globalDrawdown.length) {
       ddChart = createChart(ddContainer, {
         width: ddContainer.clientWidth,
-        height: 150,
+        height: 120,
         layout: {
-          background: { color: isDarkMode ? "#18181a" : "#fafaf7" },
-          textColor: isDarkMode ? "#f8fafc" : "#333"
+          background: { type: ColorType.Solid, color: "#16181A" },
+          textColor: "#8A8D92",
         },
         grid: {
-          vertLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
-          horzLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
+          vertLines: { color: "#2C2F33" },
+          horzLines: { color: "#2C2F33" },
         },
-        rightPriceScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0" },
-        timeScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0", timeVisible: true },
+        rightPriceScale: { borderColor: "#2C2F33" },
+        timeScale: { borderColor: "#2C2F33", timeVisible: false },
+        localization: {
+          timeFormatter,
+        },
       });
       ddChartRef.current = ddChart;
 
@@ -266,10 +281,6 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
           let val = p.value; // Drawdown is natively in % from the backend
           if (viewMode === "R") {
             // Convert % drawdown to absolute $ drawdown, then divide by R
-            // Since drawdown is negative %, (p.value/100) * initCash gives $ drawdown 
-            // We use the account high water mark, but roughly p.value% of current is close enough
-            // Since we don't have the HWM per day, we'll approximate absolute drawdown displacement
-            // Actually, risk_r view for drawdown is just % DD converted to R units via initCash
             val = riskR > 0 ? ((p.value / 100) * initCash) / riskR : 0;
           } else if (viewMode === "$") {
             val = (p.value / 100) * initCash;
@@ -377,27 +388,69 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
   })();
 
   return (
-    <div className="flex flex-col h-[675px]">
+    <div className="flex flex-col h-full">
       {/* MAIN TAB SWITCHER */}
-      <div className="px-1 flex items-center h-[30px]" style={{ borderBottom: '1px solid var(--border)' }}>
-        <div className="flex h-full">
+      <div style={{ borderBottom: '0.5px solid var(--color-ec-border)', height: 32, display: 'flex', alignItems: 'center', padding: '0 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', height: '100%', gap: 0 }}>
           <button
             onClick={() => setActiveMainTab("equity")}
-            className={`px-3 flex items-center text-[10px] font-semibold uppercase tracking-[0.12em] transition-all border-b-2 h-full ${
-              activeMainTab === "equity"
-                ? "text-[var(--foreground)] border-[var(--foreground)]"
-                : "text-[var(--muted)] border-transparent hover:text-[var(--foreground)]"
-            }`}
+            style={{
+              padding: '0 10px 0 0',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase' as const,
+              letterSpacing: '0.15em',
+              color: activeMainTab === "equity" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+              borderBottom: activeMainTab === "equity" ? '2px solid var(--color-ec-text-high)' : '2px solid transparent',
+              background: 'transparent',
+              border: 'none',
+              borderBottomWidth: 2,
+              borderBottomStyle: 'solid' as const,
+              borderBottomColor: activeMainTab === "equity" ? 'var(--color-ec-text-high)' : 'transparent',
+              cursor: 'pointer',
+              transition: 'color 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (activeMainTab !== "equity") e.currentTarget.style.color = "var(--color-ec-text-secondary)";
+            }}
+            onMouseLeave={(e) => {
+              if (activeMainTab !== "equity") e.currentTarget.style.color = "var(--color-ec-text-muted)";
+            }}
           >
             Equity Curve
           </button>
+          <span style={{ width: 1, height: 14, backgroundColor: 'var(--color-ec-border)', opacity: 0.7, margin: '0 6px', flexShrink: 0 }}></span>
           <button
             onClick={() => setActiveMainTab("whatif")}
-            className={`px-3 flex items-center text-[10px] font-semibold uppercase tracking-[0.12em] transition-all border-b-2 h-full ${
-              activeMainTab === "whatif"
-                ? "text-[var(--foreground)] border-[var(--foreground)]"
-                : "text-[var(--muted)] border-transparent hover:text-[var(--foreground)]"
-            }`}
+            style={{
+              padding: '0 10px',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase' as const,
+              letterSpacing: '0.15em',
+              color: activeMainTab === "whatif" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+              background: 'transparent',
+              border: 'none',
+              borderBottomWidth: 2,
+              borderBottomStyle: 'solid' as const,
+              borderBottomColor: activeMainTab === "whatif" ? 'var(--color-ec-text-high)' : 'transparent',
+              cursor: 'pointer',
+              transition: 'color 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (activeMainTab !== "whatif") e.currentTarget.style.color = "var(--color-ec-text-secondary)";
+            }}
+            onMouseLeave={(e) => {
+              if (activeMainTab !== "whatif") e.currentTarget.style.color = "var(--color-ec-text-muted)";
+            }}
           >
             What if...
           </button>
@@ -406,50 +459,62 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
 
       <div className="flex-1 overflow-hidden">
         {activeMainTab === "equity" ? (
-          <div key="equity-tab" className="px-4 pt-4 pb-2">
+          <div key="equity-tab" className="px-6 pt-2 pb-1 h-full flex flex-col">
             {globalDrawdown && globalDrawdown.length > 0 && (
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mt-1 mb-1 flex items-center justify-between">
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-[var(--muted)] uppercase tracking-wide font-mono">
+                    <span className="text-[10px] uppercase tracking-wide font-mono" style={{ color: "#ffffff" }}>
                       Max DD
                     </span>
-                    <span className="text-[12px] font-bold font-mono text-[var(--danger)]">
+                    <span className="text-[12px] font-bold font-mono" style={{ color: "var(--color-ec-loss)" }}>
                       {ddDisplay}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-[var(--muted)] uppercase tracking-wide font-mono">
+                    <span className="text-[10px] uppercase tracking-wide font-mono" style={{ color: "#ffffff" }}>
                       Max Profit
                     </span>
-                    <span className="text-[12px] font-bold font-mono text-[var(--success)]">
+                    <span className="text-[12px] font-bold font-mono" style={{ color: "var(--color-ec-profit)" }}>
                       {profitDisplay}
                     </span>
                   </div>
                   {maxProfitWithExpenses !== null && (
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] text-[var(--muted)] uppercase tracking-wide font-mono">
+                      <span className="text-[10px] uppercase tracking-wide font-mono" style={{ color: "#ffffff" }}>
                         Max Profit c/ Gastos
                       </span>
-                      <span className="text-[12px] font-bold font-mono text-[var(--success)]">
+                      <span className="text-[12px] font-bold font-mono" style={{ color: "var(--color-ec-profit)" }}>
                         {profitWithExpensesDisplay}
                       </span>
                     </div>
                   )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="flex p-0.5 text-[10px] ml-2">
+                <div className="flex items-center" style={{ marginRight: 22 }}>
+                  <div style={{ display: 'flex', gap: '4px' }}>
                     {(["$", "%", "R"] as ViewMode[]).map((mode) => (
                       <button
                         key={mode}
                         onClick={() => setViewMode(mode)}
-                        className={`px-2.5 py-1 font-mono transition-colors ${
-                          viewMode === mode
-                            ? "text-[var(--foreground)] font-bold"
-                            : "text-[var(--muted)] hover:text-[var(--foreground)]"
-                        }`}
-                        style={viewMode === mode ? { borderBottom: '2px solid var(--foreground)' } : { borderBottom: '2px solid transparent' }}
+                        style={{
+                          padding: '2px 4px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: viewMode === mode ? "#ffffff" : "var(--color-ec-text-muted)",
+                          borderBottom: viewMode === mode ? "2px solid #ffffff" : "2px solid transparent",
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          transition: 'color 150ms ease, border-color 150ms ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (viewMode !== mode) e.currentTarget.style.color = "var(--color-ec-text-secondary)";
+                        }}
+                        onMouseLeave={(e) => {
+                          if (viewMode !== mode) e.currentTarget.style.color = "var(--color-ec-text-muted)";
+                        }}
                       >
                         {mode}
                       </button>
@@ -458,9 +523,9 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 </div>
               </div>
             )}
-            <div ref={containerRef} className="h-[410px] w-full" />
-            <div className="border-t border-[var(--border)] pt-2 mt-2">
-               <div ref={ddContainerRef} className="h-[130px] w-full" />
+            <div ref={containerRef} className="h-[370px] w-full" />
+            <div className="border-t border-[var(--border)] pt-2 mt-auto">
+               <div ref={ddContainerRef} className="h-[120px] w-full" />
             </div>
           </div>
         ) : (
@@ -826,26 +891,40 @@ function WhatIfEquityChart({
 
     const container = chartContainerRef.current;
 
+    // Common time formatter for showing only date
+    const timeFormatter = (time: any) => {
+      if (typeof time === "number") {
+        const date = new Date(time * 1000);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const dd = String(date.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+      }
+      return String(time);
+    };
+
     const chart = createChart(container, {
       width: container.clientWidth,
       height: 180,
       layout: {
-        background: { color: isDarkMode ? "#18181a" : "#fafaf7" },
-        textColor: isDarkMode ? "#94a3b8" : "#64748b",
+        background: { type: ColorType.Solid, color: "#16181A" },
+        textColor: "#8A8D92",
       },
       grid: {
-        vertLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
-        horzLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
+        vertLines: { color: "#2C2F33" },
+        horzLines: { color: "#2C2F33" },
       },
-      rightPriceScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0" },
+      rightPriceScale: { borderColor: "#2C2F33" },
       timeScale: {
-        borderColor: isDarkMode ? "#334155" : "#e2e8f0",
+        borderColor: "#2C2F33",
         timeVisible: false,
+      },
+      localization: {
+        timeFormatter,
       },
     });
     chartInstanceRef.current = chart;
 
-    // 1. Original equity as ghost (faded, dashed)
     if (originalEquity.length > 0) {
       const ghostSeries = chart.addSeries(LineSeries, {
         color: isDarkMode ? "rgba(148,163,184,0.3)" : "rgba(100,116,139,0.25)",
@@ -888,17 +967,20 @@ function WhatIfEquityChart({
       width: ddContainer.clientWidth,
       height: 80,
       layout: {
-        background: { color: isDarkMode ? "#18181a" : "#fafaf7" },
-        textColor: isDarkMode ? "#94a3b8" : "#64748b",
+        background: { type: ColorType.Solid, color: "#16181A" },
+        textColor: "#8A8D92",
       },
       grid: {
-        vertLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
-        horzLines: { color: isDarkMode ? "#303033" : "#f0f0f0" },
+        vertLines: { color: "#2C2F33" },
+        horzLines: { color: "#2C2F33" },
       },
-      rightPriceScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0" },
+      rightPriceScale: { borderColor: "#2C2F33" },
       timeScale: {
-        borderColor: isDarkMode ? "#334155" : "#e2e8f0",
+        borderColor: "#2C2F33",
         timeVisible: true,
+      },
+      localization: {
+        timeFormatter,
       },
     });
     ddInstanceRef.current = ddChart;

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import {
     createChart,
     BaselineSeries,
+    ColorType,
     type IChartApi,
     type Time,
 } from "lightweight-charts";
@@ -86,15 +87,15 @@ export default function RollingAvgRChart({ trades, isDarkMode = false }: Rolling
             width: containerRef.current.clientWidth,
             height: containerRef.current.clientHeight || 120,
             layout: {
-                background: { color: isDarkMode ? "#18181a" : "#fafaf7" },
-                textColor: isDarkMode ? "#94a3b8" : "#999"
+                background: { type: ColorType.Solid, color: "#16181A" },
+                textColor: "#8A8D92"
             },
             grid: {
-                vertLines: { color: isDarkMode ? "#303033" : "#f5f5f5" },
-                horzLines: { color: isDarkMode ? "#303033" : "#f5f5f5" },
+                vertLines: { color: "#2C2F33" },
+                horzLines: { color: "#2C2F33" },
             },
-            rightPriceScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0" },
-            timeScale: { borderColor: isDarkMode ? "#334155" : "#e2e8f0", timeVisible: true },
+            rightPriceScale: { borderColor: "#2C2F33" },
+            timeScale: { borderColor: "#2C2F33", timeVisible: true },
             crosshair: { mode: 0 },
         });
         chartRef.current = chart;

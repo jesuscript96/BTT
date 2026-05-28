@@ -43,6 +43,12 @@ def init_db():
             print("[INFO] Optimized GCS views initialized (non-recursive globs)")
         elif provider == "local":
             # Local mode: create local empty tables if not exists, and create massive virtual database views
+            # First, drop any existing views in main schema to avoid conflict with local tables and infinite recursion
+            for table_name in ["tickers", "splits", "daily_metrics", "intraday_1m"]:
+                try:
+                    cur.execute(f"DROP VIEW IF EXISTS main.{table_name}")
+                except Exception as e:
+                    pass
             # 1. Create empty local tables in local_data.duckdb so they exist
             cur.execute("CREATE TABLE IF NOT EXISTS tickers (ticker VARCHAR PRIMARY KEY, name VARCHAR, type VARCHAR)")
             cur.execute("CREATE TABLE IF NOT EXISTS splits (ticker VARCHAR, execution_date DATE, PRIMARY KEY(ticker, execution_date))")
@@ -117,11 +123,8 @@ def init_db():
             cur.execute("CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM main.daily_metrics")
             cur.execute("CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM main.intraday_1m")
             
-            # Also create aliases in the main schema
-            cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.daily_metrics")
-            cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.intraday_1m")
-            cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.tickers")
-            cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.splits")
+            # In local mode, we do NOT create aliases in the main schema pointing to massive views,
+            # because they are already tables in the main schema.
             print("[INFO] Local market data views virtualized in massive schema")
         else:
             cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.main.daily_metrics")

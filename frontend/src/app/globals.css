@@ -29,6 +29,22 @@
   --sidebar-foreground: #8A8D92;
   --sidebar-active: #1C1E21;
   --sidebar-hover: #1C1E21;
+
+  /* Exported theme variables for inline styles */
+  --color-ec-copper: #D87A3D;
+  --color-ec-copper-bright: #E89C6A;
+  --color-ec-copper-text: #1A0A00;
+  --color-ec-bg-sidebar: #101213;
+  --color-ec-bg-base: #16181A;
+  --color-ec-bg-surface: #1C1E21;
+  --color-ec-bg-elevated: #232528;
+  --color-ec-border: #2C2F33;
+  --color-ec-text-muted: #6A6D72;
+  --color-ec-text-secondary: #8A8D92;
+  --color-ec-text-primary: #D4D2CF;
+  --color-ec-text-high: #E4E2DF;
+  --color-ec-profit: #4A9D7F;
+  --color-ec-loss: #C94D3F;
 }
 
 * {

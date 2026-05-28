@@ -9,7 +9,7 @@ import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
 import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
-import { createStrategy, createQuery } from "@/lib/api";
+import { createStrategy, createQuery, getStrategy } from "@/lib/api";
 import {
   runBacktest,
   runBacktestWithDefinition,
@@ -31,6 +31,35 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [strategyToSave, setStrategyToSave] = useState<any | null>(null);
+  const [includeWhatIfInSave, setIncludeWhatIfInSave] = useState(false);
+  const [hoveredSaveBtn, setHoveredSaveBtn] = useState(false);
+  const [activeSaveBtn, setActiveSaveBtn] = useState(false);
+
+  const handleSaveToBaulClick = async () => {
+    if (draftStrategy) {
+      setStrategyToSave({
+        name: draftStrategy.name,
+        bias: draftStrategy.bias,
+        entry_logic: draftStrategy.entry_logic,
+        exit_logic: draftStrategy.exit_logic,
+        risk_management: draftStrategy.risk_management,
+      });
+      setSaveName(draftStrategy.name);
+      setShowSaveModal(true);
+    } else if (strategyIdRef.current && strategyIdRef.current !== "draft") {
+      try {
+        const existing = await getStrategy(strategyIdRef.current);
+        setStrategyToSave(existing);
+        setSaveName(`${existing.name} (Copia)`);
+        setShowSaveModal(true);
+      } catch (err) {
+        alert("Error al cargar la estrategia para guardar.");
+      }
+    } else {
+      alert("No hay ninguna estrategia activa para guardar.");
+    }
+  };
   const initCashRef = useRef(10000);
   const riskRRef = useRef(100);
   const datasetIdRef = useRef("");
@@ -313,7 +342,7 @@ export default function Home() {
           padding: '20px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 16,
+          gap: 0,
           backgroundColor: 'var(--color-ec-bg-base)',
           minWidth: 0,
         }}>
@@ -365,8 +394,8 @@ export default function Home() {
           {result && (
             <>
               {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3) */}
-              <div className="flex gap-4 items-stretch">
-                <div className="w-2/3">
+              <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
+                <div style={{ width: '66.666667%', height: 580 }}>
                   <EquityCurveTab
                     globalEquity={result.global_equity}
                     globalDrawdown={result.global_drawdown}
@@ -378,37 +407,63 @@ export default function Home() {
                     isDarkMode={isDarkMode}
                   />
                 </div>
-                <div className="w-1/3 flex flex-col px-1 h-[675px]">
-                  <div>
+                <div style={{ width: '33.333333%', display: 'flex', flexDirection: 'column', height: 580, paddingBottom: 4, boxSizing: 'border-box' }}>
+                  <div style={{ flexShrink: 0 }}>
                     <MetricsCard metrics={result.aggregate_metrics} vertical />
-                    {draftStrategy && (
-                      <div style={{ padding: '8px 4px 4px 4px' }}>
-                        <button
-                          onClick={() => { setSaveName(draftStrategy.name); setShowSaveModal(true); }}
+                    <div style={{ padding: '12px 4px 4px 4px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <button
+                        onClick={handleSaveToBaulClick}
+                        onMouseEnter={() => setHoveredSaveBtn(true)}
+                        onMouseLeave={() => { setHoveredSaveBtn(false); setActiveSaveBtn(false); }}
+                        onMouseDown={() => setActiveSaveBtn(true)}
+                        onMouseUp={() => setActiveSaveBtn(false)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 0',
+                          backgroundColor: 'var(--color-ec-copper)',
+                          border: 'none',
+                          borderRadius: 5,
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 11,
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '1.2px',
+                          color: 'var(--color-ec-copper-text)',
+                          cursor: 'pointer',
+                          boxShadow: hoveredSaveBtn ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+                          transform: activeSaveBtn ? 'scale(0.98)' : hoveredSaveBtn ? 'scale(1.015)' : 'scale(1)',
+                          transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+                        }}
+                      >
+                        Guardar estrategia en el baúl
+                      </button>
+                      <label style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        cursor: 'pointer',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 10,
+                        color: 'var(--color-ec-text-secondary)',
+                        userSelect: 'none',
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={includeWhatIfInSave}
+                          onChange={(e) => setIncludeWhatIfInSave(e.target.checked)}
                           style={{
-                            width: '100%',
-                            padding: '7px 0',
-                            backgroundColor: 'var(--color-ec-bg-surface)',
-                            border: '0.5px solid var(--color-ec-border)',
-                            borderRadius: 5,
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            textTransform: 'uppercase',
-                            letterSpacing: '1.2px',
-                            color: 'var(--color-ec-text-secondary)',
+                            accentColor: 'var(--color-ec-copper)',
                             cursor: 'pointer',
-                            transition: 'color 150ms ease',
+                            width: 13,
+                            height: 13,
                           }}
-                          onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-primary)')}
-                          onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-secondary)')}
-                        >
-                          Guardar estrategia
-                        </button>
-                      </div>
-                    )}
+                        />
+                        <span>incluir configuración del what-if</span>
+                      </label>
+                    </div>
                   </div>
-                  <div className="h-[290px] w-full mt-auto mb-[-14px]">
+                  <div style={{ height: 250, width: '100%', marginTop: 'auto', marginBottom: 38, flexShrink: 0 }}>
                     <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
                   </div>
                 </div>
@@ -485,18 +540,32 @@ export default function Home() {
                   <button
                     disabled={!saveName.trim()}
                     onClick={async () => {
-                      if (!saveName.trim() || !draftStrategy) return;
+                      if (!saveName.trim() || !strategyToSave) return;
+                      let description = strategyToSave.description || "";
+                      if (includeWhatIfInSave) {
+                        const stored = localStorage.getItem("current_whatif_params");
+                        if (stored) {
+                          try {
+                            const parsed = JSON.parse(stored);
+                            const whatifDesc = `[What-if: ${Object.entries(parsed).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}]`;
+                            description = description ? `${description}\n${whatifDesc}` : whatifDesc;
+                          } catch {
+                            description = description ? `${description}\n[What-if: ${stored}]` : `[What-if: ${stored}]`;
+                          }
+                        }
+                      }
                       await createStrategy({
                         name: saveName.trim(),
-                        description: "",
-                        bias: draftStrategy.bias,
-                        entry_logic: draftStrategy.entry_logic,
-                        exit_logic: draftStrategy.exit_logic,
-                        risk_management: draftStrategy.risk_management,
+                        description,
+                        bias: strategyToSave.bias,
+                        entry_logic: strategyToSave.entry_logic,
+                        exit_logic: strategyToSave.exit_logic,
+                        risk_management: strategyToSave.risk_management,
                       });
                       setStrategiesRefresh((prev) => prev + 1);
                       setShowSaveModal(false);
                       setDraftStrategy(null);
+                      setStrategyToSave(null);
                     }}
                     style={{
                       flex: 2, padding: '7px 0', borderRadius: 5,

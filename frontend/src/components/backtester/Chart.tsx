@@ -6,6 +6,7 @@ import {
   CandlestickSeries,
   LineSeries,
   HistogramSeries,
+  ColorType,
   type IChartApi,
   type CandlestickData,
   type SeriesMarker,
@@ -237,11 +238,11 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 400,
-      layout: { background: { color: "#ffffff" }, textColor: "#333" },
-      grid: { vertLines: { color: "#f0f0f0" }, horzLines: { color: "#f0f0f0" } },
+      layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "var(--color-ec-text-secondary)" },
+      grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
       crosshair: { mode: 0 },
-      rightPriceScale: { borderColor: "#e2e8f0" },
-      timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: "#2C2F33" },
+      timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false },
     });
     chartRef.current = chart;
 
@@ -437,11 +438,11 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
     const createSubChart = (container: HTMLDivElement, height: number = 120): IChartApi => {
       const subChart = createChart(container, {
         width: container.clientWidth, height,
-        layout: { background: { color: "#fafafa" }, textColor: "#666", fontSize: 10 },
-        grid: { vertLines: { color: "#f0f0f0" }, horzLines: { color: "#eee" } },
+        layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "var(--color-ec-text-secondary)", fontSize: 10 },
+        grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
         crosshair: { mode: 0 },
-        rightPriceScale: { borderColor: "#e2e8f0" },
-        timeScale: { borderColor: "#e2e8f0", timeVisible: true, secondsVisible: false, visible: false },
+        rightPriceScale: { borderColor: "#2C2F33" },
+        timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false, visible: false },
       });
       chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
         if (range) subChart.timeScale().setVisibleLogicalRange(range);
@@ -464,11 +465,11 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
 
         // Create wrapper
         const wrapper = document.createElement("div");
-        wrapper.className = "border-t border-gray-200";
+        wrapper.className = "border-t border-[var(--color-ec-border)]";
 
         // Label
         const label = document.createElement("div");
-        label.className = "px-3 py-0.5 bg-gray-50 text-[10px] font-semibold text-gray-500 tracking-wider";
+        label.className = "px-3 py-0.5 bg-[var(--color-ec-bg-sidebar)] text-[10px] font-semibold text-[var(--color-ec-text-muted)] tracking-wider";
         label.textContent = def.label + " " + group.instances.map(i => {
           const paramStr = def.params.map(p => i.params[p.name]).join(",");
           return paramStr ? `(${paramStr})` : "";

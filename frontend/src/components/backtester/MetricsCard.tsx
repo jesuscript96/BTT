@@ -35,24 +35,25 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
         height: 32,
         display: 'flex',
         alignItems: 'center',
-        padding: '0 12px',
+        justifyContent: 'flex-start',
+        padding: '0 0px',
       }}>
         <span style={{
           fontFamily: 'var(--color-ec-sans)',
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: 700,
           textTransform: 'uppercase',
           letterSpacing: '0.15em',
           color: 'var(--color-ec-text-muted)',
         }}>
-          Aggregate Results
+          Agregate results
         </span>
       </div>
         <div className="grid grid-cols-2 gap-x-4">
           {rows.map((row, idx) => (
             <div
               key={idx}
-              className="flex items-baseline justify-between py-2 transition-colors"
+              className="flex items-baseline justify-between py-1 transition-colors"
               style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
             >
               <span style={{
@@ -88,18 +89,19 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
         height: 32,
         display: 'flex',
         alignItems: 'center',
-        padding: '0 12px',
+        justifyContent: 'flex-start',
+        padding: '0 0px',
         marginBottom: 12,
       }}>
         <span style={{
           fontFamily: 'var(--color-ec-sans)',
-          fontSize: 9,
+          fontSize: 11,
           fontWeight: 700,
           textTransform: 'uppercase',
           letterSpacing: '0.15em',
           color: 'var(--color-ec-text-muted)',
         }}>
-          Aggregate Results
+          Agregate results
         </span>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6">
