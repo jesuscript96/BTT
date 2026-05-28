@@ -376,7 +376,7 @@ export default function ChartsTab({
 
         {/* Consecutive Runs */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
-          <div className="px-3 py-2 flex items-center justify-between">
+          <div className="px-3 pt-4 pb-1 flex items-center justify-between">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
               Consecutive Runs
             </span>
@@ -385,9 +385,9 @@ export default function ChartsTab({
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-red-500 rounded-sm"></span>L</span>
             </div>
           </div>
-          <div className="flex-1 px-4 pb-4">
+          <div className="flex-1 pl-1 pr-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={consecutiveRuns.data} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
+              <BarChart data={consecutiveRuns.data} margin={{ top: 16, right: 16, bottom: 16, left: -20 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="length"
