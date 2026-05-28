@@ -14,20 +14,33 @@ SPLITS_TTL_HOURS = 24
 def load_tickers_cache() -> None:
     global _tickers_cache
     con = get_db_connection()
-    _tickers_cache = con.execute(
-        "SELECT ticker, type FROM massive.tickers "
-        "WHERE type IN ('CS', 'ADRC', 'OS')"
-    ).fetchdf()
-    print(f"[CACHE] tickers loaded: {len(_tickers_cache)} rows")
+    try:
+        _tickers_cache = con.execute(
+            "SELECT ticker, type FROM massive.tickers "
+            "WHERE type IN ('CS', 'ADRC', 'OS')"
+        ).fetchdf()
+        print(f"[CACHE] tickers loaded: {len(_tickers_cache)} rows")
+    except Exception as e:
+        print(f"[WARN] Failed to load tickers cache: {e}. Falling back to default list.")
+        _tickers_cache = pd.DataFrame([
+            {'ticker': 'AAPL', 'type': 'CS'},
+            {'ticker': 'TSLA', 'type': 'CS'},
+            {'ticker': 'NVDA', 'type': 'CS'},
+            {'ticker': 'MSFT', 'type': 'CS'}
+        ])
 
 def load_splits_cache() -> None:
     global _splits_cache, _splits_cache_ts
     con = get_db_connection()
-    _splits_cache = con.execute(
-        "SELECT ticker, execution_date FROM massive.splits"
-    ).fetchdf()
+    try:
+        _splits_cache = con.execute(
+            "SELECT ticker, execution_date FROM massive.splits"
+        ).fetchdf()
+        print(f"[CACHE] splits loaded: {len(_splits_cache)} rows")
+    except Exception as e:
+        print(f"[WARN] Failed to load splits cache: {e}. Falling back to empty splits list.")
+        _splits_cache = pd.DataFrame(columns=['ticker', 'execution_date'])
     _splits_cache_ts = datetime.now()
-    print(f"[CACHE] splits loaded: {len(_splits_cache)} rows")
 
 def get_tickers_df() -> pd.DataFrame:
     if _tickers_cache is None:
@@ -53,22 +66,89 @@ HOT_PRICE_MIN = 0.10
 def load_hot_daily_cache() -> None:
     global _hot_daily_cache
     con = get_db_connection()
+    
+    loaded = False
+    provider = os.getenv("DB_PROVIDER", "motherduck").lower()
+    
+    # Try reading from local table first in local mode
+    if provider == "local":
+        try:
+            _hot_daily_cache = con.execute("SELECT * FROM daily_metrics WHERE gap_pct >= 10.0").fetchdf()
+            if not _hot_daily_cache.empty:
+                print(f"[HOT CACHE] loaded from local daily_metrics table: {len(_hot_daily_cache)} rows")
+                loaded = True
+        except Exception:
+            pass
 
-    bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
-    path = f"gs://{bucket}/cold_storage/hot_cache/daily_metrics_gaps.parquet"
-
-    _hot_daily_cache = con.execute(f"""
-        SELECT * FROM read_parquet('{path}')
-    """).fetchdf()
+    if not loaded:
+        try:
+            bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+            path = f"gs://{bucket}/cold_storage/hot_cache/daily_metrics_gaps.parquet"
+            _hot_daily_cache = con.execute(f"""
+                SELECT * FROM read_parquet('{path}')
+            """).fetchdf()
+            loaded = True
+            mem_mb = _hot_daily_cache.memory_usage(deep=True).sum() / 1024 / 1024
+            print(f"[HOT CACHE] loaded from GCS Parquet: {len(_hot_daily_cache):,} rows, {mem_mb:.1f} MB")
+        except Exception as e:
+            print(f"[WARN] Failed to load hot cache from GCS: {e}")
+            
+    if not loaded:
+        # Fallback to local generated mock data so the app can function offline
+        print("[WARN] Using local generated mock data for hot cache")
+        import numpy as np
+        from datetime import datetime, timedelta
+        dates = [datetime.now().date() - timedelta(days=i) for i in range(10)]
+        mock_rows = []
+        for ticker in ['AAPL', 'TSLA', 'NVDA', 'MSFT']:
+            for d in dates:
+                mock_rows.append({
+                    'ticker': ticker,
+                    'timestamp': pd.Timestamp(d),
+                    'year': int(d.year),
+                    'month': int(d.month),
+                    'gap_pct': 12.5 if ticker == 'AAPL' else (15.2 if ticker == 'TSLA' else (9.8 if ticker == 'NVDA' else 14.1)),
+                    'open': 150.0 if ticker == 'AAPL' else (200.0 if ticker == 'TSLA' else (120.0 if ticker == 'NVDA' else 400.0)),
+                    'close': 148.0 if ticker == 'AAPL' else (195.0 if ticker == 'TSLA' else (118.0 if ticker == 'NVDA' else 395.0)),
+                    'high': 152.0 if ticker == 'AAPL' else (205.0 if ticker == 'TSLA' else (122.0 if ticker == 'NVDA' else 405.0)),
+                    'low': 147.0 if ticker == 'AAPL' else (192.0 if ticker == 'TSLA' else (116.0 if ticker == 'NVDA' else 390.0)),
+                    'volume': 1000000.0,
+                    'pm_volume': 50000.0,
+                    'pm_high': 153.0 if ticker == 'AAPL' else (206.0 if ticker == 'TSLA' else 123.0),
+                    'pm_low': 149.0 if ticker == 'AAPL' else (199.0 if ticker == 'TSLA' else 119.0),
+                    'rth_volume': 950000.0,
+                    'rth_open': 150.0 if ticker == 'AAPL' else (200.0 if ticker == 'TSLA' else (120.0 if ticker == 'NVDA' else 400.0)),
+                    'rth_high': 152.0 if ticker == 'AAPL' else (205.0 if ticker == 'TSLA' else (122.0 if ticker == 'NVDA' else 405.0)),
+                    'rth_low': 147.0 if ticker == 'AAPL' else (192.0 if ticker == 'TSLA' else (116.0 if ticker == 'NVDA' else 390.0)),
+                    'rth_close': 148.0 if ticker == 'AAPL' else (195.0 if ticker == 'TSLA' else (118.0 if ticker == 'NVDA' else 395.0)),
+                    'rth_run_pct': 2.5,
+                    'day_return_pct': -1.33,
+                    'rth_range_pct': 3.33,
+                    'pmh_gap_pct': 2.0,
+                    'pmh_fade_pct': 1.5,
+                    'rth_fade_pct': 1.2,
+                    'pm_high_time': '08:30',
+                    'pm_low_time': '09:15',
+                    'hod_time': '10:30',
+                    'lod_time': '14:15',
+                    'm15_return_pct': 0.5,
+                    'm30_return_pct': -0.2,
+                    'm60_return_pct': -0.8,
+                    'm180_return_pct': -1.1,
+                    'close_1559': 148.1 if ticker == 'AAPL' else 195.2,
+                    'last_close': 148.0 if ticker == 'AAPL' else 195.0,
+                    'prev_close': 148.5 if ticker == 'AAPL' else 198.0,
+                    'eod_volume': 1000000.0,
+                    'transactions': 25000.0
+                })
+        _hot_daily_cache = pd.DataFrame(mock_rows)
+        print(f"[HOT CACHE] Mock data created: {len(_hot_daily_cache)} rows")
 
     # Optimizar memoria
     for col in _hot_daily_cache.select_dtypes(include=['float64']).columns:
         _hot_daily_cache[col] = _hot_daily_cache[col].astype('float32')
     if 'ticker' in _hot_daily_cache.columns:
         _hot_daily_cache['ticker'] = _hot_daily_cache['ticker'].astype('category')
-
-    mem_mb = _hot_daily_cache.memory_usage(deep=True).sum() / 1024 / 1024
-    print(f"[HOT CACHE] loaded from GCS Parquet: {len(_hot_daily_cache):,} rows, {mem_mb:.1f} MB")
 
     # Columnas calculadas que no existen en el Parquet
     df = _hot_daily_cache

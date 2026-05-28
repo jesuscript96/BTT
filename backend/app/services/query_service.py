@@ -200,7 +200,7 @@ def build_screener_query(
     }
     
     for k, v in filters.items():
-        if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker']: continue
+        if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker', 'rules']: continue
         try:
             val = float(v)
             if k in ['min_gap', 'min_run', 'min_volume'] and val <= 0: continue
@@ -214,6 +214,42 @@ def build_screener_query(
             m_filters.append(f"{col} {operator} ?")
             sql_p.append(val)
         except: pass
+
+    # Parse dynamic rules array (e.g. from the new dataset builder)
+    rules = filters.get("rules", [])
+    if isinstance(rules, list):
+        for rule in rules:
+            if not isinstance(rule, dict): continue
+            metric = rule.get("metric")
+            op = rule.get("operator")
+            val = rule.get("value")
+            if metric and op and val is not None:
+                # Map metric using field_map if possible
+                col = field_map.get(metric, metric)
+                
+                # Convert rule operator to SQL operator
+                sql_op = {
+                    "GREATER_THAN": ">",
+                    "LESS_THAN": "<",
+                    "GREATER_THAN_OR_EQUAL": ">=",
+                    "LESS_THAN_OR_EQUAL": "<=",
+                    "EQUAL": "=",
+                    "CONTAINS": "LIKE",
+                    "=": "=",
+                    "!=": "!=",
+                    ">": ">",
+                    ">=": ">=",
+                    "<": "<",
+                    "<=": "<="
+                }.get(op, op)
+                
+                try:
+                    val_float = float(val)
+                    m_filters.append(f"{col} {sql_op} ?")
+                    sql_p.append(val_float)
+                except ValueError:
+                    m_filters.append(f"{col} {sql_op} ?")
+                    sql_p.append(val)
 
     # Join with massive.tickers for type filtering
     # We use a LEFT JOIN implicitly if we just want to filter, but an INNER JOIN is better to enforce existence in tickers table

@@ -67,10 +67,29 @@ def create_saved_query(query: SavedQuery):
                 
                 _, params, _, _, _, where_m_stats = build_screener_query(query.filters, limit=100000)
                 
+                subquery_lagged = """
+                (
+                    SELECT *,
+                           LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_1,
+                           LAG(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_1,
+                           LAG(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_1,
+                           LAG(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_1,
+                           LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_1,
+                           LAG(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_1,
+                           
+                           LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_2,
+                           LAG(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_2,
+                           LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_2,
+                           LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_2,
+                           LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_2,
+                           LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_2
+                    FROM daily_metrics
+                ) dm_lagged
+                """
                 insert_sql = f"""
                     INSERT INTO dataset_pairs (dataset_id, ticker, date)
                     SELECT ? as dataset_id, ticker, CAST(timestamp AS DATE) as date
-                    FROM daily_metrics
+                    FROM {subquery_lagged}
                     WHERE {where_m_stats}
                 """
                 

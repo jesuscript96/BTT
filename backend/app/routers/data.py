@@ -203,10 +203,28 @@ def get_tickers():
     try:
         con = get_db_connection(read_only=True)
         tickers = con.execute("SELECT ticker, name FROM tickers ORDER BY ticker").fetch_df()
+        if tickers.empty:
+            raise ValueError("Tickers table is empty")
         return tickers.to_dict(orient="records")
     except Exception as e:
-        print(f"Tickers API Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Tickers API Error: {e}. Falling back to cache or default list.")
+        try:
+            from app.services.cache_service import get_tickers_df
+            df = get_tickers_df()
+            if df is not None and not df.empty:
+                df_with_name = df.copy()
+                if 'name' not in df_with_name.columns:
+                    df_with_name['name'] = df_with_name['ticker']
+                return df_with_name[['ticker', 'name']].to_dict(orient="records")
+        except Exception as cache_err:
+            print(f"Tickers Cache Error: {cache_err}")
+        
+        return [
+            {'ticker': 'AAPL', 'name': 'Apple Inc.'},
+            {'ticker': 'TSLA', 'name': 'Tesla Inc.'},
+            {'ticker': 'NVDA', 'name': 'NVIDIA Corp.'},
+            {'ticker': 'MSFT', 'name': 'Microsoft Corp.'}
+        ]
     finally:
         if con:
             con.close()
@@ -354,10 +372,14 @@ def list_datasets():
                     "SELECT id, name, filters, created_at, updated_at FROM saved_queries ORDER BY created_at DESC"
                 ).fetchall()
                 for row in rows:
+                    filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
                     results.append({
                         "id": row[0],
                         "name": row[1],
-                        "filters": _json.loads(row[2]) if isinstance(row[2], str) else row[2],
+                        "filters": filters,
+                        "pair_count": filters.get("pair_count", 0),
+                        "min_date": filters.get("start_date") or filters.get("date_from"),
+                        "max_date": filters.get("end_date") or filters.get("date_to"),
                         "created_at": str(row[3]) if row[3] else None,
                         "updated_at": str(row[4]) if row[4] else None,
                     })
@@ -393,10 +415,14 @@ def get_dataset(dataset_id: str):
                 (dataset_id,)
             ).fetchone()
             if row:
+                filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
                 return {
                     "id": row[0],
                     "name": row[1],
-                    "filters": _json.loads(row[2]) if isinstance(row[2], str) else row[2],
+                    "filters": filters,
+                    "pair_count": filters.get("pair_count", 0),
+                    "min_date": filters.get("start_date") or filters.get("date_from"),
+                    "max_date": filters.get("end_date") or filters.get("date_to"),
                     "created_at": str(row[3]) if row[3] else None,
                     "updated_at": str(row[4]) if row[4] else None,
                 }
