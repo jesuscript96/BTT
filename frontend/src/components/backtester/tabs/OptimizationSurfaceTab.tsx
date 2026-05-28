@@ -289,7 +289,7 @@ export default function OptimizationSurfaceTab({
         {/* Mode toggle */}
         <div>
           <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Modo</label>
-          <div className="flex bg-[var(--color-ec-bg-sidebar)] rounded border border-[var(--color-ec-border)]">
+          <div className="flex bg-[var(--color-ec-bg-sidebar)] rounded border border-[var(--color-ec-border)]" style={{ marginTop: '2px' }}>
             {(["2D", "3D"] as const).map((m) => (
               <button
                 key={m}
