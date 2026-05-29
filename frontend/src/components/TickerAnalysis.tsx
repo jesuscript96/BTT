@@ -12,54 +12,129 @@ interface TickerAnalysisProps {
     availableTickers: string[]; // For the combobox
 }
 
-// Sparkline Component implemented with native SVG to avoid React 19 hook mismatches in Recharts
-const Sparkline = ({ data, color }: { data: any[], color: string }) => {
-    if (!data || data.length === 0) {
-        return (
-            <div 
-                className="animate-pulse" 
-                style={{ 
-                    height: '48px', 
-                    width: '100%', 
-                    backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
-                    borderRadius: '4px' 
-                }} 
-            />
-        );
-    }
-    
-    const values = data.map(d => d.value ?? 0);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min === 0 ? 1 : max - min;
-    
-    const points = data.map((d, index) => {
-        const x = (index / (data.length - 1)) * 100;
-        // Invert y because SVG y=0 is at the top, and we want high values at the top
-        const y = 40 - (((d.value ?? 0) - min) / range) * 36 - 2;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-    });
-    
-    const pathData = `M ${points.join(' L ')}`;
-    
-    return (
-        <div style={{ height: '48px', width: '100%' }}>
-            <svg className="w-full h-full" viewBox="0 0 100 40" preserveAspectRatio="none">
-                <path
-                    d={pathData}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                />
-            </svg>
-        </div>
-    );
-};
+interface TickerAnalysisData {
+    profile?: {
+        sector?: string | null;
+        industry?: string | null;
+        website?: string | null;
+        description?: string | null;
+        employees?: number | null;
+        country?: string | null;
+        exchange?: string | null;
+        name?: string | null;
+        logo_url?: string | null;
+    };
+    market?: {
+        market_cap?: number | null;
+        shares_outstanding?: number | null;
+        float_shares?: number | null;
+        held_percent_insiders?: number | null;
+        held_percent_institutions?: number | null;
+        price?: number | null;
+    };
+    financials?: {
+        enterprise_value?: number | null;
+        cash?: number | null;
+        total_debt?: number | null;
+        eps?: number | null;
+        working_capital?: number | null;
+        ebitda?: number | null;
+    };
+    performance?: {
+        [key: string]: number | null;
+    };
+    charts?: {
+        cash_history?: FinancialHistoryPoint[];
+        debt_history?: FinancialHistoryPoint[];
+        working_capital_history?: FinancialHistoryPoint[];
+    };
+    daily_history?: DailyDataPoint[];
+    know_the_float?: FloatData;
+    gap_stats?: GapStats;
+}
+
+interface FilingsData {
+    financials?: FilingItem[];
+    news?: FilingItem[];
+    prospectuses?: FilingItem[];
+    ownership?: FilingItem[];
+    proxies?: FilingItem[];
+    others?: FilingItem[];
+}
+
+interface DailyDataPoint {
+    time: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+}
+
+interface FloatSourceData {
+    float?: string;
+    short_percent?: string;
+    outstanding?: string;
+}
+
+interface FloatData {
+    [source: string]: FloatSourceData;
+}
+
+interface GapStats {
+    source: string;
+    gap_days_count: number;
+    high_rth_spike_avg: number | null;
+    low_rth_spike_avg: number | null;
+    pm_fade_avg: number | null;
+    rthh_fade_avg: number | null;
+    neg_close_freq: number | null;
+    close_above_pmh_freq: number | null;
+    close_below_vwap_freq: number | null;
+}
+
+interface FinancialHistoryPoint {
+    date: string;
+    value: number | null;
+}
+
+interface MetricCardProps {
+    title: string;
+    value: string;
+    subtext?: string;
+    icon?: React.ReactNode;
+    indicatorColor?: string;
+}
+
+interface InfoItemProps {
+    label: string;
+    value?: string | number | null;
+}
+
+interface StatRowProps {
+    label: string;
+    value: string | number | null;
+}
+
+interface PerfCardProps {
+    label: string;
+    value?: number | null;
+}
+
+interface FilingItem {
+    type: string;
+    title: string;
+    date: string;
+    link: string;
+}
+
+interface FilingListProps {
+    title: string;
+    items?: FilingItem[];
+}
 
 // Pure utility helpers for numbers and percentages
-const formatNumber = (num: number | null) => {
+const formatNumber = (num: number | null | undefined) => {
     if (num === null || num === undefined) return '-';
     const isNeg = num < 0;
     const absNum = Math.abs(num);
@@ -72,13 +147,13 @@ const formatNumber = (num: number | null) => {
     return isNeg ? `-$ ${formatted.replace('$', '')}` : formatted;
 };
 
-const formatPercent = (num: number | null) => {
+const formatPercent = (num: number | null | undefined) => {
     if (num === null || num === undefined) return '-';
     return `${(num * 100).toFixed(2)}%`;
 };
 
 // Lightweight-charts Daily Candlestick Stock Chart
-const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any[] }) => {
+const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -89,7 +164,7 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 250,
+            height: 350,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -181,7 +256,7 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
     if (!dailyData || dailyData.length === 0) {
         return (
             <div style={{
-                height: '250px',
+                height: '350px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -200,13 +275,13 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
                 Daily Stock Chart
             </span>
-            <div ref={chartContainerRef} style={{ width: '100%', height: '250px' }} />
+            <div ref={chartContainerRef} style={{ width: '100%', height: '350px' }} />
         </div>
     );
 };
 
 // KnowTheFloat comparison table
-const KnowTheFloatTable = ({ floatData }: { floatData: any }) => {
+const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
     if (!floatData || Object.keys(floatData).length === 0) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
@@ -248,7 +323,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData: any }) => {
                     </thead>
                     <tbody>
                         {sources.map(src => {
-                            const sData = floatData[src] || { float: '-', short_percent: '-', outstanding: '-' };
+                            const sData = (floatData && floatData[src]) || { float: '-', short_percent: '-', outstanding: '-' };
                             return (
                                 <tr key={src} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
                                     <td style={{ padding: '10px 4px 10px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{src}</td>
@@ -260,6 +335,102 @@ const KnowTheFloatTable = ({ floatData }: { floatData: any }) => {
                         })}
                     </tbody>
                 </table>
+            </div>
+        </div>
+    );
+};
+
+// Gap day statistics sub-component
+const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
+    if (!gapStats || gapStats.gap_days_count === 0) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
+                    Gap Day Statistics
+                </span>
+                <div style={{
+                    height: '140px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-ec-text-muted)',
+                    fontSize: '11px',
+                    border: '1px dashed var(--color-ec-border)',
+                    borderRadius: '6px'
+                }}>
+                    No gap stats available for this ticker.
+                </div>
+            </div>
+        );
+    }
+
+    const formatVal = (val: number | null) => {
+        if (val === null || val === undefined) return '-';
+        return `${val.toFixed(2)}%`;
+    };
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
+                Gap Day Statistics ({gapStats.gap_days_count} gaps)
+            </span>
+            
+            {/* 2x2 Numeric Metrics Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>High RTH Spike</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.high_rth_spike_avg)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low RTH Spike</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.low_rth_spike_avg)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% PM Fade</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.pm_fade_avg)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% RTHH Fade</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.rthh_fade_avg)}</span>
+                </div>
+            </div>
+
+            {/* Frequencies and Progress Bars */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
+                {/* Negative Close Frequency */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
+                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Negative Close</span>
+                        <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.neg_close_freq)}</span>
+                    </div>
+                    <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${gapStats.neg_close_freq ?? 0}%`, backgroundColor: 'var(--color-ec-loss)', borderRadius: 2 }} />
+                    </div>
+                </div>
+
+                {/* Close Above PMH Frequency */}
+                {gapStats.close_above_pmh_freq !== null && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
+                            <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Above PMH</span>
+                            <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.close_above_pmh_freq)}</span>
+                        </div>
+                        <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: `${gapStats.close_above_pmh_freq ?? 0}%`, backgroundColor: 'var(--color-ec-profit)', borderRadius: 2 }} />
+                        </div>
+                    </div>
+                )}
+
+                {/* Close Below VWAP Frequency */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
+                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
+                        <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.close_below_vwap_freq)}</span>
+                    </div>
+                    <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${gapStats.close_below_vwap_freq ?? 0}%`, backgroundColor: 'var(--color-ec-copper)', borderRadius: 2 }} />
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -278,7 +449,7 @@ const formatAxisLabel = (num: number) => {
 };
 
 // SVG-based Cash & Debt grouped bar chart
-const CashDebtChart = ({ cashData, debtData }: { cashData: any[], debtData: any[] }) => {
+const CashDebtChart = ({ cashData, debtData }: { cashData: FinancialHistoryPoint[], debtData: FinancialHistoryPoint[] }) => {
     if (!cashData && !debtData) {
         return (
             <div 
@@ -294,8 +465,8 @@ const CashDebtChart = ({ cashData, debtData }: { cashData: any[], debtData: any[
     }
 
     const datesSet = new Set<string>();
-    cashData?.forEach((item: any) => datesSet.add(item.date));
-    debtData?.forEach((item: any) => datesSet.add(item.date));
+    cashData?.forEach((item: FinancialHistoryPoint) => datesSet.add(item.date));
+    debtData?.forEach((item: FinancialHistoryPoint) => datesSet.add(item.date));
     const sortedDates = Array.from(datesSet).sort();
 
     if (sortedDates.length === 0) {
@@ -316,8 +487,8 @@ const CashDebtChart = ({ cashData, debtData }: { cashData: any[], debtData: any[
 
     let maxVal = 1;
     sortedDates.forEach(d => {
-        const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
-        const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
+        const cashVal = cashData?.find((item: FinancialHistoryPoint) => item.date === d)?.value ?? 0;
+        const debtVal = debtData?.find((item: FinancialHistoryPoint) => item.date === d)?.value ?? 0;
         maxVal = Math.max(maxVal, Math.abs(cashVal), Math.abs(debtVal));
     });
 
@@ -379,8 +550,8 @@ const CashDebtChart = ({ cashData, debtData }: { cashData: any[], debtData: any[
                 <line x1={marginLeft} y1={zeroY} x2={svgWidth - marginRight} y2={zeroY} stroke="var(--color-ec-border)" strokeWidth="1" />
 
                 {sortedDates.map((d, index) => {
-                    const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
-                    const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const cashVal = cashData?.find((item: FinancialHistoryPoint) => item.date === d)?.value ?? 0;
+                    const debtVal = debtData?.find((item: FinancialHistoryPoint) => item.date === d)?.value ?? 0;
                     const groupStartX = marginLeft + index * groupWidth + (groupWidth - totalBarsWidth) / 2;
 
                     const cashH = cashVal * scale;
@@ -412,7 +583,7 @@ const CashDebtChart = ({ cashData, debtData }: { cashData: any[], debtData: any[
 };
 
 // SVG-based Working Capital bar chart (supports negative values)
-const WorkingCapitalChart = ({ wcData }: { wcData: any[] }) => {
+const WorkingCapitalChart = ({ wcData }: { wcData: FinancialHistoryPoint[] }) => {
     if (!wcData) {
         return (
             <div 
@@ -428,7 +599,7 @@ const WorkingCapitalChart = ({ wcData }: { wcData: any[] }) => {
     }
 
     const datesSet = new Set<string>();
-    wcData?.forEach((item: any) => datesSet.add(item.date));
+    wcData?.forEach((item: FinancialHistoryPoint) => datesSet.add(item.date));
     const sortedDates = Array.from(datesSet).sort();
 
     if (sortedDates.length === 0) {
@@ -450,7 +621,7 @@ const WorkingCapitalChart = ({ wcData }: { wcData: any[] }) => {
     let maxVal = 1;
     let hasNegative = false;
     sortedDates.forEach(d => {
-        const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
+        const wcVal = wcData?.find((item: FinancialHistoryPoint) => item.date === d)?.value ?? 0;
         if (wcVal < 0) hasNegative = true;
         maxVal = Math.max(maxVal, Math.abs(wcVal));
     });
@@ -532,7 +703,7 @@ const WorkingCapitalChart = ({ wcData }: { wcData: any[] }) => {
                 <line x1={marginLeft} y1={zeroY} x2={svgWidth - marginRight} y2={zeroY} stroke="var(--color-ec-border)" strokeWidth="1" />
 
                 {sortedDates.map((d, index) => {
-                    const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const wcVal = wcData?.find((item: FinancialHistoryPoint) => item.date === d)?.value ?? 0;
                     const groupStartX = marginLeft + index * groupWidth + (groupWidth - barWidth) / 2;
 
                     const wcH = Math.abs(wcVal) * scale;
@@ -560,7 +731,7 @@ const WorkingCapitalChart = ({ wcData }: { wcData: any[] }) => {
 };
 
 // Unified Balance Sheet Trends Card component containing two separate charts
-const BalanceSheetTrendsCard = ({ data }: { data: any }) => {
+const BalanceSheetTrendsCard = ({ data }: { data: TickerAnalysisData | null }) => {
     return (
         <div style={{
             padding: '8px 0',
@@ -579,12 +750,12 @@ const BalanceSheetTrendsCard = ({ data }: { data: any }) => {
                 }}>
                     <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cash & Total Debt</span>
                     <div style={{ display: 'flex', gap: 12, fontSize: 10, fontWeight: 700 }}>
-                        <span style={{ color: 'var(--color-ec-profit)' }}>C: {formatNumber(data?.financials?.cash)}</span>
-                        <span style={{ color: 'var(--color-ec-loss)' }}>D: {formatNumber(data?.financials?.total_debt)}</span>
+                        <span style={{ color: 'var(--color-ec-profit)' }}>C: {formatNumber(data?.financials?.cash ?? null)}</span>
+                        <span style={{ color: 'var(--color-ec-loss)' }}>D: {formatNumber(data?.financials?.total_debt ?? null)}</span>
                     </div>
                 </div>
                 <div style={{ height: '130px' }}>
-                    <CashDebtChart cashData={data?.charts?.cash_history} debtData={data?.charts?.debt_history} />
+                    <CashDebtChart cashData={data?.charts?.cash_history ?? []} debtData={data?.charts?.debt_history ?? []} />
                 </div>
             </div>
 
@@ -598,10 +769,10 @@ const BalanceSheetTrendsCard = ({ data }: { data: any }) => {
                     paddingBottom: 6
                 }}>
                     <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Working Capital</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6' }}>{formatNumber(data?.financials?.working_capital)}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6' }}>{formatNumber(data?.financials?.working_capital ?? null)}</span>
                 </div>
                 <div style={{ height: '130px' }}>
-                    <WorkingCapitalChart wcData={data?.charts?.working_capital_history} />
+                    <WorkingCapitalChart wcData={data?.charts?.working_capital_history ?? []} />
                 </div>
             </div>
         </div>
@@ -611,20 +782,23 @@ const BalanceSheetTrendsCard = ({ data }: { data: any }) => {
 export default function TickerAnalysis({ ticker: initialTicker, availableTickers }: TickerAnalysisProps) {
     const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || '');
     const [loading, setLoading] = useState(false);
-    const [data, setData] = useState<any>(null);
-    const [filings, setFilings] = useState<any>(null);
+    const [data, setData] = useState<TickerAnalysisData | null>(null);
+    const [filings, setFilings] = useState<FilingsData | null>(null);
     const [showFullDesc, setShowFullDesc] = useState(false);
     const [logoFailed, setLogoFailed] = useState(false);
 
-    // Update if prop changes
-    useEffect(() => {
-        if (initialTicker) setSelectedTicker(initialTicker);
-    }, [initialTicker]);
+    // Adjust state when props/state change during render (standard React pattern)
+    const [prevInitialTicker, setPrevInitialTicker] = useState(initialTicker);
+    if (initialTicker !== prevInitialTicker) {
+        setPrevInitialTicker(initialTicker);
+        setSelectedTicker(initialTicker || '');
+    }
 
-    // Reset logoFailed when ticker changes
-    useEffect(() => {
+    const [prevSelectedTicker, setPrevSelectedTicker] = useState(selectedTicker);
+    if (selectedTicker !== prevSelectedTicker) {
+        setPrevSelectedTicker(selectedTicker);
         setLogoFailed(false);
-    }, [selectedTicker]);
+    }
 
     // Fetch Data
     useEffect(() => {
@@ -634,8 +808,8 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             setLoading(true);
             try {
                 // Parallel fetching — each independent so one failure doesn't block the other
-                try { setData(await getTickerAnalysis(selectedTicker)); } catch { /* ignore */ }
-                try { setFilings(await getTickerSecFilings(selectedTicker)); } catch { /* ignore */ }
+                try { setData((await getTickerAnalysis(selectedTicker)) as TickerAnalysisData); } catch { /* ignore */ }
+                try { setFilings((await getTickerSecFilings(selectedTicker)) as FilingsData); } catch { /* ignore */ }
 
             } catch (error) {
                 console.error("Error fetching ticker analysis:", error);
@@ -915,10 +1089,11 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
                         <div className="lg:col-span-2">
-                            <DailyStockChart ticker={selectedTicker} dailyData={data?.daily_history} />
+                            <DailyStockChart dailyData={data?.daily_history} />
                         </div>
-                        <div className="lg:col-span-1">
+                        <div className="lg:col-span-1" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
                             <KnowTheFloatTable floatData={data?.know_the_float} />
+                            <GapStatsSection gapStats={data?.gap_stats} />
                         </div>
                     </div>
 
@@ -1119,7 +1294,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
 }
 
 // Sub-components with clean unboxed styling
-const MetricCard = ({ title, value, subtext, icon, indicatorColor }: any) => (
+const MetricCard = ({ title, value, subtext, icon, indicatorColor }: MetricCardProps) => (
     <div style={{
         padding: '12px 0',
         borderBottom: '1px solid var(--color-ec-border)',
@@ -1159,7 +1334,7 @@ const MetricCard = ({ title, value, subtext, icon, indicatorColor }: any) => (
     </div>
 );
 
-const InfoItem = ({ label, value }: any) => (
+const InfoItem = ({ label, value }: InfoItemProps) => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <span style={{
             fontFamily: "'General Sans', sans-serif",
@@ -1178,7 +1353,7 @@ const InfoItem = ({ label, value }: any) => (
     </div>
 );
 
-const StatRow = ({ label, value }: any) => (
+const StatRow = ({ label, value }: StatRowProps) => (
     <div style={{
         display: 'flex',
         justifyContent: 'space-between',
@@ -1203,7 +1378,7 @@ const StatRow = ({ label, value }: any) => (
     </div>
 );
 
-const PerfCard = ({ label, value }: any) => {
+const PerfCard = ({ label, value }: PerfCardProps) => {
     if (value === null || value === undefined) {
         return (
             <div style={{
@@ -1259,41 +1434,7 @@ const PerfCard = ({ label, value }: any) => {
     );
 };
 
-const SparklineCard = ({ title, value, data, color, indicatorColor }: any) => (
-    <div style={{
-        padding: '12px 0',
-        borderBottom: '1px solid var(--color-ec-border)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8
-    }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {indicatorColor && <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: indicatorColor }} />}
-            <span style={{
-                fontFamily: "'General Sans', sans-serif",
-                fontSize: 8,
-                fontWeight: 700,
-                color: 'var(--color-ec-text-secondary)',
-                textTransform: 'uppercase',
-                letterSpacing: '1px'
-            }}>{title}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-            <div style={{
-                fontFamily: "'General Sans', sans-serif",
-                fontSize: 20,
-                fontWeight: 700,
-                color: 'var(--color-ec-text-primary)',
-                letterSpacing: '-0.5px'
-            }}>{value}</div>
-        </div>
-        <div style={{ marginTop: 4 }}>
-            <Sparkline data={data} color={color} />
-        </div>
-    </div>
-);
-
-const FilingList = ({ title, items }: any) => {
+const FilingList = ({ title, items }: FilingListProps) => {
     if (!items || items.length === 0) return null;
     return (
         <div style={{
@@ -1320,7 +1461,7 @@ const FilingList = ({ title, items }: any) => {
                 zIndex: 5
             }}>{title}</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {items.map((item: any, i: number) => (
+                {items.map((item: FilingItem, i: number) => (
                     <a 
                         key={i}
                         href={item.link} 

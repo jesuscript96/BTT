@@ -76,6 +76,95 @@ def scrape_knowthefloat(ticker: str) -> dict:
         print(f"Error scraping knowthefloat for {ticker}: {e}")
         return {}
 
+def safe_mean(series):
+    if series is None or len(series) == 0:
+        return None
+    val = series.mean()
+    if pd.isna(val) or np.isnan(val) or np.isinf(val):
+        return None
+    return float(val)
+
+def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
+    ticker = ticker.upper()
+    
+    # 1. Try GCS hot cache in memory
+    try:
+        from app.services.cache_service import get_hot_daily_cache
+        df_hot = get_hot_daily_cache()
+        if df_hot is not None and not df_hot.empty:
+            ticker_gcs = df_hot[df_hot['ticker'] == ticker]
+            if not ticker_gcs.empty:
+                high_spike = ticker_gcs['rth_run_pct']
+                low_spike = (ticker_gcs['rth_open'] - ticker_gcs['rth_low']) / ticker_gcs['rth_open'] * 100
+                pm_fade = (ticker_gcs['pm_high'] - ticker_gcs['rth_open']) / ticker_gcs['pm_high'] * 100
+                rthh_fade = (ticker_gcs['rth_high'] - ticker_gcs['rth_close']) / ticker_gcs['rth_high'] * 100
+                
+                neg_close = (ticker_gcs['rth_close'] < ticker_gcs['prev_close']).astype(float) * 100
+                close_above_pmh = (ticker_gcs['rth_close'] > ticker_gcs['pm_high']).astype(float) * 100
+                
+                mid_point = (ticker_gcs['rth_high'] + ticker_gcs['rth_low']) / 2.0
+                close_below_vwap = (ticker_gcs['rth_close'] < mid_point).astype(float) * 100
+                
+                return {
+                    "source": "database_hot_cache",
+                    "gap_days_count": len(ticker_gcs),
+                    "high_rth_spike_avg": safe_mean(high_spike),
+                    "low_rth_spike_avg": safe_mean(low_spike),
+                    "pm_fade_avg": safe_mean(pm_fade),
+                    "rthh_fade_avg": safe_mean(rthh_fade),
+                    "neg_close_freq": safe_mean(neg_close),
+                    "close_above_pmh_freq": safe_mean(close_above_pmh),
+                    "close_below_vwap_freq": safe_mean(close_below_vwap)
+                }
+    except Exception as e:
+        print(f"Error calculating stats from hot cache: {e}")
+        
+    # 2. Fallback to daily_history (1y from yfinance)
+    if daily_history:
+        try:
+            df = pd.DataFrame(daily_history)
+            if not df.empty and 'close' in df.columns:
+                df['prev_close'] = df['close'].shift(1)
+                df['gap_pct'] = (df['open'] - df['prev_close']) / df['prev_close'] * 100
+                
+                # Filter for gap days (abs(gap) >= 2.0%)
+                gap_yf = df[df['gap_pct'].abs() >= 2.0].copy()
+                if not gap_yf.empty:
+                    high_spike = (gap_yf['high'] - gap_yf['open']) / gap_yf['open'] * 100
+                    low_spike = (gap_yf['open'] - gap_yf['low']) / gap_yf['open'] * 100
+                    rthh_fade = (gap_yf['high'] - gap_yf['close']) / gap_yf['high'] * 100
+                    
+                    neg_close = (gap_yf['close'] < gap_yf['prev_close']).astype(float) * 100
+                    
+                    mid_point = (gap_yf['high'] + gap_yf['low']) / 2.0
+                    close_below_vwap = (gap_yf['close'] < mid_point).astype(float) * 100
+                    
+                    return {
+                        "source": "yfinance_1y_history",
+                        "gap_days_count": len(gap_yf),
+                        "high_rth_spike_avg": safe_mean(high_spike),
+                        "low_rth_spike_avg": safe_mean(low_spike),
+                        "pm_fade_avg": None,
+                        "rthh_fade_avg": safe_mean(rthh_fade),
+                        "neg_close_freq": safe_mean(neg_close),
+                        "close_above_pmh_freq": None,
+                        "close_below_vwap_freq": safe_mean(close_below_vwap)
+                    }
+        except Exception as e:
+            print(f"Error calculating stats from daily_history: {e}")
+            
+    return {
+        "source": "none",
+        "gap_days_count": 0,
+        "high_rth_spike_avg": None,
+        "low_rth_spike_avg": None,
+        "pm_fade_avg": None,
+        "rthh_fade_avg": None,
+        "neg_close_freq": None,
+        "close_above_pmh_freq": None,
+        "close_below_vwap_freq": None
+    }
+
 @router.get("/{ticker}")
 def get_ticker_analysis(ticker: str):
     try:
@@ -218,6 +307,9 @@ def get_ticker_analysis(ticker: str):
         # --- Scrape KnowTheFloat ---
         know_the_float = scrape_knowthefloat(ticker)
 
+        # --- Gap Day Statistics ---
+        gap_stats = get_gap_stats(ticker, daily_history)
+
         return {
             "profile": profile,
             "market": market,
@@ -225,7 +317,8 @@ def get_ticker_analysis(ticker: str):
             "performance": perf,
             "charts": charts,
             "daily_history": daily_history,
-            "know_the_float": know_the_float
+            "know_the_float": know_the_float,
+            "gap_stats": gap_stats
         }
 
     except Exception as e:
