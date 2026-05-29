@@ -11,6 +11,7 @@ import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
 import TickerAnalysis from "@/components/TickerAnalysis";
+import { MarketIntelligenceCharts } from "@/components/MarketIntelligenceCharts";
 
 import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
 
@@ -34,7 +35,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   // Initialize filters with defaults matching the panel UI
   const [currentFilters, setCurrentFilters] = useState<any>({
-    min_gap_pct: 5,
+    min_gap_pct: 20,
     max_gap_pct: 50,
     min_pm_volume: 100000,
     start_date: new Date(new Date().setMonth(new Date().getMonth() - 4)).toISOString().split('T')[0],
@@ -45,6 +46,7 @@ export default function Home() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0);
+  const [showScanResults, setShowScanResults] = useState(false);
 
   const handleFilterStateChange = React.useCallback((newFilters: any) => {
     setCurrentFilters(newFilters);
@@ -171,6 +173,7 @@ export default function Home() {
         setStats(result.stats || null);
       }
       setIsLoading(false);
+      setShowScanResults(true); // Auto-expand when results are fetched
       setAggregateSeries(null); // null = loading, prevents individual ticker mode
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
@@ -217,98 +220,23 @@ export default function Home() {
     setFilterPanelKey(prev => prev + 1); // Reset panel with new values
   };
 
-  // Fetch when rules change
+  // Fetch when rules change, skipping initial mount
+  const isFirstMount = React.useRef(true);
   useEffect(() => {
-    if (activeRules.length > 0) {
-      fetchData(currentFilters, activeRules);
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
     }
+    fetchData(currentFilters, activeRules);
   }, [activeRules]);
+
+  const memoizedData = React.useMemo(() => data, [data]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', 
                   height: '100vh', overflow: 'hidden',
                   backgroundColor: 'var(--color-ec-bg-base)' }}>
-      <AdvancedFilterPanel
-        key={filterPanelKey}
-        filters={currentFilters}
-        onFilterStateChange={handleFilterStateChange}
-        onFilter={(newFilters) => fetchData(newFilters, activeRules)}
-        onExport={handleExport}
-        onSaveDataset={() => setIsSaveModalOpen(true)}
-        onLoadDataset={() => setIsLoadModalOpen(true)}
-        isLoading={isLoading}
-      />
-
-      {/* Active Filters Bar */}
-      <div style={{
-        backgroundColor: 'var(--color-ec-bg-sidebar)',
-        borderBottom: '0.5px solid var(--color-ec-border)',
-        padding: '6px 20px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        minHeight: '32px'
-      }}>
-        <button
-          onClick={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
-          style={{
-            background: 'var(--color-ec-copper)',
-            color: 'var(--color-ec-copper-text)',
-            fontSize: 9,
-            fontWeight: 700,
-            letterSpacing: '1.5px',
-            textTransform: 'uppercase',
-            padding: '2px 6px',
-            borderRadius: 3,
-            border: 'none',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-          }}
-        >
-          FILTROS
-        </button>
-
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, overflowX: 'auto', borderLeft: '0.5px solid var(--color-ec-border)', paddingLeft: 16 }}>
-          <span style={{
-            fontSize: 9,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '1.5px',
-            color: 'var(--color-ec-text-muted)',
-            whiteSpace: 'nowrap',
-          }}>Advanced Rules:</span>
-          {activeRules.map(rule => (
-            <div key={rule.id} style={{
-              background: 'var(--color-ec-bg-surface)',
-              border: '0.5px solid var(--color-ec-border)',
-              padding: '2px 10px',
-              borderRadius: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}>
-              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{rule.metric} {rule.operator} {rule.value}</span>
-              <button
-                onClick={() => setActiveRules(prev => prev.filter(r => r.id !== rule.id))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-secondary)', padding: 0, display: 'flex' }}
-              >
-                <XIcon className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-          {activeRules.length === 0 && (
-            <span style={{
-              fontSize: 11,
-              fontWeight: 400,
-              color: 'var(--color-ec-text-secondary)',
-            }}>No active advanced rules</span>
-          )}
-        </div>
-      </div>
-
+      
       {/* Tab Navigation */}
       <div style={{
         backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -338,7 +266,7 @@ export default function Home() {
           }}
         >
           <LayoutDashboard size={14} strokeWidth={1.5} />
-          Screener & Summary
+          Market & Summary
         </button>
         <button
           onClick={() => setActiveTab('ticker')}
@@ -376,9 +304,26 @@ export default function Home() {
             flexDirection: 'column',
             gap: '20px',
             padding: '20px',
-            minHeight: '100%',
-            backgroundColor: 'var(--color-ec-bg-base)'
+            height: 'calc(100vh - 38px)',
+            backgroundColor: 'var(--color-ec-bg-base)',
+            overflow: 'hidden'
           }}>
+            <AdvancedFilterPanel
+              key={filterPanelKey}
+              filters={currentFilters}
+              onFilterStateChange={handleFilterStateChange}
+              onFilter={(newFilters) => fetchData(newFilters, activeRules)}
+              onExport={handleExport}
+              onSaveDataset={() => setIsSaveModalOpen(true)}
+              onLoadDataset={() => setIsLoadModalOpen(true)}
+              isLoading={isLoading}
+              onToggleFilterBuilder={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
+              activeRules={activeRules}
+              onRemoveRule={(id) => setActiveRules(prev => prev.filter(r => r.id !== id))}
+              showScanResults={showScanResults}
+              onToggleScanResults={() => setShowScanResults(prev => !prev)}
+            />
+
             <FilterBuilder
               isOpen={isFilterBuilderOpen}
               onClose={() => setIsFilterBuilderOpen(false)}
@@ -401,21 +346,89 @@ export default function Home() {
               onLoad={handleLoadDataset}
             />
 
-            {/* Dashboard & DataGrid Stack */}
-            <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
-
+            {/* Container for sliding panels */}
             <div style={{
+              position: 'relative',
               flex: 1,
-              minHeight: 500,
-              background: 'var(--color-ec-bg-surface)',
-              borderRadius: 7,
-              border: '0.5px solid var(--color-ec-border)',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
             }}>
-              <DataGrid
-                data={React.useMemo(() => data, [data])}
-                isLoading={isLoading}
-              />
+              
+              {/* Background Panel: Market Intelligence */}
+              <div style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+                overflowY: 'auto',
+                paddingBottom: '20px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '0.5px solid var(--color-ec-border)', paddingBottom: '16px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <h1 style={{
+                      fontFamily: "'Fraunces', serif",
+                      fontSize: 32,
+                      fontWeight: 600,
+                      color: 'var(--color-ec-text-high)',
+                      letterSpacing: '-0.5px',
+                      marginBottom: 4,
+                    }}>MARKET INTELLIGENCE</h1>
+                    <span style={{
+                      fontFamily: "'General Sans', sans-serif",
+                      fontSize: 9,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: 2,
+                      color: 'var(--color-ec-text-muted)',
+                    }}>
+                      REAL-TIME STATISTICAL DISTRIBUTIONS AND GAP COHORT ANALYSIS
+                    </span>
+                  </div>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <MarketIntelligenceCharts />
+                </div>
+              </div>
+
+              {/* Foreground Sliding Panel: Scan Results */}
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'var(--color-ec-bg-base)',
+                transform: showScanResults ? 'translateY(0)' : 'translateY(-110%)',
+                opacity: showScanResults ? 1 : 0,
+                transition: 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease-in-out',
+                zIndex: 20,
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '32px',
+                padding: '24px',
+                boxSizing: 'border-box',
+              }}>
+                {/* Dashboard & DataGrid Stack */}
+                <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
+
+                <div style={{
+                  flex: 1,
+                  minHeight: 500,
+                  background: 'var(--color-ec-bg-surface)',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-ec-border)',
+                  overflow: 'hidden',
+                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+                }}>
+                  <DataGrid
+                    data={memoizedData}
+                    isLoading={isLoading}
+                  />
+                </div>
+              </div>
+
             </div>
           </div>
         )}

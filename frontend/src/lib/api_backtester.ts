@@ -23,15 +23,15 @@ console.log("[API] Base URL configured as:", apiBaseUrl());
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error("[API ERROR DIAGNOSTIC]", {
-      url: error.config?.url,
-      fullUrl: error.config?.baseURL + (error.config?.url || ""),
-      method: error.config?.method,
-      status: error.response?.status,
-      data: error.response?.data,
-      message: error.message,
-      stack: error.stack,
-    });
+    console.error(
+      `[API ERROR DIAGNOSTIC]\n` +
+      `URL: ${error.config?.baseURL || ""}${error.config?.url || ""}\n` +
+      `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
+      `Status: ${error.response?.status || "N/A"}\n` +
+      `Message: ${error.message || "N/A"}\n` +
+      `Response Data:`,
+      error.response?.data || "No data"
+    );
     return Promise.reject(error);
   }
 );

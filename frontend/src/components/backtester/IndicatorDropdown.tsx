@@ -101,10 +101,10 @@ export default function IndicatorDropdown({
       <div ref={dropdownRef} className="relative">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`px-2.5 py-1.5 border rounded font-medium transition-all flex items-center gap-1.5
+          className={`px-3 py-1.5 border rounded text-[13px] font-medium transition-all flex items-center gap-1.5
             ${isOpen
-              ? "border-blue-400 bg-blue-50 text-blue-700 shadow-sm"
-              : "border-[var(--border)] bg-[var(--card-bg)] text-[var(--muted)] hover:bg-[var(--sidebar-bg)] hover:border-gray-400"
+              ? "border-[var(--color-ec-copper)] bg-[rgba(216,122,61,0.15)] text-[var(--color-ec-copper-bright)] shadow-sm"
+              : "border-[var(--color-ec-border)] bg-[var(--color-ec-bg-surface)] text-[var(--color-ec-text-secondary)] hover:bg-[var(--color-ec-bg-elevated)] hover:text-[var(--color-ec-text-primary)] hover:border-gray-500"
             }`}
         >
           <span className="text-sm">＋</span> Indicators

@@ -57,23 +57,27 @@ def list_strategies() -> list[dict]:
 def get_strategy(strategy_id: str) -> dict | None:
     # Primero buscar en users.duckdb (BTT local)
     try:
-        from app.database import get_db_connection
-        con = get_db_connection()
-        row = con.execute(
-            "SELECT id, name, description, definition FROM strategies WHERE id = ?",
-            [strategy_id]
-        ).fetchone()
-        if row:
-            import json
-            definition = row[3]
-            if isinstance(definition, str):
-                definition = json.loads(definition)
-            return {
-                "id": row[0],
-                "name": row[1],
-                "description": row[2],
-                "definition": definition
-            }
+        from app.database import get_user_db_connection, get_user_db_lock
+        with get_user_db_lock():
+            con = get_user_db_connection()
+            try:
+                row = con.execute(
+                    "SELECT id, name, description, definition FROM strategies WHERE id = ?",
+                    [strategy_id]
+                ).fetchone()
+                if row:
+                    import json
+                    definition = row[3]
+                    if isinstance(definition, str):
+                        definition = json.loads(definition)
+                    return {
+                        "id": row[0],
+                        "name": row[1],
+                        "description": row[2],
+                        "definition": definition
+                    }
+            finally:
+                con.close()
     except Exception as e:
         print(f"[WARN] Could not read strategy from users.duckdb: {e}")
 
@@ -131,31 +135,35 @@ def list_datasets() -> list[dict]:
 def get_dataset(dataset_id: str) -> dict | None:
     # Primero buscar en users.duckdb
     try:
-        from app.database import get_db_connection
-        con = get_db_connection()
-        row = con.execute(
-            "SELECT id, name, filters FROM saved_queries WHERE id = ?",
-            [dataset_id]
-        ).fetchone()
-        if row:
-            import json
-            filters = row[2]
-            if isinstance(filters, str):
-                filters = json.loads(filters)
+        from app.database import get_user_db_connection, get_user_db_lock
+        with get_user_db_lock():
+            con = get_user_db_connection()
+            try:
+                row = con.execute(
+                    "SELECT id, name, filters FROM saved_queries WHERE id = ?",
+                    [dataset_id]
+                ).fetchone()
+                if row:
+                    import json
+                    filters = row[2]
+                    if isinstance(filters, str):
+                        filters = json.loads(filters)
 
-            start_date = filters.get("start_date") or filters.get("date_from")
-            end_date = filters.get("end_date") or filters.get("date_to")
+                    start_date = filters.get("start_date") or filters.get("date_from")
+                    end_date = filters.get("end_date") or filters.get("date_to")
 
-            return {
-                "id": row[0],
-                "name": row[1],
-                "filters": filters,
-                "start_date": start_date,
-                "end_date": end_date,
-                "min_date": start_date,
-                "max_date": end_date,
-                "pairs": []
-            }
+                    return {
+                        "id": row[0],
+                        "name": row[1],
+                        "filters": filters,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "min_date": start_date,
+                        "max_date": end_date,
+                        "pairs": []
+                    }
+            finally:
+                con.close()
     except Exception as e:
         print(f"[WARN] Could not read dataset from users.duckdb: {e}")
 
@@ -312,7 +320,6 @@ def _years_from_filters(filters: dict) -> set[int]:
             pass
     return years
 
-
 def fetch_qualifying_data(
     dataset_id: str,
     req_start_date: str | None = None,
@@ -323,17 +330,60 @@ def fetch_qualifying_data(
 
     Uses hot cache when gap >= 10%; otherwise falls back to GCS.
     """
+    import os
+    provider = os.getenv("DB_PROVIDER", "motherduck").lower()
+    filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+    if not filters:
+        return pd.DataFrame()
+
+    has_custom_rules = len(filters.get("rules", [])) > 0
+    if provider == "local" and has_custom_rules:
+        from app.database import get_db_connection
+        con = get_db_connection()
+        try:
+            where_clause = _build_where_clause(filters)
+            subquery = """
+            (
+                SELECT *,
+                       LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_1,
+                       LAG(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_1,
+                       LAG(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_1,
+                       LAG(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_1,
+                       LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_1,
+                       LAG(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_1,
+                       
+                       LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_2,
+                       LAG(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_2,
+                       LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_2,
+                       LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_2,
+                       LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_2,
+                       LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_2
+                FROM daily_metrics
+            ) i
+            """
+            sql = f"""
+            SELECT *, CAST("timestamp" AS DATE) AS date
+            FROM {subquery}
+            WHERE {where_clause}
+            """
+            df = con.execute(sql).fetchdf()
+            if not df.empty:
+                df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+            print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
+            return df
+        except Exception as e:
+            print(f"[ERROR] local fetch_qualifying_data failed: {e}")
+
     from app.services.cache_service import get_hot_daily_cache
 
     hot_df = get_hot_daily_cache()
     if hot_df is not None and not hot_df.empty:
-        filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
-        if not filters:
-            return pd.DataFrame()
-
-        min_gap = filters.get("min_gap_pct", 0)
-        max_gap = filters.get("max_gap_pct", 500)
-        min_pm_vol = filters.get("min_pm_volume", 0)
+        min_gap_raw = filters.get("min_gap_pct")
+        min_gap = float(min_gap_raw) if min_gap_raw is not None else 0.0
+        max_gap_raw = filters.get("max_gap_pct")
+        max_gap = float(max_gap_raw) if max_gap_raw is not None else 999999.0
+        min_pm_vol_raw = filters.get("min_pm_volume")
+        min_pm_vol = float(min_pm_vol_raw) if min_pm_vol_raw is not None else 0.0
         start_date = filters.get("start_date")
         end_date = filters.get("end_date")
 

@@ -83,13 +83,13 @@ export default function ChartsTab({
   isDarkMode = false,
 }: ChartsTabProps) {
 
-  const gridColor = isDarkMode ? "#303033" : "#f0eeea";
-  const tickColor = isDarkMode ? "#94a3b8" : "#a8a29e";
-  const tooltipBg = isDarkMode ? "#303033" : "#fafaf7";
-  const barPositiveFill = isDarkMode ? "#3b82f6" : "#f1f5f9";
-  const barPositiveStroke = isDarkMode ? "transparent" : "#1c1917";
-  const barNegativeFill = isDarkMode ? "#e2e8f0" : "#18181a";
-  const barNegativeStroke = isDarkMode ? "transparent" : "transparent";
+  const gridColor = "#2C2F33";
+  const tickColor = "#ffffff";
+  const tooltipBg = "#1C1E21";
+  const barPositiveFill = "#10b981";
+  const barPositiveStroke = "transparent";
+  const barNegativeFill = "#ef4444";
+  const barNegativeStroke = "transparent";
 
   const pnlDistribution = useMemo(() => {
     const pnlPctCoords = trades.map(t => t.return_pct).filter((v): v is number => v !== undefined && v !== null);
@@ -272,7 +272,7 @@ export default function ChartsTab({
   const fmt = (v: number, pct = false) => `${v.toFixed(2)}${pct ? '%' : ''}`;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-12" style={{ paddingTop: 24 }}>
 
       {/* ROW 1: Rolling EV + EV by Time + EV by Day — borderless triptych */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 h-[280px] lg:h-[300px]" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -285,20 +285,20 @@ export default function ChartsTab({
         {/* EV por Tiempo (30m) */}
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">EV por Tiempo (30m)</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8">EV por Tiempo (30m)</span>
           </div>
-          <div className="flex-1 px-1 pb-1 min-h-0">
+          <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evByTime30Min} margin={{ top: 5, right: 8, bottom: 0, left: -28 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                <XAxis dataKey="time" tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+              <BarChart data={evByTime30Min} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
+                <CartesianGrid stroke={gridColor} vertical={false} />
+                <XAxis dataKey="time" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
                   formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
-                <ReferenceLine y={0} stroke={tickColor} strokeWidth={0.5} />
+                <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
                 <Bar dataKey="ev" radius={[1, 1, 0, 0]}>
                   {evByTime30Min.map((entry, idx) => <Cell key={idx} fill={entry.ev >= 0 ? barPositiveFill : barNegativeFill} stroke={entry.ev >= 0 ? barPositiveStroke : barNegativeStroke} fillOpacity={isDarkMode ? 0.75 : 1} />)}
                 </Bar>
@@ -310,20 +310,20 @@ export default function ChartsTab({
         {/* EV por Día */}
         <div className="flex flex-col h-full">
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">EV por Dia</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">EV por Dia</span>
           </div>
-          <div className="flex-1 px-1 pb-1 min-h-0">
+          <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={evByDay} margin={{ top: 5, right: 8, bottom: 0, left: -28 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                <XAxis dataKey="day" tick={{ fontSize: 9, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+              <BarChart data={evByDay} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
+                <CartesianGrid stroke={gridColor} vertical={false} />
+                <XAxis dataKey="day" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
                   formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
-                <ReferenceLine y={0} stroke={tickColor} strokeWidth={0.5} />
+                <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
                 <Bar dataKey="ev" radius={[1, 1, 0, 0]}>
                   {evByDay.map((entry, idx) => <Cell key={idx} fill={entry.ev >= 0 ? barPositiveFill : barNegativeFill} stroke={entry.ev >= 0 ? barPositiveStroke : barNegativeStroke} fillOpacity={isDarkMode ? 0.75 : 1} />)}
                 </Bar>
@@ -334,27 +334,27 @@ export default function ChartsTab({
       </div>
 
       {/* ROW 2: Distributions side by side — no card wrappers */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 mt-10">
         {/* PnL Distribution */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
               Distribucion de Retornos (PnL %)
             </span>
           </div>
-          <div className="flex-1 px-1 pb-1">
+          <div className="flex-1 pl-1 pr-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={pnlDistribution.data} margin={{ top: 8, right: 8, left: -28, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+              <BarChart data={pnlDistribution.data} margin={{ top: 16, right: 16, bottom: 16, left: -20 }}>
+                <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 7, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                   interval="preserveStartEnd"
                 />
                 <YAxis
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -363,7 +363,7 @@ export default function ChartsTab({
                   contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
-                <ReferenceLine x="0.00%" stroke={tickColor} strokeDasharray="3 3" strokeWidth={0.5} />
+                <ReferenceLine x="0.00%" stroke="#6A6D72" strokeDasharray="3 3" strokeWidth={0.5} />
                 <Bar dataKey="value" radius={[1, 1, 0, 0]}>
                   {pnlDistribution.data.map((entry, index) => (
                     <Cell key={index} fill={entry.num > 0 ? barPositiveFill : entry.num < 0 ? barNegativeFill : tickColor} stroke={entry.num > 0 ? barPositiveStroke : entry.num < 0 ? barNegativeStroke : 'transparent'} fillOpacity={isDarkMode ? 0.7 : 1} />
@@ -376,27 +376,27 @@ export default function ChartsTab({
 
         {/* Consecutive Runs */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
-          <div className="px-3 py-2 flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+          <div className="px-3 pt-4 pb-1 flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
               Consecutive Runs
             </span>
-            <div className="flex gap-3 text-[8px] font-mono text-[var(--muted)]">
+            <div className="flex gap-3 text-[8px] font-mono text-[var(--color-ec-text-secondary)]">
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-emerald-500 rounded-sm"></span>W</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-red-500 rounded-sm"></span>L</span>
             </div>
           </div>
-          <div className="flex-1 px-1 pb-1">
+          <div className="flex-1 pl-1 pr-4 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={consecutiveRuns.data} margin={{ top: 8, right: 8, left: -28, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+              <BarChart data={consecutiveRuns.data} margin={{ top: 16, right: 16, bottom: 16, left: -20 }}>
+                <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis
                   dataKey="length"
-                  tick={{ fontSize: 9, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -411,127 +411,64 @@ export default function ChartsTab({
           </div>
         </div>
 
-        {/* Gap % vs PnL % Scatter */}
+        {/* Descriptive Statistics Table */}
         <div className="flex flex-col h-[280px]">
-          <div className="px-3 py-2 flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
-              Gap % vs PnL %
+          <div className="py-2" style={{ paddingLeft: '40px' }}>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
+              Descriptive Statistics
             </span>
-            {gapRegression && (
-              <span className="text-[9px] font-mono text-[var(--muted)]">
-                R² = {(gapRegression.r2 * 100).toFixed(1)}%
-              </span>
-            )}
           </div>
-          <div className="flex-1 px-1 pb-1 relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 8, right: 8, left: -20, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-                <XAxis
-                  type="number"
-                  dataKey="x"
-                  name="Gap %"
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
-                  tickFormatter={(v: number) => `${v.toFixed(0)}%`}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="y"
-                  name="PnL %"
-                  tick={{ fontSize: 8, fill: tickColor, fontFamily: 'monospace' }}
-                  tickFormatter={(v: number) => `${v.toFixed(1)}%`}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  cursor={{ strokeDasharray: '3 3' }}
-                  contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
-                  formatter={(value: any, name: any) => {
-                    const numValue = typeof value === 'number' ? value : Number(value);
-                    return [`${numValue.toFixed(2)}%`, name === 'x' ? 'Gap' : 'PnL'];
-                  }}
-                />
-                <ReferenceLine y={0} stroke={isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"} strokeWidth={1} />
-                <ReferenceLine x={0} stroke={isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"} strokeWidth={1} />
-                <Scatter
-                  name="Trades"
-                  data={gapVsPnl}
-                  shape={(props: { cx?: number; cy?: number }) => {
-                    if (!props.cx || !props.cy) return <></>;
-                    return <circle cx={props.cx} cy={props.cy} r={2} stroke={isDarkMode ? '#e2e8f0' : '#1c1917'} fill="transparent" strokeWidth={1} />;
-                  }}
-                  isAnimationActive={false}
-                />
-                {gapRegressionLine && (
-                  <Scatter
-                    data={gapRegressionLine}
-                    shape={() => <></>}
-                    line={{
-                      stroke: isDarkMode ? '#e2e8f0' : '#1c1917',
-                      strokeDasharray: '3 3',
-                      strokeWidth: 1.5
-                    }}
-                    tooltipType="none"
-                    isAnimationActive={false}
-                  />
-                )}
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW 3: Combined Statistics — single terminal-style table */}
-      <div className="pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-        <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em] block mb-3">
-          Descriptive Statistics
-        </span>
-        <div className="overflow-x-auto">
-          <table className="w-full text-[11px] font-mono" style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th className="text-left py-1.5 px-2 text-[var(--muted)] font-normal">metric</th>
-                <th className="text-right py-1.5 px-2 text-[var(--muted)] font-normal">PnL %</th>
-                <th className="text-right py-1.5 px-2 text-[var(--muted)] font-normal">Streaks (W)</th>
-                <th className="text-right py-1.5 px-2 text-[var(--muted)] font-normal">Streaks (L)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                { label: "N", pnl: pnlDistribution.stats?.n ?? 0, w: consecutiveRuns.winStats?.n ?? 0, l: consecutiveRuns.lossStats?.n ?? 0, isPct: false, isInt: true },
-                { label: "Mean", pnl: pnlDistribution.stats?.mean ?? 0, w: consecutiveRuns.winStats?.mean ?? 0, l: consecutiveRuns.lossStats?.mean ?? 0, isPct: true },
-                { label: "Median", pnl: pnlDistribution.stats?.median ?? 0, w: consecutiveRuns.winStats?.median ?? 0, l: consecutiveRuns.lossStats?.median ?? 0, isPct: true },
-                { label: "Std Dev", pnl: pnlDistribution.stats?.stdDev ?? 0, w: consecutiveRuns.winStats?.stdDev ?? 0, l: consecutiveRuns.lossStats?.stdDev ?? 0, isPct: true },
-                { label: "Q1 (25%)", pnl: pnlDistribution.stats?.q1 ?? 0, w: consecutiveRuns.winStats?.q1 ?? 0, l: consecutiveRuns.lossStats?.q1 ?? 0, isPct: true },
-                { label: "Q3 (75%)", pnl: pnlDistribution.stats?.q3 ?? 0, w: consecutiveRuns.winStats?.q3 ?? 0, l: consecutiveRuns.lossStats?.q3 ?? 0, isPct: true },
-                { label: "Max", pnl: pnlDistribution.stats?.max ?? 0, w: consecutiveRuns.winStats?.max ?? 0, l: consecutiveRuns.lossStats?.max ?? 0, isPct: true },
-                { label: "Min", pnl: pnlDistribution.stats?.min ?? 0, w: consecutiveRuns.winStats?.min ?? 0, l: consecutiveRuns.lossStats?.min ?? 0, isPct: true },
-                { label: "Range", pnl: pnlDistribution.stats?.range ?? 0, w: consecutiveRuns.winStats?.range ?? 0, l: consecutiveRuns.lossStats?.range ?? 0, isPct: true },
-                { label: "IQR", pnl: pnlDistribution.stats?.iqr ?? 0, w: consecutiveRuns.winStats?.iqr ?? 0, l: consecutiveRuns.lossStats?.iqr ?? 0, isPct: true },
-                { label: "Skewness", pnl: pnlDistribution.stats?.skewness ?? 0, w: consecutiveRuns.winStats?.skewness ?? 0, l: consecutiveRuns.lossStats?.skewness ?? 0, isPct: false, prec: 3 },
-                { label: "Kurtosis", pnl: pnlDistribution.stats?.kurtosis ?? 0, w: consecutiveRuns.winStats?.kurtosis ?? 0, l: consecutiveRuns.lossStats?.kurtosis ?? 0, isPct: false, prec: 3 },
-              ].map((row, idx) => (
-                <tr
-                  key={idx}
-                  className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
-                  style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
-                >
-                  <td className="py-1.5 px-2 text-[var(--muted)]">{row.label}</td>
-                  <td className="py-1.5 px-2 text-right text-[var(--text-data)]">
-                    {row.isInt ? row.pnl : (row.pnl).toFixed(row.prec ?? 2)}{row.isPct && !row.isInt ? '%' : ''}
-                  </td>
-                  <td className="py-1.5 px-2 text-right text-[var(--text-data)]">
-                    {row.isInt ? row.w : (row.w).toFixed(row.prec ?? 2)}
-                  </td>
-                  <td className="py-1.5 px-2 text-right text-[var(--text-data)]">
-                    {row.isInt ? row.l : (row.l).toFixed(row.prec ?? 2)}
-                  </td>
+          <div className="flex-1 pr-6 pb-4 overflow-y-auto custom-scrollbar" style={{ paddingLeft: '40px', scrollbarWidth: 'none' }}>
+            <table className="w-full text-[10px] font-mono" style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+              <colgroup>
+                <col style={{ width: '43%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+                <col style={{ width: '19%' }} />
+              </colgroup>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-ec-border)' }}>
+                  <th className="text-left py-1.5 pl-6 pr-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">metric</th>
+                  <th className="text-right py-1.5 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">PnL %</th>
+                  <th className="text-right py-1.5 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (W)</th>
+                  <th className="text-right py-1.5 px-3 text-[var(--color-ec-text-secondary)] font-normal text-[9px]">Streaks (L)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[
+                  { label: "N", pnl: pnlDistribution.stats?.n ?? 0, w: consecutiveRuns.winStats?.n ?? 0, l: consecutiveRuns.lossStats?.n ?? 0, isPct: false, isInt: true },
+                  { label: "Mean", pnl: pnlDistribution.stats?.mean ?? 0, w: consecutiveRuns.winStats?.mean ?? 0, l: consecutiveRuns.lossStats?.mean ?? 0, isPct: true },
+                  { label: "Median", pnl: pnlDistribution.stats?.median ?? 0, w: consecutiveRuns.winStats?.median ?? 0, l: consecutiveRuns.lossStats?.median ?? 0, isPct: true },
+                  { label: "Std Dev", pnl: pnlDistribution.stats?.stdDev ?? 0, w: consecutiveRuns.winStats?.stdDev ?? 0, l: consecutiveRuns.lossStats?.stdDev ?? 0, isPct: true },
+                  { label: "Q1 (25%)", pnl: pnlDistribution.stats?.q1 ?? 0, w: consecutiveRuns.winStats?.q1 ?? 0, l: consecutiveRuns.lossStats?.q1 ?? 0, isPct: true },
+                  { label: "Q3 (75%)", pnl: pnlDistribution.stats?.q3 ?? 0, w: consecutiveRuns.winStats?.q3 ?? 0, l: consecutiveRuns.lossStats?.q3 ?? 0, isPct: true },
+                  { label: "Max", pnl: pnlDistribution.stats?.max ?? 0, w: consecutiveRuns.winStats?.max ?? 0, l: consecutiveRuns.lossStats?.max ?? 0, isPct: true },
+                  { label: "Min", pnl: pnlDistribution.stats?.min ?? 0, w: consecutiveRuns.winStats?.min ?? 0, l: consecutiveRuns.lossStats?.min ?? 0, isPct: true },
+                  { label: "Range", pnl: pnlDistribution.stats?.range ?? 0, w: consecutiveRuns.winStats?.range ?? 0, l: consecutiveRuns.lossStats?.range ?? 0, isPct: true },
+                  { label: "IQR", pnl: pnlDistribution.stats?.iqr ?? 0, w: consecutiveRuns.winStats?.iqr ?? 0, l: consecutiveRuns.lossStats?.iqr ?? 0, isPct: true },
+                  { label: "Skewness", pnl: pnlDistribution.stats?.skewness ?? 0, w: consecutiveRuns.winStats?.skewness ?? 0, l: consecutiveRuns.lossStats?.skewness ?? 0, isPct: false, prec: 3 },
+                  { label: "Kurtosis", pnl: pnlDistribution.stats?.kurtosis ?? 0, w: consecutiveRuns.winStats?.kurtosis ?? 0, l: consecutiveRuns.lossStats?.kurtosis ?? 0, isPct: false, prec: 3 },
+                ].map((row, idx) => (
+                  <tr
+                    key={idx}
+                    className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
+                    style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)' }}
+                  >
+                    <td className="py-1 pl-6 pr-3" style={{ color: 'var(--color-ec-text-primary)' }}>{row.label}</td>
+                    <td className="py-1 px-3 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                      {row.isInt ? row.pnl : (row.pnl).toFixed(row.prec ?? 2)}{row.isPct && !row.isInt ? '%' : ''}
+                    </td>
+                    <td className="py-1 px-3 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                      {row.isInt ? row.w : (row.w).toFixed(row.prec ?? 2)}
+                    </td>
+                    <td className="py-1 px-3 text-right" style={{ color: 'var(--color-ec-text-high)' }}>
+                      {row.isInt ? row.l : (row.l).toFixed(row.prec ?? 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

@@ -32,31 +32,41 @@ def map_stats_row(row):
         "rth_range_pct": safe_float(row[17]),
         # New Metric
         "low_spike_prev_close_pct": safe_float(row[23]) if len(row) > 23 else 0.0,
-        # Mocking missing columns
-        "pm_high_break": 0.0, 
+        "pm_high_break": safe_float(row[24]) if len(row) > 24 else 0.0, 
         "close_red": safe_float(row[22]) if len(row) > 22 else 0.0,
         "pm_high_time": str(row[18]) if len(row) > 18 else "--",
         "hod_time": str(row[19]) if len(row) > 19 else "--",
         "lod_time": str(row[20]) if len(row) > 20 else "--",
         "rth_high_run_pct": safe_float(row[21]) if len(row) > 21 else 0.0,
-        "open_lt_vwap": 0.0
+        "open_lt_vwap": safe_float(row[25]) if len(row) > 25 else 0.0
     }
 
-def get_stats_sql_logic(where_d, where_i, where_m, where_base):
-    # Aggregation query 
-    # REMOVED pm_high_break and close_red checks to fix Binder Error
+def get_stats_sql_logic(where_d, where_i, where_m, where_base, limit=5000):
     # Aggregation query 
     # Logic Update:
-    # 1. RTH High Fade to Close % (formerly rth_fade): (rth_high - close_1559) / close_1559 * 100
+    # 1. RTH High Fade to Close % (formerly rth_fade): (rth_high - close) / close * 100
     # 2. RTH High %: (rth_high - open) / open * 100
-    # Note: Using NULLIF to avoid division by zero. Fallback to 'close' if 'close_1559' is null? 
-    # The user asked specifically for close_1559. If it's 0 or null, result is null.
+    # 3. pm_high_break: percentage of the pool where close > pm_high and pm_high > 0
+    # 4. close_red: percentage of the pool where close < open
+    # 5. open_lt_vwap: percentage of the pool where open < vwap
+    
+    # Check if open_lt_vwap column exists in daily_metrics (e.g. in GCS mode it doesn't)
+    from app.database import get_db_connection
+    has_vwap = False
+    try:
+        con = get_db_connection()
+        con.execute("SELECT open_lt_vwap FROM daily_metrics LIMIT 0")
+        has_vwap = True
+    except Exception:
+        pass
+
+    vwap_expr = "AVG(CASE WHEN open_lt_vwap = true THEN 1.0 ELSE 0.0 END) * 100" if has_vwap else "0.0"
     
     return f"""
         WITH pool AS (
             SELECT * FROM daily_metrics
             WHERE {where_m}
-            ORDER BY random() LIMIT 500
+            ORDER BY timestamp DESC, gap_pct DESC LIMIT {int(limit)}
         )
         SELECT * FROM (
             SELECT 'avg' as type, 
@@ -80,7 +90,9 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                    '--' as pm_h_t, '--' as hod_t, '--' as lod_t,
                    AVG((rth_high - open) / NULLIF(open,0) * 100) as rth_high_run,
                    AVG(CASE WHEN close < open THEN 1.0 ELSE 0.0 END) * 100 as close_red,
-                   AVG((rth_low - prev_close) / NULLIF(prev_close,0) * 100) as low_spike_prev_close
+                   AVG((rth_low - prev_close) / NULLIF(prev_close,0) * 100) as low_spike_prev_close,
+                   AVG(CASE WHEN close > pm_high AND pm_high > 0 THEN 1.0 ELSE 0.0 END) * 100 as pm_high_break,
+                   {vwap_expr} as open_lt_vwap
             FROM pool
             UNION ALL
             SELECT 'p25', 
@@ -94,8 +106,10 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                    QUANTILE_CONT( ABS((rth_high - open) / NULLIF(open,0) * 100) + ABS((rth_low - open) / NULLIF(open,0) * 100), 0.25), 
                    '--', '--', '--',
                    QUANTILE_CONT((rth_high - open) / NULLIF(open,0) * 100, 0.25),
-                   QUANTILE_CONT(CASE WHEN close < open THEN 1.0 ELSE 0.0 END, 0.25) * 100,
-                   QUANTILE_CONT((rth_low - prev_close) / NULLIF(prev_close,0) * 100, 0.25)
+                   AVG(CASE WHEN close < open THEN 1.0 ELSE 0.0 END) * 100,
+                   QUANTILE_CONT((rth_low - prev_close) / NULLIF(prev_close,0) * 100, 0.25),
+                   AVG(CASE WHEN close > pm_high AND pm_high > 0 THEN 1.0 ELSE 0.0 END) * 100,
+                   {vwap_expr}
             FROM pool
             UNION ALL
             SELECT 'p50', 
@@ -109,8 +123,10 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                    QUANTILE_CONT( ABS((rth_high - open) / NULLIF(open,0) * 100) + ABS((rth_low - open) / NULLIF(open,0) * 100), 0.5), 
                    '--', '--', '--',
                    QUANTILE_CONT((rth_high - open) / NULLIF(open,0) * 100, 0.5),
-                   QUANTILE_CONT(CASE WHEN close < open THEN 1.0 ELSE 0.0 END, 0.5) * 100,
-                   QUANTILE_CONT((rth_low - prev_close) / NULLIF(prev_close,0) * 100, 0.5)
+                   AVG(CASE WHEN close < open THEN 1.0 ELSE 0.0 END) * 100,
+                   QUANTILE_CONT((rth_low - prev_close) / NULLIF(prev_close,0) * 100, 0.5),
+                   AVG(CASE WHEN close > pm_high AND pm_high > 0 THEN 1.0 ELSE 0.0 END) * 100,
+                   {vwap_expr}
             FROM pool
             UNION ALL
             SELECT 'p75', 
@@ -124,8 +140,10 @@ def get_stats_sql_logic(where_d, where_i, where_m, where_base):
                    QUANTILE_CONT( ABS((rth_high - open) / NULLIF(open,0) * 100) + ABS((rth_low - open) / NULLIF(open,0) * 100), 0.75), 
                    '--', '--', '--',
                    QUANTILE_CONT((rth_high - open) / NULLIF(open,0) * 100, 0.75),
-                   QUANTILE_CONT(CASE WHEN close < open THEN 1.0 ELSE 0.0 END, 0.75) * 100,
-                   QUANTILE_CONT((rth_low - prev_close) / NULLIF(prev_close,0) * 100, 0.75)
+                   AVG(CASE WHEN close < open THEN 1.0 ELSE 0.0 END) * 100,
+                   QUANTILE_CONT((rth_low - prev_close) / NULLIF(prev_close,0) * 100, 0.75),
+                   AVG(CASE WHEN close > pm_high AND pm_high > 0 THEN 1.0 ELSE 0.0 END) * 100,
+                   {vwap_expr}
             FROM pool
         )
     """
@@ -193,14 +211,15 @@ def build_screener_query(
         'min_rth_volume': 'rth_volume', 'min_volume': 'volume',
         'min_m15_return_pct': 'm15_return_pct',
         'min_pm_volume': 'pm_volume', 
-        'min_pm_high_gap_pct': 'pmh_gap_pct',
+        'min_pm_high_gap_pct': 'pmh_gap_pct', 'max_pm_high_gap_pct': 'pmh_gap_pct',
+        'min_pmh_gap_pct': 'pmh_gap_pct', 'max_pmh_gap_pct': 'pmh_gap_pct',
         'min_pmh_fade_to_open_pct': 'pmh_fade_pct', 'max_pmh_fade_to_open_pct': 'pmh_fade_pct',
         'min_high_spike_pct': 'rth_run_pct', 
         'min_low_spike_pct': 'rth_range_pct'
     }
     
     for k, v in filters.items():
-        if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker']: continue
+        if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker', 'rules']: continue
         try:
             val = float(v)
             if k in ['min_gap', 'min_run', 'min_volume'] and val <= 0: continue
@@ -214,6 +233,42 @@ def build_screener_query(
             m_filters.append(f"{col} {operator} ?")
             sql_p.append(val)
         except: pass
+
+    # Parse dynamic rules array (e.g. from the new dataset builder)
+    rules = filters.get("rules", [])
+    if isinstance(rules, list):
+        for rule in rules:
+            if not isinstance(rule, dict): continue
+            metric = rule.get("metric")
+            op = rule.get("operator")
+            val = rule.get("value")
+            if metric and op and val is not None:
+                # Map metric using field_map if possible
+                col = field_map.get(metric, metric)
+                
+                # Convert rule operator to SQL operator
+                sql_op = {
+                    "GREATER_THAN": ">",
+                    "LESS_THAN": "<",
+                    "GREATER_THAN_OR_EQUAL": ">=",
+                    "LESS_THAN_OR_EQUAL": "<=",
+                    "EQUAL": "=",
+                    "CONTAINS": "LIKE",
+                    "=": "=",
+                    "!=": "!=",
+                    ">": ">",
+                    ">=": ">=",
+                    "<": "<",
+                    "<=": "<="
+                }.get(op, op)
+                
+                try:
+                    val_float = float(val)
+                    m_filters.append(f"{col} {sql_op} ?")
+                    sql_p.append(val_float)
+                except ValueError:
+                    m_filters.append(f"{col} {sql_op} ?")
+                    sql_p.append(val)
 
     # Join with massive.tickers for type filtering
     # We use a LEFT JOIN implicitly if we just want to filter, but an INNER JOIN is better to enforce existence in tickers table

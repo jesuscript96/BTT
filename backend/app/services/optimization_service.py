@@ -47,7 +47,7 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
     _seen = set()
 
     def _add(param_id: str, label: str, value, category: str, path: str,
-             min_val=None, max_val=None, step=None):
+             min_val=None, max_val=None, step=None, is_int_param=False):
         if param_id in _seen or value is None:
             return
         _seen.add(param_id)
@@ -59,15 +59,25 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         # (e.g., SL=0 means no stop loss, TP=0 means no take profit)
         if v == 0:
             return
+        
+        if is_int_param:
+            v_step = 1.0
+            v_min = float(max(0, int(v - 5))) if min_val is None else float(min_val)
+            v_max = float(int(v + 10)) if max_val is None else float(max_val)
+        else:
+            v_step = float(step or _auto_step(v))
+            v_min = float(min_val or max(0, v * 0.25))
+            v_max = float(max_val or max(v * 3, v + 10))
+
         params.append({
             "id": param_id,
             "label": label,
             "current_value": v,
             "category": category,
             "path": path,
-            "min": min_val or max(0, v * 0.25),
-            "max": max_val or max(v * 3, v + 10),
-            "step": step or _auto_step(v),
+            "min": v_min,
+            "max": v_max,
+            "step": v_step,
         })
 
     def _auto_step(v):
@@ -148,16 +158,21 @@ def _extract_from_condition_group(group, logic_label, path, params, seen, add_fn
         if cond_type == "group":
             _extract_from_condition_group(cond, logic_label, cond_path, params, seen, add_fn)
         elif cond_type == "indicator_comparison":
-            _extract_indicator_params(cond.get("source", {}), logic_label, "Source",
+            _extract_indicator_params(cond.get("source", {}), logic_label,
                                        f"{cond_path}.source", add_fn)
             target = cond.get("target", {})
             if isinstance(target, dict):
-                _extract_indicator_params(target, logic_label, "Target",
+                _extract_indicator_params(target, logic_label,
                                            f"{cond_path}.target", add_fn)
+            elif isinstance(target, (int, float)):
+                src_name = cond.get("source", {}).get("name", "Indicator")
+                add_fn(f"{cond_path}.target",
+                       f"{logic_label} {src_name} Target Value",
+                       target, "Condition", f"{cond_path}.target")
         elif cond_type == "price_level_distance":
-            _extract_indicator_params(cond.get("source", {}), logic_label, "Source",
+            _extract_indicator_params(cond.get("source", {}), logic_label,
                                        f"{cond_path}.source", add_fn)
-            _extract_indicator_params(cond.get("level", {}), logic_label, "Level",
+            _extract_indicator_params(cond.get("level", {}), logic_label,
                                        f"{cond_path}.level", add_fn)
             val_pct = cond.get("value_pct")
             if val_pct is not None:
@@ -167,26 +182,50 @@ def _extract_from_condition_group(group, logic_label, path, params, seen, add_fn
                        f"{logic_label} Dist ({src_name}-{lvl_name}) %",
                        val_pct, "Condition", f"{cond_path}.value_pct",
                        min_val=0.1, max_val=max(val_pct * 5, 10), step=0.25)
+        elif cond_type == "candle_pattern":
+            lookback = cond.get("lookback")
+            if lookback is not None:
+                add_fn(f"{cond_path}.lookback",
+                       f"{logic_label} Candle Lookback",
+                       lookback, "Condition", f"{cond_path}.lookback",
+                       min_val=1, max_val=10, step=1, is_int_param=True)
+            consecutive_count = cond.get("consecutive_count")
+            if consecutive_count is not None:
+                add_fn(f"{cond_path}.consecutive_count",
+                       f"{logic_label} Candle Consecutive Count",
+                       consecutive_count, "Condition", f"{cond_path}.consecutive_count",
+                       min_val=1, max_val=10, step=1, is_int_param=True)
 
 
-def _extract_indicator_params(cfg, logic_label, role, path, add_fn):
+def _extract_indicator_params(cfg, logic_label, path, add_fn):
     """Extract indicator config parameters."""
     if not cfg or not isinstance(cfg, dict):
         return
     name = cfg.get("name", "")
-    for param_key in ["period", "period2", "period3", "stdDev", "multiplier"]:
+    
+    int_keys = [
+        "period", "period2", "period3", "offset", "consecutive_count",
+        "time_hour", "time_minute", "days_lookback", "orb_minutes",
+        "time_from_hour", "time_from_minute", "range_minutes", "deviationLevel"
+    ]
+    float_keys = [
+        "stdDev", "multiplier", "overbought", "oversold", "return_pct",
+        "reversionPercentage", "min_af", "max_af"
+    ]
+
+    for param_key in int_keys:
         val = cfg.get(param_key)
         if val is not None:
             label = f"{logic_label} {name} {param_key}"
             param_id = f"{path}.{param_key}"
-            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}")
-    # offset
-    offset = cfg.get("offset")
-    if offset is not None:
-        add_fn(f"{path}.offset",
-               f"{logic_label} {name} offset",
-               offset, "Indicator", f"{path}.offset",
-               min_val=0, max_val=10, step=1)
+            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}", is_int_param=True)
+
+    for param_key in float_keys:
+        val = cfg.get(param_key)
+        if val is not None:
+            label = f"{logic_label} {name} {param_key}"
+            param_id = f"{path}.{param_key}"
+            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}", is_int_param=False)
 
 
 # ---------------------------------------------------------------------------
