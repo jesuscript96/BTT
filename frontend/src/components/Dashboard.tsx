@@ -533,7 +533,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {isAggregate ? (
                             <>
-                                <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: '15px', fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>CHANGE VS. PM HIGH</h3>
+                                <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: '15px', fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>CHANGE VS. OPEN PRICE</h3>
                                 <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>(AGGREGATE)</span>
                             </>
                         ) : (

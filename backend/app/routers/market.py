@@ -302,9 +302,10 @@ def get_aggregate_intraday(
             if not tickers:
                 return []
 
-            # daily_opens from hot cache (using pm_high as reference)
-            opens_df = result_df[result_df['timestamp'].dt.date == target_date][['ticker', 'pm_high']].copy()
-            opens_df = opens_df.rename(columns={'pm_high': 'day_open'})
+            # daily_opens from hot cache (using open as day_open and prev_close as close_4am)
+            opens_df = result_df[result_df['timestamp'].dt.date == target_date][['ticker', 'open', 'prev_close']].copy()
+            opens_df = opens_df.rename(columns={'open': 'day_open', 'prev_close': 'close_4am'})
+            opens_df = opens_df[opens_df['close_4am'] > 0]
 
             # FASE 2: intraday_1m query (sin daily_opens CTE — el merge es en pandas)
             placeholders = ','.join(['?'] * len(tickers))
@@ -322,7 +323,7 @@ def get_aggregate_intraday(
 
             intraday_df = pd.DataFrame(intra_rows, columns=['timestamp', 'ticker', 'close'])
             intraday_df = intraday_df.merge(opens_df, on='ticker', how='inner')
-            intraday_df['pct_change'] = (intraday_df['close'] - intraday_df['day_open']) / intraday_df['day_open'] * 100
+            intraday_df['pct_change'] = (intraday_df['close'] - intraday_df['day_open']) / intraday_df['close_4am'] * 100
             intraday_df['minute'] = pd.to_datetime(intraday_df['timestamp']).dt.strftime('%H:%M')
             grouped = intraday_df.groupby('minute').agg(
                 avg_change=('pct_change', 'mean'),
@@ -368,19 +369,20 @@ def get_aggregate_intraday(
 
         agg_query = f"""
             WITH daily_opens AS (
-                 SELECT ticker, pm_high as day_open 
+                 SELECT ticker, open as day_open, prev_close as close_4am
                  FROM daily_metrics 
                  WHERE DATE_TRUNC('day', timestamp) = CAST(? AS DATE)
                  AND ticker IN ({placeholders})
             ),
             joined_intraday AS (
                 SELECT 
-                    i.timestamp, i.ticker, i.close, d.day_open,
-                    ((i.close - d.day_open) / d.day_open * 100) as pct_change
+                    i.timestamp, i.ticker, i.close, d.day_open, d.close_4am,
+                    ((i.close - d.day_open) / NULLIF(d.close_4am, 0) * 100) as pct_change
                 FROM intraday_1m i
                 JOIN daily_opens d ON i.ticker = d.ticker
                 WHERE i.date = CAST(? AS DATE)
                 AND i.ticker IN ({placeholders})
+                AND d.close_4am > 0
             )
             SELECT 
                 strftime(timestamp, '%H:%M') as minute,
