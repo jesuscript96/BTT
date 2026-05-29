@@ -88,14 +88,14 @@ const formatAxisLabel = (num: number) => {
     return `${num < 0 ? '-' : ''}$${formatted}`;
 };
 
-// SVG-based responsive Grouped Bar Chart supporting dual Y-axes (Left: Cash/Debt, Right: Working Capital)
-const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debtData: any[], wcData: any[] }) => {
-    if (!cashData && !debtData && !wcData) {
+// SVG-based Cash & Debt grouped bar chart
+const CashDebtChart = ({ cashData, debtData }: { cashData: any[], debtData: any[] }) => {
+    if (!cashData && !debtData) {
         return (
             <div 
                 className="animate-pulse" 
                 style={{ 
-                    height: '160px', 
+                    height: '130px', 
                     width: '100%', 
                     backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                     borderRadius: '4px' 
@@ -107,14 +107,12 @@ const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debt
     const datesSet = new Set<string>();
     cashData?.forEach((item: any) => datesSet.add(item.date));
     debtData?.forEach((item: any) => datesSet.add(item.date));
-    wcData?.forEach((item: any) => datesSet.add(item.date));
-
     const sortedDates = Array.from(datesSet).sort();
 
     if (sortedDates.length === 0) {
         return (
             <div style={{
-                height: '160px',
+                height: '130px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -127,51 +125,29 @@ const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debt
         );
     }
 
-    // Left scale values (Cash, Debt)
-    let maxLeftVal = 1;
+    let maxVal = 1;
     sortedDates.forEach(d => {
         const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
         const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
-        maxLeftVal = Math.max(maxLeftVal, Math.abs(cashVal), Math.abs(debtVal));
-    });
-
-    // Right scale values (Working Capital)
-    let maxRightVal = 1;
-    let hasNegative = false;
-    sortedDates.forEach(d => {
-        const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
-        if (wcVal < 0) {
-            hasNegative = true;
-        }
-        maxRightVal = Math.max(maxRightVal, Math.abs(wcVal));
+        maxVal = Math.max(maxVal, Math.abs(cashVal), Math.abs(debtVal));
     });
 
     const svgWidth = 500;
-    const svgHeight = 220;
-    const marginTop = 30;
-    const marginBottom = 35;
-    const marginLeft = 45;
-    const marginRight = 45;
+    const svgHeight = 140;
+    const marginTop = 10;
+    const marginBottom = 25;
+    const marginLeft = 52;
+    const marginRight = 15;
     
     const chartHeight = svgHeight - marginTop - marginBottom;
     const chartWidth = svgWidth - marginLeft - marginRight;
-
-    const zeroY = hasNegative 
-        ? marginTop + chartHeight / 2 
-        : marginTop + chartHeight;
-        
-    const scaleLeft = hasNegative 
-        ? (chartHeight / 2) / maxLeftVal 
-        : chartHeight / maxLeftVal;
-
-    const scaleRight = hasNegative 
-        ? (chartHeight / 2) / maxRightVal 
-        : chartHeight / maxRightVal;
+    const zeroY = marginTop + chartHeight;
+    const scale = chartHeight / maxVal;
 
     const groupWidth = chartWidth / sortedDates.length;
-    const barWidth = 12;
-    const barGap = 3;
-    const totalBarsWidth = 3 * barWidth + 2 * barGap;
+    const barWidth = 16;
+    const barGap = 4;
+    const totalBarsWidth = 2 * barWidth + barGap;
 
     const formatDateLabel = (dateStr: string) => {
         try {
@@ -187,7 +163,139 @@ const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debt
     return (
         <div style={{ width: '100%', height: '100%' }}>
             <svg className="w-full h-full" viewBox={`0 0 ${svgWidth} ${svgHeight}`} preserveAspectRatio="xMidYMid meet">
-                {/* Horizontal reference lines */}
+                <line x1={marginLeft} y1={marginTop} x2={svgWidth - marginRight} y2={marginTop} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.2" />
+                <line x1={marginLeft} y1={marginTop + chartHeight / 2} x2={svgWidth - marginRight} y2={marginTop + chartHeight / 2} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.2" />
+
+                <line x1={marginLeft} y1={marginTop} x2={marginLeft} y2={marginTop + chartHeight} stroke="var(--color-ec-border)" strokeWidth="0.5" opacity="0.5" />
+
+                <text
+                    x={marginLeft - 8}
+                    y={marginTop + 5}
+                    textAnchor="end"
+                    fill="var(--color-ec-text-muted)"
+                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600 }}
+                >
+                    {formatAxisLabel(maxVal)}
+                </text>
+                <text
+                    x={marginLeft - 8}
+                    y={zeroY + 4}
+                    textAnchor="end"
+                    fill="var(--color-ec-text-muted)"
+                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600 }}
+                >
+                    $0
+                </text>
+
+                <line x1={marginLeft} y1={zeroY} x2={svgWidth - marginRight} y2={zeroY} stroke="var(--color-ec-border)" strokeWidth="1" />
+
+                {sortedDates.map((d, index) => {
+                    const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const groupStartX = marginLeft + index * groupWidth + (groupWidth - totalBarsWidth) / 2;
+
+                    const cashH = cashVal * scale;
+                    const cashY = zeroY - cashH;
+
+                    const debtH = debtVal * scale;
+                    const debtY = zeroY - debtH;
+
+                    return (
+                        <g key={d}>
+                            <rect x={groupStartX} y={cashY} width={barWidth} height={Math.max(cashH, 1)} fill="var(--color-ec-profit)" rx="1" opacity="0.9" />
+                            <rect x={groupStartX + barWidth + barGap} y={debtY} width={barWidth} height={Math.max(debtH, 1)} fill="var(--color-ec-loss)" rx="1" opacity="0.9" />
+
+                            <text
+                                x={marginLeft + index * groupWidth + groupWidth / 2}
+                                y={svgHeight - 6}
+                                textAnchor="middle"
+                                fill="var(--color-ec-text-muted)"
+                                style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}
+                            >
+                                {formatDateLabel(d)}
+                            </text>
+                        </g>
+                    );
+                })}
+            </svg>
+        </div>
+    );
+};
+
+// SVG-based Working Capital bar chart (supports negative values)
+const WorkingCapitalChart = ({ wcData }: { wcData: any[] }) => {
+    if (!wcData) {
+        return (
+            <div 
+                className="animate-pulse" 
+                style={{ 
+                    height: '130px', 
+                    width: '100%', 
+                    backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                    borderRadius: '4px' 
+                }} 
+            />
+        );
+    }
+
+    const datesSet = new Set<string>();
+    wcData?.forEach((item: any) => datesSet.add(item.date));
+    const sortedDates = Array.from(datesSet).sort();
+
+    if (sortedDates.length === 0) {
+        return (
+            <div style={{
+                height: '130px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--color-ec-text-muted)',
+                fontSize: '11px',
+                fontWeight: 500
+            }}>
+                No historical data available.
+            </div>
+        );
+    }
+
+    let maxVal = 1;
+    let hasNegative = false;
+    sortedDates.forEach(d => {
+        const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
+        if (wcVal < 0) hasNegative = true;
+        maxVal = Math.max(maxVal, Math.abs(wcVal));
+    });
+
+    const svgWidth = 500;
+    const svgHeight = 140;
+    const marginTop = 10;
+    const marginBottom = 25;
+    const marginLeft = 52;
+    const marginRight = 15;
+    
+    const chartHeight = svgHeight - marginTop - marginBottom;
+    const chartWidth = svgWidth - marginLeft - marginRight;
+
+    const zeroY = hasNegative ? marginTop + chartHeight / 2 : marginTop + chartHeight;
+    const scale = hasNegative ? (chartHeight / 2) / maxVal : chartHeight / maxVal;
+
+    const groupWidth = chartWidth / sortedDates.length;
+    const barWidth = 18;
+
+    const formatDateLabel = (dateStr: string) => {
+        try {
+            const date = new Date(dateStr);
+            const month = date.toLocaleString('en-US', { month: 'short' });
+            const year = date.getFullYear().toString().slice(-2);
+            return `${month} '${year}`;
+        } catch {
+            return dateStr;
+        }
+    };
+
+    return (
+        <div style={{ width: '100%', height: '100%' }}>
+            <svg className="w-full h-full" viewBox={`0 0 ${svgWidth} ${svgHeight}`} preserveAspectRatio="xMidYMid meet">
                 {hasNegative ? (
                     <>
                         <line x1={marginLeft} y1={marginTop} x2={svgWidth - marginRight} y2={marginTop} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.2" />
@@ -200,179 +308,57 @@ const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debt
                     </>
                 )}
 
-                {/* Vertical Axis lines */}
                 <line x1={marginLeft} y1={marginTop} x2={marginLeft} y2={marginTop + chartHeight} stroke="var(--color-ec-border)" strokeWidth="0.5" opacity="0.5" />
-                <line x1={svgWidth - marginRight} y1={marginTop} x2={svgWidth - marginRight} y2={marginTop + chartHeight} stroke="var(--color-ec-border)" strokeWidth="0.5" opacity="0.5" />
 
-                {/* Axis Titles */}
-                <text
-                    x={marginLeft}
-                    y={marginTop - 12}
-                    textAnchor="start"
-                    fill="var(--color-ec-text-secondary)"
-                    style={{
-                        fontFamily: "'General Sans', sans-serif",
-                        fontSize: '8px',
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px'
-                    }}
-                >
-                    Cash / Debt (L)
-                </text>
-                <text
-                    x={svgWidth - marginRight}
-                    y={marginTop - 12}
-                    textAnchor="end"
-                    fill="#60a5fa"
-                    style={{
-                        fontFamily: "'General Sans', sans-serif",
-                        fontSize: '8px',
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px'
-                    }}
-                >
-                    Working Capital (R)
-                </text>
-
-                {/* Left Y-axis ticks and labels */}
                 <text
                     x={marginLeft - 8}
-                    y={marginTop + 4}
+                    y={marginTop + 5}
                     textAnchor="end"
                     fill="var(--color-ec-text-muted)"
-                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '8px', fontWeight: 600 }}
+                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600 }}
                 >
-                    {formatAxisLabel(maxLeftVal)}
+                    {formatAxisLabel(maxVal)}
                 </text>
                 <text
                     x={marginLeft - 8}
-                    y={zeroY + 3}
+                    y={zeroY + 4}
                     textAnchor="end"
                     fill="var(--color-ec-text-muted)"
-                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '8px', fontWeight: 600 }}
+                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600 }}
                 >
                     $0
                 </text>
                 {hasNegative && (
                     <text
                         x={marginLeft - 8}
-                        y={marginTop + chartHeight + 2}
+                        y={marginTop + chartHeight + 3}
                         textAnchor="end"
                         fill="var(--color-ec-text-muted)"
-                        style={{ fontFamily: "'General Sans', sans-serif", fontSize: '8px', fontWeight: 600 }}
+                        style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600 }}
                     >
-                        {formatAxisLabel(-maxLeftVal)}
+                        {formatAxisLabel(-maxVal)}
                     </text>
                 )}
 
-                {/* Right Y-axis ticks and labels */}
-                <text
-                    x={svgWidth - marginRight + 8}
-                    y={marginTop + 4}
-                    textAnchor="start"
-                    fill="#60a5fa"
-                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '8px', fontWeight: 600 }}
-                >
-                    {formatAxisLabel(maxRightVal)}
-                </text>
-                <text
-                    x={svgWidth - marginRight + 8}
-                    y={zeroY + 3}
-                    textAnchor="start"
-                    fill="#60a5fa"
-                    style={{ fontFamily: "'General Sans', sans-serif", fontSize: '8px', fontWeight: 600 }}
-                >
-                    $0
-                </text>
-                {hasNegative && (
-                    <text
-                        x={svgWidth - marginRight + 8}
-                        y={marginTop + chartHeight + 2}
-                        textAnchor="start"
-                        fill="#60a5fa"
-                        style={{ fontFamily: "'General Sans', sans-serif", fontSize: '8px', fontWeight: 600 }}
-                    >
-                        {formatAxisLabel(-maxRightVal)}
-                    </text>
-                )}
+                <line x1={marginLeft} y1={zeroY} x2={svgWidth - marginRight} y2={zeroY} stroke="var(--color-ec-border)" strokeWidth="1" />
 
-                {/* Zero baseline line */}
-                <line 
-                    x1={marginLeft} 
-                    y1={zeroY} 
-                    x2={svgWidth - marginRight} 
-                    y2={zeroY} 
-                    stroke="var(--color-ec-border)" 
-                    strokeWidth="1" 
-                />
-
-                {/* Bars & X-axis dates */}
                 {sortedDates.map((d, index) => {
-                    const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
-                    const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
                     const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const groupStartX = marginLeft + index * groupWidth + (groupWidth - barWidth) / 2;
 
-                    const groupStartX = marginLeft + index * groupWidth + (groupWidth - totalBarsWidth) / 2;
-
-                    // Cash & Debt (scaled to Left axis)
-                    const cashH = Math.abs(cashVal) * scaleLeft;
-                    const cashY = cashVal >= 0 ? zeroY - cashH : zeroY;
-
-                    const debtH = Math.abs(debtVal) * scaleLeft;
-                    const debtY = debtVal >= 0 ? zeroY - debtH : zeroY;
-
-                    // Working Capital (scaled to Right axis)
-                    const wcH = Math.abs(wcVal) * scaleRight;
+                    const wcH = Math.abs(wcVal) * scale;
                     const wcY = wcVal >= 0 ? zeroY - wcH : zeroY;
 
                     return (
                         <g key={d}>
-                            {/* Cash Bar */}
-                            <rect
-                                x={groupStartX}
-                                y={cashY}
-                                width={barWidth}
-                                height={Math.max(cashH, 1)}
-                                fill="var(--color-ec-profit)"
-                                rx="1"
-                                opacity="0.9"
-                            />
-                            {/* Debt Bar */}
-                            <rect
-                                x={groupStartX + barWidth + barGap}
-                                y={debtY}
-                                width={barWidth}
-                                height={Math.max(debtH, 1)}
-                                fill="var(--color-ec-loss)"
-                                rx="1"
-                                opacity="0.9"
-                            />
-                            {/* Working Capital Bar */}
-                            <rect
-                                x={groupStartX + 2 * (barWidth + barGap)}
-                                y={wcY}
-                                width={barWidth}
-                                height={Math.max(wcH, 1)}
-                                fill="#3b82f6"
-                                rx="1"
-                                opacity="0.9"
-                            />
+                            <rect x={groupStartX} y={wcY} width={barWidth} height={Math.max(wcH, 1)} fill="#3b82f6" rx="1" opacity="0.9" />
 
-                            {/* X-axis date label - enlarged to 11px according to request */}
                             <text
                                 x={marginLeft + index * groupWidth + groupWidth / 2}
-                                y={svgHeight - 12}
+                                y={svgHeight - 6}
                                 textAnchor="middle"
                                 fill="var(--color-ec-text-muted)"
-                                style={{
-                                    fontFamily: "'General Sans', sans-serif",
-                                    fontSize: '11px',
-                                    fontWeight: 600,
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.5px'
-                                }}
+                                style={{ fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}
                             >
                                 {formatDateLabel(d)}
                             </text>
@@ -384,64 +370,49 @@ const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debt
     );
 };
 
-// Unified Balance Sheet Trends Card component
+// Unified Balance Sheet Trends Card component containing two separate charts
 const BalanceSheetTrendsCard = ({ data }: { data: any }) => {
     return (
         <div style={{
-            padding: '12px 0',
+            padding: '8px 0',
             display: 'flex',
             flexDirection: 'column',
-            gap: 16
+            gap: 24
         }}>
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr',
-                gap: 12,
-                borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)',
-                paddingBottom: 12
-            }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cash</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-profit)' }}>{formatNumber(data?.financials?.cash)}</span>
+            {/* Cash & Debt Chart Section */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                    paddingBottom: 6
+                }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cash & Total Debt</span>
+                    <div style={{ display: 'flex', gap: 12, fontSize: 10, fontWeight: 700 }}>
+                        <span style={{ color: 'var(--color-ec-profit)' }}>C: {formatNumber(data?.financials?.cash)}</span>
+                        <span style={{ color: 'var(--color-ec-loss)' }}>D: {formatNumber(data?.financials?.total_debt)}</span>
+                    </div>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Debt</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-loss)' }}>{formatNumber(data?.financials?.total_debt)}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Working Capital</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#3b82f6' }}>{formatNumber(data?.financials?.working_capital)}</span>
+                <div style={{ height: '130px' }}>
+                    <CashDebtChart cashData={data?.charts?.cash_history} debtData={data?.charts?.debt_history} />
                 </div>
             </div>
 
-            <div style={{ height: '180px' }}>
-                <GroupedBarChart 
-                    cashData={data?.charts?.cash_history} 
-                    debtData={data?.charts?.debt_history} 
-                    wcData={data?.charts?.working_capital_history} 
-                />
-            </div>
-
-            <div style={{
-                display: 'flex',
-                justifyContent: 'center',
-                gap: 16,
-                fontSize: 8,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px'
-            }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: 'var(--color-ec-profit)' }} />
-                    <span style={{ color: 'var(--color-ec-text-muted)' }}>Cash</span>
+            {/* Working Capital Chart Section */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                    paddingBottom: 6
+                }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Working Capital</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#3b82f6' }}>{formatNumber(data?.financials?.working_capital)}</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: 'var(--color-ec-loss)' }} />
-                    <span style={{ color: 'var(--color-ec-text-muted)' }}>Debt</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: '#3b82f6' }} />
-                    <span style={{ color: 'var(--color-ec-text-muted)' }}>Working Capital</span>
+                <div style={{ height: '130px' }}>
+                    <WorkingCapitalChart wcData={data?.charts?.working_capital_history} />
                 </div>
             </div>
         </div>
