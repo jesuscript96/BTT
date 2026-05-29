@@ -11,7 +11,7 @@ const ALL_PRICE_VARIABLES = [
     IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN,
     IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ];
 
@@ -36,7 +36,7 @@ const PM_RTH_YESTERDAY = [
     IndicatorType.AM_OPEN,
     IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ];
 
@@ -44,7 +44,7 @@ const RTH_YESTERDAY_INDICATORS = [
     IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
     IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
     ...ALL_INDICATORS,
 ];
@@ -74,7 +74,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         ...ALL_INDICATORS,
     ],
@@ -86,8 +86,6 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.YESTERDAY_CLOSE]: [],
     [IndicatorType.YESTERDAY_HIGH]: [],
     [IndicatorType.YESTERDAY_LOW]: [],
-    [IndicatorType.YESTERDAY_AM_HIGH]: [],
-    [IndicatorType.YESTERDAY_AM_LOW]: [],
     [IndicatorType.HIGH_X_DAYS]: [],
     [IndicatorType.LOW_X_DAYS]: [],
 
@@ -139,7 +137,7 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         ...ALL_INDICATORS,
     ],
@@ -149,7 +147,7 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
         IndicatorType.PM_OPEN, IndicatorType.PREVIOUS_MIN,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         IndicatorType.VWAP,
     ],
@@ -159,7 +157,7 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
         IndicatorType.PM_OPEN, IndicatorType.PREVIOUS_MIN,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-        IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+    
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         IndicatorType.VWAP,
     ],
@@ -190,7 +188,7 @@ export function isStandalone(indicator: IndicatorType): boolean {
 const ONLY_TARGET_INDICATORS = new Set([
     IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    IndicatorType.YESTERDAY_AM_HIGH, IndicatorType.YESTERDAY_AM_LOW,
+
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ]);
 

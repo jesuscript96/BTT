@@ -99,8 +99,6 @@ const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.YESTERDAY_CLOSE]: "Yesterday Close",
     [IndicatorType.YESTERDAY_HIGH]: "Yesterday High",
     [IndicatorType.YESTERDAY_LOW]: "Yesterday Low",
-    [IndicatorType.YESTERDAY_AM_HIGH]: "Yesterday AM High",
-    [IndicatorType.YESTERDAY_AM_LOW]: "Yesterday AM Low",
     [IndicatorType.HIGH_X_DAYS]: "High of last X days",
     [IndicatorType.LOW_X_DAYS]: "Low of last X days",
     [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Elapsed Time Last High",
