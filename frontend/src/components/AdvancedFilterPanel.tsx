@@ -15,6 +15,8 @@ interface AdvancedFilterPanelProps {
     onToggleFilterBuilder?: () => void;
     activeRules?: any[];
     onRemoveRule?: (id: string) => void;
+    showScanResults: boolean;
+    onToggleScanResults: () => void;
 }
 
 const parseVolume = (value: string): number | undefined => {
@@ -46,7 +48,9 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
     isFilterBuilderOpen,
     onToggleFilterBuilder,
     activeRules,
-    onRemoveRule
+    onRemoveRule,
+    showScanResults,
+    onToggleScanResults
 }) => {
     // Local state for UI responsiveness, synced with parent
     const [ticker, setTicker] = React.useState(filters.ticker || "");
@@ -64,7 +68,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
     const [lowSpike, setLowSpike] = React.useState(filters.min_low_spike_pct?.toString() || "");
     const [hodAfter, setHodAfter] = React.useState(filters.hod_after || "");
     const [lodBefore, setLodBefore] = React.useState(filters.lod_before || "");
-    const [isExpanded, setIsExpanded] = React.useState(true);
+    const [showRulesDropdown, setShowRulesDropdown] = React.useState(false);
 
     // Sync from props (when loading datasets)
     React.useEffect(() => {
@@ -121,104 +125,181 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                             title="End Date"
                             style={{ background: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 5, padding: '0 8px', height: 30, fontFamily: "'General Sans', sans-serif", fontSize: 12, color: 'var(--color-ec-text-primary)', outline: 'none', width: 110, colorScheme: 'dark' }}
                         />
-                    </div>
+                    </div>                    {/* Divider */}
+                    <div style={{ width: '0.5px', height: 20, background: 'var(--color-ec-border)', margin: '0 4px', flexShrink: 0 }} />
 
-                    {/* Basic Filters & Advanced Filters Toggle */}
-                    {isExpanded && (
-                        <>
-                            {/* Divider */}
-                            <div style={{ width: '0.5px', height: 20, background: 'var(--color-ec-border)', margin: '0 4px', flexShrink: 0 }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 10,
+                            fontWeight: 800,
+                            textTransform: 'uppercase',
+                            letterSpacing: '1px',
+                            color: 'var(--color-ec-text-muted)',
+                            marginRight: 6,
+                            whiteSpace: 'nowrap'
+                        }}>Filtros básicos</span>
+                        
+                        <FilterInput label="Min RTH Gap" value={minGap} onChange={(v: string) => { setMinGap(v); updateParent('min_gap_pct', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="Max RTH Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="Min PM Gap" value={minPmGap} onChange={(v: string) => { setMinPmGap(v); updateParent('min_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="Max PM Gap" value={maxPmGap} onChange={(v: string) => { setMaxPmGap(v); updateParent('max_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="RTH Vol (M)" placeholder="0.0M" value={minVol} onChange={(v: string) => { setMinVol(v); updateParent('min_rth_volume', parseVolume(v)); }} />
+                        <FilterInput label="PM Vol (M)" placeholder="0.0M" value={minPmVol} onChange={(v: string) => { setMinPmVol(v); updateParent('min_pm_volume', parseVolume(v)); }} />
 
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{
+                        {onToggleFilterBuilder && (
+                            <button
+                                onClick={onToggleFilterBuilder}
+                                style={{
+                                    height: 30,
+                                    padding: '0 14px',
+                                    background: 'var(--color-ec-copper)',
+                                    color: 'var(--color-ec-copper-text)',
+                                    border: 'none',
+                                    borderRadius: 5,
                                     fontFamily: "'General Sans', sans-serif",
-                                    fontSize: 10,
-                                    fontWeight: 800,
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    letterSpacing: '1.2px',
                                     textTransform: 'uppercase',
-                                    letterSpacing: '1px',
-                                    color: 'var(--color-ec-text-muted)',
-                                    marginRight: 6,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    marginLeft: 8,
                                     whiteSpace: 'nowrap'
-                                }}>Filtros básicos</span>
-                                
-                                <FilterInput label="Min RTH Gap" value={minGap} onChange={(v: string) => { setMinGap(v); updateParent('min_gap_pct', v ? parseFloat(v) : undefined); }} />
-                                <FilterInput label="Max RTH Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
-                                <FilterInput label="Min PM Gap" value={minPmGap} onChange={(v: string) => { setMinPmGap(v); updateParent('min_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
-                                <FilterInput label="Max PM Gap" value={maxPmGap} onChange={(v: string) => { setMaxPmGap(v); updateParent('max_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
-                                <FilterInput label="RTH Vol (M)" placeholder="0.0M" value={minVol} onChange={(v: string) => { setMinVol(v); updateParent('min_rth_volume', parseVolume(v)); }} />
-                                <FilterInput label="PM Vol (M)" placeholder="0.0M" value={minPmVol} onChange={(v: string) => { setMinPmVol(v); updateParent('min_pm_volume', parseVolume(v)); }} />
+                                }}
+                            >
+                                más filtros
+                            </button>
+                        )}
 
-                                {onToggleFilterBuilder && (
-                                    <button
-                                        onClick={onToggleFilterBuilder}
-                                        style={{
-                                            height: 30,
-                                            padding: '0 14px',
-                                            background: 'var(--color-ec-copper)',
-                                            color: 'var(--color-ec-copper-text)',
-                                            border: 'none',
-                                            borderRadius: 5,
-                                            fontFamily: "'General Sans', sans-serif",
-                                            fontSize: 11,
-                                            fontWeight: 700,
-                                            letterSpacing: '1.2px',
-                                            textTransform: 'uppercase',
-                                            cursor: 'pointer',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 6,
-                                            marginLeft: 8,
-                                            whiteSpace: 'nowrap'
-                                        }}
-                                    >
-                                        más filtros
-                                    </button>
-                                )}
-
-                                {activeRules && activeRules.length > 0 && (
-                                    <div style={{
+                        {activeRules && activeRules.length > 0 && (
+                            <div style={{ position: 'relative', marginLeft: 8 }}>
+                                <button
+                                    onClick={() => setShowRulesDropdown(!showRulesDropdown)}
+                                    style={{
+                                        height: 30,
+                                        padding: '0 12px',
+                                        background: showRulesDropdown ? 'var(--color-ec-bg-surface-hover)' : 'var(--color-ec-bg-surface)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        fontFamily: "'General Sans', sans-serif",
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-secondary)',
+                                        cursor: 'pointer',
                                         display: 'flex',
                                         alignItems: 'center',
                                         gap: 6,
-                                        marginLeft: 12,
-                                        overflowX: 'auto',
-                                        borderLeft: '0.5px solid var(--color-ec-border)',
-                                        paddingLeft: 12,
-                                    }}>
-                                        {activeRules.map(rule => (
-                                            <div key={rule.id} style={{
-                                                background: 'var(--color-ec-bg-surface)',
-                                                border: '0.5px solid var(--color-ec-border)',
-                                                padding: '2px 8px',
-                                                borderRadius: 4,
+                                        whiteSpace: 'nowrap'
+                                    }}
+                                >
+                                    <span>{activeRules.length} {activeRules.length === 1 ? 'filtro' : 'filtros'}</span>
+                                    {showRulesDropdown ? <ChevronUp size={12} strokeWidth={2} /> : <ChevronDown size={12} strokeWidth={2} />}
+                                </button>
+
+                                {showRulesDropdown && (
+                                    <>
+                                        {/* Click outside backdrop overlay */}
+                                        <div 
+                                            onClick={() => setShowRulesDropdown(false)}
+                                            style={{
+                                                position: 'fixed',
+                                                top: 0,
+                                                left: 0,
+                                                right: 0,
+                                                bottom: 0,
+                                                zIndex: 99,
+                                            }}
+                                        />
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: 'calc(100% + 6px)',
+                                            left: 0,
+                                            background: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 6,
+                                            padding: '8px',
+                                            minWidth: 220,
+                                            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                                            zIndex: 100,
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 4,
+                                        }}>
+                                            <div style={{
+                                                padding: '4px 6px',
+                                                fontSize: 9,
+                                                fontWeight: 800,
+                                                textTransform: 'uppercase',
+                                                letterSpacing: '1px',
+                                                color: 'var(--color-ec-text-muted)',
+                                                borderBottom: '0.5px solid var(--color-ec-border)',
+                                                paddingBottom: 6,
+                                                marginBottom: 4,
                                                 display: 'flex',
+                                                justifyContent: 'space-between',
                                                 alignItems: 'center',
-                                                gap: 6,
-                                                whiteSpace: 'nowrap',
-                                                height: 24,
                                             }}>
-                                                <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                                    {rule.metric} {rule.operator} {rule.value}
-                                                </span>
+                                                <span>Filtros avanzados</span>
                                                 <button
-                                                    onClick={() => onRemoveRule && onRemoveRule(rule.id)}
-                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-secondary)', padding: 0, display: 'flex' }}
+                                                    onClick={() => {
+                                                        activeRules.forEach(rule => onRemoveRule && onRemoveRule(rule.id));
+                                                        setShowRulesDropdown(false);
+                                                    }}
+                                                    style={{
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        color: 'var(--color-ec-copper)',
+                                                        fontSize: 9,
+                                                        fontWeight: 700,
+                                                        textTransform: 'uppercase',
+                                                        cursor: 'pointer',
+                                                        padding: 0
+                                                    }}
                                                 >
-                                                    <X size={10} strokeWidth={2.5} />
+                                                    Limpiar todo
                                                 </button>
                                             </div>
-                                        ))}
-                                    </div>
+                                            <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                                {activeRules.map(rule => (
+                                                    <div key={rule.id} style={{
+                                                        background: 'var(--color-ec-bg-surface)',
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        padding: '4px 8px',
+                                                        borderRadius: 4,
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'space-between',
+                                                        gap: 8,
+                                                        whiteSpace: 'nowrap',
+                                                    }}>
+                                                        <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-ec-text-primary)' }}>
+                                                            {rule.metric} {rule.operator} {rule.value}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => onRemoveRule && onRemoveRule(rule.id)}
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-muted)', padding: 2, display: 'flex', borderRadius: 3 }}
+                                                        >
+                                                            <X size={12} strokeWidth={2} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </>
                                 )}
                             </div>
-                        </>
-                    )}
+                        )}
+                    </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {/* Chevron Icon Button */}
                     <button
-                        onClick={() => setIsExpanded(!isExpanded)}
+                        onClick={onToggleScanResults}
+                        title={showScanResults ? "Colapsar resultados de escaneo" : "Expandir resultados de escaneo"}
                         style={{
                             height: 30, width: 30, padding: 0,
                             background: 'var(--color-ec-bg-surface)',
@@ -227,7 +308,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                             color: 'var(--color-ec-text-secondary)', cursor: 'pointer',
                         }}
                     >
-                        {isExpanded ? <ChevronUp size={14} strokeWidth={1.5} /> : <ChevronDown size={14} strokeWidth={1.5} />}
+                        {showScanResults ? <ChevronUp size={14} strokeWidth={1.5} /> : <ChevronDown size={14} strokeWidth={1.5} />}
                     </button>
                     {/* Primary Button */}
                     <button

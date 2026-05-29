@@ -55,24 +55,79 @@ interface DashboardProps {
 
 type StatMode = 'avg' | 'p25' | 'p50' | 'p75';
 
-// ─── Sidebar Metric Row (Compact) ─────────────────────────────────────
+// ─── Sidebar Metric Row (Clean & Premium, no rounded badge box) ───────
 const SidebarMetricRow = ({ label, value, suffix = "%" }: { label: string; value: number | undefined; suffix?: string }) => {
     const safeValue = value ?? 0;
     const isNegative = safeValue < 0;
-    const formatted = suffix === "%" ? `${safeValue.toFixed(2)}%` : `${safeValue.toFixed(2)}`;
-    const badgeColor = isNegative ? "bg-ec-loss/15 text-ec-loss" : "bg-ec-profit/15 text-ec-profit";
-    const badgeText = isNegative ? `${safeValue.toFixed(1)}%` : `+${safeValue.toFixed(1)}%`;
+    const isZero = Math.abs(safeValue) < 0.0001;
+    
+    const formattedVal = isZero 
+        ? `0.00${suffix}` 
+        : `${safeValue > 0 ? '+' : ''}${safeValue.toFixed(2)}${suffix}`;
+    
+    let textColor = 'var(--color-ec-text-primary)';
+    if (!isZero) {
+        textColor = isNegative ? 'var(--color-ec-loss)' : 'var(--color-ec-profit)';
+    }
 
     return (
-        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: 1.5 }}>{label}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: isNegative ? 'var(--color-ec-loss)' : 'var(--color-ec-text-high)' }}>
-                    {formatted}
-                </span>
-            </div>
-            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${badgeColor}`}>
-                {badgeText}
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '4px 0',
+            borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)'
+        }}>
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 8,
+                fontWeight: 600,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                marginBottom: 0
+            }}>
+                {label}
+            </span>
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 12,
+                fontWeight: 600,
+                color: textColor
+            }}>
+                {formattedVal}
+            </span>
+        </div>
+    );
+};
+
+// ─── Volume Metric Row (Large numbers format) ────────────────────────
+const VolumeMetricRow = ({ label, value }: { label: string; value: number | undefined }) => {
+    const formatted = formatLargeNumber(value ?? 0);
+    return (
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '4px 0',
+            borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)'
+        }}>
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 8,
+                fontWeight: 600,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                marginBottom: 0
+            }}>
+                {label}
+            </span>
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--color-ec-text-primary)'
+            }}>
+                {formatted}
             </span>
         </div>
     );
@@ -83,7 +138,7 @@ const formatLargeNumber = (num: number) => {
     if (!num) return "0";
     if (num >= 1000000) return (num / 1000000).toFixed(1) + "M";
     if (num >= 1000) return (num / 1000).toFixed(1) + "K";
-    return num.toFixed(0);
+    return num.toLocaleString(undefined, { maximumFractionDigits: 0 });
 };
 
 // ─── Main Dashboard ───────────────────────────────────────────────────
@@ -118,7 +173,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                         </span>
                     </div>
                 </div>
-                <div className="flex-1 overflow-hidden">
+                <div style={{ flex: 1, overflow: 'hidden' }}>
                     <NewsFeed />
                 </div>
             </div>
@@ -127,35 +182,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 
     return (
         <div style={{ minHeight: '100%', fontFamily: "'General Sans', sans-serif" }}>
-            {/* Top Row: Sidebar Metrics & Main Chart */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-0">
-
-                {/* ═══ LEFT COLUMN: Compact 2-Col Metrics ═══ */}
-                <div className="md:col-span-3 pr-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)', borderRight: '0.5px solid var(--color-ec-border)' }}>
+            <div style={{
+                display: 'flex',
+                flexDirection: 'row',
+                flexWrap: 'wrap',
+                width: '100%',
+                gap: 0,
+            }}>
+                {/* ═══ LEFT COLUMN: Sidebar Metrics ═══ */}
+                <div style={{
+                    flex: '1 1 280px',
+                    minWidth: '260px',
+                    maxWidth: '300px',
+                    paddingRight: '20px',
+                    borderRight: '1px solid var(--color-ec-border)',
+                    boxSizing: 'border-box',
+                }}>
                     {/* Header: Sample + Mode Selector */}
-                    <div className="flex items-center justify-between py-2 border-b border-border/40 mb-1">
-                        <div className="flex flex-col">
-                            <div className="flex items-center gap-1.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
-                                <span className="text-[8px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Total Sample</span>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '12px 0',
+                        borderBottom: '1px solid var(--color-ec-border)',
+                        marginBottom: '8px'
+                    }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--color-ec-copper)' }}></div>
+                                <span style={{ fontSize: '8px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Total Sample</span>
                             </div>
-                            <span className="text-base font-bold text-[var(--color-ec-text-high)] tracking-tight">{stats.count} RECORDS</span>
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>{stats.count.toLocaleString()} REC</span>
                         </div>
-                        <div className="flex gap-1.5 text-[8px] font-black uppercase tracking-widest items-center">
+                        
+                        {/* Selector tabs */}
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                             {(['avg', 'p25', 'p50', 'p75'] as const).map((m) => (
                                 <span
                                     key={m}
                                     onClick={() => setMode(m)}
-                                    className={`cursor-pointer transition-all`}
                                     style={{
-                                        color: mode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
-                                        background: mode === m ? 'color-mix(in srgb, var(--color-ec-copper) 10%, transparent)' : 'transparent',
-                                        padding: mode === m ? '1.5px 6px' : undefined,
-                                        borderRadius: mode === m ? 3 : undefined,
-                                        fontSize: 8,
+                                        cursor: 'pointer',
+                                        color: mode === m ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-muted)',
+                                        background: mode === m ? 'var(--color-ec-bg-elevated)' : 'transparent',
+                                        padding: '4px 6px',
+                                        borderRadius: '3px',
+                                        fontSize: '8px',
                                         fontWeight: 700,
                                         textTransform: 'uppercase',
-                                        letterSpacing: 1.5,
+                                        letterSpacing: '0.5px',
+                                        border: mode === m ? '1px solid var(--color-ec-copper)' : '1px solid transparent',
+                                        transition: 'all 0.2s ease',
                                     }}
                                 >
                                     {m === 'avg' ? 'AVG' : m === 'p25' ? '25th' : m === 'p50' ? 'MED' : '75th'}
@@ -164,88 +241,169 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                         </div>
                     </div>
 
-                    {/* 2-Column Metrics Grid */}
-                    <div className="grid grid-cols-2 gap-x-3">
-                        <SidebarMetricRow label="Gap at Open" value={averages.gap_at_open_pct} />
-                        <SidebarMetricRow label="PM High Gap" value={averages.pm_high_gap_pct} />
-                        <SidebarMetricRow label="PM Fade to Open" value={averages.pmh_fade_to_open_pct} />
-                        <SidebarMetricRow label="RTH High Run" value={averages.rth_high_run_pct} />
-                        <SidebarMetricRow label="RTH Fade to Close" value={averages.rth_fade_to_close_pct} />
-                        <SidebarMetricRow label="PM High Break" value={averages.pm_high_break} />
-                        <SidebarMetricRow label="Close Red" value={averages.close_red} />
-                        <SidebarMetricRow label="Range" value={averages.rth_range_pct} />
-                        <SidebarMetricRow label="Low Spike" value={averages.low_spike_pct} />
-                        <SidebarMetricRow label="Low Spike vs Close" value={averages.low_spike_prev_close_pct} />
-
-                        {/* Volume */}
-                        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
-                            <div className="flex flex-col">
-                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">PM Volume</span>
-                                <span className="text-sm font-black text-foreground tracking-tight leading-tight">{formatLargeNumber(averages.avg_pm_volume)}</span>
+                    {/* Metrics Sections */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        
+                        {/* SECTION 1: Core Movements */}
+                        <div>
+                            <div style={{
+                                fontSize: '8px',
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.5px',
+                                paddingBottom: '2px',
+                                borderBottom: '1px solid var(--color-ec-border)',
+                                marginBottom: '2px'
+                            }}>
+                                Core Movements
                             </div>
-                        </div>
-                        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
-                            <div className="flex flex-col">
-                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">Volume</span>
-                                <span className="text-sm font-black text-foreground tracking-tight leading-tight">{formatLargeNumber(averages.avg_volume)}</span>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '12px' }}>
+                                <SidebarMetricRow label="Gap at Open" value={averages.gap_at_open_pct} />
+                                <SidebarMetricRow label="PM High Gap" value={averages.pm_high_gap_pct} />
+                                <SidebarMetricRow label="PM Fade Open" value={averages.pmh_fade_to_open_pct} />
+                                <SidebarMetricRow label="PM High Break" value={averages.pm_high_break} />
                             </div>
                         </div>
 
-                        {/* Volatility */}
-                        <div className="flex items-center justify-between py-1.5 border-b border-border/20">
-                            <div className="flex flex-col">
-                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">High Spike</span>
-                                <span className="text-sm font-black text-foreground tracking-tight leading-tight">{averages.high_spike_pct?.toFixed(2) || "0.00"}%</span>
+                        {/* SECTION 2: Regular Session */}
+                        <div>
+                            <div style={{
+                                fontSize: '8px',
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.5px',
+                                paddingBottom: '2px',
+                                borderBottom: '1px solid var(--color-ec-border)',
+                                marginBottom: '2px'
+                            }}>
+                                Regular Session (RTH)
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '12px' }}>
+                                <SidebarMetricRow label="RTH High Run" value={averages.rth_high_run_pct} />
+                                <SidebarMetricRow label="RTH Fade Close" value={averages.rth_fade_to_close_pct} />
+                                <SidebarMetricRow label="Close Red" value={averages.close_red} />
+                                <SidebarMetricRow label="Range" value={averages.rth_range_pct} />
                             </div>
                         </div>
-                    </div>
 
-                    {/* Volume & Volatility below metrics */}
-                    <div className="mt-3 pt-2 border-t border-border/30 space-y-1.5">
-                        <p className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">Volume</p>
-                        <div className="grid grid-cols-2 gap-x-3">
-                            <div className="flex justify-between items-center text-[10px] py-1">
-                                <span className="text-muted-foreground">PM Vol</span>
-                                <span className="text-foreground font-bold">{formatLargeNumber(averages.avg_pm_volume)}</span>
+                        {/* SECTION 3: Spikes & Volatility */}
+                        <div>
+                            <div style={{
+                                fontSize: '8px',
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.5px',
+                                paddingBottom: '2px',
+                                borderBottom: '1px solid var(--color-ec-border)',
+                                marginBottom: '4px'
+                            }}>
+                                Volatility & Spikes
                             </div>
-                            <div className="flex justify-between items-center text-[10px] py-1">
-                                <span className="text-muted-foreground">Volume</span>
-                                <span className="text-foreground font-bold">{formatLargeNumber(averages.avg_volume)}</span>
+                            {(() => {
+                                const rawLowVal = averages.low_spike_pct ?? 0;
+                                const lowVal = rawLowVal > 0 ? -rawLowVal : rawLowVal;
+                                const highVal = averages.high_spike_pct ?? 0;
+
+                                const lowValFormatted = `${lowVal.toFixed(2)}%`;
+                                const highValFormatted = `${highVal >= 0 ? '+' : ''}${highVal.toFixed(2)}%`;
+
+                                const maxVal = Math.max(Math.abs(lowVal), Math.abs(highVal), 1);
+                                const leftWidth = (Math.abs(lowVal) / maxVal) * 50;
+                                const rightWidth = (Math.abs(highVal) / maxVal) * 50;
+
+                                return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '6px 0' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontFamily: "'General Sans', sans-serif", fontSize: '11px', fontWeight: 600 }}>
+                                            <span style={{ color: 'var(--color-ec-loss)' }}>{lowValFormatted}</span>
+                                            <span style={{ fontSize: '7.5px', fontWeight: 600, color: 'var(--color-ec-text-muted)', letterSpacing: '0.5px' }}>LOW / HIGH SPIKE</span>
+                                            <span style={{ color: 'var(--color-ec-profit)' }}>{highValFormatted}</span>
+                                        </div>
+                                        
+                                        <div style={{
+                                            height: '5px',
+                                            width: '100%',
+                                            backgroundColor: 'var(--color-ec-bg-elevated)',
+                                            borderRadius: '2.5px',
+                                            position: 'relative',
+                                            overflow: 'hidden',
+                                            marginTop: '2px'
+                                        }}>
+                                            <div style={{
+                                                position: 'absolute',
+                                                left: '50%',
+                                                top: 0,
+                                                bottom: 0,
+                                                width: '1px',
+                                                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                                                zIndex: 2
+                                            }} />
+                                            <div style={{
+                                                position: 'absolute',
+                                                right: '50%',
+                                                width: `${leftWidth}%`,
+                                                height: '100%',
+                                                backgroundColor: 'var(--color-ec-loss)',
+                                                borderRadius: '2.5px 0 0 2.5px'
+                                            }} />
+                                            <div style={{
+                                                position: 'absolute',
+                                                left: '50%',
+                                                width: `${rightWidth}%`,
+                                                height: '100%',
+                                                backgroundColor: 'var(--color-ec-profit)',
+                                                borderRadius: '0 2.5px 2.5px 0'
+                                            }} />
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                        </div>
+
+                        {/* SECTION 4: Volume Stats */}
+                        <div>
+                            <div style={{
+                                fontSize: '8px',
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.5px',
+                                paddingBottom: '2px',
+                                borderBottom: '1px solid var(--color-ec-border)',
+                                marginBottom: '2px'
+                            }}>
+                                Volume
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '12px' }}>
+                                <VolumeMetricRow label="PM Volume" value={averages.avg_pm_volume} />
+                                <VolumeMetricRow label="Avg Volume" value={averages.avg_volume} />
                             </div>
                         </div>
-                        <p className="text-[8px] font-black text-muted-foreground uppercase tracking-widest pt-1">Volatility</p>
-                        <div className="grid grid-cols-2 gap-x-3">
-                            <div className="flex justify-between items-center text-[10px] py-1">
-                                <span className="text-muted-foreground">High Spike</span>
-                                <span className="text-foreground font-bold">{averages.high_spike_pct?.toFixed(2) || "0.00"}%</span>
-                            </div>
-                            <div className="flex justify-between items-center text-[10px] py-1">
-                                <span className="text-muted-foreground">Low Spike</span>
-                                <span className="text-foreground font-bold">{averages.low_spike_pct?.toFixed(2) || "0.00"}%</span>
-                            </div>
-                            <div className="flex justify-between items-center text-[10px] py-1 col-span-2">
-                                <span className="text-muted-foreground">Range</span>
-                                <span className="text-foreground font-bold">{averages.rth_range_pct?.toFixed(2) || "0.00"}%</span>
-                            </div>
-                        </div>
+
                     </div>
                 </div>
 
-                {/* ═══ RIGHT COLUMN: Chart + Cards Below ═══ */}
-                <div className="md:col-span-9 flex flex-col pl-6">
-                    {/* Chart */}
-                    <div className="h-[500px]">
+                {/* ═══ RIGHT COLUMN: Chart ═══ */}
+                <div style={{
+                    flex: '1 1 500px',
+                    minWidth: '320px',
+                    paddingLeft: '20px',
+                    boxSizing: 'border-box',
+                    display: 'flex',
+                    flexDirection: 'column',
+                }}>
+                    <div style={{ height: '480px', width: '100%' }}>
                         <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isLoadingAggregate} />
                     </div>
-
-
                 </div>
             </div>
         </div>
     );
 };
 
-// ─── Intraday Chart (unchanged logic) ─────────────────────────────────
+// ─── Intraday Chart (Pure inline styles & custom variables) ───────────
 const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[] | null, isLoadingAggregate?: boolean }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
@@ -264,7 +422,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
     );
 
     React.useEffect(() => {
-        if (aggregateSeries === null) return; // still loading aggregate
+        if (aggregateSeries === null) return;
         if (!isAggregate && data && data.length > 0) {
             setActiveTicker(data[0].ticker);
         }
@@ -327,7 +485,17 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
 
     if (!isAggregate && !activeTicker) {
         return (
-            <div className="bg-transparent p-8 flex items-center justify-center text-muted-foreground text-[10px] font-black uppercase tracking-widest h-full">
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--color-ec-text-muted)',
+                fontSize: '10px',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '1.5px',
+                height: '100%'
+            }}>
                 No intraday data available for selection.
             </div>
         );
@@ -348,158 +516,227 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
     }
 
     const pmHigh = !isAggregate && chartData.length > 0 ? chartData[0].pm_high : 0;
-
-    // Combined loading state
     const isChartLoading = loading || (isAggregate && isLoadingAggregate);
 
     return (
-        <div className="bg-transparent p-8 space-y-6 h-full flex flex-col relative">
-            <div className="flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+            height: '100%',
+            position: 'relative',
+            boxSizing: 'border-box'
+        }}>
+            {/* Header controls & titles */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         {isAggregate ? (
                             <>
-                                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>CHANGE VS. PM HIGH</h3>
-                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">(AGGREGATE)</span>
+                                <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: '15px', fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>CHANGE VS. PM HIGH</h3>
+                                <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>(AGGREGATE)</span>
                             </>
                         ) : (
                             <>
-                                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{activeTicker}</h3>
-                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">INTRADAY ACTION</span>
+                                <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: '15px', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{activeTicker}</h3>
+                                <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>INTRADAY ACTION</span>
                             </>
                         )}
                     </div>
-                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--color-ec-text-muted)]">
+                    
+                    {/* Legend */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                         {isAggregate ? (
                             <>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2563eb]" /> AVERAGE</div>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-[#60a5fa] border-dashed" /> MEDIAN</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--color-ec-copper)' }} /> 
+                                    AVERAGE
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', border: '1px dashed var(--color-ec-text-secondary)' }} /> 
+                                    MEDIAN
+                                </div>
                             </>
                         ) : (
                             <>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2563eb]" /> Price</div>
-                                {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#a855f7]" /> PM High</div>}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--color-ec-profit)' }} /> 
+                                    Price
+                                </div>
+                                {pmHigh > 0 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                        <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', border: '1px dashed var(--color-ec-copper)' }} /> 
+                                        PM High
+                                    </div>
+                                )}
                             </>
                         )}
                     </div>
                 </div>
 
                 {/* Session & Smoothing Controls */}
-                <div className="flex flex-wrap items-center gap-6 pb-2 border-b border-border/40">
-                    <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Sessions:</span>
-                        <div className="flex items-center gap-4">
-                            <label className="flex items-center gap-2 cursor-pointer group">
+                <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '16px',
+                    paddingBottom: '10px',
+                    borderBottom: '1px solid var(--color-ec-border)'
+                }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Sessions:</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                                 <input
                                     type="checkbox"
                                     checked={sessions.pre}
                                     onChange={(e) => setSessions(prev => ({ ...prev, pre: e.target.checked }))}
-                                    className="hidden"
+                                    style={{ display: 'none' }}
                                 />
-                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.pre ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.pre ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.pre ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.pre ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
                                 <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.pre ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Pre</span>
                             </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                                 <input
                                     type="checkbox"
                                     checked={sessions.market}
                                     onChange={(e) => setSessions(prev => ({ ...prev, market: e.target.checked }))}
-                                    className="hidden"
+                                    style={{ display: 'none' }}
                                 />
-                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.market ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.market ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.market ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.market ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
                                 <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.market ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Market</span>
                             </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                                 <input
                                     type="checkbox"
                                     checked={sessions.post}
                                     onChange={(e) => setSessions(prev => ({ ...prev, post: e.target.checked }))}
-                                    className="hidden"
+                                    style={{ display: 'none' }}
                                 />
-                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.post ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.post ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.post ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.post ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
                                 <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.post ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Post</span>
                             </label>
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Smoothing:</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Smoothing:</span>
                         <input
                             type="range"
                             min="1"
                             max="20"
                             value={smoothing}
                             onChange={(e) => setSmoothing(parseInt(e.target.value))}
-                            className="w-24 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-[var(--color-ec-copper)]"
+                            style={{
+                                width: '80px',
+                                height: '3px',
+                                backgroundColor: 'var(--color-ec-bg-elevated)',
+                                borderRadius: '9999px',
+                                appearance: 'none',
+                                WebkitAppearance: 'none',
+                                cursor: 'pointer',
+                                accentColor: 'var(--color-ec-copper)',
+                            }}
                         />
-                        <span className="text-[10px] font-bold text-foreground w-4">{smoothing}</span>
+                        <span style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-ec-text-high)', width: '14px', textAlign: 'right' }}>{smoothing}</span>
                     </div>
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 relative">
+            {/* Chart display */}
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
                 {isChartLoading ? (
-                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-background/50 backdrop-blur-sm">
-                        <div className="w-8 h-8 border-4 border-[var(--color-ec-copper)] border-solid rounded-full border-t-transparent animate-spin mb-4"></div>
-                        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-widest">
+                    <div style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        zIndex: 10,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: 'rgba(22, 24, 26, 0.7)',
+                        backdropFilter: 'blur(4px)',
+                    }}>
+                        <div className="animate-spin" style={{
+                            width: 24,
+                            height: 24,
+                            border: '3px solid var(--color-ec-border)',
+                            borderTop: '3px solid var(--color-ec-copper)',
+                            borderRadius: '50%',
+                            marginBottom: 12
+                        }} />
+                        <div style={{
+                            color: 'var(--color-ec-text-muted)',
+                            fontSize: '9px',
+                            textTransform: 'uppercase',
+                            fontWeight: 700,
+                            letterSpacing: '1px'
+                        }}>
                             {isLoadingAggregate ? "Aggregating Intraday Data..." : "Loading Chart..."}
                         </div>
                     </div>
                 ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={chartData}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="currentColor" className="text-border" vertical={false} />
+                        <ComposedChart data={chartData} margin={{ top: 10, right: 5, left: 5, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-ec-border)" vertical={false} />
                             <XAxis
                                 dataKey={isAggregate ? "time" : "timeShort"}
-                                stroke="currentColor"
-                                className="text-muted-foreground"
-                                fontSize={10}
+                                stroke="var(--color-ec-text-muted)"
+                                fontSize={9}
                                 tickLine={false}
                                 axisLine={false}
                                 minTickGap={40}
+                                style={{ fontFamily: "'General Sans', sans-serif" }}
                             />
                             <YAxis
-                                stroke="currentColor"
-                                className="text-muted-foreground"
-                                fontSize={10}
+                                stroke="var(--color-ec-text-muted)"
+                                fontSize={9}
                                 tickLine={false}
                                 axisLine={false}
                                 domain={[minPrice, maxPrice]}
                                 tickFormatter={(v) => v.toFixed(2) + (isAggregate ? "%" : "")}
                                 orientation="right"
+                                style={{ fontFamily: "'General Sans', sans-serif" }}
                             />
                             <Tooltip
                                 contentStyle={{
-                                    backgroundColor: 'var(--card)',
-                                    border: '1px solid var(--border)',
-                                    borderRadius: '5px',
+                                    backgroundColor: 'var(--color-ec-bg-surface)',
+                                    border: '1px solid var(--color-ec-border)',
+                                    borderRadius: '6px',
                                     fontSize: '11px',
-                                    color: 'var(--foreground)'
+                                    fontFamily: "'General Sans', sans-serif",
+                                    color: 'var(--color-ec-text-primary)',
+                                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)'
                                 }}
-                                itemStyle={{ color: 'var(--foreground)' }}
+                                itemStyle={{ color: 'var(--color-ec-text-primary)' }}
+                                labelStyle={{ color: 'var(--color-ec-text-muted)', fontWeight: 600, marginBottom: 4 }}
                                 formatter={(value: any) => [value.toFixed(2) + (isAggregate ? "%" : ""), ""]}
                             />
 
                             {sessions.pre && (
-                                <ReferenceArea x1="04:00" x2="09:30" fill="currentColor" fillOpacity={0.03} className="text-muted-foreground" />
+                                <ReferenceArea x1="04:00" x2="09:30" fill="var(--color-ec-text-muted)" fillOpacity={0.04} />
                             )}
                             {sessions.market && (
-                                <ReferenceArea x1="09:30" x2="16:00" fill="currentColor" fillOpacity={0.01} className="text-blue-500" />
+                                <ReferenceArea x1="09:30" x2="16:00" fill="var(--color-ec-profit)" fillOpacity={0.02} />
                             )}
                             {sessions.post && (
-                                <ReferenceArea x1="16:00" x2="20:00" fill="currentColor" fillOpacity={0.03} className="text-[var(--color-ec-copper)]" />
+                                <ReferenceArea x1="16:00" x2="20:00" fill="var(--color-ec-copper)" fillOpacity={0.04} />
                             )}
 
                             {isAggregate ? (
                                 <>
-                                    <Line type="monotone" dataKey="avg_change" stroke="#2563eb" strokeWidth={3} dot={false} name="Average" animationDuration={300} />
-                                    <Line type="monotone" dataKey="median_change" stroke="#60a5fa" strokeWidth={2} strokeDasharray="4 4" dot={false} name="Median" animationDuration={300} />
+                                    <Line type="monotone" dataKey="avg_change" stroke="var(--color-ec-copper)" strokeWidth={2.5} dot={false} name="Average" animationDuration={300} />
+                                    <Line type="monotone" dataKey="median_change" stroke="var(--color-ec-text-secondary)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Median" animationDuration={300} />
                                 </>
                             ) : (
                                 <>
-                                    {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="#a855f7" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: '#a855f7', fontSize: 10 }} />}
-                                    <ReferenceLine x="09:30" stroke="currentColor" strokeDasharray="3 3" className="text-muted-foreground" />
-                                    <Area type="monotone" dataKey="close" stroke="#2563eb" strokeWidth={2} fillOpacity={0.1} fill="#2563eb" dot={false} animationDuration={300} />
+                                    {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="var(--color-ec-copper)" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: 'var(--color-ec-copper)', fontSize: 9, fontFamily: 'General Sans' }} />}
+                                    <ReferenceLine x="09:30" stroke="var(--color-ec-border)" strokeDasharray="3 3" />
+                                    <Area type="monotone" dataKey="close" stroke="var(--color-ec-profit)" strokeWidth={2} fillOpacity={0.06} fill="var(--color-ec-profit)" dot={false} animationDuration={300} />
                                 </>
                             )}
                         </ComposedChart>

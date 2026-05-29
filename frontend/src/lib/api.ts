@@ -7,7 +7,7 @@ import type {
 
 // ─── Base URL ───────────────────────────────────────────────
 const RAW_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010/api";
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8010/api";
 
 const API_BASE = (() => {
   const trimmed = RAW_BASE.replace(/\/+$/, "");

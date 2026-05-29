@@ -55,6 +55,23 @@ def screen_market(
 
             # Compute stats from full filtered result (before head)
             import numpy as np
+            
+            # Recalculate or add missing columns for statistics
+            if 'close' in result.columns and 'pm_high' in result.columns:
+                result['pm_high_break'] = ((result['close'] > result['pm_high']) & (result['pm_high'] > 0)).astype(np.float32) * 100
+            else:
+                result['pm_high_break'] = 0.0
+
+            if 'high_spike_pct' in result.columns:
+                result['rth_high_run_pct'] = result['high_spike_pct']
+            elif 'rth_high' in result.columns and 'open' in result.columns:
+                result['rth_high_run_pct'] = ((result['rth_high'] - result['open']) / result['open'] * 100).astype(np.float32)
+            else:
+                result['rth_high_run_pct'] = 0.0
+
+            if 'close_red' not in result.columns and 'close' in result.columns and 'open' in result.columns:
+                result['close_red'] = ((result['close'] < result['open']).astype(np.float32) * 100)
+
             col_map = {
                 'gap_pct': 'gap_at_open_pct',
                 'rth_run_pct': 'rth_run_pct',
@@ -64,10 +81,12 @@ def screen_market(
                 'pmh_gap_pct': 'pm_high_gap_pct',
                 'pmh_fade_pct': 'pmh_fade_to_open_pct',
                 'rth_fade_pct': 'rth_fade_to_close_pct',
-                'close_red': 'close_red_pct',
+                'close_red': 'close_red',
                 'high_spike_pct': 'high_spike_pct',
                 'low_spike_pct': 'low_spike_pct',
                 'rth_range_pct': 'rth_range_pct',
+                'rth_high_run_pct': 'rth_high_run_pct',
+                'pm_high_break': 'pm_high_break',
             }
             stats_payload = {
                 "count": len(result),

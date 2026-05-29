@@ -11,6 +11,7 @@ import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
 import TickerAnalysis from "@/components/TickerAnalysis";
+import { NewsFeed } from "@/components/NewsFeed";
 
 import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
 
@@ -45,6 +46,7 @@ export default function Home() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0);
+  const [showScanResults, setShowScanResults] = useState(false);
 
   const handleFilterStateChange = React.useCallback((newFilters: any) => {
     setCurrentFilters(newFilters);
@@ -171,6 +173,7 @@ export default function Home() {
         setStats(result.stats || null);
       }
       setIsLoading(false);
+      setShowScanResults(true); // Auto-expand when results are fetched
       setAggregateSeries(null); // null = loading, prevents individual ticker mode
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
@@ -263,7 +266,7 @@ export default function Home() {
           }}
         >
           <LayoutDashboard size={14} strokeWidth={1.5} />
-          Screener & Summary
+          Market & Summary
         </button>
         <button
           onClick={() => setActiveTab('ticker')}
@@ -301,8 +304,9 @@ export default function Home() {
             flexDirection: 'column',
             gap: '20px',
             padding: '20px',
-            minHeight: '100%',
-            backgroundColor: 'var(--color-ec-bg-base)'
+            height: 'calc(100vh - 38px)',
+            backgroundColor: 'var(--color-ec-bg-base)',
+            overflow: 'hidden'
           }}>
             <AdvancedFilterPanel
               key={filterPanelKey}
@@ -316,6 +320,8 @@ export default function Home() {
               onToggleFilterBuilder={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
               activeRules={activeRules}
               onRemoveRule={(id) => setActiveRules(prev => prev.filter(r => r.id !== id))}
+              showScanResults={showScanResults}
+              onToggleScanResults={() => setShowScanResults(prev => !prev)}
             />
 
             <FilterBuilder
@@ -340,21 +346,89 @@ export default function Home() {
               onLoad={handleLoadDataset}
             />
 
-            {/* Dashboard & DataGrid Stack */}
-            <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
-
+            {/* Container for sliding panels */}
             <div style={{
+              position: 'relative',
               flex: 1,
-              minHeight: 500,
-              background: 'var(--color-ec-bg-surface)',
-              borderRadius: 7,
-              border: '0.5px solid var(--color-ec-border)',
-              overflow: 'hidden'
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
             }}>
-              <DataGrid
-                data={memoizedData}
-                isLoading={isLoading}
-              />
+              
+              {/* Background Panel: Market Intelligence */}
+              <div style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px',
+                overflowY: 'auto',
+                paddingBottom: '20px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '0.5px solid var(--color-ec-border)', paddingBottom: '16px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <h1 style={{
+                      fontFamily: "'Fraunces', serif",
+                      fontSize: 32,
+                      fontWeight: 600,
+                      color: 'var(--color-ec-text-high)',
+                      letterSpacing: '-0.5px',
+                      marginBottom: 4,
+                    }}>MARKET INTELLIGENCE</h1>
+                    <span style={{
+                      fontFamily: "'General Sans', sans-serif",
+                      fontSize: 9,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: 2,
+                      color: 'var(--color-ec-text-muted)',
+                    }}>
+                      READ THE LATEST MARKET NEWS AND SEC FILINGS BELOW
+                    </span>
+                  </div>
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <NewsFeed />
+                </div>
+              </div>
+
+              {/* Foreground Sliding Panel: Scan Results */}
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'var(--color-ec-bg-base)',
+                transform: showScanResults ? 'translateY(0)' : 'translateY(-110%)',
+                opacity: showScanResults ? 1 : 0,
+                transition: 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease-in-out',
+                zIndex: 20,
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '32px',
+                padding: '24px',
+                boxSizing: 'border-box',
+              }}>
+                {/* Dashboard & DataGrid Stack */}
+                <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
+
+                <div style={{
+                  flex: 1,
+                  minHeight: 500,
+                  background: 'var(--color-ec-bg-surface)',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-ec-border)',
+                  overflow: 'hidden',
+                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.2)',
+                }}>
+                  <DataGrid
+                    data={memoizedData}
+                    isLoading={isLoading}
+                  />
+                </div>
+              </div>
+
             </div>
           </div>
         )}

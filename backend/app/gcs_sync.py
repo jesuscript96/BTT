@@ -67,6 +67,10 @@ def get_gcs_client():
 
 def download_user_db() -> bool:
     """Download users.duckdb from GCS on startup."""
+    if os.getenv("DISABLE_GCS_SYNC", "false").lower() == "true":
+        print("[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).")
+        return False
+
     if os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
         return False
 
@@ -82,8 +86,8 @@ def download_user_db() -> bool:
     try:
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_name)
-        if blob.exists():
-            blob.download_to_filename(local_file)
+        if blob.exists(timeout=5):
+            blob.download_to_filename(local_file, timeout=5)
             print(f"[INFO] Successfully downloaded {local_file}")
             return True
         else:
@@ -97,6 +101,10 @@ def download_user_db() -> bool:
 def upload_user_db() -> bool:
     """Upload users.duckdb to GCS with retry on lock."""
     import time
+
+    if os.getenv("DISABLE_GCS_SYNC", "false").lower() == "true":
+        print("[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).")
+        return False
 
     if os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
         return False
@@ -118,7 +126,7 @@ def upload_user_db() -> bool:
             client = storage.Client.from_service_account_json(key_file)
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(object_name)
-            blob.upload_from_filename(local_file)
+            blob.upload_from_filename(local_file, timeout=5)
             print(f"[INFO] Successfully uploaded users.duckdb to GCS")
             return True
         except PermissionError:

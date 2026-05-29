@@ -139,7 +139,8 @@ def load_hot_daily_cache() -> None:
                     'last_close': 148.0 if ticker == 'AAPL' else 195.0,
                     'prev_close': 148.5 if ticker == 'AAPL' else 198.0,
                     'eod_volume': 1000000.0,
-                    'transactions': 25000.0
+                    'transactions': 25000.0,
+                    'open_lt_vwap': True if ticker in ['AAPL', 'NVDA'] else False
                 })
         _hot_daily_cache = pd.DataFrame(mock_rows)
         print(f"[HOT CACHE] Mock data created: {len(_hot_daily_cache)} rows")
@@ -170,10 +171,17 @@ def load_hot_daily_cache() -> None:
             .astype('float32')
         )
 
+    if 'open_lt_vwap' in df.columns:
+        _hot_daily_cache['open_lt_vwap'] = (
+            (df['open_lt_vwap'] == True).astype('float32') * 100
+        )
+    else:
+        _hot_daily_cache['open_lt_vwap'] = 0.0
+
     # Auto-expandir si faltan columnas críticas para el backtest
     expanded_columns = [
         "pm_high_time", "pm_low_time", "rth_open", "rth_close",
-        "close_1559", "last_close", "transactions",
+        "close_1559", "last_close", "transactions", "open_lt_vwap",
     ]
     missing = [c for c in expanded_columns if c not in _hot_daily_cache.columns]
     if missing:
@@ -189,7 +197,7 @@ def load_hot_daily_cache() -> None:
                 "hod_time", "lod_time",
                 "m15_return_pct", "m30_return_pct", "m60_return_pct", "m180_return_pct",
                 "close_1559", "last_close", "prev_close", "eod_volume",
-                "transactions",
+                "transactions", "open_lt_vwap",
             ]
             _hot_daily_cache = con.execute(f"""
                 SELECT {", ".join(all_cols)}
