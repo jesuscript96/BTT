@@ -45,7 +45,7 @@ export const MarketIntelligenceCharts: React.FC = () => {
     const loadMarketData = async () => {
       try {
         // Fetch up to 1000 records of gap data to analyze
-        const res = await getScreener("limit=1000&min_gap_at_open_pct=5") as any;
+        const res = await getScreener("limit=1000&min_gap_at_open_pct=20") as any;
         const records = Array.isArray(res) ? res : res.records || [];
         setData(records);
       } catch (err) {
