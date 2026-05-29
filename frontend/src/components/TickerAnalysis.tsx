@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     Activity, Users, ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
-import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
 import { getTickerAnalysis, getTickerSecFilings } from '@/lib/api';
 
 interface TickerAnalysisProps {
@@ -84,6 +84,9 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
     useEffect(() => {
         if (!chartContainerRef.current || !dailyData || dailyData.length === 0) return;
 
+        // Clear container to prevent duplicate chart instances in React StrictMode
+        chartContainerRef.current.innerHTML = '';
+
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
             height: 250,
@@ -100,7 +103,6 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
             crosshair: { mode: 0 },
             rightPriceScale: {
                 borderColor: '#2C2F33',
-                textColor: '#ffffff',
             },
             timeScale: {
                 borderColor: '#2C2F33',
@@ -140,6 +142,26 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
             color: d.close >= d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)',
         }));
         volumeSeries.setData(formattedVolume);
+
+        // Calculate and plot VWAP (Volume Weighted Average Price)
+        let cumulativeVolume = 0;
+        let cumulativeTPV = 0;
+        const vwapData = dailyData.map(d => {
+            const tp = (d.high + d.low + d.close) / 3;
+            cumulativeVolume += d.volume;
+            cumulativeTPV += tp * d.volume;
+            return {
+                time: d.time,
+                value: cumulativeVolume > 0 ? (cumulativeTPV / cumulativeVolume) : tp
+            };
+        });
+
+        const vwapSeries = chart.addSeries(LineSeries, {
+            color: '#ff9800',
+            lineWidth: 2,
+            title: 'VWAP',
+        });
+        vwapSeries.setData(vwapData);
 
         chart.timeScale().fitContent();
 
