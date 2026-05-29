@@ -59,3 +59,47 @@ body {
   font-family: 'General Sans', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Ticker Analysis responsive grid layout */
+.ticker-analysis-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+@media (min-width: 1024px) {
+  .ticker-analysis-grid {
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 0 !important;
+  }
+}
+
+.ticker-col-container {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 20px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  padding: 0 16px !important;
+}
+
+@media (min-width: 1024px) {
+  .ticker-col-1-container {
+    border-right: 1px solid var(--color-ec-border) !important;
+    padding-left: 0 !important;
+    padding-right: 32px !important;
+  }
+  
+  .ticker-col-2-container {
+    border-right: 1px solid var(--color-ec-border) !important;
+    padding-left: 32px !important;
+    padding-right: 32px !important;
+  }
+  
+  .ticker-col-3-container {
+    padding-left: 32px !important;
+    padding-right: 0 !important;
+  }
+}
+

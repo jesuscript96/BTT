@@ -374,10 +374,10 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     </div>
 
                     {/* Columns Grid: Profile, Financials, Trends */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 border-b border-ec-border pb-8">
+                    <div className="ticker-analysis-grid border-b border-ec-border pb-8">
                         
                         {/* Col 1: Corporate Profile & Description */}
-                        <div className="lg:border-r lg:border-ec-border lg:pr-12 lg:pb-0 pb-6" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                        <div className="ticker-col-container ticker-col-1-container lg:pb-0 pb-6">
                             <div>
                                 <h3 style={{
                                     fontFamily: "'General Sans', sans-serif",
@@ -478,7 +478,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         </div>
 
                         {/* Col 2: Financial Stats & Price Performance */}
-                        <div className="lg:border-r lg:border-ec-border lg:px-12 lg:py-0 py-6" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                        <div className="ticker-col-container ticker-col-2-container lg:py-0 py-6">
                             <div>
                                 <h3 style={{
                                     fontFamily: "'General Sans', sans-serif",
@@ -522,7 +522,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         </div>
 
                         {/* Col 3: Sparkline Trends (Cash, Debt, Working Capital) */}
-                        <div className="lg:pl-12 lg:pt-0 pt-6" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                        <div className="ticker-col-container ticker-col-3-container lg:pt-0 pt-6">
                             <h3 style={{
                                 fontFamily: "'General Sans', sans-serif",
                                 fontSize: 8,
