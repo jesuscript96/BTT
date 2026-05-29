@@ -35,7 +35,7 @@ df = con.execute(f"""
         transactions
     FROM read_parquet('{daily_path}', hive_partitioning=true)
     WHERE (
-        (gap_pct >= 10.0 AND gap_pct <= 500.0)
+        (gap_pct >= 20.0 AND gap_pct <= 500.0)
         OR
         (pm_high > 0 AND prev_close > 0
          AND ((pm_high - prev_close) / prev_close * 100) >= 20)
