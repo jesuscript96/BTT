@@ -24,7 +24,17 @@ def safe_float(val):
 def get_ticker_analysis(ticker: str):
     try:
         ticker = ticker.upper()
-        stock = yf.Ticker(ticker)
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        session = requests.Session()
+        session.verify = False
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
+        
+        stock = yf.Ticker(ticker, session=session)
         info = stock.info
 
         # --- Profile ---
@@ -158,8 +168,10 @@ def get_sec_filings(ticker: str):
         # User-Agent is required by SEC
         # Using requests to handle SSL/User-Agent better than feedparser's internal urllib
         import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         headers = {'User-Agent': 'MyStrategyBuilder/1.0 (contact@mystrategybuilder.fun)'}
-        response = requests.get(rss_url, headers=headers)
+        response = requests.get(rss_url, headers=headers, verify=False)
         
         feed = feedparser.parse(response.content)
 

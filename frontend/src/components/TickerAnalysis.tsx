@@ -2,10 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-    Activity, Globe, MapPin, Building2, Users, FileText,
-    ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
+    Activity, Users, ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
-// Recharts import removed to fix React 19 ResponsiveContainer hooks error
 import { getTickerAnalysis, getTickerSecFilings } from '@/lib/api';
 
 interface TickerAnalysisProps {
@@ -15,7 +13,19 @@ interface TickerAnalysisProps {
 
 // Sparkline Component implemented with native SVG to avoid React 19 hook mismatches in Recharts
 const Sparkline = ({ data, color }: { data: any[], color: string }) => {
-    if (!data || data.length === 0) return <div className="h-12 w-full bg-muted/20 animate-pulse rounded"></div>;
+    if (!data || data.length === 0) {
+        return (
+            <div 
+                className="animate-pulse" 
+                style={{ 
+                    height: '48px', 
+                    width: '100%', 
+                    backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                    borderRadius: '4px' 
+                }} 
+            />
+        );
+    }
     
     const values = data.map(d => d.value ?? 0);
     const min = Math.min(...values);
@@ -32,13 +42,13 @@ const Sparkline = ({ data, color }: { data: any[], color: string }) => {
     const pathData = `M ${points.join(' L ')}`;
     
     return (
-        <div className="h-12 w-full">
+        <div style={{ height: '48px', width: '100%' }}>
             <svg className="w-full h-full" viewBox="0 0 100 40" preserveAspectRatio="none">
                 <path
                     d={pathData}
                     fill="none"
                     stroke={color}
-                    strokeWidth="2"
+                    strokeWidth="1.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                 />
@@ -53,11 +63,17 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [data, setData] = useState<any>(null);
     const [filings, setFilings] = useState<any>(null);
     const [showFullDesc, setShowFullDesc] = useState(false);
+    const [logoFailed, setLogoFailed] = useState(false);
 
     // Update if prop changes
     useEffect(() => {
         if (initialTicker) setSelectedTicker(initialTicker);
     }, [initialTicker]);
+
+    // Reset logoFailed when ticker changes
+    useEffect(() => {
+        setLogoFailed(false);
+    }, [selectedTicker]);
 
     // Fetch Data
     useEffect(() => {
@@ -80,17 +96,63 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         fetchData();
     }, [selectedTicker]);
 
+    // Empty state - Clean, centered search box
     if (!selectedTicker) {
         return (
-            <div className="flex flex-col items-center justify-center min-h-[50vh] p-4 text-center">
-                <div className="w-full max-w-lg p-8 bg-[var(--color-ec-bg-sidebar)] border border-[var(--color-ec-border)] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.2)] space-y-6">
-                    <div className="space-y-1">
-                        <h2 className="text-sm font-black text-[var(--color-ec-text-secondary)] uppercase tracking-widest">Ticker Analysis</h2>
-                        <p className="text-xs text-[var(--color-ec-text-muted)]">Carga métricas en tiempo real, perfil corporativo e información financiera</p>
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '60vh',
+                fontFamily: "'General Sans', sans-serif",
+                color: 'var(--color-ec-text-primary)',
+                padding: '16px'
+            }}>
+                <div style={{
+                    width: '100%',
+                    maxWidth: '400px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 20,
+                    textAlign: 'center'
+                }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <h2 style={{
+                            fontFamily: "'Fraunces', serif",
+                            fontSize: 32,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-high)',
+                            letterSpacing: '-0.5px'
+                        }}>TICKER ANALYSIS</h2>
+                        <p style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            letterSpacing: '1.5px',
+                            color: 'var(--color-ec-text-muted)'
+                        }}>
+                            REAL-TIME METRICS & CORPORATE INFO
+                        </p>
                     </div>
-                    <div className="flex items-center gap-3 px-4 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg h-12 w-full">
-                        <Search className="w-4 h-4 text-[var(--color-ec-text-muted)] shrink-0" />
+                    
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 10,
+                        padding: '0 16px',
+                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                        border: '1px solid var(--color-ec-border)',
+                        borderRadius: 8,
+                        height: 48,
+                        width: '100%',
+                        boxSizing: 'border-box'
+                    }}>
+                        <Search size={16} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
                         <input
+                            key="search-input-empty"
                             type="text"
                             list="ticker-options-empty"
                             placeholder="(busca un ticker)"
@@ -106,13 +168,22 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                     setSelectedTicker(val);
                                 }
                             }}
-                            className="bg-transparent border-none outline-none font-semibold text-sm text-[var(--color-ec-text-primary)] w-full placeholder-[var(--color-ec-text-muted)]"
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                outline: 'none',
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-primary)',
+                                textAlign: 'center',
+                                width: '130px'
+                            }}
                         />
                         <datalist id="ticker-options-empty">
                             {availableTickers.sort().map(t => <option key={t} value={t} />)}
                         </datalist>
                     </div>
-                    <p className="text-[9px] text-[var(--color-ec-text-muted)] uppercase tracking-widest font-bold">Introduce el símbolo (ej. AAPL, TSLA) y presiona Enter</p>
                 </div>
             </div>
         );
@@ -129,183 +200,365 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
 
     const formatPercent = (num: number | null) => {
         if (num === null || num === undefined) return '-';
-        return `${(num * 100).toFixed(2)}%`; // assuming raw decimal e.g. 0.05
+        return `${(num * 100).toFixed(2)}%`;
     };
-
-    // YFinance sometimes returns percents as 0.05 (5%) or 5 (5%). 
-    // Usually 'heldPercent' is 0.X. 'performance' from our backend is returned as 100-based (e.g. 5.2).
-    const formatPerf = (num: number | null) => {
-        if (num === null || num === undefined) return '-';
-        return `${num.toFixed(2)}%`;
-    };
-
 
     return (
-        <div className="flex flex-col gap-6 p-4 max-w-7xl mx-auto pb-20">
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 24,
+            width: '100%',
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: '24px',
+            boxSizing: 'border-box',
+            fontFamily: "'General Sans', sans-serif",
+            color: 'var(--color-ec-text-primary)',
+            paddingBottom: '80px'
+        }}>
 
-            {/* Header / Selector */}
-            <div className="flex items-center justify-between gap-4 bg-transparent p-4 border-b border-border/40 transition-colors">
-                <div className="flex items-center gap-4">
-                    {data?.profile?.logo_url ? (
-                        <img src={data.profile.logo_url} alt={selectedTicker} className="w-12 h-12 rounded bg-white object-contain p-1" />
+            {/* Header & Search */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 16,
+                borderBottom: '1px solid var(--color-ec-border)',
+                paddingBottom: 16
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {!logoFailed && data?.profile?.logo_url ? (
+                        <img 
+                            src={data.profile.logo_url} 
+                            alt={selectedTicker} 
+                            onError={() => setLogoFailed(true)}
+                            style={{
+                                width: 40,
+                                height: 40,
+                                borderRadius: 4,
+                                backgroundColor: '#ffffff',
+                                border: '1px solid var(--color-ec-border)',
+                                objectFit: 'contain',
+                                padding: '2px',
+                                flexShrink: 0
+                            }}
+                        />
                     ) : (
-                        <div className="w-12 h-12 rounded bg-primary/10 flex items-center justify-center text-primary font-bold text-xl">
+                        <div style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 4,
+                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                            border: '1px solid var(--color-ec-border)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontFamily: "'Fraunces', serif",
+                            fontSize: 20,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-copper-bright)',
+                            flexShrink: 0
+                        }}>
                             {selectedTicker[0]}
                         </div>
                     )}
-                    <div>
-                        <h1 className="text-2xl font-black tracking-tighter flex items-center gap-2 uppercase">
-                            {selectedTicker}
-                            <span className="text-[10px] font-black text-muted-foreground bg-muted px-2 py-0.5 rounded uppercase tracking-widest">{data?.profile?.exchange || 'BS'}</span>
-                        </h1>
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest opacity-70">{data?.profile?.name || 'Loading...'}</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <h1 style={{
+                                fontFamily: "'Fraunces', serif",
+                                fontSize: 28,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                                letterSpacing: '-0.5px'
+                            }}>{selectedTicker}</h1>
+                            <span style={{
+                                fontSize: 8,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-text-muted)',
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                padding: '2px 6px',
+                                borderRadius: 3,
+                                textTransform: 'uppercase',
+                                letterSpacing: '1px'
+                            }}>{data?.profile?.exchange || 'STOCK'}</span>
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-ec-text-muted)' }}>
+                            {data?.profile?.name || 'Loading profile...'}
+                        </span>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest hidden sm:inline">Ticker:</span>
-                    <div style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        background: 'var(--color-ec-bg-sidebar)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5, padding: '0 10px', height: 30, width: 160,
-                    }}>
-                        <Search size={13} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
-                        <input
-                            type="text"
-                            list="ticker-options"
-                            placeholder="Ticker..."
-                            value={selectedTicker}
-                            onChange={(e) => {
-                                const val = e.target.value.toUpperCase();
-                                setSelectedTicker(val);
-                            }}
-                            style={{
-                                background: 'transparent', border: 'none', outline: 'none',
-                                fontFamily: "'General Sans', sans-serif", fontSize: 12, fontWeight: 400,
-                                color: 'var(--color-ec-text-primary)', width: '100%',
-                            }}
-                        />
-                        <datalist id="ticker-options">
-                            {availableTickers.sort().map(t => <option key={t} value={t} />)}
-                        </datalist>
-                    </div>
+                {/* Search box */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                    border: '1px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '0 10px',
+                    height: 32,
+                    width: 180,
+                    boxSizing: 'border-box'
+                }}>
+                    <Search size={12} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
+                    <input
+                        key="search-input-detail"
+                        type="text"
+                        list="ticker-options"
+                        placeholder="Buscar ticker..."
+                        value={selectedTicker || ''}
+                        onChange={(e) => {
+                            const val = e.target.value.toUpperCase().trim();
+                            setSelectedTicker(val);
+                        }}
+                        style={{
+                            background: 'transparent',
+                            border: 'none',
+                            outline: 'none',
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 11,
+                            fontWeight: 500,
+                            color: 'var(--color-ec-text-primary)',
+                            width: '100%'
+                        }}
+                    />
+                    <datalist id="ticker-options">
+                        {availableTickers.sort().map(t => <option key={t} value={t} />)}
+                    </datalist>
                 </div>
             </div>
 
             {loading ? (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-pulse">
-                    {[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-32 bg-muted/20 rounded-xl"></div>)}
+                <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                    gap: 24,
+                    padding: '20px 0'
+                }}>
+                    {[1, 2, 3, 4, 5, 6].map(i => (
+                        <div 
+                            key={i} 
+                            className="animate-pulse" 
+                            style={{ 
+                                height: '120px', 
+                                backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)', 
+                                borderRadius: '8px' 
+                            }} 
+                        />
+                    ))}
                 </div>
             ) : (
                 <>
-                    {/* Section 2: Key Metrics Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <MetricCard title="Market Cap" value={formatNumber(data?.market?.market_cap)} icon={<Activity className="w-4 h-4" />} dotColor="bg-blue-500" />
-                        <MetricCard title="Shares Outstanding" value={formatNumber(data?.market?.shares_outstanding).replace('$', '')} icon={<Users className="w-4 h-4" />} dotColor="bg-blue-500" />
-                        <MetricCard
-                            title="Float"
-                            value={formatNumber(data?.market?.float_shares).replace('$', '')}
+                    {/* Market Metrics Row */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                        gap: 24,
+                        borderBottom: '1px solid var(--color-ec-border)',
+                        paddingBottom: 20
+                    }}>
+                        <MetricCard title="Market Cap" value={formatNumber(data?.market?.market_cap)} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
+                        <MetricCard title="Shares Outstanding" value={formatNumber(data?.market?.shares_outstanding).replace('$', '')} icon={<Users size={12} />} indicatorColor="var(--color-ec-copper)" />
+                        <MetricCard 
+                            title="Float Shares" 
+                            value={formatNumber(data?.market?.float_shares).replace('$', '')} 
                             subtext={`${formatPercent(data?.market?.held_percent_insiders)} Insiders / ${formatPercent(data?.market?.held_percent_institutions)} Inst.`}
-                            icon={<Users className="w-4 h-4" />}
-                            dotColor="bg-blue-500"
+                            icon={<Users size={12} />} 
+                            indicatorColor="var(--color-ec-copper)" 
                         />
                     </div>
 
-                    {/* Section 3: Corp Info & Section 4: Description */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Corp Info Grid */}
-                        <div className="lg:col-span-1 bg-transparent border-t border-border/40 py-6 space-y-4 relative">
-                            <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-blue-500/20 rounded-full"></div>
-                            <h3 className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2 text-muted-foreground pl-3.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div> Corporate Info
-                            </h3>
-                            <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-sm pl-3.5">
-                                <InfoItem label="Sector" value={data?.profile?.sector} />
-                                <InfoItem label="Industry" value={data?.profile?.industry} />
-                                <InfoItem label="Employees" value={data?.profile?.employees?.toLocaleString()} />
-                                <InfoItem label="Country" value={data?.profile?.country} />
-                                <div className="col-span-2">
-                                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest block mb-1">Website</span>
-                                    {data?.profile?.website ? (
-                                        <a href={data.profile.website} target="_blank" rel="noopener noreferrer" className="text-blue-500 font-bold hover:underline flex items-center gap-1 text-sm">
-                                            {data.profile.website} <ExternalLink className="w-3 h-3" />
-                                        </a>
-                                    ) : '-'}
+                    {/* Columns Grid: Profile, Financials, Trends */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 border-b border-ec-border pb-8">
+                        
+                        {/* Col 1: Corporate Profile & Description */}
+                        <div className="lg:border-r lg:border-ec-border lg:pr-12 lg:pb-0 pb-6" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            <div>
+                                <h3 style={{
+                                    fontFamily: "'General Sans', sans-serif",
+                                    fontSize: 8,
+                                    fontWeight: 700,
+                                    color: 'var(--color-ec-copper)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '1.5px',
+                                    borderBottom: '1px solid var(--color-ec-border)',
+                                    paddingBottom: 4,
+                                    marginBottom: 12
+                                }}>Corporate Info</h3>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                    <InfoItem label="Sector" value={data?.profile?.sector} />
+                                    <InfoItem label="Industry" value={data?.profile?.industry} />
+                                    <InfoItem label="Employees" value={data?.profile?.employees?.toLocaleString()} />
+                                    <InfoItem label="Country" value={data?.profile?.country} />
+                                    <div style={{ gridColumn: 'span 2' }}>
+                                        <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: 2 }}>Website</span>
+                                        {data?.profile?.website ? (
+                                            <a 
+                                                href={data.profile.website} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer" 
+                                                className="transition-colors hover:text-white" 
+                                                style={{ 
+                                                    fontSize: 12, 
+                                                    fontWeight: 600, 
+                                                    color: 'var(--color-ec-copper-bright)', 
+                                                    textDecoration: 'none', 
+                                                    display: 'flex', 
+                                                    alignItems: 'center', 
+                                                    gap: 4 
+                                                }}
+                                            >
+                                                {data.profile.website} <ExternalLink size={10} />
+                                            </a>
+                                        ) : '-'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)', paddingTop: 16 }}>
+                                <h3 style={{
+                                    fontFamily: "'General Sans', sans-serif",
+                                    fontSize: 8,
+                                    fontWeight: 700,
+                                    color: 'var(--color-ec-copper)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '1.5px',
+                                    marginBottom: 10
+                                }}>Description</h3>
+                                <div style={{
+                                    fontSize: 12,
+                                    lineHeight: '1.6',
+                                    color: 'var(--color-ec-text-secondary)',
+                                    maxHeight: showFullDesc ? 'none' : '120px',
+                                    overflow: 'hidden',
+                                    position: 'relative'
+                                }}>
+                                    {data?.profile?.description || 'No description available.'}
+                                    {!showFullDesc && data?.profile?.description && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            height: '40px',
+                                            background: 'linear-gradient(to top, var(--color-ec-bg-base), transparent)'
+                                        }} />
+                                    )}
+                                </div>
+                                {data?.profile?.description && (
+                                    <button
+                                        onClick={() => setShowFullDesc(!showFullDesc)}
+                                        className="transition-colors hover:text-[var(--color-ec-copper-bright)]"
+                                        style={{
+                                            backgroundColor: 'transparent',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            fontFamily: "'General Sans', sans-serif",
+                                            fontSize: 9,
+                                            fontWeight: 700,
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '1px',
+                                            color: 'var(--color-ec-copper)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 2,
+                                            marginTop: 6,
+                                            padding: 0
+                                        }}
+                                    >
+                                        {showFullDesc ? 'Show Less' : 'Read More'} {showFullDesc ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Col 2: Financial Stats & Price Performance */}
+                        <div className="lg:border-r lg:border-ec-border lg:px-12 lg:py-0 py-6" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            <div>
+                                <h3 style={{
+                                    fontFamily: "'General Sans', sans-serif",
+                                    fontSize: 8,
+                                    fontWeight: 700,
+                                    color: 'var(--color-ec-copper)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '1.5px',
+                                    borderBottom: '1px solid var(--color-ec-border)',
+                                    paddingBottom: 4,
+                                    marginBottom: 8
+                                }}>Financial Statistics</h3>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <StatRow label="Enterprise Value" value={formatNumber(data?.financials?.enterprise_value)} />
+                                    <StatRow label="Total Cash" value={formatNumber(data?.financials?.cash)} />
+                                    <StatRow label="Total Debt" value={formatNumber(data?.financials?.total_debt)} />
+                                    <StatRow label="EBITDA" value={formatNumber(data?.financials?.ebitda)} />
+                                    <StatRow label="EPS (TTM)" value={data?.financials?.eps?.toFixed(2) || '-'} />
+                                </div>
+                            </div>
+
+                            <div style={{ borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)', paddingTop: 16 }}>
+                                <h3 style={{
+                                    fontFamily: "'General Sans', sans-serif",
+                                    fontSize: 8,
+                                    fontWeight: 700,
+                                    color: 'var(--color-ec-copper)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '1.5px',
+                                    marginBottom: 12
+                                }}>Price Performance</h3>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                                    <PerfCard label="1 Week" value={data?.performance?.['1w']} />
+                                    <PerfCard label="1 Month" value={data?.performance?.['1m']} />
+                                    <PerfCard label="3 Month" value={data?.performance?.['3m']} />
+                                    <PerfCard label="6 Month" value={data?.performance?.['6m']} />
+                                    <PerfCard label="1 Year" value={data?.performance?.['1y']} />
+                                    <PerfCard label="YTD" value={data?.performance?.['ytd']} />
                                 </div>
                             </div>
                         </div>
 
-                        {/* Description */}
-                        <div className="lg:col-span-2 bg-transparent border-t border-border/40 py-6 relative">
-                            <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-muted-foreground/10 rounded-full"></div>
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-4 pl-3.5">Description</h3>
-                            <div className={`relative text-sm text-foreground leading-relaxed pl-3.5 ${!showFullDesc ? 'max-h-[140px] overflow-hidden' : ''}`}>
-                                {data?.profile?.description || 'No description available.'}
-                                {!showFullDesc && data?.profile?.description && (
-                                    <div className="absolute bottom-0 left-0 w-full h-12 bg-gradient-to-t from-background to-transparent pl-3.5"></div>
-                                )}
-                            </div>
-                            {data?.profile?.description && (
-                                <button
-                                    onClick={() => setShowFullDesc(!showFullDesc)}
-                                    className="mt-2 text-[10px] font-black uppercase tracking-widest text-blue-500 hover:underline flex items-center gap-1 pl-3.5"
-                                >
-                                    {showFullDesc ? 'Show Less' : 'Read More'} {showFullDesc ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                </button>
-                            )}
-                        </div>
-                    </div>
-
-                    {/* Section 5: Financials & Performance */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        {/* Financial Stats */}
-                        <div className="bg-transparent border-t border-border/40 py-6 relative">
-                            <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-ec-loss/20 rounded-full"></div>
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-4 flex items-center gap-2 pl-3.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-ec-loss"></div> Financial Statistics
-                            </h3>
-                            <div className="space-y-3 pl-3.5">
-                                <StatRow label="Enterprise Value" value={formatNumber(data?.financials?.enterprise_value)} />
-                                <StatRow label="Total Cash" value={formatNumber(data?.financials?.cash)} />
-                                <StatRow label="Total Debt" value={formatNumber(data?.financials?.total_debt)} />
-                                <StatRow label="EBITDA" value={formatNumber(data?.financials?.ebitda)} />
-                                <StatRow label="EPS (TTM)" value={data?.financials?.eps?.toFixed(2) || '-'} />
-                            </div>
-                        </div>
-
-                        {/* Performance Cards */}
-                        <div className="bg-transparent border-t border-border/40 py-6 lg:border-l lg:border-t-0 lg:pl-10 relative">
-                            <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-purple-500/20 rounded-full hidden lg:block"></div>
-                            <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-4 flex items-center gap-2 pl-3.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-purple-500"></div> Price Performance
-                            </h3>
-                            <div className="grid grid-cols-3 gap-3 pl-3.5">
-                                <PerfCard label="1 Week" value={data?.performance?.['1w']} />
-                                <PerfCard label="1 Month" value={data?.performance?.['1m']} />
-                                <PerfCard label="3 Month" value={data?.performance?.['3m']} />
-                                <PerfCard label="6 Month" value={data?.performance?.['6m']} />
-                                <PerfCard label="1 Year" value={data?.performance?.['1y']} />
-                                <PerfCard label="YTD" value={data?.performance?.['ytd']} />
+                        {/* Col 3: Sparkline Trends (Cash, Debt, Working Capital) */}
+                        <div className="lg:pl-12 lg:pt-0 pt-6" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            <h3 style={{
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 8,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.5px',
+                                borderBottom: '1px solid var(--color-ec-border)',
+                                paddingBottom: 4,
+                                marginBottom: 4
+                            }}>Balance Sheet Trends</h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <SparklineCard title="Cash Trend (Quarterly)" value={formatNumber(data?.financials?.cash)} data={data?.charts?.cash_history} color="var(--color-ec-profit)" indicatorColor="var(--color-ec-profit)" />
+                                <SparklineCard title="Debt Trend (Quarterly)" value={formatNumber(data?.financials?.total_debt)} data={data?.charts?.debt_history} color="var(--color-ec-loss)" indicatorColor="var(--color-ec-loss)" />
+                                <SparklineCard title="Working Capital" value={formatNumber(data?.financials?.working_capital)} data={data?.charts?.working_capital_history} color="#3b82f6" indicatorColor="#3b82f6" />
                             </div>
                         </div>
                     </div>
 
-                    {/* Section 6: Sparklines */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <SparklineCard title="Cash Trend (Quarterly)" value={formatNumber(data?.financials?.cash)} data={data?.charts?.cash_history} color="#22c55e" dotColor="bg-ec-profit" />
-                        <SparklineCard title="Debt Trend (Quarterly)" value={formatNumber(data?.financials?.total_debt)} data={data?.charts?.debt_history} color="#ef4444" dotColor="bg-ec-loss" />
-                        <SparklineCard title="Working Capital" value={formatNumber(data?.financials?.working_capital)} data={data?.charts?.working_capital_history} color="#3b82f6" dotColor="bg-blue-500" />
-                    </div>
-
-                    {/* Section 7: SEC Filings */}
-                    <div className="bg-transparent border-t border-border/40 py-6 relative">
-                        <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-orange-500/20 rounded-full"></div>
-                        <h3 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2 mb-6 pl-3.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-orange-500"></div> latest SEC Filings
-                        </h3>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pl-3.5">
+                    {/* SEC Filings Section */}
+                    <div style={{ paddingTop: 8 }}>
+                        <h3 style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 8,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            textTransform: 'uppercase',
+                            letterSpacing: '1.5px',
+                            marginBottom: 16
+                        }}>Latest SEC Filings</h3>
+                        
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                            gap: 24
+                        }}>
                             <FilingList title="Financials (10-K/Q)" items={filings?.financials} />
                             <FilingList title="News & Events (8-K)" items={filings?.news} />
                             <FilingList title="Offerings (424B/S-1)" items={filings?.prospectuses} />
@@ -320,70 +573,176 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     );
 }
 
-// Sub-components
-// Sub-components
-const MetricCard = ({ title, value, subtext, icon, dotColor }: any) => (
-    <div className="bg-transparent border-t border-border/40 py-5 transition-colors relative">
-        {dotColor && <div className="absolute left-0 top-5 bottom-5 w-0.5 bg-current opacity-20 rounded-full"></div>}
-        <div className="flex justify-between items-start mb-2 pl-3.5">
-            <div className="flex items-center gap-2">
-                {dotColor && <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div>}
-                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">{title}</span>
+// Sub-components with clean unboxed styling
+const MetricCard = ({ title, value, subtext, icon, indicatorColor }: any) => (
+    <div style={{
+        padding: '12px 0',
+        borderBottom: '1px solid var(--color-ec-border)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4
+    }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {indicatorColor && <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: indicatorColor }} />}
+                <span style={{
+                    fontFamily: "'General Sans', sans-serif",
+                    fontSize: 8,
+                    fontWeight: 700,
+                    color: 'var(--color-ec-text-secondary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px'
+                }}>{title}</span>
             </div>
-            <span className="text-muted-foreground opacity-50">{icon}</span>
+            <span style={{ color: 'var(--color-ec-text-muted)', opacity: 0.6 }}>{icon}</span>
         </div>
-        <div className="text-2xl font-black text-foreground tracking-tighter pl-3.5">{value}</div>
-        {subtext && <div className="text-[10px] font-bold text-muted-foreground mt-1 uppercase tracking-wider pl-3.5">{subtext}</div>}
+        <div style={{
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 20,
+            fontWeight: 700,
+            color: 'var(--color-ec-text-primary)',
+            letterSpacing: '-0.5px'
+        }}>{value}</div>
+        {subtext && <div style={{
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 9,
+            fontWeight: 600,
+            color: 'var(--color-ec-text-muted)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px'
+        }}>{subtext}</div>}
     </div>
 );
 
 const InfoItem = ({ label, value }: any) => (
-    <div className="flex flex-col">
-        <span className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-0.5">{label}</span>
-        <span className="text-sm font-bold text-foreground truncate" title={value}>{value || '-'}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 8,
+            fontWeight: 700,
+            color: 'var(--color-ec-text-muted)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px'
+        }}>{label}</span>
+        <span style={{
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--color-ec-text-primary)'
+        }}>{value || '-'}</span>
     </div>
 );
 
 const StatRow = ({ label, value }: any) => (
-    <div className="flex justify-between items-center py-2 border-b border-border/20 last:border-0 hover:bg-muted/5 transition-colors rounded px-1 -mx-1">
-        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
-        <span className="text-sm font-black text-foreground font-mono">{value}</span>
+    <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '8px 0',
+        borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)'
+    }}>
+        <span style={{
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 10,
+            fontWeight: 500,
+            color: 'var(--color-ec-text-secondary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px'
+        }}>{label}</span>
+        <span style={{
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 12,
+            fontWeight: 700,
+            color: 'var(--color-ec-text-primary)'
+        }}>{value}</span>
     </div>
 );
 
 const PerfCard = ({ label, value }: any) => {
-    if (value === null || value === undefined) return (
-        <div className="bg-muted/5 rounded p-3 flex flex-col items-center justify-center opacity-50 border border-border/20">
-            <span className="text-[8px] font-black uppercase tracking-widest text-muted-foreground">{label}</span>
-            <span className="font-mono text-sm font-bold">-</span>
-        </div>
-    );
+    if (value === null || value === undefined) {
+        return (
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                padding: '8px',
+                border: '1px solid var(--color-ec-border)',
+                borderRadius: '4px',
+                opacity: 0.5
+            }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>-</span>
+            </div>
+        );
+    }
 
     const isPos = value >= 0;
+    const color = isPos ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)';
+    
     return (
-        <div className={`rounded p-3 flex flex-col items-center justify-center border transition-all ${isPos ? 'bg-ec-profit/[0.03] border-ec-profit/20 text-ec-profit shadow-sm shadow-ec-profit/5' : 'bg-ec-loss/[0.03] border-ec-loss/20 text-ec-loss shadow-sm shadow-ec-loss/5'}`}>
-            <span className="text-[8px] font-black uppercase tracking-widest opacity-60 mb-1">{label}</span>
-            <div className="flex items-center gap-1 font-black font-mono text-sm tracking-tight">
-                {isPos ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '8px',
+            border: `1px solid color-mix(in srgb, ${color} 30%, transparent)`,
+            backgroundColor: `color-mix(in srgb, ${color} 4%, transparent)`,
+            borderRadius: '4px'
+        }}>
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 8,
+                fontWeight: 600,
+                color: 'var(--color-ec-text-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px',
+                marginBottom: 2
+            }}>{label}</span>
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 12,
+                fontWeight: 700,
+                color: color,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2
+            }}>
+                {isPos ? <ArrowUpRight size={10} /> : <ArrowDownRight size={10} />}
                 {Math.abs(value).toFixed(2)}%
-            </div>
+            </span>
         </div>
     );
-}
+};
 
-const SparklineCard = ({ title, value, data, color, dotColor }: any) => (
-    <div className="bg-transparent border-t border-border/40 py-6 relative">
-        {dotColor && <div className="absolute left-0 top-6 bottom-6 w-0.5 bg-current opacity-20 rounded-full"></div>}
-        <div className="flex justify-between items-end mb-4 pl-3.5">
-            <div>
-                <div className="flex items-center gap-2 mb-1">
-                    {dotColor && <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div>}
-                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">{title}</div>
-                </div>
-                <div className="text-2xl font-black text-foreground tracking-tighter pl-3.5">{value}</div>
-            </div>
+const SparklineCard = ({ title, value, data, color, indicatorColor }: any) => (
+    <div style={{
+        padding: '12px 0',
+        borderBottom: '1px solid var(--color-ec-border)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8
+    }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {indicatorColor && <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: indicatorColor }} />}
+            <span style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 8,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '1px'
+            }}>{title}</span>
         </div>
-        <div className="pl-3.5">
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+            <div style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 20,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-primary)',
+                letterSpacing: '-0.5px'
+            }}>{value}</div>
+        </div>
+        <div style={{ marginTop: 4 }}>
             <Sparkline data={data} color={color} />
         </div>
     </div>
@@ -392,23 +751,74 @@ const SparklineCard = ({ title, value, data, color, dotColor }: any) => (
 const FilingList = ({ title, items }: any) => {
     if (!items || items.length === 0) return null;
     return (
-        <div className="bg-muted/10 rounded-lg p-3 border border-border/50 max-h-[250px] overflow-y-auto">
-            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 sticky top-0 bg-background/95 backdrop-blur p-1 rounded">{title}</h4>
-            <ul className="space-y-2">
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            maxHeight: '260px',
+            overflowY: 'auto',
+            paddingRight: 6
+        }}>
+            <h4 style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 9,
+                fontWeight: 700,
+                color: 'var(--color-ec-copper)',
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: 'var(--color-ec-bg-base)',
+                padding: '4px 0',
+                margin: 0,
+                borderBottom: '1px solid var(--color-ec-border)',
+                zIndex: 5
+            }}>{title}</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {items.map((item: any, i: number) => (
-                    <li key={i} className="group">
-                        <a href={item.link} target="_blank" rel="noopener noreferrer" className="block p-2 rounded hover:bg-secondary/50 transition-colors">
-                            <div className="flex justify-between items-start">
-                                <span className="font-medium text-blue-500 group-hover:underline text-sm">{item.type}</span>
-                                <span className="text-[10px] text-muted-foreground">{item.date}</span>
-                            </div>
-                            <div className="text-xs text-foreground mt-0.5 line-clamp-1 opacity-80" title={item.title}>
-                                {item.title}
-                            </div>
-                        </a>
-                    </li>
+                    <a 
+                        key={i}
+                        href={item.link} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="transition-all hover:bg-[var(--color-ec-bg-sidebar)]"
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            padding: '6px 8px',
+                            borderRadius: '4px',
+                            borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                            textDecoration: 'none'
+                        }}
+                    >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                            <span style={{
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper-bright)'
+                            }}>{item.type}</span>
+                            <span style={{
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 9,
+                                color: 'var(--color-ec-text-muted)'
+                            }}>{item.date}</span>
+                        </div>
+                        <div style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 10,
+                            color: 'var(--color-ec-text-secondary)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            opacity: 0.85
+                        }} title={item.title}>
+                            {item.title}
+                        </div>
+                    </a>
                 ))}
-            </ul>
+            </div>
         </div>
     );
-}
+};
