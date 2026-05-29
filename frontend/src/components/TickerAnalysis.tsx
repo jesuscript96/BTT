@@ -57,6 +57,268 @@ const Sparkline = ({ data, color }: { data: any[], color: string }) => {
     );
 };
 
+// Pure utility helpers for numbers and percentages
+const formatNumber = (num: number | null) => {
+    if (num === null || num === undefined) return '-';
+    const isNeg = num < 0;
+    const absNum = Math.abs(num);
+    let formatted = '';
+    if (absNum >= 1e9) formatted = `$ ${(absNum / 1e9).toFixed(2)} B`;
+    else if (absNum >= 1e6) formatted = `$ ${(absNum / 1e6).toFixed(2)} M`;
+    else if (absNum >= 1e3) formatted = `$ ${(absNum / 1e3).toFixed(2)} K`;
+    else formatted = absNum.toFixed(2);
+    
+    return isNeg ? `-$ ${formatted.replace('$', '')}` : formatted;
+};
+
+const formatPercent = (num: number | null) => {
+    if (num === null || num === undefined) return '-';
+    return `${(num * 100).toFixed(2)}%`;
+};
+
+// SVG-based responsive Grouped Bar Chart supporting negative values
+const GroupedBarChart = ({ cashData, debtData, wcData }: { cashData: any[], debtData: any[], wcData: any[] }) => {
+    if (!cashData && !debtData && !wcData) {
+        return (
+            <div 
+                className="animate-pulse" 
+                style={{ 
+                    height: '160px', 
+                    width: '100%', 
+                    backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                    borderRadius: '4px' 
+                }} 
+            />
+        );
+    }
+
+    const datesSet = new Set<string>();
+    cashData?.forEach((item: any) => datesSet.add(item.date));
+    debtData?.forEach((item: any) => datesSet.add(item.date));
+    wcData?.forEach((item: any) => datesSet.add(item.date));
+
+    const sortedDates = Array.from(datesSet).sort();
+
+    if (sortedDates.length === 0) {
+        return (
+            <div style={{
+                height: '160px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--color-ec-text-muted)',
+                fontSize: '11px',
+                fontWeight: 500
+            }}>
+                No historical data available.
+            </div>
+        );
+    }
+
+    let maxVal = 1;
+    let hasNegative = false;
+    sortedDates.forEach(d => {
+        const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
+        const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
+        const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
+        
+        if (cashVal < 0 || debtVal < 0 || wcVal < 0) {
+            hasNegative = true;
+        }
+        maxVal = Math.max(maxVal, Math.abs(cashVal), Math.abs(debtVal), Math.abs(wcVal));
+    });
+
+    const svgWidth = 500;
+    const svgHeight = 180;
+    const marginTop = 10;
+    const marginBottom = 30;
+    const marginLeft = 20;
+    const marginRight = 20;
+    
+    const chartHeight = svgHeight - marginTop - marginBottom;
+    const chartWidth = svgWidth - marginLeft - marginRight;
+
+    const zeroY = hasNegative 
+        ? marginTop + chartHeight / 2 
+        : marginTop + chartHeight;
+        
+    const scale = hasNegative 
+        ? (chartHeight / 2) / maxVal 
+        : chartHeight / maxVal;
+
+    const groupWidth = chartWidth / sortedDates.length;
+    const barWidth = 12;
+    const barGap = 3;
+    const totalBarsWidth = 3 * barWidth + 2 * barGap;
+
+    const formatDateLabel = (dateStr: string) => {
+        try {
+            const date = new Date(dateStr);
+            const month = date.toLocaleString('en-US', { month: 'short' });
+            const year = date.getFullYear().toString().slice(-2);
+            return `${month} '${year}`;
+        } catch {
+            return dateStr;
+        }
+    };
+
+    return (
+        <div style={{ width: '100%', height: '100%' }}>
+            <svg className="w-full h-full" viewBox={`0 0 ${svgWidth} ${svgHeight}`} preserveAspectRatio="xMidYMid meet">
+                {hasNegative ? (
+                    <>
+                        <line x1={marginLeft} y1={marginTop} x2={svgWidth - marginRight} y2={marginTop} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                        <line x1={marginLeft} y1={marginTop + chartHeight} x2={svgWidth - marginRight} y2={marginTop + chartHeight} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                    </>
+                ) : (
+                    <>
+                        <line x1={marginLeft} y1={marginTop} x2={svgWidth - marginRight} y2={marginTop} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                        <line x1={marginLeft} y1={marginTop + chartHeight / 2} x2={svgWidth - marginRight} y2={marginTop + chartHeight / 2} stroke="var(--color-ec-border)" strokeWidth="0.5" strokeDasharray="3 3" opacity="0.3" />
+                    </>
+                )}
+
+                <line 
+                    x1={marginLeft} 
+                    y1={zeroY} 
+                    x2={svgWidth - marginRight} 
+                    y2={zeroY} 
+                    stroke="var(--color-ec-border)" 
+                    strokeWidth="1" 
+                />
+
+                {sortedDates.map((d, index) => {
+                    const cashVal = cashData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const debtVal = debtData?.find((item: any) => item.date === d)?.value ?? 0;
+                    const wcVal = wcData?.find((item: any) => item.date === d)?.value ?? 0;
+
+                    const groupStartX = marginLeft + index * groupWidth + (groupWidth - totalBarsWidth) / 2;
+
+                    const cashH = Math.abs(cashVal) * scale;
+                    const cashY = cashVal >= 0 ? zeroY - cashH : zeroY;
+
+                    const debtH = Math.abs(debtVal) * scale;
+                    const debtY = debtVal >= 0 ? zeroY - debtH : zeroY;
+
+                    const wcH = Math.abs(wcVal) * scale;
+                    const wcY = wcVal >= 0 ? zeroY - wcH : zeroY;
+
+                    return (
+                        <g key={d}>
+                            <rect
+                                x={groupStartX}
+                                y={cashY}
+                                width={barWidth}
+                                height={Math.max(cashH, 1)}
+                                fill="var(--color-ec-profit)"
+                                rx="1"
+                                opacity="0.9"
+                            />
+                            <rect
+                                x={groupStartX + barWidth + barGap}
+                                y={debtY}
+                                width={barWidth}
+                                height={Math.max(debtH, 1)}
+                                fill="var(--color-ec-loss)"
+                                rx="1"
+                                opacity="0.9"
+                            />
+                            <rect
+                                x={groupStartX + 2 * (barWidth + barGap)}
+                                y={wcY}
+                                width={barWidth}
+                                height={Math.max(wcH, 1)}
+                                fill="#3b82f6"
+                                rx="1"
+                                opacity="0.9"
+                            />
+
+                            <text
+                                x={marginLeft + index * groupWidth + groupWidth / 2}
+                                y={svgHeight - 8}
+                                textAnchor="middle"
+                                fill="var(--color-ec-text-muted)"
+                                style={{
+                                    fontFamily: "'General Sans', sans-serif",
+                                    fontSize: '8px',
+                                    fontWeight: 600,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px'
+                                }}
+                            >
+                                {formatDateLabel(d)}
+                            </text>
+                        </g>
+                    );
+                })}
+            </svg>
+        </div>
+    );
+};
+
+// Unified Balance Sheet Trends Card component
+const BalanceSheetTrendsCard = ({ data }: { data: any }) => {
+    return (
+        <div style={{
+            padding: '12px 0',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16
+        }}>
+            <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr',
+                gap: 12,
+                borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 30%, transparent)',
+                paddingBottom: 12
+            }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cash</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-profit)' }}>{formatNumber(data?.financials?.cash)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Debt</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-loss)' }}>{formatNumber(data?.financials?.total_debt)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Working Capital</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#3b82f6' }}>{formatNumber(data?.financials?.working_capital)}</span>
+                </div>
+            </div>
+
+            <div style={{ height: '180px' }}>
+                <GroupedBarChart 
+                    cashData={data?.charts?.cash_history} 
+                    debtData={data?.charts?.debt_history} 
+                    wcData={data?.charts?.working_capital_history} 
+                />
+            </div>
+
+            <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                gap: 16,
+                fontSize: 8,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: 'var(--color-ec-profit)' }} />
+                    <span style={{ color: 'var(--color-ec-text-muted)' }}>Cash</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: 'var(--color-ec-loss)' }} />
+                    <span style={{ color: 'var(--color-ec-text-muted)' }}>Debt</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 1.5, backgroundColor: '#3b82f6' }} />
+                    <span style={{ color: 'var(--color-ec-text-muted)' }}>Working Capital</span>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export default function TickerAnalysis({ ticker: initialTicker, availableTickers }: TickerAnalysisProps) {
     const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || '');
     const [loading, setLoading] = useState(false);
@@ -189,19 +451,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         );
     }
 
-    // Helpers
-    const formatNumber = (num: number | null) => {
-        if (num === null || num === undefined) return '-';
-        if (num >= 1e9) return `$ ${(num / 1e9).toFixed(2)} B`;
-        if (num >= 1e6) return `$ ${(num / 1e6).toFixed(2)} M`;
-        if (num >= 1e3) return `$ ${(num / 1e3).toFixed(2)} K`;
-        return num.toFixed(2);
-    };
-
-    const formatPercent = (num: number | null) => {
-        if (num === null || num === undefined) return '-';
-        return `${(num * 100).toFixed(2)}%`;
-    };
+    // Helpers (moved to top-level)
 
     return (
         <div style={{
@@ -534,11 +784,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 paddingBottom: 4,
                                 marginBottom: 4
                             }}>Balance Sheet Trends</h3>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                <SparklineCard title="Cash Trend (Quarterly)" value={formatNumber(data?.financials?.cash)} data={data?.charts?.cash_history} color="var(--color-ec-profit)" indicatorColor="var(--color-ec-profit)" />
-                                <SparklineCard title="Debt Trend (Quarterly)" value={formatNumber(data?.financials?.total_debt)} data={data?.charts?.debt_history} color="var(--color-ec-loss)" indicatorColor="var(--color-ec-loss)" />
-                                <SparklineCard title="Working Capital" value={formatNumber(data?.financials?.working_capital)} data={data?.charts?.working_capital_history} color="#3b82f6" indicatorColor="#3b82f6" />
-                            </div>
+                            <BalanceSheetTrendsCard data={data} />
                         </div>
                     </div>
 
