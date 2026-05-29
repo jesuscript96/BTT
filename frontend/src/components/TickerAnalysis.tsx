@@ -164,7 +164,7 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 350,
+            height: 420,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -256,7 +256,7 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
     if (!dailyData || dailyData.length === 0) {
         return (
             <div style={{
-                height: '350px',
+                height: '420px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -275,7 +275,7 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
                 Daily Stock Chart
             </span>
-            <div ref={chartContainerRef} style={{ width: '100%', height: '350px' }} />
+            <div ref={chartContainerRef} style={{ width: '100%', height: '420px' }} />
         </div>
     );
 };
@@ -315,10 +315,10 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'General Sans', sans-serif" }}>
                     <thead>
                         <tr style={{ borderBottom: '1px solid var(--color-ec-border)', textAlign: 'left' }}>
-                            <th style={{ padding: '8px 4px 8px 0', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600 }}>Source</th>
-                            <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Float</th>
-                            <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Short I.%</th>
-                            <th style={{ padding: '8px 0 8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Outstanding</th>
+                            <th style={{ padding: '4px 4px 4px 0', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600 }}>Source</th>
+                            <th style={{ padding: '4px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Float</th>
+                            <th style={{ padding: '4px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Short I.%</th>
+                            <th style={{ padding: '4px 0 4px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Outstanding</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -326,10 +326,10 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
                             const sData = (floatData && floatData[src]) || { float: '-', short_percent: '-', outstanding: '-' };
                             return (
                                 <tr key={src} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
-                                    <td style={{ padding: '10px 4px 10px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{src}</td>
-                                    <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{sData.float || '-'}</td>
-                                    <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-loss)' }}>{sData.short_percent || '-'}</td>
-                                    <td style={{ padding: '10px 0 10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{sData.outstanding || '-'}</td>
+                                    <td style={{ padding: '4px 4px 4px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{src}</td>
+                                    <td style={{ padding: '4px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{sData.float || '-'}</td>
+                                    <td style={{ padding: '4px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-loss)' }}>{sData.short_percent || '-'}</td>
+                                    <td style={{ padding: '4px 0 4px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{sData.outstanding || '-'}</td>
                                 </tr>
                             );
                         })}
@@ -400,7 +400,7 @@ const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
                 {/* Negative Close Frequency */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
-                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Negative Close</span>
+                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
                         <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.neg_close_freq)}</span>
                     </div>
                     <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
@@ -412,7 +412,7 @@ const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
                 {gapStats.close_above_pmh_freq !== null && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
-                            <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Above PMH</span>
+                            <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
                             <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.close_above_pmh_freq)}</span>
                         </div>
                         <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
@@ -428,7 +428,7 @@ const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
                         <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.close_below_vwap_freq)}</span>
                     </div>
                     <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${gapStats.close_below_vwap_freq ?? 0}%`, backgroundColor: 'var(--color-ec-copper)', borderRadius: 2 }} />
+                        <div style={{ height: '100%', width: `${gapStats.close_below_vwap_freq ?? 0}%`, backgroundColor: 'var(--color-ec-loss)', borderRadius: 2 }} />
                     </div>
                 </div>
             </div>
@@ -1091,7 +1091,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         <div className="lg:col-span-2">
                             <DailyStockChart dailyData={data?.daily_history} />
                         </div>
-                        <div className="lg:col-span-1" style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                        <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
                             <KnowTheFloatTable floatData={data?.know_the_float} />
                             <GapStatsSection gapStats={data?.gap_stats} />
                         </div>
