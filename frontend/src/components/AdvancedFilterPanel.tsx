@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Search, Filter, RefreshCw, Download, ChevronDown, ChevronUp } from "lucide-react";
+import { Filter, RefreshCw, Download, ChevronDown, ChevronUp, X } from "lucide-react";
 
 interface AdvancedFilterPanelProps {
     filters: any;
@@ -11,7 +11,29 @@ interface AdvancedFilterPanelProps {
     onSaveDataset: () => void;
     onLoadDataset: () => void;
     isLoading: boolean;
+    isFilterBuilderOpen?: boolean;
+    onToggleFilterBuilder?: () => void;
+    activeRules?: any[];
+    onRemoveRule?: (id: string) => void;
 }
+
+const parseVolume = (value: string): number | undefined => {
+    if (!value) return undefined;
+    const clean = value.trim().toLowerCase();
+    
+    // Support either clean numbers or numbers ending with 'm' (e.g. "1.5" or "1.5m" -> 1,500,000)
+    const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
+    const num = parseFloat(numericStr);
+    return isNaN(num) ? undefined : num * 1000000;
+};
+
+const formatVolume = (val: any): string => {
+    if (val === undefined || val === null || val === '') return '';
+    const num = parseFloat(val);
+    if (isNaN(num)) return '';
+    // Format to millions (e.g. 1500000 -> "1.5", 500000 -> "0.5")
+    return (num / 1000000).toString();
+};
 
 export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.memo(({
     filters,
@@ -20,14 +42,20 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
     onExport,
     onSaveDataset,
     onLoadDataset,
-    isLoading
+    isLoading,
+    isFilterBuilderOpen,
+    onToggleFilterBuilder,
+    activeRules,
+    onRemoveRule
 }) => {
     // Local state for UI responsiveness, synced with parent
     const [ticker, setTicker] = React.useState(filters.ticker || "");
     const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "");
     const [maxGap, setMaxGap] = React.useState(filters.max_gap_pct?.toString() || "");
-    const [minVol, setMinVol] = React.useState(filters.min_rth_volume?.toString() || "");
-    const [minPmVol, setMinPmVol] = React.useState(filters.min_pm_volume?.toString() || "5000000");
+    const [minPmGap, setMinPmGap] = React.useState(filters.min_pmh_gap_pct?.toString() || "");
+    const [maxPmGap, setMaxPmGap] = React.useState(filters.max_pmh_gap_pct?.toString() || "");
+    const [minVol, setMinVol] = React.useState(formatVolume(filters.min_rth_volume));
+    const [minPmVol, setMinPmVol] = React.useState(formatVolume(filters.min_pm_volume));
     const [startDate, setStartDate] = React.useState(filters.start_date || "");
     const [endDate, setEndDate] = React.useState(filters.end_date || "");
     const [m15Ret, setM15Ret] = React.useState(filters.min_m15_ret_pct?.toString() || "");
@@ -43,8 +71,10 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
         setTicker(filters.ticker || "");
         setMinGap(filters.min_gap_pct?.toString() || "");
         setMaxGap(filters.max_gap_pct?.toString() || "");
-        setMinVol(filters.min_rth_volume?.toString() || "");
-        setMinPmVol(filters.min_pm_volume?.toString() || "");
+        setMinPmGap(filters.min_pmh_gap_pct?.toString() || "");
+        setMaxPmGap(filters.max_pmh_gap_pct?.toString() || "");
+        setMinVol(formatVolume(filters.min_rth_volume));
+        setMinPmVol(formatVolume(filters.min_pm_volume));
         setStartDate(filters.start_date || "");
         setEndDate(filters.end_date || "");
         setM15Ret(filters.min_m15_ret_pct?.toString() || "");
@@ -69,37 +99,13 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
             display: 'flex',
             alignItems: 'center',
             background: 'var(--color-ec-bg-sidebar)',
-            borderBottom: '0.5px solid var(--color-ec-border)',
+            border: '0.5px solid var(--color-ec-border)',
+            borderRadius: 7,
             padding: '0 16px',
             minHeight: 44,
         }}>
             <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {/* Ticker Input */}
-                    <div style={{
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        background: 'var(--color-ec-bg-sidebar)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5, padding: '0 10px', height: 30, width: 160,
-                    }}>
-                        <Search size={13} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
-                        <input
-                            type="text"
-                            placeholder="Ticker..."
-                            value={ticker}
-                            onChange={(e) => {
-                                const val = e.target.value.toUpperCase();
-                                setTicker(val);
-                                updateParent('ticker', val);
-                            }}
-                            style={{
-                                background: 'transparent', border: 'none', outline: 'none',
-                                fontFamily: "'General Sans', sans-serif", fontSize: 12, fontWeight: 400,
-                                color: 'var(--color-ec-text-primary)', width: '100%',
-                            }}
-                        />
-                    </div>
-
                     {/* Date Pickers */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
@@ -117,16 +123,96 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                         />
                     </div>
 
-                    {/* Divider */}
-                    <div style={{ width: '0.5px', height: 20, background: 'var(--color-ec-border)', margin: '0 4px', flexShrink: 0 }} />
+                    {/* Basic Filters & Advanced Filters Toggle */}
+                    {isExpanded && (
+                        <>
+                            {/* Divider */}
+                            <div style={{ width: '0.5px', height: 20, background: 'var(--color-ec-border)', margin: '0 4px', flexShrink: 0 }} />
 
-                    {/* Filter Boxes */}
-                    <div style={{ display: 'flex', gap: 4 }}>
-                        <FilterInput label="Min Gap" value={minGap} onChange={(v: string) => { setMinGap(v); updateParent('min_gap_pct', v ? parseFloat(v) : undefined); }} />
-                        <FilterInput label="Max Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
-                        <FilterInput label="RTH Vol" value={minVol} onChange={(v: string) => { setMinVol(v); updateParent('min_rth_volume', v ? parseFloat(v) : undefined); }} />
-                        <FilterInput label="PM Vol" value={minPmVol} onChange={(v: string) => { setMinPmVol(v); updateParent('min_pm_volume', v ? parseFloat(v) : undefined); }} />
-                    </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{
+                                    fontFamily: "'General Sans', sans-serif",
+                                    fontSize: 10,
+                                    fontWeight: 800,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '1px',
+                                    color: 'var(--color-ec-text-muted)',
+                                    marginRight: 6,
+                                    whiteSpace: 'nowrap'
+                                }}>Filtros básicos</span>
+                                
+                                <FilterInput label="Min RTH Gap" value={minGap} onChange={(v: string) => { setMinGap(v); updateParent('min_gap_pct', v ? parseFloat(v) : undefined); }} />
+                                <FilterInput label="Max RTH Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
+                                <FilterInput label="Min PM Gap" value={minPmGap} onChange={(v: string) => { setMinPmGap(v); updateParent('min_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
+                                <FilterInput label="Max PM Gap" value={maxPmGap} onChange={(v: string) => { setMaxPmGap(v); updateParent('max_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
+                                <FilterInput label="RTH Vol (M)" placeholder="0.0M" value={minVol} onChange={(v: string) => { setMinVol(v); updateParent('min_rth_volume', parseVolume(v)); }} />
+                                <FilterInput label="PM Vol (M)" placeholder="0.0M" value={minPmVol} onChange={(v: string) => { setMinPmVol(v); updateParent('min_pm_volume', parseVolume(v)); }} />
+
+                                {onToggleFilterBuilder && (
+                                    <button
+                                        onClick={onToggleFilterBuilder}
+                                        style={{
+                                            height: 30,
+                                            padding: '0 14px',
+                                            background: 'var(--color-ec-copper)',
+                                            color: 'var(--color-ec-copper-text)',
+                                            border: 'none',
+                                            borderRadius: 5,
+                                            fontFamily: "'General Sans', sans-serif",
+                                            fontSize: 11,
+                                            fontWeight: 700,
+                                            letterSpacing: '1.2px',
+                                            textTransform: 'uppercase',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 6,
+                                            marginLeft: 8,
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                    >
+                                        más filtros
+                                    </button>
+                                )}
+
+                                {activeRules && activeRules.length > 0 && (
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 6,
+                                        marginLeft: 12,
+                                        overflowX: 'auto',
+                                        borderLeft: '0.5px solid var(--color-ec-border)',
+                                        paddingLeft: 12,
+                                    }}>
+                                        {activeRules.map(rule => (
+                                            <div key={rule.id} style={{
+                                                background: 'var(--color-ec-bg-surface)',
+                                                border: '0.5px solid var(--color-ec-border)',
+                                                padding: '2px 8px',
+                                                borderRadius: 4,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 6,
+                                                whiteSpace: 'nowrap',
+                                                height: 24,
+                                            }}>
+                                                <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                                    {rule.metric} {rule.operator} {rule.value}
+                                                </span>
+                                                <button
+                                                    onClick={() => onRemoveRule && onRemoveRule(rule.id)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-secondary)', padding: 0, display: 'flex' }}
+                                                >
+                                                    <X size={10} strokeWidth={2.5} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -160,14 +246,12 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                     </button>
                     {/* Secondary Buttons */}
                     <SecondaryButton onClick={onLoadDataset} title="Load dataset">
-                        <RefreshCw size={14} strokeWidth={1.5} />
+                        <Download size={14} strokeWidth={1.5} />
+                        <span>LOAD</span>
                     </SecondaryButton>
                     <SecondaryButton onClick={onSaveDataset} title="Save dataset">
                         <Download size={14} strokeWidth={1.5} style={{ transform: 'rotate(180deg)' }} />
                         <span>Save</span>
-                    </SecondaryButton>
-                    <SecondaryButton onClick={onExport} title="Export CSV">
-                        <Download size={14} strokeWidth={1.5} />
                     </SecondaryButton>
                 </div>
             </div>
@@ -202,7 +286,7 @@ const SecondaryButton = ({ onClick, title, children }: any) => (
     </button>
 );
 
-const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) => (
+const FilterInput = ({ label, value, checked, onChange, isCheck = false, placeholder = '—' }: any) => (
     <div style={{
         display: 'flex', flexDirection: 'column', justifyContent: 'center',
         gap: 1, paddingLeft: 10,
@@ -221,7 +305,7 @@ const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) 
         ) : (
             <input
                 type="text"
-                placeholder={value ? undefined : '—'}
+                placeholder={value ? undefined : placeholder}
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
                 style={{

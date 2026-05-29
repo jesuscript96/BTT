@@ -193,7 +193,8 @@ def build_screener_query(
         'min_rth_volume': 'rth_volume', 'min_volume': 'volume',
         'min_m15_return_pct': 'm15_return_pct',
         'min_pm_volume': 'pm_volume', 
-        'min_pm_high_gap_pct': 'pmh_gap_pct',
+        'min_pm_high_gap_pct': 'pmh_gap_pct', 'max_pm_high_gap_pct': 'pmh_gap_pct',
+        'min_pmh_gap_pct': 'pmh_gap_pct', 'max_pmh_gap_pct': 'pmh_gap_pct',
         'min_pmh_fade_to_open_pct': 'pmh_fade_pct', 'max_pmh_fade_to_open_pct': 'pmh_fade_pct',
         'min_high_spike_pct': 'rth_run_pct', 
         'min_low_spike_pct': 'rth_range_pct'

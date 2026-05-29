@@ -532,9 +532,8 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
         ) : (
           <div key="whatif-tab" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
-              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>
-                {/* Temporal Settings */}
-                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '12px', marginBottom: '8px' }}>
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
+                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '16px', marginBottom: '16px' }}>
                   <button 
                     onClick={() => toggleSection("temporal")}
                     style={{
@@ -557,7 +556,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                   </button>
                   
                   {openSections.includes("temporal") && (
-                    <div style={{ paddingBottom: '12px', paddingTop: '4px' }} className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingBottom: '16px', paddingTop: '6px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div>
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Días de la Semana</label>
                         <div className="flex gap-1.5">
@@ -578,7 +577,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                           ))}
                         </div>
                       </div>
-                      <div>
+                      <div className="pt-2">
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Meses del Año</label>
                         <div className="grid grid-cols-6 gap-1.5">
                           {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => (
@@ -598,7 +597,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                           ))}
                         </div>
                       </div>
-                      <div>
+                      <div className="pt-2">
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Rango de Horas</label>
                         <div className="flex items-center gap-4">
                           <div className="flex-1">
@@ -622,9 +621,9 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                         </div>
                       </div>
                       
-                      <div className="pt-3 border-t border-[var(--color-ec-border)]">
+                      <div className="border-t border-[var(--color-ec-border)]" style={{ marginTop: '18px', paddingTop: '12px', paddingBottom: '6px' }}>
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">Días aleatorios mensuales:</label>
+                          <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">Excluir días aleatorios mensuales:</label>
                           <div className="flex items-center gap-2">
                              <input
                                type="number"
@@ -643,7 +642,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 </div>
  
                 {/* Daily Limit */}
-                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '12px', marginBottom: '8px' }}>
+                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '16px', marginBottom: '16px' }}>
                   <button 
                     onClick={() => toggleSection("limit")}
                     style={{
@@ -666,7 +665,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                   </button>
                   
                   {openSections.includes("limit") && (
-                    <div style={{ paddingBottom: '12px', paddingTop: '4px' }} className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingBottom: '16px', paddingTop: '6px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-[var(--color-ec-text-secondary)]">Máx. trades/día:</span>
                         <input
@@ -692,7 +691,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                 </div>
  
                 {/* Stress Test & Black Swan */}
-                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '12px', marginBottom: '8px' }}>
+                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '16px', marginBottom: '16px' }}>
                   <button 
                     onClick={() => toggleSection("stress")}
                     style={{
@@ -715,7 +714,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                   </button>
  
                   {openSections.includes("stress") && (
-                    <div style={{ paddingBottom: '12px', paddingTop: '4px' }} className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingBottom: '16px', paddingTop: '6px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="text-[10px] text-[var(--color-ec-text-secondary)] block mb-1">Omitir mejores trades (%):</label>
@@ -738,7 +737,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                         </div>
                       </div>
                       
-                      <div className="border-t border-[var(--color-ec-border)] pt-3">
+                      <div className="border-t border-[var(--color-ec-border)]" style={{ marginTop: '18px', paddingTop: '12px', paddingBottom: '6px' }}>
                         <div className="flex items-center justify-between mb-2">
                            <label className="text-[10px] font-bold text-[var(--color-ec-text-secondary)] uppercase">Añadir Black Swans Aleatorios</label>
                         </div>

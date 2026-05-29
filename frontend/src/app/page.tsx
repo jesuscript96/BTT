@@ -217,98 +217,23 @@ export default function Home() {
     setFilterPanelKey(prev => prev + 1); // Reset panel with new values
   };
 
-  // Fetch when rules change
+  // Fetch when rules change, skipping initial mount
+  const isFirstMount = React.useRef(true);
   useEffect(() => {
-    if (activeRules.length > 0) {
-      fetchData(currentFilters, activeRules);
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      return;
     }
+    fetchData(currentFilters, activeRules);
   }, [activeRules]);
+
+  const memoizedData = React.useMemo(() => data, [data]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', 
                   height: '100vh', overflow: 'hidden',
                   backgroundColor: 'var(--color-ec-bg-base)' }}>
-      <AdvancedFilterPanel
-        key={filterPanelKey}
-        filters={currentFilters}
-        onFilterStateChange={handleFilterStateChange}
-        onFilter={(newFilters) => fetchData(newFilters, activeRules)}
-        onExport={handleExport}
-        onSaveDataset={() => setIsSaveModalOpen(true)}
-        onLoadDataset={() => setIsLoadModalOpen(true)}
-        isLoading={isLoading}
-      />
-
-      {/* Active Filters Bar */}
-      <div style={{
-        backgroundColor: 'var(--color-ec-bg-sidebar)',
-        borderBottom: '0.5px solid var(--color-ec-border)',
-        padding: '6px 20px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        minHeight: '32px'
-      }}>
-        <button
-          onClick={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
-          style={{
-            background: 'var(--color-ec-copper)',
-            color: 'var(--color-ec-copper-text)',
-            fontSize: 9,
-            fontWeight: 700,
-            letterSpacing: '1.5px',
-            textTransform: 'uppercase',
-            padding: '2px 6px',
-            borderRadius: 3,
-            border: 'none',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-          }}
-        >
-          FILTROS
-        </button>
-
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, overflowX: 'auto', borderLeft: '0.5px solid var(--color-ec-border)', paddingLeft: 16 }}>
-          <span style={{
-            fontSize: 9,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '1.5px',
-            color: 'var(--color-ec-text-muted)',
-            whiteSpace: 'nowrap',
-          }}>Advanced Rules:</span>
-          {activeRules.map(rule => (
-            <div key={rule.id} style={{
-              background: 'var(--color-ec-bg-surface)',
-              border: '0.5px solid var(--color-ec-border)',
-              padding: '2px 10px',
-              borderRadius: 4,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}>
-              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{rule.metric} {rule.operator} {rule.value}</span>
-              <button
-                onClick={() => setActiveRules(prev => prev.filter(r => r.id !== rule.id))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-secondary)', padding: 0, display: 'flex' }}
-              >
-                <XIcon className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-          {activeRules.length === 0 && (
-            <span style={{
-              fontSize: 11,
-              fontWeight: 400,
-              color: 'var(--color-ec-text-secondary)',
-            }}>No active advanced rules</span>
-          )}
-        </div>
-      </div>
-
+      
       {/* Tab Navigation */}
       <div style={{
         backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -379,6 +304,20 @@ export default function Home() {
             minHeight: '100%',
             backgroundColor: 'var(--color-ec-bg-base)'
           }}>
+            <AdvancedFilterPanel
+              key={filterPanelKey}
+              filters={currentFilters}
+              onFilterStateChange={handleFilterStateChange}
+              onFilter={(newFilters) => fetchData(newFilters, activeRules)}
+              onExport={handleExport}
+              onSaveDataset={() => setIsSaveModalOpen(true)}
+              onLoadDataset={() => setIsLoadModalOpen(true)}
+              isLoading={isLoading}
+              onToggleFilterBuilder={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
+              activeRules={activeRules}
+              onRemoveRule={(id) => setActiveRules(prev => prev.filter(r => r.id !== id))}
+            />
+
             <FilterBuilder
               isOpen={isFilterBuilderOpen}
               onClose={() => setIsFilterBuilderOpen(false)}
@@ -413,7 +352,7 @@ export default function Home() {
               overflow: 'hidden'
             }}>
               <DataGrid
-                data={React.useMemo(() => data, [data])}
+                data={memoizedData}
                 isLoading={isLoading}
               />
             </div>

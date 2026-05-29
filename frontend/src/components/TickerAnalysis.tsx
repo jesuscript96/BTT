@@ -3,11 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import {
     Activity, Globe, MapPin, Building2, Users, FileText,
-    ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp
+    ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
-import {
-    LineChart, Line, ResponsiveContainer, YAxis
-} from 'recharts';
+// Recharts import removed to fix React 19 ResponsiveContainer hooks error
 import { getTickerAnalysis, getTickerSecFilings } from '@/lib/api';
 
 interface TickerAnalysisProps {
@@ -15,28 +13,42 @@ interface TickerAnalysisProps {
     availableTickers: string[]; // For the combobox
 }
 
-// Sparkline Component
+// Sparkline Component implemented with native SVG to avoid React 19 hook mismatches in Recharts
 const Sparkline = ({ data, color }: { data: any[], color: string }) => {
     if (!data || data.length === 0) return <div className="h-12 w-full bg-muted/20 animate-pulse rounded"></div>;
+    
+    const values = data.map(d => d.value ?? 0);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min === 0 ? 1 : max - min;
+    
+    const points = data.map((d, index) => {
+        const x = (index / (data.length - 1)) * 100;
+        // Invert y because SVG y=0 is at the top, and we want high values at the top
+        const y = 40 - (((d.value ?? 0) - min) / range) * 36 - 2;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    
+    const pathData = `M ${points.join(' L ')}`;
+    
     return (
         <div className="h-12 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data}>
-                    <Line
-                        type="monotone"
-                        dataKey="value"
-                        stroke={color}
-                        strokeWidth={2}
-                        dot={false}
-                    />
-                </LineChart>
-            </ResponsiveContainer>
+            <svg className="w-full h-full" viewBox="0 0 100 40" preserveAspectRatio="none">
+                <path
+                    d={pathData}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
         </div>
     );
 };
 
 export default function TickerAnalysis({ ticker: initialTicker, availableTickers }: TickerAnalysisProps) {
-    const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || availableTickers[0] || '');
+    const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || '');
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<any>(null);
     const [filings, setFilings] = useState<any>(null);
@@ -68,7 +80,43 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         fetchData();
     }, [selectedTicker]);
 
-    if (!selectedTicker) return <div className="p-8 text-center text-muted-foreground">Select a ticker to view analysis</div>;
+    if (!selectedTicker) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-[50vh] p-4 text-center">
+                <div className="w-full max-w-lg p-8 bg-[var(--color-ec-bg-sidebar)] border border-[var(--color-ec-border)] rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.2)] space-y-6">
+                    <div className="space-y-1">
+                        <h2 className="text-sm font-black text-[var(--color-ec-text-secondary)] uppercase tracking-widest">Ticker Analysis</h2>
+                        <p className="text-xs text-[var(--color-ec-text-muted)]">Carga métricas en tiempo real, perfil corporativo e información financiera</p>
+                    </div>
+                    <div className="flex items-center gap-3 px-4 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg h-12 w-full">
+                        <Search className="w-4 h-4 text-[var(--color-ec-text-muted)] shrink-0" />
+                        <input
+                            type="text"
+                            list="ticker-options-empty"
+                            placeholder="(busca un ticker)"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    const val = (e.target as HTMLInputElement).value.toUpperCase().trim();
+                                    if (val) setSelectedTicker(val);
+                                }
+                            }}
+                            onChange={(e) => {
+                                const val = e.target.value.toUpperCase().trim();
+                                if (availableTickers.includes(val)) {
+                                    setSelectedTicker(val);
+                                }
+                            }}
+                            className="bg-transparent border-none outline-none font-semibold text-sm text-[var(--color-ec-text-primary)] w-full placeholder-[var(--color-ec-text-muted)]"
+                        />
+                        <datalist id="ticker-options-empty">
+                            {availableTickers.sort().map(t => <option key={t} value={t} />)}
+                        </datalist>
+                    </div>
+                    <p className="text-[9px] text-[var(--color-ec-text-muted)] uppercase tracking-widest font-bold">Introduce el símbolo (ej. AAPL, TSLA) y presiona Enter</p>
+                </div>
+            </div>
+        );
+    }
 
     // Helpers
     const formatNumber = (num: number | null) => {
@@ -115,14 +163,33 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest hidden sm:inline">Switch Ticker:</span>
-                    <select
-                        className="bg-background border border-border rounded px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary w-32 md:w-48 transition-colors"
-                        value={selectedTicker}
-                        onChange={(e) => setSelectedTicker(e.target.value)}
-                    >
-                        {availableTickers.sort().map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
+                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest hidden sm:inline">Ticker:</span>
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        background: 'var(--color-ec-bg-sidebar)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5, padding: '0 10px', height: 30, width: 160,
+                    }}>
+                        <Search size={13} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
+                        <input
+                            type="text"
+                            list="ticker-options"
+                            placeholder="Ticker..."
+                            value={selectedTicker}
+                            onChange={(e) => {
+                                const val = e.target.value.toUpperCase();
+                                setSelectedTicker(val);
+                            }}
+                            style={{
+                                background: 'transparent', border: 'none', outline: 'none',
+                                fontFamily: "'General Sans', sans-serif", fontSize: 12, fontWeight: 400,
+                                color: 'var(--color-ec-text-primary)', width: '100%',
+                            }}
+                        />
+                        <datalist id="ticker-options">
+                            {availableTickers.sort().map(t => <option key={t} value={t} />)}
+                        </datalist>
+                    </div>
                 </div>
             </div>
 
