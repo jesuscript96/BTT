@@ -965,6 +965,25 @@ def _compute_raw(
             return pd.Series(low.iloc[:n].min(), index=close.index)
         return pd.Series(low.min(), index=close.index)
 
+    if name == "Yesterday Volume":
+        yesterday_volume = ds.get("eod_volume", np.nan)
+        return pd.Series(float(yesterday_volume), index=close.index)
+
+    if name == "Candle Range %":
+        candle_range = ((close - open_) / open_.abs()) * 100
+        return candle_range.abs()
+
+    if name in ("Elapsed Time from Last High", "Elapsed time from last High"):
+        elapsed = pd.Series(0, index=close.index, dtype=float)
+        last_high_idx = 0
+        current_high = high.iloc[0] if len(high) > 0 else 0
+        for i in range(len(high)):
+            if high.iloc[i] > current_high:
+                current_high = high.iloc[i]
+                last_high_idx = i
+            elapsed.iloc[i] = i - last_high_idx
+        return elapsed
+
     return pd.Series(np.nan, index=close.index)
 
 
