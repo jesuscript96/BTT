@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Activity, Users, ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 import { getTickerAnalysis, getTickerSecFilings } from '@/lib/api';
 
 interface TickerAnalysisProps {
@@ -74,6 +75,172 @@ const formatNumber = (num: number | null) => {
 const formatPercent = (num: number | null) => {
     if (num === null || num === undefined) return '-';
     return `${(num * 100).toFixed(2)}%`;
+};
+
+// Lightweight-charts Daily Candlestick Stock Chart
+const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any[] }) => {
+    const chartContainerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!chartContainerRef.current || !dailyData || dailyData.length === 0) return;
+
+        const chart = createChart(chartContainerRef.current, {
+            width: chartContainerRef.current.clientWidth,
+            height: 250,
+            layout: {
+                background: { type: ColorType.Solid, color: 'transparent' },
+                textColor: 'var(--color-ec-text-secondary)',
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: 10
+            },
+            grid: {
+                vertLines: { color: 'rgba(44, 47, 51, 0.15)' },
+                horzLines: { color: 'rgba(44, 47, 51, 0.15)' }
+            },
+            crosshair: { mode: 0 },
+            rightPriceScale: {
+                borderColor: 'var(--color-ec-border)',
+                textColor: 'var(--color-ec-text-secondary)',
+            },
+            timeScale: {
+                borderColor: 'var(--color-ec-border)',
+                timeVisible: false,
+            },
+        });
+
+        const candleSeries = chart.addSeries(CandlestickSeries, {
+            upColor: 'var(--color-ec-profit)',
+            downColor: 'var(--color-ec-loss)',
+            borderDownColor: 'var(--color-ec-loss)',
+            borderUpColor: 'var(--color-ec-profit)',
+            wickDownColor: 'var(--color-ec-loss)',
+            wickUpColor: 'var(--color-ec-profit)',
+        });
+
+        const formattedCandles = dailyData.map(d => ({
+            time: d.time,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+        }));
+        candleSeries.setData(formattedCandles);
+
+        // Volume overlay
+        const volumeSeries = chart.addSeries(HistogramSeries, {
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume',
+        });
+        chart.priceScale('volume').applyOptions({
+            scaleMargins: { top: 0.8, bottom: 0 },
+        });
+        const formattedVolume = dailyData.map(d => ({
+            time: d.time,
+            value: d.volume,
+            color: d.close >= d.open ? 'rgba(74, 157, 127, 0.2)' : 'rgba(201, 77, 63, 0.2)',
+        }));
+        volumeSeries.setData(formattedVolume);
+
+        chart.timeScale().fitContent();
+
+        const handleResize = () => {
+            if (chartContainerRef.current) {
+                chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+            }
+        };
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            chart.remove();
+        };
+    }, [dailyData]);
+
+    if (!dailyData || dailyData.length === 0) {
+        return (
+            <div style={{
+                height: '250px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--color-ec-text-muted)',
+                fontSize: '11px',
+                border: '1px dashed var(--color-ec-border)',
+                borderRadius: '6px'
+            }}>
+                No daily chart data available.
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
+                Daily Stock Chart
+            </span>
+            <div ref={chartContainerRef} style={{ width: '100%', height: '250px' }} />
+        </div>
+    );
+};
+
+// KnowTheFloat comparison table
+const KnowTheFloatTable = ({ floatData }: { floatData: any }) => {
+    if (!floatData || Object.keys(floatData).length === 0) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
+                    Float Comparison (KnowTheFloat)
+                </span>
+                <div style={{
+                    height: '250px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-ec-text-muted)',
+                    fontSize: '11px',
+                    border: '1px dashed var(--color-ec-border)',
+                    borderRadius: '6px'
+                }}>
+                    No float comparisons available for this ticker.
+                </div>
+            </div>
+        );
+    }
+
+    const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal", "Dilution Tracker"];
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
+                Float Comparison (KnowTheFloat)
+            </span>
+            <div style={{ overflowX: 'auto', width: '100%' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'General Sans', sans-serif" }}>
+                    <thead>
+                        <tr style={{ borderBottom: '1px solid var(--color-ec-border)', textAlign: 'left' }}>
+                            <th style={{ padding: '8px 4px 8px 0', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600 }}>Source</th>
+                            <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Float</th>
+                            <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Short %</th>
+                            <th style={{ padding: '8px 0 8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Outstanding</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {sources.map(src => {
+                            const sData = floatData[src] || { float: '-', short_percent: '-', outstanding: '-' };
+                            return (
+                                <tr key={src} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
+                                    <td style={{ padding: '10px 4px 10px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{src}</td>
+                                    <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{sData.float || '-'}</td>
+                                    <td style={{ padding: '10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-loss)' }}>{sData.short_percent || '-'}</td>
+                                    <td style={{ padding: '10px 0 10px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{sData.outstanding || '-'}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
 };
 
 // SVG-based responsive Grouped Bar Chart supporting negative values
@@ -721,6 +888,16 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                             icon={<Users size={12} />} 
                             indicatorColor="var(--color-ec-copper)" 
                         />
+                    </div>
+
+                    {/* Middle Row: Daily Stock Chart & Know The Float Table */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
+                        <div className="lg:col-span-2">
+                            <DailyStockChart ticker={selectedTicker} dailyData={data?.daily_history} />
+                        </div>
+                        <div className="lg:col-span-1">
+                            <KnowTheFloatTable floatData={data?.know_the_float} />
+                        </div>
                     </div>
 
                     {/* Columns Grid: Profile, Financials, Trends */}

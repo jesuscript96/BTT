@@ -20,6 +20,62 @@ def safe_float(val):
     except:
         return None
 
+def scrape_knowthefloat(ticker: str) -> dict:
+    import requests
+    import urllib3
+    import re
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://knowthefloat.com/ticker/{ticker}"
+    try:
+        r = requests.get(url, headers=headers, verify=False, timeout=5)
+        if r.status_code != 200:
+            return {}
+            
+        html = r.text
+        sources = [
+            {"name": "Yahoo Finance", "img": "yahooFinance.png"},
+            {"name": "Finviz", "img": "finviz.png"},
+            {"name": "Wall Street Journal", "img": "wsj.png"},
+            {"name": "Dilution Tracker", "img": "dt.png"}
+        ]
+        
+        results = {}
+        for src in sources:
+            parts = html.split(src["img"])
+            if len(parts) > 1:
+                card_text = parts[1][:1200]
+                
+                # Float
+                float_val = ""
+                float_match = re.search(r'class="float-section"[^>]*>\s*<h3>Float</h3>\s*<p>([^<]*)</p>', card_text, re.DOTALL | re.IGNORECASE)
+                if float_match:
+                    float_val = float_match.group(1).strip()
+                
+                # Short %
+                short_val = ""
+                short_match = re.search(r'class="short-percent-section"[^>]*>\s*<h3>Short % of Float</h3>\s*<p>([^<]*)</p>', card_text, re.DOTALL | re.IGNORECASE)
+                if short_match:
+                    short_val = short_match.group(1).strip()
+                    
+                # Outstanding
+                out_val = ""
+                out_match = re.search(r'class="outstanding-shares-section"[^>]*>\s*<h3>Oustanding Shares</h3>\s*<p>([^<]*)</p>', card_text, re.DOTALL | re.IGNORECASE)
+                if out_match:
+                    out_val = out_match.group(1).strip()
+                    
+                results[src["name"]] = {
+                    "float": float_val,
+                    "short_percent": short_val,
+                    "outstanding": out_val
+                }
+        return results
+    except Exception as e:
+        print(f"Error scraping knowthefloat for {ticker}: {e}")
+        return {}
+
 @router.get("/{ticker}")
 def get_ticker_analysis(ticker: str):
     try:
@@ -79,6 +135,7 @@ def get_ticker_analysis(ticker: str):
         hist = stock.history(period="1y")
         
         perf = {}
+        daily_history = []
         if not hist.empty:
             current = hist["Close"].iloc[-1]
             def get_ret(days):
@@ -100,6 +157,28 @@ def get_ticker_analysis(ticker: str):
                 perf["ytd"] = ((current - start_price) / start_price) * 100
             else:
                  perf["ytd"] = None
+
+            # Extract daily history for chart
+            try:
+                hist_reset = hist.reset_index()
+                date_col = 'Date' if 'Date' in hist_reset.columns else hist_reset.columns[0]
+                for _, r in hist_reset.iterrows():
+                    dt = r[date_col]
+                    if hasattr(dt, 'strftime'):
+                        date_str = dt.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(dt)[:10]
+                    
+                    daily_history.append({
+                        "time": date_str,
+                        "open": safe_float(r.get('Open')),
+                        "high": safe_float(r.get('High')),
+                        "low": safe_float(r.get('Low')),
+                        "close": safe_float(r.get('Close')),
+                        "volume": safe_float(r.get('Volume'))
+                    })
+            except Exception as e:
+                print(f"Error extracting daily history for {ticker}: {e}")
 
         # --- Charts (Sparklines from Balance Sheet) ---
         # yfinance balance sheet is annual or quarterly. Let's get quarterly for more points.
@@ -127,22 +206,26 @@ def get_ticker_analysis(ticker: str):
             
             # Working Capital = Current Assets - Current Liabilities
             if "Total Current Assets" in bs_T.columns and "Total Current Liabilities" in bs_T.columns:
-                 wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
-                 charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]
+                wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
+                charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]
             elif "Working Capital" in bs_T.columns:
-                 charts["working_capital_history"] = get_series("working capital")
+                charts["working_capital_history"] = get_series("working capital")
 
         # Refine Financials if info was missing
         if financials["working_capital"] is None and charts["working_capital_history"]:
              financials["working_capital"] = charts["working_capital_history"][-1]["value"]
 
+        # --- Scrape KnowTheFloat ---
+        know_the_float = scrape_knowthefloat(ticker)
 
         return {
             "profile": profile,
             "market": market,
             "financials": financials,
             "performance": perf,
-            "charts": charts
+            "charts": charts,
+            "daily_history": daily_history,
+            "know_the_float": know_the_float
         }
 
     except Exception as e:
