@@ -429,10 +429,6 @@ def _fetch_and_cache_month(
     
     cache_key = _get_cache_hash(y, m, path, tickers_month, valid_dates)
     cache_file = os.path.join(LOCAL_CACHE_DIR, f"{cache_key}.parquet")
-    print(f"[CACHE KEY] {y}-{m:02d}: key={cache_key}, file_exists={os.path.exists(cache_file)}")
-    print(f"[CACHE KEY] tickers sample: {sorted(tickers_month)[:3]}")
-    print(f"[CACHE KEY] dates sample: {sorted(valid_dates)[:3]}")
-
     if os.path.exists(cache_file):
         try:
             df = pd.read_parquet(cache_file)
@@ -518,7 +514,6 @@ def iter_intraday_groups_streamed(
     date_to: str,
 ):
     global _warned_raw_intraday_slow
-    print(f"[DEBUG] iter_intraday_streamed CALLED: empty={qualifying_df.empty}, shape={qualifying_df.shape}, date_from={date_from}, date_to={date_to}")
     if qualifying_df.empty:
         return
 
@@ -577,16 +572,13 @@ def iter_intraday_groups_streamed(
     # Sequential iteration to strictly keep correct chronological time series
     for future, y, m in futures:
         month_intraday = future.result()
-        print(f"[STREAM] month {y}-{m}: month_intraday shape={month_intraday.shape if month_intraday is not None else None}")
         if month_intraday is None or month_intraday.empty:
             continue
 
         grouped = month_intraday.groupby(["date", "ticker"])
         n_groups = len(grouped)
-        print(f"[STREAM] month {y}-{m}: n_groups={n_groups}")
         for (date, ticker), day_df in grouped:
             total_groups += 1
-            print(f"[STREAM] yielding group: ticker={ticker}, date={date}")
             yield (date, ticker), day_df
 
         del month_intraday, grouped

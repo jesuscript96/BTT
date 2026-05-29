@@ -34,8 +34,12 @@ df = con.execute(f"""
         close_1559, last_close, prev_close, eod_volume,
         transactions
     FROM read_parquet('{daily_path}', hive_partitioning=true)
-    WHERE gap_pct >= 10.0
-    AND gap_pct <= 500.0
+    WHERE (
+        (gap_pct >= 20.0 AND gap_pct <= 500.0)
+        OR
+        (pm_high > 0 AND prev_close > 0
+         AND ((pm_high - prev_close) / prev_close * 100) >= 20)
+    )
     AND open > 0.10
 """).fetchdf()
 t_elapsed = (pd.Timestamp.now() - t_start).total_seconds()

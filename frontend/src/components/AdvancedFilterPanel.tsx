@@ -24,7 +24,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
 }) => {
     // Local state for UI responsiveness, synced with parent
     const [ticker, setTicker] = React.useState(filters.ticker || "");
-    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "");
+    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "20");
     const [maxGap, setMaxGap] = React.useState(filters.max_gap_pct?.toString() || "");
     const [minVol, setMinVol] = React.useState(filters.min_rth_volume?.toString() || "");
     const [minPmVol, setMinPmVol] = React.useState(filters.min_pm_volume?.toString() || "5000000");
@@ -41,7 +41,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
     // Sync from props (when loading datasets)
     React.useEffect(() => {
         setTicker(filters.ticker || "");
-        setMinGap(filters.min_gap_pct?.toString() || "");
+        setMinGap(filters.min_gap_pct?.toString() || "20");
         setMaxGap(filters.max_gap_pct?.toString() || "");
         setMinVol(filters.min_rth_volume?.toString() || "");
         setMinPmVol(filters.min_pm_volume?.toString() || "");
@@ -122,7 +122,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
 
                     {/* Filter Boxes */}
                     <div style={{ display: 'flex', gap: 4 }}>
-                        <FilterInput label="Min Gap" value={minGap} onChange={(v: string) => { setMinGap(v); updateParent('min_gap_pct', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="Min Gap" value={minGap} onChange={(v: string) => { const n = parseFloat(v); const val = v && !isNaN(n) && n < 20 ? "20" : v; setMinGap(val); updateParent('min_gap_pct', val ? parseFloat(val) : undefined); }} />
                         <FilterInput label="Max Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
                         <FilterInput label="RTH Vol" value={minVol} onChange={(v: string) => { setMinVol(v); updateParent('min_rth_volume', v ? parseFloat(v) : undefined); }} />
                         <FilterInput label="PM Vol" value={minPmVol} onChange={(v: string) => { setMinPmVol(v); updateParent('min_pm_volume', v ? parseFloat(v) : undefined); }} />
