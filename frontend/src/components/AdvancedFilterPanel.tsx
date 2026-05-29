@@ -13,7 +13,7 @@ interface AdvancedFilterPanelProps {
     isLoading: boolean;
 }
 
-export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
+export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.memo(({
     filters,
     onFilterStateChange,
     onFilter,
@@ -24,7 +24,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
 }) => {
     // Local state for UI responsiveness, synced with parent
     const [ticker, setTicker] = React.useState(filters.ticker || "");
-    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "");
+    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "20");
     const [maxGap, setMaxGap] = React.useState(filters.max_gap_pct?.toString() || "");
     const [minVol, setMinVol] = React.useState(filters.min_rth_volume?.toString() || "");
     const [minPmVol, setMinPmVol] = React.useState(filters.min_pm_volume?.toString() || "5000000");
@@ -41,7 +41,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
     // Sync from props (when loading datasets)
     React.useEffect(() => {
         setTicker(filters.ticker || "");
-        setMinGap(filters.min_gap_pct?.toString() || "");
+        setMinGap(filters.min_gap_pct?.toString() || "20");
         setMaxGap(filters.max_gap_pct?.toString() || "");
         setMinVol(filters.min_rth_volume?.toString() || "");
         setMinPmVol(filters.min_pm_volume?.toString() || "");
@@ -65,11 +65,24 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
     };
 
     return (
-        <div className="bg-background/80 backdrop-blur-md border-b border-border sticky top-0 z-10 transition-all shadow-sm">
-            <div className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="relative">
-                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-zinc-400" />
+        <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: 'var(--color-ec-bg-sidebar)',
+            borderBottom: '0.5px solid var(--color-ec-border)',
+            padding: '0 16px',
+            minHeight: 44,
+        }}>
+            <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {/* Ticker Input */}
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        background: 'var(--color-ec-bg-sidebar)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5, padding: '0 10px', height: 30, width: 160,
+                    }}>
+                        <Search size={13} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
                         <input
                             type="text"
                             placeholder="Ticker..."
@@ -79,151 +92,144 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = ({
                                 setTicker(val);
                                 updateParent('ticker', val);
                             }}
-                            className="bg-muted/50 border border-border text-foreground pl-8 pr-3 py-2 rounded-lg text-sm w-32 focus:border-blue-500 outline-none shadow-sm transition-all placeholder:text-muted-foreground/50"
+                            style={{
+                                background: 'transparent', border: 'none', outline: 'none',
+                                fontFamily: "'General Sans', sans-serif", fontSize: 12, fontWeight: 400,
+                                color: 'var(--color-ec-text-primary)', width: '100%',
+                            }}
                         />
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    {/* Date Pickers */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
-                            type="date"
-                            value={startDate}
-                            onChange={(e) => {
-                                setStartDate(e.target.value);
-                                updateParent('start_date', e.target.value);
-                            }}
+                            type="date" value={startDate}
+                            onChange={(e) => { setStartDate(e.target.value); updateParent('start_date', e.target.value); }}
                             title="Start Date"
-                            className="bg-muted/50 border border-border text-foreground px-2 py-2 rounded-lg text-sm focus:border-blue-500 outline-none shadow-sm transition-all w-32 [color-scheme:dark]"
+                            style={{ background: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 5, padding: '0 8px', height: 30, fontFamily: "'General Sans', sans-serif", fontSize: 12, color: 'var(--color-ec-text-primary)', outline: 'none', width: 110, colorScheme: 'dark' }}
                         />
-                        <span className="text-muted-foreground/30">-</span>
+                        <span style={{ color: 'var(--color-ec-text-muted)', fontSize: 12, padding: '0 2px' }}>—</span>
                         <input
-                            type="date"
-                            value={endDate}
-                            onChange={(e) => {
-                                setEndDate(e.target.value);
-                                updateParent('end_date', e.target.value);
-                            }}
+                            type="date" value={endDate}
+                            onChange={(e) => { setEndDate(e.target.value); updateParent('end_date', e.target.value); }}
                             title="End Date"
-                            className="bg-muted/50 border border-border text-foreground px-2 py-2 rounded-lg text-sm focus:border-blue-500 outline-none shadow-sm transition-all w-32 [color-scheme:dark]"
+                            style={{ background: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 5, padding: '0 8px', height: 30, fontFamily: "'General Sans', sans-serif", fontSize: 12, color: 'var(--color-ec-text-primary)', outline: 'none', width: 110, colorScheme: 'dark' }}
                         />
                     </div>
 
-                    <div className="h-6 w-px bg-border" />
+                    {/* Divider */}
+                    <div style={{ width: '0.5px', height: 20, background: 'var(--color-ec-border)', margin: '0 4px', flexShrink: 0 }} />
 
-                    <div className="flex gap-2">
-                        <FilterInput label="Min Gap" value={minGap} onChange={(v: string) => {
-                            setMinGap(v);
-                            updateParent('min_gap_pct', v ? parseFloat(v) : undefined);
-                        }} />
-                        <FilterInput label="Max Gap" value={maxGap} onChange={(v: string) => {
-                            setMaxGap(v);
-                            updateParent('max_gap_pct', v ? parseFloat(v) : undefined);
-                        }} />
-                        <FilterInput label="RTH Vol" value={minVol} onChange={(v: string) => {
-                            setMinVol(v);
-                            updateParent('min_rth_volume', v ? parseFloat(v) : undefined);
-                        }} />
-                        <FilterInput label="PM Vol" value={minPmVol} onChange={(v: string) => {
-                            setMinPmVol(v);
-                            updateParent('min_pm_volume', v ? parseFloat(v) : undefined);
-                        }} />
+                    {/* Filter Boxes */}
+                    <div style={{ display: 'flex', gap: 4 }}>
+                        <FilterInput label="Min Gap" value={minGap} onChange={(v: string) => { const n = parseFloat(v); const val = v && !isNaN(n) && n < 20 ? "20" : v; setMinGap(val); updateParent('min_gap_pct', val ? parseFloat(val) : undefined); }} />
+                        <FilterInput label="Max Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="RTH Vol" value={minVol} onChange={(v: string) => { setMinVol(v); updateParent('min_rth_volume', v ? parseFloat(v) : undefined); }} />
+                        <FilterInput label="PM Vol" value={minPmVol} onChange={(v: string) => { setMinPmVol(v); updateParent('min_pm_volume', v ? parseFloat(v) : undefined); }} />
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {/* Chevron Icon Button */}
                     <button
                         onClick={() => setIsExpanded(!isExpanded)}
-                        className="p-2 text-zinc-400 hover:text-zinc-600 transition-colors"
+                        style={{
+                            height: 30, width: 30, padding: 0,
+                            background: 'var(--color-ec-bg-surface)',
+                            border: '0.5px solid var(--color-ec-border)', borderRadius: 5,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: 'var(--color-ec-text-secondary)', cursor: 'pointer',
+                        }}
                     >
-                        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        {isExpanded ? <ChevronUp size={14} strokeWidth={1.5} /> : <ChevronDown size={14} strokeWidth={1.5} />}
                     </button>
+                    {/* Primary Button */}
                     <button
-                        onClick={handleApply}
-                        disabled={isLoading}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-black tracking-tight transition-all flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50"
+                        onClick={handleApply} disabled={isLoading}
+                        style={{
+                            height: 30, padding: '0 14px',
+                            background: 'var(--color-ec-copper)',
+                            color: 'var(--color-ec-copper-text)', border: 'none', borderRadius: 5,
+                            fontFamily: "'General Sans', sans-serif", fontSize: 11, fontWeight: 700,
+                            letterSpacing: '1.2px', textTransform: 'uppercase', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap',
+                        }}
                     >
-                        {isLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Filter className="h-4 w-4" />}
+                        {isLoading ? <RefreshCw size={14} strokeWidth={1.5} className="animate-spin" /> : <Filter size={14} strokeWidth={1.5} />}
                         Run Scan
                     </button>
-                    <button
-                        onClick={onLoadDataset}
-                        className="bg-card hover:bg-muted text-muted-foreground px-4 py-2 rounded-lg text-sm font-bold border border-border shadow-sm transition-all"
-                        title="Load dataset"
-                    >
-                        <RefreshCw className="h-4 w-4" />
-                    </button>
-                    <button
-                        onClick={onSaveDataset}
-                        className="bg-card hover:bg-muted text-muted-foreground px-4 py-2 rounded-lg text-sm font-bold border border-border shadow-sm transition-all flex items-center gap-2"
-                        title="Save dataset"
-                    >
-                        <Download className="h-4 w-4 rotate-180" />
-                        Save Dataset
-                    </button>
-                    <button
-                        onClick={onExport}
-                        className="bg-card hover:bg-muted text-muted-foreground px-4 py-2 rounded-lg text-sm font-bold border border-border shadow-sm transition-all"
-                        title="Export CSV"
-                    >
-                        <Download className="h-4 w-4" />
-                    </button>
+                    {/* Secondary Buttons */}
+                    <SecondaryButton onClick={onLoadDataset} title="Load dataset">
+                        <RefreshCw size={14} strokeWidth={1.5} />
+                    </SecondaryButton>
+                    <SecondaryButton onClick={onSaveDataset} title="Save dataset">
+                        <Download size={14} strokeWidth={1.5} style={{ transform: 'rotate(180deg)' }} />
+                        <span>Save</span>
+                    </SecondaryButton>
+                    <SecondaryButton onClick={onExport} title="Export CSV">
+                        <Download size={14} strokeWidth={1.5} />
+                    </SecondaryButton>
                 </div>
             </div>
-
-            {/* {isExpanded && (
-                <div className="px-4 pb-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 border-t border-border pt-4">
-                    <CategoryGroup title="Returns">
-                        <FilterInput label="M15 Ret %" value={m15Ret} onChange={(v: string) => {
-                            setM15Ret(v);
-                            updateParent('min_m15_ret_pct', v ? parseFloat(v) : undefined);
-                        }} />
-                        <FilterInput label="Day Ret %" value={dayRet} onChange={(v: string) => {
-                            setDayRet(v);
-                            updateParent('min_rth_run_pct', v ? parseFloat(v) : undefined);
-                        }} />
-                    </CategoryGroup>
-                    <CategoryGroup title="Volatility">
-                        <FilterInput label="High Spike %" value={highSpike} onChange={(v: string) => {
-                            setHighSpike(v);
-                            updateParent('min_high_spike_pct', v ? parseFloat(v) : undefined);
-                        }} />
-                        <FilterInput label="Low Spike %" value={lowSpike} onChange={(v: string) => {
-                            setLowSpike(v);
-                            updateParent('min_low_spike_pct', v ? parseFloat(v) : undefined);
-                        }} />
-                    </CategoryGroup>
-                    <CategoryGroup title="Time">
-                        <FilterInput label="HOD After" value={hodAfter} onChange={(v: string) => {
-                            setHodAfter(v);
-                            updateParent('hod_after', v || undefined);
-                        }} />
-                        <FilterInput label="LOD Before" value={lodBefore} onChange={(v: string) => {
-                            setLodBefore(v);
-                            updateParent('lod_before', v || undefined);
-                        }} />
-                    </CategoryGroup>
-                </div>
-            )} */}
         </div>
     );
-};
+});
+
+const SecondaryButton = ({ onClick, title, children }: any) => (
+    <button
+        onClick={onClick}
+        title={title || ''}
+        style={{
+            height: 30,
+            padding: '0 10px',
+            background: 'var(--color-ec-bg-surface)',
+            border: '0.5px solid var(--color-ec-border)',
+            borderRadius: 5,
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: '1.2px',
+            textTransform: 'uppercase',
+            color: 'var(--color-ec-text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 5,
+        }}
+    >
+        {children}
+    </button>
+);
 
 const FilterInput = ({ label, value, checked, onChange, isCheck = false }: any) => (
-    <div className="flex flex-col gap-1">
-        <span className="text-[10px] text-zinc-400 uppercase font-black tracking-widest">{label}</span>
+    <div style={{
+        display: 'flex', flexDirection: 'column', justifyContent: 'center',
+        gap: 1, paddingLeft: 10,
+        borderLeft: '0.5px solid var(--color-ec-border)',
+        height: 30,
+    }}>
+        <span style={{
+            fontFamily: "'General Sans', sans-serif", fontSize: 9, fontWeight: 700,
+            textTransform: 'uppercase', letterSpacing: 2,
+            color: 'var(--color-ec-text-muted)', lineHeight: 1,
+        }}>
+            {label}
+        </span>
         {isCheck ? (
-            <input
-                type="checkbox"
-                checked={checked}
-                onChange={(e) => onChange(e.target.checked)}
-                className="h-4 w-4 rounded border-border bg-muted text-blue-600 focus:ring-blue-500 cursor-pointer accent-blue-600"
-            />
+            <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-4 w-4 rounded cursor-pointer" />
         ) : (
             <input
                 type="text"
-                placeholder="-"
+                placeholder={value ? undefined : '—'}
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
-                className="bg-muted/50 border border-border text-foreground px-2 py-1 rounded text-xs w-20 focus:border-blue-500 outline-none shadow-inner placeholder:text-muted-foreground/30 font-bold tabular-nums"
+                style={{
+                    background: 'transparent', border: 'none', outline: 'none',
+                    fontFamily: "'General Sans', sans-serif", fontSize: 13, fontWeight: 600,
+                    letterSpacing: '-0.3px', color: 'var(--color-ec-text-primary)',
+                    width: 80, padding: 0, lineHeight: 1,
+                }}
             />
         )}
     </div>

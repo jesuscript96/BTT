@@ -3,8 +3,6 @@
 import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
-  LineChart,
-  ScatterChart,
   Activity
 } from 'lucide-react';
 import { AdvancedFilterPanel } from "@/components/AdvancedFilterPanel";
@@ -12,11 +10,9 @@ import { Dashboard } from "@/components/Dashboard";
 import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
-import RollingAnalysisDashboard from "@/components/RollingAnalysisDashboard";
-import RegressionAnalysis from "@/components/RegressionAnalysis";
 import TickerAnalysis from "@/components/TickerAnalysis";
 
-import { API_URL } from "@/config/constants";
+import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
 
 // Custom debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -31,10 +27,10 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'screener' | 'rolling' | 'regression' | 'ticker'>('screener');
+  const [activeTab, setActiveTab] = useState<'screener' | 'ticker'>('screener');
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
-  const [aggregateSeries, setAggregateSeries] = useState<any[]>([]);
+  const [aggregateSeries, setAggregateSeries] = useState<any[] | null>([]);
   const [isLoading, setIsLoading] = useState(false);
   // Initialize filters with defaults matching the panel UI
   const [currentFilters, setCurrentFilters] = useState<any>({
@@ -50,8 +46,12 @@ export default function Home() {
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [filterPanelKey, setFilterPanelKey] = useState(0);
 
-  // Debounce filter updates to prevent excessive re-renders/fetches
-  const debouncedFilters = useDebounce(currentFilters, 400);
+  const handleFilterStateChange = React.useCallback((newFilters: any) => {
+    setCurrentFilters(newFilters);
+    setData([]);
+    setStats(null);
+    setAggregateSeries([]);
+  }, []);
   const abortControllerRef = React.useRef<AbortController | null>(null);
 
 
@@ -161,7 +161,7 @@ export default function Home() {
 
     try {
       // 1. FAST FETCH: Get Screener Data (Grid/Sidebar) - Critical Path
-      const result = await fetch(`${API_URL}/market/screener?${queryParams.toString()}`, { signal: controller.signal }).then(r => r.json());
+      const result = await getScreener(queryParams, controller.signal) as any;
 
       if (Array.isArray(result)) {
         setData(result);
@@ -170,14 +170,14 @@ export default function Home() {
         setData(result.records || []);
         setStats(result.stats || null);
       }
-      setIsLoading(false); // UI Interactive immediately
+      setIsLoading(false);
+      setAggregateSeries(null); // null = loading, prevents individual ticker mode
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
       setIsAggregateLoading(true);
-      fetch(`${API_URL}/market/aggregate/intraday?${queryParams.toString()}`, { signal: controller.signal })
-        .then(r => r.json())
+      getAggregateIntraday(queryParams, controller.signal)
         .then(aggregateResult => {
-          setAggregateSeries(Array.isArray(aggregateResult) ? aggregateResult : []);
+          setAggregateSeries(Array.isArray(aggregateResult) && aggregateResult.length > 0 ? aggregateResult : []);
         })
         .catch(err => {
           if (err.name !== 'AbortError') console.error("Error fetching aggregate data:", err);
@@ -196,22 +196,14 @@ export default function Home() {
 
   const handleExport = async () => {
     try {
-      const res = await fetch(`${API_URL}/export`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...currentFilters, rules: activeRules }),
-      });
-
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `export_${new Date().toISOString()}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
+      const blob = await exportData({ ...currentFilters, rules: activeRules });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export_${new Date().toISOString()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     } catch (error) {
       console.error("Export failed:", error);
       alert("Export failed");
@@ -233,11 +225,13 @@ export default function Home() {
   }, [activeRules]);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div style={{ display: 'flex', flexDirection: 'column', 
+                  height: '100vh', overflow: 'hidden',
+                  backgroundColor: 'var(--color-ec-bg-base)' }}>
       <AdvancedFilterPanel
         key={filterPanelKey}
         filters={currentFilters}
-        onFilterStateChange={setCurrentFilters}
+        onFilterStateChange={handleFilterStateChange}
         onFilter={(newFilters) => fetchData(newFilters, activeRules)}
         onExport={handleExport}
         onSaveDataset={() => setIsSaveModalOpen(true)}
@@ -246,80 +240,145 @@ export default function Home() {
       />
 
       {/* Active Filters Bar */}
-      <div className="bg-muted/50 px-6 py-2 border-b border-border flex items-center gap-4 shadow-sm z-10 transition-colors">
+      <div style={{
+        backgroundColor: 'var(--color-ec-bg-sidebar)',
+        borderBottom: '0.5px solid var(--color-ec-border)',
+        padding: '6px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        minHeight: '32px'
+      }}>
         <button
           onClick={() => setIsFilterBuilderOpen(!isFilterBuilderOpen)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-black uppercase tracking-tighter transition-all shadow-md active:scale-95 shrink-0"
+          style={{
+            background: 'var(--color-ec-copper)',
+            color: 'var(--color-ec-copper-text)',
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '1.5px',
+            textTransform: 'uppercase',
+            padding: '2px 6px',
+            borderRadius: 3,
+            border: 'none',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
         >
-          <div className="w-1.5 h-1.5 rounded-full bg-white" />
           FILTROS
         </button>
 
-        <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar border-l border-border pl-4">
-          <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mr-2 whitespace-nowrap">Advanced Rules:</span>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, overflowX: 'auto', borderLeft: '0.5px solid var(--color-ec-border)', paddingLeft: 16 }}>
+          <span style={{
+            fontSize: 9,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '1.5px',
+            color: 'var(--color-ec-text-muted)',
+            whiteSpace: 'nowrap',
+          }}>Advanced Rules:</span>
           {activeRules.map(rule => (
-            <div key={rule.id} className="bg-card border border-border px-3 py-1 rounded-full flex items-center gap-2 group hover:border-blue-400 transition-all cursor-default shadow-sm shrink-0">
-              <span className="text-[10px] font-bold text-foreground/80">{rule.metric} {rule.operator} {rule.value}</span>
+            <div key={rule.id} style={{
+              background: 'var(--color-ec-bg-surface)',
+              border: '0.5px solid var(--color-ec-border)',
+              padding: '2px 10px',
+              borderRadius: 4,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}>
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{rule.metric} {rule.operator} {rule.value}</span>
               <button
                 onClick={() => setActiveRules(prev => prev.filter(r => r.id !== rule.id))}
-                className="opacity-40 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-secondary)', padding: 0, display: 'flex' }}
               >
                 <XIcon className="h-3 w-3" />
               </button>
             </div>
           ))}
-          {activeRules.length === 0 && <span className="text-[10px] italic text-muted-foreground/60">No active advanced rules</span>}
+          {activeRules.length === 0 && (
+            <span style={{
+              fontSize: 11,
+              fontWeight: 400,
+              color: 'var(--color-ec-text-secondary)',
+            }}>No active advanced rules</span>
+          )}
         </div>
       </div>
 
       {/* Tab Navigation */}
-      <div className="px-6 pt-4 border-b border-border flex gap-6 overflow-x-auto">
+      <div style={{
+        backgroundColor: 'var(--color-ec-bg-sidebar)',
+        borderBottom: '0.5px solid var(--color-ec-border)',
+        padding: '0 20px',
+        display: 'flex',
+        alignItems: 'flex-end',
+        gap: 0,
+        minHeight: '38px'
+      }}>
         <button
           onClick={() => setActiveTab('screener')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'screener'
-            ? 'border-primary text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
+          style={{
+            color: activeTab === 'screener' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+            borderBottom: activeTab === 'screener' ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
+            padding: '0 14px',
+            height: 38,
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 12,
+            fontWeight: 600,
+            background: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            whiteSpace: 'nowrap',
+          }}
         >
-          <LayoutDashboard className="w-4 h-4" />
+          <LayoutDashboard size={14} strokeWidth={1.5} />
           Screener & Summary
         </button>
         <button
-          onClick={() => setActiveTab('rolling')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'rolling'
-            ? 'border-primary text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <LineChart className="w-4 h-4" />
-          Rolling Analysis
-        </button>
-        <button
-          onClick={() => setActiveTab('regression')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'regression'
-            ? 'border-primary text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-        >
-          <ScatterChart className="w-4 h-4" />
-          Regression Analysis
-        </button>
-        <button
           onClick={() => setActiveTab('ticker')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === 'ticker'
-            ? 'border-primary text-foreground'
-            : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
+          style={{
+            color: activeTab === 'ticker' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+            borderBottom: activeTab === 'ticker' ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
+            padding: '0 14px',
+            height: 38,
+            fontFamily: "'General Sans', sans-serif",
+            fontSize: 12,
+            fontWeight: 600,
+            background: 'transparent',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            whiteSpace: 'nowrap',
+          }}
         >
-          <Activity className="w-4 h-4" />
+          <Activity size={14} strokeWidth={1.5} />
           Ticker Analysis
         </button>
       </div>
 
-      <div className="flex-1 overflow-auto bg-background scrollbar-thin scrollbar-track-muted/50 scrollbar-thumb-muted relative transition-colors duration-300">
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        backgroundColor: 'var(--color-ec-bg-base)'
+      }}>
 
         {activeTab === 'screener' && (
-          <div className="flex flex-col gap-6 p-6 min-h-screen">
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+            padding: '20px',
+            minHeight: '100%',
+            backgroundColor: 'var(--color-ec-bg-base)'
+          }}>
             <FilterBuilder
               isOpen={isFilterBuilderOpen}
               onClose={() => setIsFilterBuilderOpen(false)}
@@ -345,34 +404,19 @@ export default function Home() {
             {/* Dashboard & DataGrid Stack */}
             <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
 
-            <div className="flex-1 min-h-[500px] bg-card rounded-xl border border-border shadow-sm overflow-hidden">
+            <div style={{
+              flex: 1,
+              minHeight: 500,
+              background: 'var(--color-ec-bg-surface)',
+              borderRadius: 7,
+              border: '0.5px solid var(--color-ec-border)',
+              overflow: 'hidden'
+            }}>
               <DataGrid
-                data={data}
+                data={React.useMemo(() => data, [data])}
                 isLoading={isLoading}
               />
             </div>
-          </div>
-        )}
-
-        {activeTab === 'rolling' && (
-          <div className="p-6 h-full">
-            {currentFilters.ticker ? (
-              <RollingAnalysisDashboard
-                ticker={currentFilters.ticker}
-                startDate={currentFilters.start_date}
-                endDate={currentFilters.end_date}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-64 text-muted-foreground border border-dashed border-border rounded-xl">
-                <p>Please select a Ticker in the Filter Panel to view Rolling Analysis.</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'regression' && (
-          <div className="p-6 h-full">
-            <RegressionAnalysis data={data} />
           </div>
         )}
 

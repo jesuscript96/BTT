@@ -5,7 +5,7 @@ import {
     XAxis, YAxis, Tooltip, ResponsiveContainer,
     Area, CartesianGrid, ReferenceLine, ComposedChart, Line, ReferenceArea
 } from "recharts";
-import { API_URL } from "@/config/constants";
+import { getTickerIntraday } from "@/lib/api";
 import { NewsFeed } from "./NewsFeed";
 
 interface DistributionItem {
@@ -49,7 +49,7 @@ interface TimeSeriesItem {
 interface DashboardProps {
     stats: DashboardStats;
     data: unknown[];
-    aggregateSeries?: TimeSeriesItem[];
+    aggregateSeries?: TimeSeriesItem[] | null;
     isLoadingAggregate?: boolean;
 }
 
@@ -60,14 +60,14 @@ const SidebarMetricRow = ({ label, value, suffix = "%" }: { label: string; value
     const safeValue = value ?? 0;
     const isNegative = safeValue < 0;
     const formatted = suffix === "%" ? `${safeValue.toFixed(2)}%` : `${safeValue.toFixed(2)}`;
-    const badgeColor = isNegative ? "bg-red-500/15 text-red-500" : "bg-emerald-500/15 text-emerald-500";
+    const badgeColor = isNegative ? "bg-ec-loss/15 text-ec-loss" : "bg-ec-profit/15 text-ec-profit";
     const badgeText = isNegative ? `${safeValue.toFixed(1)}%` : `+${safeValue.toFixed(1)}%`;
 
     return (
         <div className="flex items-center justify-between py-1.5 border-b border-border/20">
-            <div className="flex flex-col">
-                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest leading-none">{label}</span>
-                <span className={`text-sm font-black tracking-tight leading-tight ${isNegative ? 'text-red-500' : 'text-foreground'}`}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: 1.5 }}>{label}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: isNegative ? 'var(--color-ec-loss)' : 'var(--color-ec-text-high)' }}>
                     {formatted}
                 </span>
             </div>
@@ -94,12 +94,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 
     // Empty State: Show News Feed
     if (!stats || !stats.avg) return (
-        <div className="p-6 bg-background min-h-screen font-sans transition-colors duration-300">
-            <div className="flex flex-col h-full gap-6">
-                <div className="flex items-center justify-between border-b border-border/40 pb-4">
-                    <div className="flex flex-col gap-1">
-                        <h1 className="text-xl font-black tracking-tight text-foreground">MARKET INTELLIGENCE</h1>
-                        <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-widest">
+        <div style={{ minHeight: '100%', fontFamily: "'General Sans', sans-serif" }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 24 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '0.5px solid var(--color-ec-border)', padding: '20px 0 16px 0' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <h1 style={{
+                            fontFamily: "'Fraunces', serif",
+                            fontSize: 32,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-high)',
+                            letterSpacing: '-0.5px',
+                            marginBottom: 4,
+                        }}>MARKET INTELLIGENCE</h1>
+                        <span style={{
+                            fontFamily: "'General Sans', sans-serif",
+                            fontSize: 9,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: 2,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>
                             WAITING FOR DATA... WHILE YOU WAIT, READ THE LATEST
                         </span>
                     </div>
@@ -112,27 +126,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
     );
 
     return (
-        <div className="p-6 bg-background min-h-screen font-sans transition-colors duration-300">
+        <div style={{ minHeight: '100%', fontFamily: "'General Sans', sans-serif" }}>
             {/* Top Row: Sidebar Metrics & Main Chart */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-0">
 
                 {/* ═══ LEFT COLUMN: Compact 2-Col Metrics ═══ */}
-                <div className="md:col-span-3 border-r border-border/40 pr-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)' }}>
+                <div className="md:col-span-3 pr-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 48px)', borderRight: '0.5px solid var(--color-ec-border)' }}>
                     {/* Header: Sample + Mode Selector */}
                     <div className="flex items-center justify-between py-2 border-b border-border/40 mb-1">
                         <div className="flex flex-col">
                             <div className="flex items-center gap-1.5">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                                <span className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">Total Sample</span>
+                                <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></div>
+                                <span className="text-[8px] font-bold text-[var(--color-ec-text-muted)] uppercase tracking-widest">Total Sample</span>
                             </div>
-                            <span className="text-base font-black text-foreground tracking-tight">{stats.count} RECORDS</span>
+                            <span className="text-base font-bold text-[var(--color-ec-text-high)] tracking-tight">{stats.count} RECORDS</span>
                         </div>
                         <div className="flex gap-1.5 text-[8px] font-black uppercase tracking-widest items-center">
                             {(['avg', 'p25', 'p50', 'p75'] as const).map((m) => (
                                 <span
                                     key={m}
                                     onClick={() => setMode(m)}
-                                    className={`cursor-pointer transition-all ${mode === m ? 'text-blue-500 bg-blue-500/10 px-1.5 py-0.5 rounded' : 'text-muted-foreground/50 hover:text-foreground'}`}
+                                    className={`cursor-pointer transition-all`}
+                                    style={{
+                                        color: mode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                                        background: mode === m ? 'color-mix(in srgb, var(--color-ec-copper) 10%, transparent)' : 'transparent',
+                                        padding: mode === m ? '1.5px 6px' : undefined,
+                                        borderRadius: mode === m ? 3 : undefined,
+                                        fontSize: 8,
+                                        fontWeight: 700,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: 1.5,
+                                    }}
                                 >
                                     {m === 'avg' ? 'AVG' : m === 'p25' ? '25th' : m === 'p50' ? 'MED' : '75th'}
                                 </span>
@@ -222,7 +246,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 };
 
 // ─── Intraday Chart (unchanged logic) ─────────────────────────────────
-const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[], isLoadingAggregate?: boolean }) => {
+const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[] | null, isLoadingAggregate?: boolean }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");
@@ -234,13 +258,17 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
         post: false
     });
 
-    const isAggregate = aggregateSeries && aggregateSeries.length > 0;
+    const isAggregate = React.useMemo(
+        () => !!(aggregateSeries && aggregateSeries.length > 0),
+        [aggregateSeries]
+    );
 
     React.useEffect(() => {
+        if (aggregateSeries === null) return; // still loading aggregate
         if (!isAggregate && data && data.length > 0) {
             setActiveTicker(data[0].ticker);
         }
-    }, [data, isAggregate]);
+    }, [data, isAggregate, aggregateSeries]);
 
     React.useEffect(() => {
         if (isAggregate) {
@@ -251,15 +279,10 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
 
         if (!activeTicker) return;
         setLoading(true);
-        let url = `${API_URL}/market/ticker/${activeTicker}/intraday`;
-        if (data && data[0] && data[0].date) {
-            url += `?trade_date=${data[0].date}`;
-        }
-
-        fetch(url)
-            .then(res => res.json())
-            .then(resData => {
-                const parsed = resData.map((d: any) => ({
+        getTickerIntraday(activeTicker, data && data[0] && data[0].date ? data[0].date : undefined)
+            .then((resData: unknown) => {
+                const arr = resData as any[];
+                const parsed = arr.map((d: any) => ({
                     ...d,
                     time: d.timestamp.split(' ')[1].substring(0, 5),
                     timeShort: d.timestamp.split(' ')[1].substring(0, 5)
@@ -336,26 +359,26 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                     <div className="flex items-center gap-4">
                         {isAggregate ? (
                             <>
-                                <h3 className="text-lg font-black text-foreground tracking-tight">CHANGE VS. OPEN PRICE</h3>
-                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">({data.length} EXTENSIONS AGGREGATE)</span>
+                                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, color: 'var(--color-ec-text-high)', letterSpacing: '-0.3px' }}>CHANGE VS. PM HIGH</h3>
+                                <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">(AGGREGATE)</span>
                             </>
                         ) : (
                             <>
-                                <h3 className="text-lg font-black text-foreground tracking-tight">{activeTicker}</h3>
+                                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 15, fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{activeTicker}</h3>
                                 <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wider">INTRADAY ACTION</span>
                             </>
                         )}
                     </div>
-                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-muted-foreground">
+                    <div className="flex items-center gap-4 text-[10px] font-bold uppercase text-[var(--color-ec-text-muted)]">
                         {isAggregate ? (
                             <>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> AVERAGE</div>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-blue-400 border-dashed" /> MEDIAN</div>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2563eb]" /> AVERAGE</div>
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border border-[#60a5fa] border-dashed" /> MEDIAN</div>
                             </>
                         ) : (
                             <>
-                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-600" /> Price</div>
-                                {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-500" /> PM High</div>}
+                                <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#2563eb]" /> Price</div>
+                                {pmHigh > 0 && <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#a855f7]" /> PM High</div>}
                             </>
                         )}
                     </div>
@@ -373,8 +396,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, pre: e.target.checked }))}
                                     className="hidden"
                                 />
-                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.pre ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
-                                <span className={`text-[10px] font-bold uppercase ${sessions.pre ? 'text-foreground' : 'text-muted-foreground'}`}>Pre</span>
+                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.pre ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.pre ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.pre ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Pre</span>
                             </label>
                             <label className="flex items-center gap-2 cursor-pointer group">
                                 <input
@@ -383,8 +406,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, market: e.target.checked }))}
                                     className="hidden"
                                 />
-                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.market ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
-                                <span className={`text-[10px] font-bold uppercase ${sessions.market ? 'text-foreground' : 'text-muted-foreground'}`}>Market</span>
+                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.market ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.market ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.market ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Market</span>
                             </label>
                             <label className="flex items-center gap-2 cursor-pointer group">
                                 <input
@@ -393,8 +416,8 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, post: e.target.checked }))}
                                     className="hidden"
                                 />
-                                <div className={`w-3 h-3 rounded-sm border transition-all ${sessions.post ? 'bg-blue-600 border-blue-600' : 'border-muted-foreground/30 group-hover:border-muted-foreground'}`} />
-                                <span className={`text-[10px] font-bold uppercase ${sessions.post ? 'text-foreground' : 'text-muted-foreground'}`}>Post</span>
+                                <div style={{ width: 12, height: 12, borderRadius: 2, border: '0.5px solid', borderColor: sessions.post ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.post ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.post ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Post</span>
                             </label>
                         </div>
                     </div>
@@ -407,7 +430,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                             max="20"
                             value={smoothing}
                             onChange={(e) => setSmoothing(parseInt(e.target.value))}
-                            className="w-24 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-blue-600"
+                            className="w-24 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-[var(--color-ec-copper)]"
                         />
                         <span className="text-[10px] font-bold text-foreground w-4">{smoothing}</span>
                     </div>
@@ -417,7 +440,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
             <div className="flex-1 min-h-0 relative">
                 {isChartLoading ? (
                     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-background/50 backdrop-blur-sm">
-                        <div className="w-8 h-8 border-4 border-blue-500 border-solid rounded-full border-t-transparent animate-spin mb-4"></div>
+                        <div className="w-8 h-8 border-4 border-[var(--color-ec-copper)] border-solid rounded-full border-t-transparent animate-spin mb-4"></div>
                         <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-widest">
                             {isLoadingAggregate ? "Aggregating Intraday Data..." : "Loading Chart..."}
                         </div>
@@ -449,7 +472,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                 contentStyle={{
                                     backgroundColor: 'var(--card)',
                                     border: '1px solid var(--border)',
-                                    borderRadius: '8px',
+                                    borderRadius: '5px',
                                     fontSize: '11px',
                                     color: 'var(--foreground)'
                                 }}
@@ -464,7 +487,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                 <ReferenceArea x1="09:30" x2="16:00" fill="currentColor" fillOpacity={0.01} className="text-blue-500" />
                             )}
                             {sessions.post && (
-                                <ReferenceArea x1="16:00" x2="20:00" fill="currentColor" fillOpacity={0.03} className="text-orange-500" />
+                                <ReferenceArea x1="16:00" x2="20:00" fill="currentColor" fillOpacity={0.03} className="text-[var(--color-ec-copper)]" />
                             )}
 
                             {isAggregate ? (

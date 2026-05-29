@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Strategy } from '@/types/strategy';
 import { Loader2, Trash2 } from 'lucide-react';
-import { API_URL } from '@/config/constants';
+import { getStrategies, deleteStrategy } from '@/lib/api';
 
 interface Props {
     refreshTrigger?: number;
@@ -18,13 +18,8 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await fetch(`${API_URL}/strategies/`);
-            const data = await response.json().catch(() => []);
-            if (!response.ok) {
-                const msg = (data && typeof data.detail === "string") ? data.detail : "Failed to fetch strategies";
-                throw new Error(msg);
-            }
-            setStrategies(Array.isArray(data) ? data : []);
+            const data = await getStrategies();
+            setStrategies(data);
         } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";
             setError(message);
@@ -38,10 +33,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (!confirm('Are you sure you want to delete this strategy?')) return;
 
         try {
-            const response = await fetch(`${API_URL}/strategies/${id}`, {
-                method: 'DELETE'
-            });
-            if (!response.ok) throw new Error('Failed to delete');
+            await deleteStrategy(id);
             fetchStrategies(); // Refresh list
         } catch (err) {
             alert('Error deleting strategy');
@@ -55,14 +47,14 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
     if (loading) {
         return (
             <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
+                <Loader2 className="w-6 h-6 animate-spin text-ec-text-secondary" />
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-500 text-sm font-bold">
+            <div className="bg-ec-loss/10 border-ec-loss/20 rounded-xl p-4 text-ec-loss text-sm font-bold">
                 Error loading strategies: {error}
             </div>
         );
@@ -118,7 +110,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
                                 <td className="px-6 py-4 text-right">
                                     <button
                                         onClick={() => strategy.id && handleDelete(strategy.id)}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black text-red-500/60 uppercase tracking-widest hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-black text-ec-loss/60 hover:text-ec-loss hover:bg-ec-loss/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
                                     >
                                         <Trash2 className="w-3 h-3" />
                                         Delete

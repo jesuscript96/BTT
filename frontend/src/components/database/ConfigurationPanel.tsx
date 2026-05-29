@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Calendar, Play, Square, Save, FolderOpen } from 'lucide-react'
-import { API_URL } from '@/config/constants'
+import { getQueries } from '@/lib/api'
 
 interface ConfigurationPanelProps {
     config: {
@@ -33,9 +33,8 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
         let cancelled = false
         async function load() {
             try {
-                const res = await fetch(`${API_URL}/queries/`)
-                const data = await res.json().catch(() => [])
-                if (!cancelled) setSavedDatasets(Array.isArray(data) ? data : [])
+                const data = await getQueries()
+                if (!cancelled) setSavedDatasets(data)
             } catch (_) {
                 if (!cancelled) setSavedDatasets([])
             } finally {
@@ -53,25 +52,56 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
     }
 
     return (
-        <div className="p-6 space-y-6">
+        <div style={{ padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: 20 }}>
             {/* Header */}
             <div>
-                <h2 className="text-lg font-semibold text-foreground">Strategy Searcher</h2>
-                <p className="text-sm text-muted-foreground mt-1">Configure search parameters</p>
+                <h2 style={{
+                  fontFamily: 'var(--color-ec-serif)',
+                  fontSize: 18,
+                  fontWeight: 600,
+                  color: 'var(--color-ec-text-high)',
+                  letterSpacing: '-0.3px',
+                }}>Strategy Searcher</h2>
+                <p style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 10,
+                  fontWeight: 400,
+                  color: 'var(--color-ec-text-muted)',
+                  marginTop: 3,
+                }}>Configure search parameters</p>
             </div>
 
             {/* Mode & Space */}
-            <div className="space-y-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-foreground/80">
-                    <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label className="flex items-center gap-2" style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-ec-text-muted)',
+                }}>
+                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--color-ec-copper)' }}></span>
                     Mode & Space
                 </label>
 
-                <div className="space-y-2">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <select
                         value={config.mode}
                         onChange={(e) => onChange({ ...config, mode: e.target.value })}
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                        style={{
+                          width: '100%',
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 5,
+                          padding: '7px 10px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 12,
+                          fontWeight: 500,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                          cursor: 'pointer',
+                        }}
                     >
                         <option>Consecutive Red</option>
                         <option>Gap & Fade</option>
@@ -79,31 +109,64 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                         <option>High of Day Break</option>
                     </select>
 
+                    <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', margin: '4px 0' }} />
                     <div className="flex items-center gap-2">
                         <span className="text-sm text-muted-foreground">Consecutive red ==</span>
                         <input
                             type="number"
                             value={config.space}
                             onChange={(e) => onChange({ ...config, space: e.target.value })}
-                            className="w-20 px-3 py-2 bg-background border border-border rounded-lg text-sm text-center text-foreground focus:ring-2 focus:ring-blue-500 transition-colors"
+                            className="w-20 border"
+                            style={{
+                              backgroundColor: 'var(--color-ec-bg-elevated)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              borderRadius: 5,
+                              padding: '6px 8px',
+                              fontFamily: 'var(--color-ec-sans)',
+                              fontSize: 12,
+                              fontWeight: 500,
+                              color: 'var(--color-ec-text-primary)',
+                              outline: 'none',
+                              width: 60,
+                            }}
                             min="1"
                             max="10"
                         />
                     </div>
                 </div>
             </div>
+            <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', margin: '0 -12px' }} />
 
             {/* Dataset Selection */}
-            <div className="space-y-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-foreground/80">
-                    <span className="w-2 h-2 rounded-full bg-green-500"></span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label className="flex items-center gap-2" style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-ec-text-muted)',
+                }}>
+                    <span className="w-2 h-2 rounded-full bg-ec-profit"></span>
                     Dataset
                 </label>
 
                 <select
                     value={config.datasetId}
                     onChange={(e) => onChange({ ...config, datasetId: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-green-500 focus:border-transparent transition-colors"
+                    style={{
+                      width: '100%',
+                      backgroundColor: 'var(--color-ec-bg-elevated)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 5,
+                      padding: '7px 10px',
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 12,
+                      fontWeight: 500,
+                      color: 'var(--color-ec-text-primary)',
+                      outline: 'none',
+                      cursor: 'pointer',
+                    }}
                 >
                     <option value="">Select dataset...</option>
                     {datasetsLoading ? (
@@ -115,46 +178,119 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                     )}
                 </select>
             </div>
+            <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', margin: '0 -12px' }} />
 
             {/* Date Range */}
-            <div className="space-y-3">
-                <label className="text-sm font-medium text-foreground/80">Date Range</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-ec-text-muted)',
+                }}>Date Range</label>
 
-                <div className="space-y-2">
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">Start Date (In-Sample)</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label style={{
+                          display: 'block',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 9,
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.12em',
+                          color: 'var(--color-ec-text-muted)',
+                          marginBottom: 4,
+                        }}>Start Date (In-Sample)</label>
                         <div className="relative">
                             <input
                                 type="date"
                                 value={config.dateFrom}
                                 onChange={(e) => onChange({ ...config, dateFrom: e.target.value })}
-                                className="w-full px-3 py-2 pl-9 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-blue-500 transition-colors"
+                                className=""
+                                style={{
+                                  width: '100%',
+                                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                                  border: '0.5px solid var(--color-ec-border)',
+                                  borderRadius: 5,
+                                  padding: '6px 8px 6px 34px',
+                                  fontFamily: 'var(--color-ec-sans)',
+                                  fontSize: 11,
+                                  color: 'var(--color-ec-text-primary)',
+                                  outline: 'none',
+                                }}
                             />
                             <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
                         </div>
                     </div>
 
-                    <div>
-                        <label className="text-xs text-muted-foreground mb-1 block">End Date (Out-of-Sample)</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <label style={{
+                          display: 'block',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 9,
+                          fontWeight: 700,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.12em',
+                          color: 'var(--color-ec-text-muted)',
+                          marginBottom: 4,
+                        }}>End Date (Out-of-Sample)</label>
                         <div className="relative">
                             <input
                                 type="date"
                                 value={config.dateTo}
                                 onChange={(e) => onChange({ ...config, dateTo: e.target.value })}
-                                className="w-full px-3 py-2 pl-9 bg-background border border-border rounded-lg text-sm text-foreground focus:ring-2 focus:ring-blue-500 transition-colors"
+                                className=""
+                                style={{
+                                  width: '100%',
+                                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                                  border: '0.5px solid var(--color-ec-border)',
+                                  borderRadius: 5,
+                                  padding: '6px 8px 6px 34px',
+                                  fontFamily: 'var(--color-ec-sans)',
+                                  fontSize: 11,
+                                  color: 'var(--color-ec-text-primary)',
+                                  outline: 'none',
+                                }}
                             />
                             <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
                         </div>
                     </div>
                 </div>
             </div>
+            <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', margin: '0 -12px' }} />
 
             {/* Action Buttons */}
-            <div className="space-y-2 pt-4 border-t border-border">
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: 8,
+              paddingTop: 12,
+              borderTop: '0.5px solid var(--color-ec-border)',
+            }}>
                 <button
                     onClick={handleRunSearch}
                     disabled={isRunning}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-muted disabled:text-muted-foreground text-white rounded-lg font-medium transition-colors shadow-sm"
+                    className="w-full"
+                    style={{
+                      width: '100%',
+                      border: 'none',
+                      cursor: isRunning ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      letterSpacing: '1.2px',
+                      textTransform: 'uppercase',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      fontFamily: 'var(--color-ec-sans)',
+                      background: isRunning ? 'var(--color-ec-text-muted)' : 'var(--color-ec-copper)',
+                      color: isRunning ? 'var(--color-ec-text-secondary)' : 'var(--color-ec-copper-text)',
+                      borderRadius: 5,
+                      padding: '9px 16px',
+                    }}
                 >
                     {isRunning ? (
                         <>
@@ -169,12 +305,48 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                     )}
                 </button>
 
-                <div className="grid grid-cols-2 gap-2">
-                    <button className="flex items-center justify-center gap-2 px-3 py-2 border border-border bg-card hover:bg-muted rounded-lg text-sm font-medium text-foreground transition-colors">
+                <div style={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: '1fr 1fr', 
+                  gap: 8 
+                }}>
+                    <button style={{
+                      padding: '7px 12px',
+                      backgroundColor: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 5,
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '1.2px',
+                      color: 'var(--color-ec-text-secondary)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                    }}>
                         <Save className="w-4 h-4" />
                         Save Preset
                     </button>
-                    <button className="flex items-center justify-center gap-2 px-3 py-2 border border-border bg-card hover:bg-muted rounded-lg text-sm font-medium text-foreground transition-colors">
+                    <button style={{
+                      padding: '7px 12px',
+                      backgroundColor: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 5,
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '1.2px',
+                      color: 'var(--color-ec-text-secondary)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                    }}>
                         <FolderOpen className="w-4 h-4" />
                         Load Preset
                     </button>
@@ -182,12 +354,30 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
             </div>
 
             {/* Progress Monitor */}
-            <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg space-y-2">
-                <div className="text-sm font-medium text-blue-500">Search Progress</div>
-                <div className="text-xs text-blue-500/80">
+            <div style={{
+              backgroundColor: 'color-mix(in srgb, var(--color-ec-copper) 10%, transparent)',
+              border: '0.5px solid color-mix(in srgb, var(--color-ec-copper) 25%, transparent)',
+              borderRadius: 5,
+              padding: '10px 12px',
+            }}>
+                <div style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: 'var(--color-ec-copper)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                }}>Search Progress</div>
+                <div style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 10,
+                  fontWeight: 400,
+                  color: 'var(--color-ec-text-muted)',
+                  marginTop: 3,
+                }}>
                     {isRunning ? (
                         <span className="flex items-center gap-2">
-                            <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                            <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: 'var(--color-ec-copper)' }}></span>
                             Searching strategies...
                         </span>
                     ) : (

@@ -33,23 +33,23 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
     })
 
     const SortIcon = ({ field }: { field: SortField }) => {
-        if (sortField !== field) return <ArrowUpDown className="w-4 h-4 text-gray-400" />
+        if (sortField !== field) return <ArrowUpDown className="w-4 h-4" style={{ color: 'var(--color-ec-text-muted)' }} />
         return sortDirection === 'asc' ?
-            <ArrowUp className="w-4 h-4 text-blue-600" /> :
-            <ArrowDown className="w-4 h-4 text-blue-600" />
+            <ArrowUp className="w-4 h-4" style={{ color: 'var(--color-ec-copper)' }} /> :
+            <ArrowDown className="w-4 h-4" style={{ color: 'var(--color-ec-copper)' }} />
     }
 
     if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8" style={{ borderBottom: '2px solid var(--color-ec-copper)' }}></div>
             </div>
         )
     }
 
     if (strategies.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+            <div className="flex flex-col items-center justify-center h-64" style={{ color: 'var(--color-ec-text-muted)', fontFamily: 'var(--color-ec-sans)' }}>
                 <p className="text-sm">No strategies found</p>
                 <p className="text-xs mt-1">Adjust your Pass Criteria or run a new search</p>
             </div>
@@ -57,13 +57,17 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
     }
 
     return (
-        <div className="overflow-x-auto rounded-xl border border-border/40 bg-card/10 backdrop-blur-sm shadow-2xl shadow-blue-900/5">
+        <div className="overflow-x-auto" style={{
+          border: '0.5px solid var(--color-ec-border)',
+          borderRadius: 7,
+          backgroundColor: 'var(--color-ec-bg-surface)',
+        }}>
             <table className="w-full border-collapse">
                 <thead>
                     <tr className="border-b border-border/60 bg-muted/30">
                         <th className="px-5 py-4 text-left">
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--color-ec-copper)', opacity: 0.5 }}></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest pl-1">Strategy ID</span>
                             </div>
                         </th>
@@ -72,7 +76,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-green-500/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-ec-profit/50"></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Return (%)</span>
                                 <SortIcon field="total_return_pct" />
                             </div>
@@ -82,7 +86,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-purple-500/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--color-ec-text-muted)', opacity: 0.5 }}></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Profit Factor</span>
                                 <SortIcon field="profit_factor" />
                             </div>
@@ -92,7 +96,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-blue-400/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--color-ec-copper)', opacity: 0.4 }}></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Win Rate</span>
                                 <SortIcon field="win_rate" />
                             </div>
@@ -102,7 +106,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-red-500/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full bg-ec-loss/50"></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Max DD</span>
                                 <SortIcon field="max_drawdown_pct" />
                             </div>
@@ -112,7 +116,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             className="px-5 py-4 text-left cursor-pointer hover:bg-muted/50 transition-colors group"
                         >
                             <div className="flex items-center gap-2">
-                                <div className="w-1.5 h-1.5 rounded-full bg-orange-400/50"></div>
+                                <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--color-ec-copper)', opacity: 0.6 }}></div>
                                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest group-hover:text-foreground transition-colors">Trades</span>
                                 <SortIcon field="total_trades" />
                             </div>
@@ -127,7 +131,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                         <tr
                             key={strategy.id}
                             className={`
-                                hover:bg-blue-500/[0.04] cursor-pointer transition-all duration-200 group
+                                hover:bg-[var(--color-ec-bg-elevated)] cursor-pointer transition-all duration-200 group
                                 ${index % 2 === 0 ? 'bg-transparent' : 'bg-muted/[0.05]'}
                             `}
                             onClick={() => router.push(`/backtester/${strategy.id}`)}
@@ -135,7 +139,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             <td className="px-5 py-4 text-xs text-muted-foreground font-black tracking-tighter group-hover:text-foreground transition-colors">
                                 {strategy.id.slice(0, 12)}...
                             </td>
-                            <td className={`px-5 py-4 text-sm font-black tracking-tight ${strategy.total_return_pct > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                            <td className={`px-5 py-4 text-sm font-black tracking-tight ${strategy.total_return_pct > 0 ? 'text-ec-profit' : 'text-ec-loss'}`}>
                                 {strategy.total_return_pct > 0 ? '+' : ''}{strategy.total_return_pct?.toFixed(2)}%
                             </td>
                             <td className="px-5 py-4 text-sm text-foreground font-black tracking-tight">
@@ -144,7 +148,7 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                             <td className="px-5 py-4 text-sm text-foreground font-black tracking-tight opacity-70">
                                 {strategy.win_rate?.toFixed(1)}%
                             </td>
-                            <td className="px-5 py-4 text-sm text-red-500/80 font-black tracking-tight">
+                            <td className="px-5 py-4 text-sm text-ec-loss/80 font-black tracking-tight">
                                 -{strategy.max_drawdown_pct?.toFixed(2)}%
                             </td>
                             <td className="px-5 py-4 text-sm text-foreground/60 font-black tracking-tight">
@@ -156,7 +160,17 @@ export default function StrategiesTable({ strategies, loading }: StrategiesTable
                                         e.stopPropagation()
                                         router.push(`/backtester/${strategy.id}`)
                                     }}
-                                    className="p-2 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-lg transition-all"
+                                    style={{
+                                      padding: 6,
+                                      borderRadius: 4,
+                                      color: 'var(--color-ec-text-muted)',
+                                      backgroundColor: 'transparent',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      transition: 'color 150ms ease',
+                                    }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--color-ec-copper)')}
+                                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--color-ec-text-muted)')}
                                 >
                                     <ExternalLink className="w-4 h-4" />
                                 </button>

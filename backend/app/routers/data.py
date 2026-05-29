@@ -324,3 +324,172 @@ def get_historical_ohlc(
     finally:
         if con:
             con.close()
+import numpy as np
+
+@router.post("/api/cache/refresh")
+async def refresh_cache():
+    from app.db.gcs_cache import sync_hot_tables
+    try:
+        sync_hot_tables(force=True)
+        return {"status": "ok", "message": "Cache refreshed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+from app.db.gcs_cache import get_strategies_df, get_saved_queries_df
+
+
+@router.get("/datasets")
+def list_datasets():
+    results = []
+    
+    # Primero: leer de users.duckdb local
+    try:
+        from app.database import get_user_db_connection, get_user_db_lock
+        import json as _json
+        with get_user_db_lock():
+            con = get_user_db_connection()
+            try:
+                rows = con.execute(
+                    "SELECT id, name, filters, created_at, updated_at FROM saved_queries ORDER BY created_at DESC"
+                ).fetchall()
+                for row in rows:
+                    results.append({
+                        "id": row[0],
+                        "name": row[1],
+                        "filters": _json.loads(row[2]) if isinstance(row[2], str) else row[2],
+                        "created_at": str(row[3]) if row[3] else None,
+                        "updated_at": str(row[4]) if row[4] else None,
+                    })
+            finally:
+                con.close()
+    except Exception as e:
+        print(f"[WARN] Could not read datasets from local DB: {e}")
+    
+    # Fallback: GCS hot cache (datasets historicos)
+    try:
+        df = get_saved_queries_df()
+        if df is not None and not df.empty:
+            local_ids = {r["id"] for r in results}
+            for record in df.to_dict(orient="records"):
+                if record.get("id") not in local_ids:
+                    results.append(record)
+    except Exception as e:
+        print(f"[WARN] Could not read datasets from GCS: {e}")
+    
+    return results
+
+
+@router.get("/datasets/{dataset_id}")
+def get_dataset(dataset_id: str):
+    # Primero: buscar en local DB
+    try:
+        from app.database import get_user_db_connection
+        import json as _json
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                "SELECT id, name, filters, created_at, updated_at FROM saved_queries WHERE id = ?",
+                (dataset_id,)
+            ).fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "name": row[1],
+                    "filters": _json.loads(row[2]) if isinstance(row[2], str) else row[2],
+                    "created_at": str(row[3]) if row[3] else None,
+                    "updated_at": str(row[4]) if row[4] else None,
+                }
+        finally:
+            con.close()
+    except Exception as e:
+        print(f"[WARN] Could not read dataset from local DB: {e}")
+    
+    # Fallback: GCS
+    try:
+        df = get_saved_queries_df()
+        if df is not None and not df.empty:
+            row = df[df["id"] == dataset_id]
+            if not row.empty:
+                return row.iloc[0].to_dict()
+    except Exception as e:
+        print(f"[WARN] Could not read dataset from GCS: {e}")
+    
+    raise HTTPException(status_code=404, detail="Dataset not found")
+
+
+@router.get("/strategies")
+def list_strategies_backtester():
+    results = []
+    
+    # Primero: leer de users.duckdb local
+    try:
+        from app.database import get_user_db_connection, get_user_db_lock
+        import json as _json
+        with get_user_db_lock():
+            con = get_user_db_connection()
+            try:
+                rows = con.execute(
+                    "SELECT id, name, description, definition FROM strategies ORDER BY created_at DESC"
+                ).fetchall()
+                for row in rows:
+                    results.append({
+                        "id": row[0],
+                        "name": row[1],
+                        "description": row[2],
+                        "definition": _json.loads(row[3]) if isinstance(row[3], str) else row[3],
+                    })
+            finally:
+                con.close()
+    except Exception as e:
+        print(f"[WARN] Could not read strategies from local DB: {e}")
+    
+    # Fallback: GCS hot cache
+    try:
+        df = get_strategies_df()
+        if df is not None and not df.empty:
+            local_ids = {r["id"] for r in results}
+            for record in df.to_dict(orient="records"):
+                if record.get("id") not in local_ids:
+                    results.append(record)
+    except Exception as e:
+        print(f"[WARN] Could not read strategies from GCS: {e}")
+    
+    return results
+
+
+@router.get("/strategies/{strategy_id}")
+def get_strategy_backtester(strategy_id: str):
+    # Primero: buscar en local DB
+    try:
+        from app.database import get_user_db_connection
+        import json as _json
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                "SELECT id, name, description, definition FROM strategies WHERE id = ?",
+                (strategy_id,)
+            ).fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "name": row[1],
+                    "description": row[2],
+                    "definition": _json.loads(row[3]) if isinstance(row[3], str) else row[3],
+                }
+        finally:
+            con.close()
+    except Exception as e:
+        print(f"[WARN] Could not read strategy from local DB: {e}")
+    
+    # Fallback: GCS
+    try:
+        df = get_strategies_df()
+        if df is not None and not df.empty:
+            row = df[df["id"] == strategy_id]
+            if not row.empty:
+                return row.iloc[0].to_dict()
+    except Exception as e:
+        print(f"[WARN] Could not read strategy from GCS: {e}")
+    
+    raise HTTPException(status_code=404, detail="Strategy not found")

@@ -16,3 +16,4 @@ feedparser>=6.0.10
 lxml>=5.1.026.4
 boto3
 google-cloud-storage
+pyarrow>=14.0.0

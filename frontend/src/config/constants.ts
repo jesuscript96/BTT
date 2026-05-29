@@ -1,5 +1,5 @@
 // Use NEXT_PUBLIC_API_URL or default to localhost
-const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8010/api";
 
 // Ensure no trailing slash
 const cleanUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;

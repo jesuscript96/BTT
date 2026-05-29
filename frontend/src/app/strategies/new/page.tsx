@@ -12,7 +12,12 @@ export default function NewStrategyPage() {
     };
 
     return (
-        <div className="space-y-8 pb-12">
+        <div style={{ 
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 0,
+  height: '100%'
+}}>
             <StrategyForm onStrategySaved={handleStrategySaved} />
 
             <div className="px-2">

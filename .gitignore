@@ -11,6 +11,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+
+# Frontend lib is source code, not Python lib
+!frontend/src/lib/
 lib64/
 parts/
 sdist/
@@ -33,6 +36,10 @@ pythonvenv*
 # DuckDB / Local Data
 *.duckdb
 *.duckdb.wal
+
+# Cache directories
+.cache/
+backend/.cache/
 
 # Node / Frontend
 node_modules/

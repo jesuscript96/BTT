@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import os
+import time
 from contextlib import asynccontextmanager
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -13,6 +14,19 @@ from app.init_db import init_db
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Write gcs-key.json from env var if present
+    import base64, json as _json, os as _os
+    gcs_key_b64 = _os.getenv("GCS_KEY_B64")
+    if gcs_key_b64:
+        try:
+            key_path = _os.getenv("GCS_KEY_FILE", "gcs-key.json")
+            key_bytes = base64.b64decode(gcs_key_b64)
+            with open(key_path, "wb") as f:
+                f.write(key_bytes)
+            print(f"[INFO] gcs-key.json written from GCS_KEY_B64 env var")
+        except Exception as e:
+            print(f"[WARN] Could not write gcs-key.json: {e}")
+
     # Startup: Connect to DB so first request is fast. If DB fails, app still starts (avoids 502 on cold start).
     print("Startup: Connecting to database...")
     from app.gcs_sync import download_user_db, upload_user_db
@@ -29,6 +43,32 @@ async def lifespan(app: FastAPI):
             print("[INFO] Init DB: strategies and saved_queries tables verified")
         except Exception as e:
             print(f"[WARN] Init DB warning: {e}")
+
+        from app.services.cache_service import load_tickers_cache, load_splits_cache, load_hot_daily_cache
+        try:
+            t0 = time.time()
+            load_tickers_cache()
+            print(f"[TIMING] tickers: {round(time.time()-t0, 2)}s")
+
+            t0 = time.time()
+            load_splits_cache()
+            print(f"[TIMING] splits: {round(time.time()-t0, 2)}s")
+
+            t0 = time.time()
+            load_hot_daily_cache()
+            print(f"[TIMING] hot cache: {round(time.time()-t0, 2)}s")
+
+            # Log intraday disk cache status
+            cache_dir = os.getenv("CACHE_DIR", ".cache/intraday")
+            if os.path.exists(cache_dir):
+                cache_files = len(os.listdir(cache_dir))
+                total_mb = sum(os.path.getsize(os.path.join(cache_dir, f)) for f in os.listdir(cache_dir) if os.path.isfile(os.path.join(cache_dir, f))) / 1024 / 1024
+                print(f"[CACHE] intraday disk cache: {cache_files} files, {total_mb:.1f} MB in {cache_dir}")
+            else:
+                print(f"[CACHE] intraday disk cache dir not found: {cache_dir}")
+            print("[INFO] Hot daily cache loaded at startup")
+        except Exception as e:
+            print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:
         print(f"[WARN] DB not available at startup: {e}. App will start; first API request may fail or be slow.")
 
@@ -79,13 +119,15 @@ async def add_cors_headers_to_all_responses(request, call_next):
     return response
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
+from app.routers import optimization
 import logging
 
 # ... (logging setup if needed)
 
 app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(strategies.router, prefix="/api/strategies", tags=["Strategies"])
-app.include_router(backtest.router, prefix="/api/backtest", tags=["Backtest"])
+app.include_router(backtest.router)
+app.include_router(optimization.router)
 app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)

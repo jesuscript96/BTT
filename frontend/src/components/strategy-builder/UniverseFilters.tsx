@@ -85,7 +85,7 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
 
             <div className="pt-2 space-y-3">
                 <label className="flex items-center gap-3 cursor-pointer group">
-                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${filters.require_shortable ? 'bg-green-500 border-green-500' : 'border-muted-foreground/50 group-hover:border-green-500/50'}`}>
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${filters.require_shortable ? 'bg-ec-profit border-ec-profit' : 'border-muted-foreground/50 group-hover:border-ec-profit/50'}`}>
                         {filters.require_shortable && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                     </div>
                     <input
@@ -98,7 +98,7 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                 </label>
 
                 <label className="flex items-center gap-3 cursor-pointer group">
-                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${filters.exclude_dilution ? 'bg-green-500 border-green-500' : 'border-muted-foreground/50 group-hover:border-green-500/50'}`}>
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${filters.exclude_dilution ? 'bg-ec-profit border-ec-profit' : 'border-muted-foreground/50 group-hover:border-ec-profit/50'}`}>
                         {filters.exclude_dilution && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
                     </div>
                     <input

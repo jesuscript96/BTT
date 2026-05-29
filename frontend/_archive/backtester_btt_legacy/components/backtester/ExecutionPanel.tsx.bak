@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Play, Loader2, Trash2 } from 'lucide-react';
 import { Strategy } from '@/types/strategy';
 import { StrategySelection, BacktestRequest, BacktestResponse } from '@/types/backtest';
-import { API_URL } from '@/config/constants';
+import { getStrategies, getQueries, runBacktest as runBacktestApi, getBacktestStatus, getBacktestResults } from '@/lib/api';
 
 interface PrefillData {
     strategy_id: string;
@@ -90,15 +90,8 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
         setLoadingStrategies(true);
         setStrategiesError(null);
         try {
-            const response = await fetch(`${API_URL}/strategies/`);
-            const data = await response.json().catch(() => []);
-            if (!response.ok) {
-                const msg = typeof data?.detail === 'string' ? data.detail : `HTTP ${response.status}`;
-                setStrategiesError(msg);
-                setStrategies([]);
-            } else {
-                setStrategies(Array.isArray(data) ? data : []);
-            }
+            const data = await getStrategies();
+            setStrategies(data);
         } catch (error) {
             console.error("Error fetching strategies:", error);
             setStrategiesError('No se pudo conectar. Comprueba que el backend esté en marcha.');
@@ -112,15 +105,8 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
         setLoadingDatasets(true);
         setDatasetsError(null);
         try {
-            const response = await fetch(`${API_URL}/queries/`);
-            const data = await response.json().catch(() => []);
-            if (!response.ok) {
-                const msg = typeof data?.detail === 'string' ? data.detail : `HTTP ${response.status}`;
-                setDatasetsError(msg);
-                setSavedDatasets([]);
-            } else {
-                setSavedDatasets(Array.isArray(data) ? data : []);
-            }
+            const data = await getQueries();
+            setSavedDatasets(data);
         } catch (error) {
             console.error("Error fetching datasets:", error);
             setDatasetsError('No se pudo conectar. Comprueba que el backend esté en marcha.');
@@ -224,38 +210,18 @@ export function ExecutionPanel({ onBacktestStart, onBacktestComplete, isLoading,
                 max_holding_minutes: maxHoldingMinutes
             };
 
-            const response = await fetch(`${API_URL}/backtest/run`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request)
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            let data: BacktestResponse = await response.json();
+            let data = await runBacktestApi(request);
             const runId = data.run_id;
 
             // Poll for status
             while (data.status === 'processing') {
                 await new Promise(resolve => setTimeout(resolve, 2500));
-                const statusResponse = await fetch(`${API_URL}/backtest/status/${runId}`);
-                if (!statusResponse.ok) {
-                    const errorData = await statusResponse.json().catch(() => ({ detail: 'Unknown error' }));
-                    throw new Error(errorData.detail || `Status HTTP ${statusResponse.status}`);
-                }
-                data = await statusResponse.json();
+                data = await getBacktestStatus(runId);
             }
 
             if (data.status === 'completed' || data.status === 'success') {
                 // Fetch the actual results
-                const resultsResponse = await fetch(`${API_URL}/backtest/results/${runId}`);
-                if (!resultsResponse.ok) {
-                    throw new Error('Failed to fetch final results');
-                }
-                const finalResults = await resultsResponse.json();
+                const finalResults = await getBacktestResults(runId);
                 onBacktestComplete(finalResults);
             } else {
                 throw new Error(data.message || 'Backtest failed');

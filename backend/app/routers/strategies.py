@@ -4,53 +4,70 @@ import json
 from uuid import uuid4
 from datetime import datetime
 
-from app.database import get_db_connection
+from app.database import get_user_db_connection, get_user_db_lock
 from app.schemas.strategy import Strategy, StrategyCreate
 
 router = APIRouter()
 
 @router.post("/", response_model=Strategy)
 def create_strategy(strategy: StrategyCreate):
-    con = get_db_connection()
-    
-    new_id = str(uuid4())
-    now = datetime.now()
-    
-    # Create full strategy object
-    full_strategy = Strategy(
-        **strategy.model_dump(),
-        id=new_id,
-        created_at=now.isoformat()
-    )
-    
-    # Store in DB
-    # We store the Pydantic model as a JSON string in the 'definition' column
-    # The dedicated columns 'id', 'name', 'description' are for easy querying/indexing
-    con.execute(
-        """
-        INSERT INTO strategies (id, name, description, created_at, updated_at, definition)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            new_id, 
-            strategy.name, 
-            strategy.description, 
-            now, 
-            now, 
-            json.dumps(full_strategy.model_dump())
-        )
-    )
-    
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            new_id = str(uuid4())
+            now = datetime.now()
+
+            full_strategy = Strategy(
+                **strategy.model_dump(),
+                id=new_id,
+                created_at=now.isoformat()
+            )
+
+            definition_json = json.dumps({
+                "bias": strategy.bias,
+                "universe_filters": strategy.universe_filters.model_dump() if strategy.universe_filters else None,
+                "entry_logic": strategy.entry_logic.model_dump() if strategy.entry_logic else None,
+                "exit_logic": strategy.exit_logic.model_dump() if strategy.exit_logic else None,
+                "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
+            })
+
+            con.execute(
+                """
+                INSERT INTO strategies (id, name, description, created_at, updated_at, definition)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    new_id,
+                    strategy.name,
+                    strategy.description,
+                    now,
+                    now,
+                    definition_json,
+                )
+            )
+        finally:
+            con.close()
+
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+        print("[GCS] users.duckdb uploaded after strategy save")
+    except Exception as e:
+        print(f"[WARN] GCS upload failed: {e}")
+
     return full_strategy
 
 @router.get("/", response_model=List[Strategy])
 def list_strategies():
+    con = get_user_db_connection()
     try:
-        con = get_db_connection()
         rows = con.execute("SELECT definition FROM strategies ORDER BY created_at DESC").fetchall()
     except Exception as e:
         print(f"list_strategies DB error: {e}")
         return []
+    finally:
+        con.close()
     strategies = []
     for row in rows:
         if not row or row[0] is None:
@@ -73,21 +90,33 @@ def list_strategies():
 
 @router.get("/{strategy_id}", response_model=Strategy)
 def get_strategy(strategy_id: str):
-    con = get_db_connection()
-    row = con.execute("SELECT definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-    
-    if not row:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-        
-    return Strategy(**json.loads(row[0]))
+    con = get_user_db_connection()
+    try:
+        row = con.execute("SELECT definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        return Strategy(**json.loads(row[0]))
+    finally:
+        con.close()
 
 @router.delete("/{strategy_id}")
 def delete_strategy(strategy_id: str):
-    con = get_db_connection()
-    # Check if exists
-    row = con.execute("SELECT id FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Strategy not found")
-        
-    con.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            row = con.execute("SELECT id FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            con.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+        finally:
+            con.close()
+
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+        print("[GCS] users.duckdb uploaded after strategy delete")
+    except Exception as e:
+        print(f"[WARN] GCS upload failed: {e}")
+
     return {"status": "success", "message": "Strategy deleted"}

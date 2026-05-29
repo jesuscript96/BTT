@@ -147,7 +147,7 @@ def build_screener_query(
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
 
     if start_date and end_date:
-        m_filters.append("CAST(timestamp AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
+        m_filters.append("timestamp >= CAST(? AS TIMESTAMP) AND timestamp < CAST(? AS TIMESTAMP)")
         sql_p.extend([str(start_date), str(end_date)])
         
         # Partition Pruning for GCS
@@ -159,7 +159,7 @@ def build_screener_query(
             except: pass
             
     elif trade_date:
-        m_filters.append("CAST(timestamp AS DATE) = CAST(? AS DATE)")
+        m_filters.append("timestamp >= CAST(? AS TIMESTAMP) AND timestamp < CAST(? AS TIMESTAMP) + INTERVAL '1 day'")
         sql_p.append(str(trade_date))
         
         # Partition Pruning for GCS
@@ -173,7 +173,7 @@ def build_screener_query(
         from datetime import datetime, timedelta
         default_end = datetime.now().date()
         default_start = default_end - timedelta(days=7)
-        m_filters.append("CAST(timestamp AS DATE) BETWEEN CAST(? AS DATE) AND CAST(? AS DATE)")
+        m_filters.append("timestamp >= CAST(? AS TIMESTAMP) AND timestamp < CAST(? AS TIMESTAMP)")
         sql_p.extend([str(default_start), str(default_end)])
         
         # Partition Pruning for GCS
@@ -261,7 +261,7 @@ def build_screener_query(
         SELECT {col_str}
         FROM daily_metrics
         JOIN massive.tickers t ON daily_metrics.ticker = t.ticker
-        LEFT JOIN massive.splits sp ON daily_metrics.ticker = sp.ticker AND CAST(daily_metrics.timestamp AS DATE) = sp.execution_date
+        LEFT JOIN massive.splits sp ON daily_metrics.ticker = sp.ticker AND DATE_TRUNC('day', daily_metrics.timestamp) = sp.execution_date
         WHERE {where_combined}
         ORDER BY timestamp DESC, gap_pct DESC
         LIMIT {int(limit)}
@@ -277,7 +277,7 @@ def build_screener_query(
     # We can change where_m to be: {where_m} AND ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS'))
     # This avoids changing the join structure in get_stats_sql_logic which might be fragile.
     
-    where_m_stats = f"{where_m} AND daily_metrics.ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS')) AND NOT EXISTS (SELECT 1 FROM massive.splits sp WHERE sp.ticker = daily_metrics.ticker AND sp.execution_date = CAST(daily_metrics.timestamp AS DATE))"
+    where_m_stats = f"{where_m} AND daily_metrics.ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS')) AND NOT EXISTS (SELECT 1 FROM massive.splits sp WHERE sp.ticker = daily_metrics.ticker AND sp.execution_date = DATE_TRUNC('day', daily_metrics.timestamp))"
     
     return rec_query, sql_p, "1=1", "1=1", where_m_stats, where_m_stats
 

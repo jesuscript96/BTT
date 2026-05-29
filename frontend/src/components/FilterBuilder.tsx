@@ -116,12 +116,12 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
         <div className="absolute top-4 left-6 z-[100] animate-in zoom-in-95 fade-in duration-150">
             <div className="bg-white border border-zinc-200 w-[600px] h-[520px] rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.1)] flex flex-col overflow-hidden transition-colors">
                 {/* Header */}
-                <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-[#F2F0ED]">
+                <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-[var(--color-ec-bg-surface)]">
                     <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-blue-600 shadow-sm" />
-                        <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">Rule Builder</p>
+                        <p className="text-[10px] text-ec-text-muted font-black uppercase tracking-widest">Rule Builder</p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-zinc-200 rounded-lg transition-all text-zinc-400 hover:text-zinc-600">
+                    <button onClick={onClose} className="p-2 hover:bg-zinc-200 rounded-lg transition-all text-ec-text-secondary hover:text-ec-text-primary">
                         <X className="h-4 w-4" />
                     </button>
                 </div>
@@ -130,7 +130,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                     {step === "select" ? (
                         <>
                             {/* Sidebar */}
-                            <div className="w-48 border-r border-zinc-100 p-4 space-y-1 bg-[#F9F9F8]">
+                            <div className="w-48 border-r border-zinc-100 p-4 space-y-1 bg-[var(--color-ec-bg-elevated)]">
                                 {CATEGORIES.map((cat) => (
                                     <button
                                         key={cat.id}
@@ -139,7 +139,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                             "w-full flex items-center gap-3 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-tight transition-all",
                                             activeCategory === cat.id
                                                 ? "bg-blue-50 text-blue-600 border border-blue-100 shadow-sm"
-                                                : "text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100"
+                                                : "text-ec-text-secondary hover:text-ec-text-high hover:bg-zinc-100"
                                         )}
                                     >
                                         <cat.icon className="h-3.5 w-3.5" />
@@ -157,7 +157,7 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                             onClick={() => handleMetricSelect(metric)}
                                             className="group px-4 py-2.5 bg-white border border-zinc-100 rounded-lg text-left hover:border-blue-400 hover:bg-blue-50/50 transition-all shadow-sm active:scale-95"
                                         >
-                                            <span className="text-[10px] font-black text-zinc-500 group-hover:text-blue-600 tracking-tight uppercase leading-tight">{metric}</span>
+                                            <span className="text-[10px] font-black text-ec-text-muted group-hover:text-blue-600 tracking-tight uppercase leading-tight">{metric}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -168,8 +168,8 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                         <div className="flex-1 flex flex-col p-10 space-y-8 items-center justify-center bg-white">
                             <div className="w-full max-w-sm space-y-6">
                                 <div className="text-center space-y-1">
-                                    <p className="text-[9px] uppercase font-black text-zinc-400 tracking-widest">Comparing</p>
-                                    <h4 className="text-lg font-black text-zinc-900">{selectedMetric}</h4>
+                                    <p className="text-[9px] uppercase font-black text-ec-text-secondary tracking-widest">Comparing</p>
+                                    <h4 className="text-lg font-black text-ec-text-high">{selectedMetric}</h4>
                                 </div>
 
                                 <div className="grid grid-cols-6 gap-1">
@@ -180,8 +180,8 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                             className={cn(
                                                 "py-3 rounded-lg font-black text-xs border transition-all shadow-sm",
                                                 operator === op
-                                                    ? "bg-blue-600 border-blue-500 text-white shadow-md"
-                                                    : "bg-zinc-50 border-zinc-100 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600"
+                                                    ? "bg-[var(--color-ec-copper)] border-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] shadow-md"
+                                                    : "bg-zinc-50 border-zinc-100 text-ec-text-secondary hover:border-zinc-300 hover:text-ec-text-primary"
                                             )}
                                         >
                                             {op}
@@ -197,8 +197,8 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                             className={cn(
                                                 "flex-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
                                                 valueType === type
-                                                    ? "bg-white text-zinc-900 shadow-sm border border-zinc-100"
-                                                    : "text-zinc-400 hover:text-zinc-600"
+                                                    ? "bg-white text-ec-text-high shadow-sm border border-zinc-100"
+                                                    : "text-ec-text-secondary hover:text-ec-text-primary"
                                             )}
                                         >
                                             {type === "static" ? "Value" : "Variable"}
@@ -211,20 +211,20 @@ export const FilterBuilder: React.FC<FilterBuilderProps> = ({ isOpen, onClose, o
                                     placeholder={activeCategory === 'time' ? "HH:MM (e.g. 09:45)" : "Value..."}
                                     value={value}
                                     onChange={(e) => setValue(e.target.value)}
-                                    className="w-full p-4 bg-white border border-zinc-200 rounded-xl font-black text-xl text-center focus:border-blue-500 outline-none transition-all placeholder:text-zinc-200 text-zinc-900 shadow-inner"
+                                    className="w-full p-4 bg-white border border-zinc-200 rounded-xl font-black text-xl text-center focus:border-blue-500 outline-none transition-all placeholder:text-zinc-200 text-ec-text-high shadow-inner"
                                 />
                             </div>
 
                             <div className="flex gap-2 w-full max-w-sm pt-4">
                                 <button
                                     onClick={() => setStep("select")}
-                                    className="flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest text-zinc-400 hover:text-zinc-600 transition-colors bg-white border border-zinc-200 hover:bg-zinc-50"
+                                    className="flex-1 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest text-ec-text-secondary hover:text-ec-text-primary transition-colors bg-white border border-zinc-200 hover:bg-zinc-50"
                                 >
                                     Back
                                 </button>
                                 <button
                                     onClick={handleSaveRule}
-                                    className="flex-[2] py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-md hover:shadow-lg transition-all active:scale-95"
+                                    className="flex-[2] py-3 bg-[var(--color-ec-copper)] hover:bg-[var(--color-ec-copper-bright)] text-[var(--color-ec-copper-text)] rounded-[5px] font-black text-[10px] uppercase tracking-widest shadow-md hover:shadow-lg transition-all active:scale-95"
                                 >
                                     Add Filter
                                 </button>

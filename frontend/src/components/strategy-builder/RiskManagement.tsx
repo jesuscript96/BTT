@@ -69,16 +69,37 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
 
 
     return (
-        <div className="space-y-8">
+        <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 24,
+        }}>
 
             {/* Hard Stop */}
-            <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Hard Stop Loss</label>
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                paddingBottom: 20,
+            }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 10,
+                }}>
+                    <label style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.15em',
+                        color: 'var(--color-ec-text-muted)',
+                    }}>Hard Stop Loss</label>
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.use_hard_stop !== false ? 'ON' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop !== false ? 'bg-red-500/70' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop !== false ? 'bg-ec-loss/70' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, use_hard_stop: risk.use_hard_stop === false })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_hard_stop !== false ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -90,7 +111,17 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                         <select
                             value={risk.hard_stop.type}
                             onChange={(e) => updateRiskSetting('hard_stop', 'type', e.target.value)}
-                            className="bg-muted/20 border border-border/50 rounded-lg px-2 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-red-500/30 w-1/3"
+                            style={{
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                padding: '7px 10px',
+                                fontSize: 12,
+                                fontWeight: 500,
+                                color: 'var(--color-ec-text-primary)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                outline: 'none',
+                            }}
                         >
                             {Object.values(RiskType).map(type => (
                                 <option key={type} value={type}>{type}</option>
@@ -100,20 +131,48 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                             type="number"
                             value={risk.hard_stop.value}
                             onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
-                            className="bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-red-500/30 flex-1"
+                            style={{
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                padding: '7px 10px',
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-primary)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                outline: 'none',
+                                flex: 1,
+                            }}
                         />
                     </div>
                 )}
             </div>
 
             {/* Take Profit */}
-            <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Take Profit</label>
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                paddingBottom: 20,
+            }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 10,
+                }}>
+                    <label style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.15em',
+                        color: 'var(--color-ec-text-muted)',
+                    }}>Take Profit</label>
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.use_take_profit !== false ? 'ON' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit !== false ? 'bg-green-500/70' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit !== false ? 'bg-ec-profit/70' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, use_take_profit: risk.use_take_profit === false })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_take_profit !== false ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -123,16 +182,71 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 {(risk.use_take_profit !== false) && (
                     <div className="space-y-4 animate-in fade-in slide-in-from-top-1">
                         {/* Mode Toggle */}
-                        <div className="flex bg-muted/20 p-1 rounded-lg w-full">
+                        <div style={{
+                            display: 'flex',
+                            backgroundColor: 'var(--color-ec-bg-elevated)',
+                            border: '0.5px solid var(--color-ec-border)',
+                            borderRadius: 5,
+                            padding: 3,
+                            gap: 2,
+                        }}>
                             <button
                                 onClick={() => onChange({ ...risk, take_profit_mode: TakeProfitMode.FULL })}
-                                className={`flex-1 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${risk.take_profit_mode === TakeProfitMode.FULL ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                style={risk.take_profit_mode === TakeProfitMode.FULL ? {
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    color: 'var(--color-ec-text-high)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.12em',
+                                    padding: '4px 12px',
+                                    borderRadius: 4,
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    cursor: 'pointer',
+                                } : {
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--color-ec-text-muted)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.12em',
+                                    padding: '4px 12px',
+                                    borderRadius: 4,
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                }}
                             >
                                 Completo (Full)
                             </button>
                             <button
                                 onClick={() => onChange({ ...risk, take_profit_mode: TakeProfitMode.PARTIAL })}
-                                className={`flex-1 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${risk.take_profit_mode === TakeProfitMode.PARTIAL ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                style={risk.take_profit_mode === TakeProfitMode.PARTIAL ? {
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    color: 'var(--color-ec-text-high)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.12em',
+                                    padding: '4px 12px',
+                                    borderRadius: 4,
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    cursor: 'pointer',
+                                } : {
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--color-ec-text-muted)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.12em',
+                                    padding: '4px 12px',
+                                    borderRadius: 4,
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                }}
                             >
                                 Parciales (Partial)
                             </button>
@@ -143,7 +257,17 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                 <select
                                     value={risk.take_profit.type}
                                     onChange={(e) => updateRiskSetting('take_profit', 'type', e.target.value)}
-                                    className="bg-muted/20 border border-border/50 rounded-lg px-2 py-2 text-xs font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 w-1/3"
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 10px',
+                                        fontSize: 12,
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                    }}
                                 >
                                     {Object.values(RiskType).map(type => (
                                         <option key={type} value={type}>{type}</option>
@@ -154,7 +278,18 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                         type="number"
                                         value={risk.take_profit.value}
                                         onChange={(e) => updateRiskSetting('take_profit', 'value', Number(e.target.value))}
-                                        className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-bold text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30"
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 10px',
+                                            fontSize: 13,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                        }}
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
                                 </div>
@@ -163,13 +298,22 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                             <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
                                 <div className="space-y-2">
                                     {risk.partial_take_profits.map((partial, idx) => (
-                                        <div key={idx} className="group relative bg-muted/10 border border-border/30 rounded-xl p-3 space-y-3 transition-all hover:border-green-500/30 hover:bg-muted/15">
+                                        <div key={idx} className="group relative"
+                                            style={{
+                                                backgroundColor: 'var(--color-ec-bg-elevated)',
+                                                border: '0.5px solid var(--color-ec-border)',
+                                                borderRadius: 5,
+                                                padding: '12px 14px',
+                                            }}
+                                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-profit)')}
+                                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-border)')}
+                                        >
                                             <div className="flex items-center justify-between">
-                                                <span className="text-[10px] font-black text-green-500/70 tracking-tighter">PARTIAL #{idx + 1}</span>
+                                                <span className="text-[10px] font-black text-ec-profit/70 tracking-tighter">PARTIAL #{idx + 1}</span>
                                                 {risk.partial_take_profits.length > 1 && (
                                                     <button
                                                         onClick={() => removePartial(idx)}
-                                                        className="p-1 text-muted-foreground hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                                                        className="p-1 text-muted-foreground hover:text-ec-loss transition-colors opacity-0 group-hover:opacity-100"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" />
                                                     </button>
@@ -185,7 +329,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                                             step="0.1"
                                                             value={partial.distance_pct}
                                                             onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                                            className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-green-500/30"
+                                                            className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-[var(--color-ec-profit)]/30"
                                                         />
                                                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/30">%</span>
                                                     </div>
@@ -201,7 +345,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                                         max="100"
                                                         value={partial.capital_pct}
                                                         onChange={(e) => updatePartial(idx, 'capital_pct', Number(e.target.value))}
-                                                        className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-green-500"
+                                                        className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-[var(--color-ec-profit)]"
                                                     />
                                                 </div>
                                             </div>
@@ -211,13 +355,33 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
 
                                 <button
                                     onClick={addPartial}
-                                    className="w-full py-2 border border-dashed border-border/60 rounded-xl flex items-center justify-center gap-2 text-[10px] font-bold text-muted-foreground hover:border-green-500/40 hover:text-green-500 hover:bg-green-500/5 transition-all"
+                                    style={{
+                                        width: '100%',
+                                        padding: '7px 0',
+                                        border: '0.5px dashed var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.1em',
+                                        color: 'var(--color-ec-text-muted)',
+                                        backgroundColor: 'transparent',
+                                        cursor: 'pointer',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        transition: 'border-color 150ms ease, color 150ms ease',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                    }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-profit)'; e.currentTarget.style.color = 'var(--color-ec-profit)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-border)'; e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}
                                 >
                                     <PlusCircle className="w-3.5 h-3.5" />
                                     <span>Add Partial Take Profit</span>
                                 </button>
 
-                                <div className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${Math.abs(totalPartialCapital - 100) < 0.01 ? 'bg-green-500/5 border-green-500/20 text-green-500/80' : 'bg-amber-500/5 border-amber-500/20 text-amber-500'}`}>
+                                <div className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${Math.abs(totalPartialCapital - 100) < 0.01 ? 'bg-ec-profit/5 border-ec-profit/20 text-ec-profit/80' : 'bg-[var(--color-ec-copper)]/5 border-[var(--color-ec-copper)]/20 text-[var(--color-ec-copper)]'}`}>
                                     <Info className="w-3.5 h-3.5 shrink-0" />
                                     <div className="flex-1 text-[9px] font-bold leading-tight">
                                         Total Capital: <span className="font-black underline">{totalPartialCapital}%</span>
@@ -233,16 +397,36 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
             </div>
 
             {/* Re-entries Option */}
-            <div className="pt-4 border-t border-dashed border-border/40">
-                <div className="flex items-center justify-between mb-4">
+            <div style={{
+                paddingTop: 20,
+                borderTop: '0.5px solid var(--color-ec-border)',
+                marginTop: 4,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                paddingBottom: 20,
+            }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 10,
+                }}>
                     <div>
-                        <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Accept Re-entries</label>
+                        <label style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 9,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.15em',
+                            color: 'var(--color-ec-text-muted)',
+                        }}>Accept Re-entries</label>
                         <p className="text-[9px] text-muted-foreground/50 mt-0.5">Allow entering again if a trade for this ticker was closed.</p>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-indigo-500' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
@@ -252,13 +436,33 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
             </div>
 
             {/* Trailing Stop */}
-            <div className="pt-4 border-t border-dashed border-border/40">
-                <div className="flex items-center justify-between mb-4">
-                    <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest opacity-70">Trailing Stop</label>
+            <div style={{
+                paddingTop: 20,
+                borderTop: '0.5px solid var(--color-ec-border)',
+                marginTop: 4,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                paddingBottom: 20,
+            }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 10,
+                }}>
+                    <label style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.15em',
+                        color: 'var(--color-ec-text-muted)',
+                    }}>Trailing Stop</label>
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground/60">{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-blue-500' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
                             onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.trailing_stop.active ? 'left-4.5' : 'left-0.5'}`}></div>
