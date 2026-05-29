@@ -88,33 +88,33 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
             width: chartContainerRef.current.clientWidth,
             height: 250,
             layout: {
-                background: { type: ColorType.Solid, color: 'transparent' },
-                textColor: 'var(--color-ec-text-secondary)',
+                background: { type: ColorType.Solid, color: '#16181A' },
+                textColor: '#ffffff',
                 fontFamily: "'General Sans', sans-serif",
                 fontSize: 10
             },
             grid: {
-                vertLines: { color: 'rgba(44, 47, 51, 0.15)' },
-                horzLines: { color: 'rgba(44, 47, 51, 0.15)' }
+                vertLines: { color: '#2C2F33' },
+                horzLines: { color: '#2C2F33' }
             },
             crosshair: { mode: 0 },
             rightPriceScale: {
-                borderColor: 'var(--color-ec-border)',
-                textColor: 'var(--color-ec-text-secondary)',
+                borderColor: '#2C2F33',
+                textColor: '#ffffff',
             },
             timeScale: {
-                borderColor: 'var(--color-ec-border)',
+                borderColor: '#2C2F33',
                 timeVisible: false,
             },
         });
 
         const candleSeries = chart.addSeries(CandlestickSeries, {
-            upColor: 'var(--color-ec-profit)',
-            downColor: 'var(--color-ec-loss)',
-            borderDownColor: 'var(--color-ec-loss)',
-            borderUpColor: 'var(--color-ec-profit)',
-            wickDownColor: 'var(--color-ec-loss)',
-            wickUpColor: 'var(--color-ec-profit)',
+            upColor: '#10b981',
+            downColor: '#ef4444',
+            borderDownColor: '#ef4444',
+            borderUpColor: '#10b981',
+            wickDownColor: '#ef4444',
+            wickUpColor: '#10b981',
         });
 
         const formattedCandles = dailyData.map(d => ({
@@ -137,7 +137,7 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
         const formattedVolume = dailyData.map(d => ({
             time: d.time,
             value: d.volume,
-            color: d.close >= d.open ? 'rgba(74, 157, 127, 0.2)' : 'rgba(201, 77, 63, 0.2)',
+            color: d.close >= d.open ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)',
         }));
         volumeSeries.setData(formattedVolume);
 
