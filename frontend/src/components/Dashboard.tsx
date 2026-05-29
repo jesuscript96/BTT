@@ -6,7 +6,7 @@ import {
     Area, CartesianGrid, ReferenceLine, ComposedChart, Line, ReferenceArea
 } from "recharts";
 import { getTickerIntraday } from "@/lib/api";
-import { NewsFeed } from "./NewsFeed";
+import { MarketIntelligenceCharts } from "./MarketIntelligenceCharts";
 
 interface DistributionItem {
     label: string;
@@ -147,7 +147,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 
     const averages = stats?.[mode] ?? stats?.avg;
 
-    // Empty State: Show News Feed
+    // Empty State: Show Market Intelligence Charts
     if (!stats || !stats.avg) return (
         <div style={{ minHeight: '100%', fontFamily: "'General Sans', sans-serif" }}>
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: 24 }}>
@@ -169,12 +169,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                             letterSpacing: 2,
                             color: 'var(--color-ec-text-muted)',
                         }}>
-                            WAITING FOR DATA... WHILE YOU WAIT, READ THE LATEST
+                            REAL-TIME STATISTICAL DISTRIBUTIONS AND GAP COHORT ANALYSIS
                         </span>
                     </div>
                 </div>
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                    <NewsFeed />
+                <div style={{ flex: 1 }}>
+                    <MarketIntelligenceCharts />
                 </div>
             </div>
         </div>

@@ -11,6 +11,19 @@ router = APIRouter(
     tags=["ticker-analysis"]
 )
 
+import threading
+from datetime import timedelta
+
+# Cache for ticker analysis data (15 minutes TTL)
+_analysis_cache = {}
+_analysis_cache_lock = threading.Lock()
+ANALYSIS_CACHE_TTL = timedelta(minutes=15)
+
+# Cache for SEC filings data (30 minutes TTL)
+_filings_cache = {}
+_filings_cache_lock = threading.Lock()
+FILINGS_CACHE_TTL = timedelta(minutes=30)
+
 def safe_float(val):
     try:
         if val is None: return None
@@ -30,7 +43,7 @@ def scrape_knowthefloat(ticker: str) -> dict:
     }
     url = f"https://knowthefloat.com/ticker/{ticker}"
     try:
-        r = requests.get(url, headers=headers, verify=False, timeout=5)
+        r = requests.get(url, headers=headers, verify=False, timeout=3)
         if r.status_code != 200:
             return {}
             
@@ -87,19 +100,19 @@ def safe_mean(series):
 def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
     ticker = ticker.upper()
     
-    # 1. Try GCS hot cache in memory
+    # 1. Try GCS hot cache in memory (filtered to gap_pct >= 20.0) because it is in-memory (0ms)
     try:
         from app.services.cache_service import get_hot_daily_cache
         df_hot = get_hot_daily_cache()
         if df_hot is not None and not df_hot.empty:
-            ticker_gcs = df_hot[df_hot['ticker'] == ticker]
+            ticker_gcs = df_hot[(df_hot['ticker'] == ticker) & (df_hot['gap_pct'] >= 20.0)]
             if not ticker_gcs.empty:
                 high_spike = ticker_gcs['rth_run_pct']
                 low_spike = (ticker_gcs['rth_open'] - ticker_gcs['rth_low']) / ticker_gcs['rth_open'] * 100
                 pm_fade = (ticker_gcs['pm_high'] - ticker_gcs['rth_open']) / ticker_gcs['pm_high'] * 100
                 rthh_fade = (ticker_gcs['rth_high'] - ticker_gcs['rth_close']) / ticker_gcs['rth_high'] * 100
                 
-                neg_close = (ticker_gcs['rth_close'] < ticker_gcs['prev_close']).astype(float) * 100
+                neg_close = (ticker_gcs['rth_close'] < ticker_gcs['rth_open']).astype(float) * 100
                 close_above_pmh = (ticker_gcs['rth_close'] > ticker_gcs['pm_high']).astype(float) * 100
                 
                 mid_point = (ticker_gcs['rth_high'] + ticker_gcs['rth_low']) / 2.0
@@ -119,7 +132,7 @@ def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
     except Exception as e:
         print(f"Error calculating stats from hot cache: {e}")
         
-    # 2. Fallback to daily_history (1y from yfinance)
+    # 2. Fallback to daily_history (1y from yfinance, filtered to gap_pct >= 20.0)
     if daily_history:
         try:
             df = pd.DataFrame(daily_history)
@@ -127,14 +140,14 @@ def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
                 df['prev_close'] = df['close'].shift(1)
                 df['gap_pct'] = (df['open'] - df['prev_close']) / df['prev_close'] * 100
                 
-                # Filter for gap days (abs(gap) >= 2.0%)
-                gap_yf = df[df['gap_pct'].abs() >= 2.0].copy()
+                # Filter for gap days (gap >= 20.0%)
+                gap_yf = df[df['gap_pct'] >= 20.0].copy()
                 if not gap_yf.empty:
                     high_spike = (gap_yf['high'] - gap_yf['open']) / gap_yf['open'] * 100
                     low_spike = (gap_yf['open'] - gap_yf['low']) / gap_yf['open'] * 100
                     rthh_fade = (gap_yf['high'] - gap_yf['close']) / gap_yf['high'] * 100
                     
-                    neg_close = (gap_yf['close'] < gap_yf['prev_close']).astype(float) * 100
+                    neg_close = (gap_yf['close'] < gap_yf['open']).astype(float) * 100
                     
                     mid_point = (gap_yf['high'] + gap_yf['low']) / 2.0
                     close_below_vwap = (gap_yf['close'] < mid_point).astype(float) * 100
@@ -167,10 +180,31 @@ def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
 
 @router.get("/{ticker}")
 def get_ticker_analysis(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    # Cache lookup
+    with _analysis_cache_lock:
+        if ticker in _analysis_cache:
+            cached_data, expiry = _analysis_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached ticker analysis for {ticker}")
+                return cached_data
+
     try:
-        ticker = ticker.upper()
         import requests
         import urllib3
+        from requests.adapters import HTTPAdapter
+        
+        # Subclass HTTPAdapter to set default request timeout for yfinance calls
+        class TimeoutHTTPAdapter(HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = kwargs.pop('timeout', 5)
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs['timeout'] = kwargs.get('timeout', self.timeout)
+                return super().send(request, **kwargs)
+                
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
         session = requests.Session()
@@ -179,8 +213,19 @@ def get_ticker_analysis(ticker: str):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         })
         
+        # Mount the timeout adapter to HTTP and HTTPS
+        adapter = TimeoutHTTPAdapter(timeout=5)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
         stock = yf.Ticker(ticker, session=session)
-        info = stock.info
+        info = {}
+        try:
+            info = stock.info
+            if not isinstance(info, dict):
+                info = {}
+        except Exception as e:
+            print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
 
         # --- Profile ---
         profile = {
@@ -221,7 +266,11 @@ def get_ticker_analysis(ticker: str):
         # --- Performance ---
         # Note: yfinance info often has 52WeekChange, but specific periods might need history
         # Let's fetch 1y history to calculate exact performance
-        hist = stock.history(period="1y")
+        hist = pd.DataFrame()
+        try:
+            hist = stock.history(period="1y")
+        except Exception as e:
+            print(f"[WARN] Failed to fetch yfinance history for {ticker}: {e}")
         
         perf = {}
         daily_history = []
@@ -271,7 +320,11 @@ def get_ticker_analysis(ticker: str):
 
         # --- Charts (Sparklines from Balance Sheet) ---
         # yfinance balance sheet is annual or quarterly. Let's get quarterly for more points.
-        bs = stock.quarterly_balance_sheet
+        bs = pd.DataFrame()
+        try:
+            bs = stock.quarterly_balance_sheet
+        except Exception as e:
+            print(f"[WARN] Failed to fetch yfinance quarterly balance sheet for {ticker}: {e}")
         charts = {
             "cash_history": [],
             "debt_history": [],
@@ -310,7 +363,7 @@ def get_ticker_analysis(ticker: str):
         # --- Gap Day Statistics ---
         gap_stats = get_gap_stats(ticker, daily_history)
 
-        return {
+        res = {
             "profile": profile,
             "market": market,
             "financials": financials,
@@ -320,6 +373,9 @@ def get_ticker_analysis(ticker: str):
             "know_the_float": know_the_float,
             "gap_stats": gap_stats
         }
+        with _analysis_cache_lock:
+            _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
+        return res
 
     except Exception as e:
         print(f"Error fetching ticker analysis for {ticker}: {e}")
@@ -332,6 +388,15 @@ def get_sec_filings(ticker: str):
     Fetches latest filings from SEC EDGAR RSS feed.
     No API key required.
     """
+    ticker = ticker.upper()
+    now = datetime.now()
+    with _filings_cache_lock:
+        if ticker in _filings_cache:
+            cached_data, expiry = _filings_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached SEC filings for {ticker}")
+                return cached_data
+
     try:
         # SEC RSS Feed URL pattern
         # CIKS are usually mapped, but searching by Ticker works on this endpoint often, 
@@ -347,7 +412,7 @@ def get_sec_filings(ticker: str):
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         headers = {'User-Agent': 'MyStrategyBuilder/1.0 (contact@mystrategybuilder.fun)'}
-        response = requests.get(rss_url, headers=headers, verify=False)
+        response = requests.get(rss_url, headers=headers, verify=False, timeout=5)
         
         feed = feedparser.parse(response.content)
 
@@ -388,6 +453,8 @@ def get_sec_filings(ticker: str):
             else:
                 filings["others"].append(item)
 
+        with _filings_cache_lock:
+            _filings_cache[ticker] = (filings, now + FILINGS_CACHE_TTL)
         return filings
 
     except Exception as e:

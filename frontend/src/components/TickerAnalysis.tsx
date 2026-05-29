@@ -289,7 +289,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
                     Float Comparison (KnowTheFloat)
                 </span>
                 <div style={{
-                    height: '250px',
+                    height: '130px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -311,7 +311,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
                 Float Comparison (KnowTheFloat)
             </span>
-            <div style={{ overflowX: 'auto', width: '100%' }}>
+            <div style={{ overflowX: 'auto', width: '100%', height: '130px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'General Sans', sans-serif" }}>
                     <thead>
                         <tr style={{ borderBottom: '1px solid var(--color-ec-border)', textAlign: 'left' }}>
@@ -396,41 +396,171 @@ const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
             </div>
 
             {/* Frequencies and Progress Bars */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
-                {/* Negative Close Frequency */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
-                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
-                        <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.neg_close_freq)}</span>
-                    </div>
-                    <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${gapStats.neg_close_freq ?? 0}%`, backgroundColor: 'var(--color-ec-loss)', borderRadius: 2 }} />
-                    </div>
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
+                {/* Negative Close Frequency (Bidirectional Bar) */}
+                {(() => {
+                    const negClose = gapStats.neg_close_freq ?? 0;
+                    const posClose = 100 - negClose;
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+                                <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
+                            </div>
+                            <div style={{
+                                height: 18,
+                                width: '100%',
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                display: 'flex',
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 9,
+                                fontWeight: 700
+                            }}>
+                                {negClose > 0 && (
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${negClose}%`,
+                                        backgroundColor: 'var(--color-ec-loss)',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'width 0.3s ease',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                    }}>
+                                        {negClose >= 10 ? `${negClose.toFixed(1)}%` : ''}
+                                    </div>
+                                )}
+                                {posClose > 0 && (
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${posClose}%`,
+                                        backgroundColor: 'var(--color-ec-profit)',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'width 0.3s ease',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                    }}>
+                                        {posClose >= 10 ? `${posClose.toFixed(1)}%` : ''}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 {/* Close Above PMH Frequency */}
-                {gapStats.close_above_pmh_freq !== null && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
-                            <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
-                            <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.close_above_pmh_freq)}</span>
+                {gapStats.close_above_pmh_freq !== null && (() => {
+                    const val = gapStats.close_above_pmh_freq ?? 0;
+                    const restVal = 100 - val;
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+                                <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
+                            </div>
+                            <div style={{
+                                height: 18,
+                                width: '100%',
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                display: 'flex',
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 9,
+                                fontWeight: 700
+                            }}>
+                                {restVal > 0 && (
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${restVal}%`,
+                                        backgroundColor: 'var(--color-ec-loss)',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'width 0.3s ease',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                    }}>
+                                        {restVal >= 10 ? `${restVal.toFixed(1)}%` : ''}
+                                    </div>
+                                )}
+                                {val > 0 && (
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${val}%`,
+                                        backgroundColor: 'var(--color-ec-profit)',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'width 0.3s ease',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                    }}>
+                                        {val >= 10 ? `${val.toFixed(1)}%` : ''}
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                        <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${gapStats.close_above_pmh_freq ?? 0}%`, backgroundColor: 'var(--color-ec-profit)', borderRadius: 2 }} />
-                        </div>
-                    </div>
-                )}
+                    );
+                })()}
 
                 {/* Close Below VWAP Frequency */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 600 }}>
-                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
-                        <span style={{ color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.close_below_vwap_freq)}</span>
-                    </div>
-                    <div style={{ height: 4, width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${gapStats.close_below_vwap_freq ?? 0}%`, backgroundColor: 'var(--color-ec-loss)', borderRadius: 2 }} />
-                    </div>
-                </div>
+                {(() => {
+                    const val = gapStats.close_below_vwap_freq ?? 0;
+                    const restVal = 100 - val;
+                    return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+                                <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
+                            </div>
+                            <div style={{
+                                height: 18,
+                                width: '100%',
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                display: 'flex',
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 9,
+                                fontWeight: 700
+                            }}>
+                                {val > 0 && (
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${val}%`,
+                                        backgroundColor: 'var(--color-ec-loss)',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'width 0.3s ease',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                    }}>
+                                        {val >= 10 ? `${val.toFixed(1)}%` : ''}
+                                    </div>
+                                )}
+                                {restVal > 0 && (
+                                    <div style={{
+                                        height: '100%',
+                                        width: `${restVal}%`,
+                                        backgroundColor: 'var(--color-ec-profit)',
+                                        color: '#ffffff',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'width 0.3s ease',
+                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                    }}>
+                                        {restVal >= 10 ? `${restVal.toFixed(1)}%` : ''}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
             </div>
         </div>
     );

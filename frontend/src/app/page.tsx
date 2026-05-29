@@ -11,7 +11,7 @@ import { DataGrid } from "@/components/DataGrid";
 import { FilterBuilder } from "@/components/FilterBuilder";
 import { SaveDatasetModal, LoadDatasetModal } from "@/components/DatasetModals";
 import TickerAnalysis from "@/components/TickerAnalysis";
-import { NewsFeed } from "@/components/NewsFeed";
+import { MarketIntelligenceCharts } from "@/components/MarketIntelligenceCharts";
 
 import { getScreener, getAggregateIntraday, exportData } from "@/lib/api";
 
@@ -382,12 +382,12 @@ export default function Home() {
                       letterSpacing: 2,
                       color: 'var(--color-ec-text-muted)',
                     }}>
-                      READ THE LATEST MARKET NEWS AND SEC FILINGS BELOW
+                      REAL-TIME STATISTICAL DISTRIBUTIONS AND GAP COHORT ANALYSIS
                     </span>
                   </div>
                 </div>
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <NewsFeed />
+                <div style={{ flex: 1 }}>
+                  <MarketIntelligenceCharts />
                 </div>
               </div>
 
