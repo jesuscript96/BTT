@@ -706,6 +706,29 @@ def _compute_raw(
                 result.iloc[i] = running_min
         return result
 
+    if name == "PM Open":
+        timestamps = pd.to_datetime(df["timestamp"])
+        hours = timestamps.dt.hour
+        minutes = timestamps.dt.minute
+        pm_mask = (hours < 9) | ((hours == 9) & (minutes < 30))
+        pm_bars = open_[pm_mask]
+        if len(pm_bars) > 0:
+            pm_open_val = float(pm_bars.iloc[0])
+        else:
+            pm_open_val = float(ds.get("rth_open", np.nan))
+        return pd.Series(pm_open_val, index=close.index)
+
+    if name == "AM Open":
+        timestamps = pd.to_datetime(df["timestamp"])
+        hours = timestamps.dt.hour
+        am_mask = hours >= 16
+        am_bars = open_[am_mask]
+        if len(am_bars) > 0:
+            am_open_val = float(am_bars.iloc[0])
+        else:
+            am_open_val = np.nan
+        return pd.Series(am_open_val, index=close.index)
+
     # --- Trend / MA ---
     if name == "SMA":
         return pd.Series(_sma(close.values, period or 20), index=close.index)
