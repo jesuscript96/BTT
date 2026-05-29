@@ -157,7 +157,7 @@ const DailyStockChart = ({ ticker, dailyData }: { ticker: string; dailyData: any
         });
 
         const vwapSeries = chart.addSeries(LineSeries, {
-            color: '#ff9800',
+            color: '#D87A3D',
             lineWidth: 2,
             title: 'VWAP',
         });
@@ -242,7 +242,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData: any }) => {
                         <tr style={{ borderBottom: '1px solid var(--color-ec-border)', textAlign: 'left' }}>
                             <th style={{ padding: '8px 4px 8px 0', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600 }}>Source</th>
                             <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Float</th>
-                            <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Short %</th>
+                            <th style={{ padding: '8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Short I.%</th>
                             <th style={{ padding: '8px 0 8px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Outstanding</th>
                         </tr>
                     </thead>
