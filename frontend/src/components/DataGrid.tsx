@@ -13,82 +13,306 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
     const visibleData = data.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
     React.useEffect(() => { setPage(0); }, [data]);
+
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center p-20 text-ec-text-secondary">
-                Loading data...
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '80px',
+                color: 'var(--color-ec-text-secondary)',
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: '12px',
+                fontWeight: 600,
+                letterSpacing: '1px',
+                textTransform: 'uppercase'
+            }}>
+                Loading records...
             </div>
         );
     }
 
     if (data.length === 0) {
         return (
-            <div className="flex items-center justify-center p-20 text-ec-text-secondary">
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '80px',
+                color: 'var(--color-ec-text-secondary)',
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: '12px',
+                fontWeight: 600,
+                letterSpacing: '1px',
+                textTransform: 'uppercase'
+            }}>
                 No records found.
             </div>
         );
     }
 
-    // Auto-detect columns from first row (excluding internal enrichment if needed, but we want most)
+    // Auto-detect columns from first row
     const columns = Object.keys(data[0]);
 
     return (
-        <div className="overflow-x-auto w-full bg-background transition-colors duration-300 relative">
-            <table className="w-full text-left text-sm text-foreground/80 border-collapse">
-                <thead style={{ background: 'var(--color-ec-bg-elevated)', fontSize: 9, textTransform: 'uppercase', fontWeight: 700, color: 'var(--color-ec-text-muted)', letterSpacing: '1.5px', position: 'sticky', top: 0, zIndex: 10 }}>
-                    <tr>
-                        <th style={{ padding: '8px 12px', position: 'sticky', left: 0, background: 'var(--color-ec-bg-elevated)', zIndex: 20, borderBottom: '0.5px solid var(--color-ec-border)', width: 48, textAlign: 'center' }}>
+        <div style={{
+            overflowX: 'auto',
+            width: '100%',
+            backgroundColor: 'var(--color-ec-bg-surface)',
+            position: 'relative',
+        }}>
+            {/* Header: Title and records count */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                borderBottom: '1px solid var(--color-ec-border)',
+                backgroundColor: 'var(--color-ec-bg-surface)',
+            }}>
+                <span style={{
+                    fontFamily: "'Fraunces', serif",
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    color: 'var(--color-ec-text-high)',
+                }}>
+                    Scanned Records
+                </span>
+                <span style={{
+                    fontFamily: "'General Sans', sans-serif",
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    color: 'var(--color-ec-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px'
+                }}>
+                    Showing {Math.min(data.length, (page + 1) * PAGE_SIZE).toLocaleString()} of {data.length.toLocaleString()} records
+                </span>
+            </div>
+
+            {/* Table */}
+            <table style={{
+                width: '100%',
+                textAlign: 'left',
+                borderCollapse: 'collapse',
+                fontFamily: "'General Sans', sans-serif",
+            }}>
+                <thead>
+                    <tr style={{
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        fontSize: '9px',
+                        textTransform: 'uppercase',
+                        fontWeight: 700,
+                        color: 'var(--color-ec-text-muted)',
+                        letterSpacing: '1px',
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 10,
+                    }}>
+                        <th style={{
+                            padding: '10px 16px',
+                            position: 'sticky',
+                            left: 0,
+                            backgroundColor: 'var(--color-ec-bg-elevated)',
+                            zIndex: 20,
+                            borderBottom: '1px solid var(--color-ec-border)',
+                            width: '48px',
+                            textAlign: 'center',
+                        }}>
                             View
                         </th>
                         {columns.map((col) => (
-                            <th key={col} style={{ padding: '8px 12px', whiteSpace: 'nowrap', borderBottom: '0.5px solid var(--color-ec-border)' }}>
+                            <th key={col} style={{
+                                padding: '10px 16px',
+                                whiteSpace: 'nowrap',
+                                borderBottom: '1px solid var(--color-ec-border)',
+                            }}>
                                 {col.replace(/_/g, " ")}
                             </th>
                         ))}
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-border/50">
+                <tbody style={{
+                    backgroundColor: 'var(--color-ec-bg-surface)',
+                }}>
                     {visibleData.map((row, i) => (
-                        <tr key={i} style={{ transition: 'background 150ms' }} className="hover:bg-[var(--color-ec-bg-elevated)] group">
-                            <td style={{ padding: '8px 12px', position: 'sticky', left: 0, background: 'var(--color-ec-bg-base)', zIndex: 10, borderRight: '0.5px solid var(--color-ec-border)', textAlign: 'center' }} className="group-hover:bg-[var(--color-ec-bg-elevated)]">
+                        <tr
+                            key={i}
+                            style={{
+                                borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)',
+                                transition: 'background-color 150ms ease',
+                            }}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-elevated)';
+                                const firstCell = e.currentTarget.firstElementChild as HTMLElement;
+                                if (firstCell) firstCell.style.backgroundColor = 'var(--color-ec-bg-elevated)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'transparent';
+                                const firstCell = e.currentTarget.firstElementChild as HTMLElement;
+                                if (firstCell) firstCell.style.backgroundColor = 'var(--color-ec-bg-base)';
+                            }}
+                        >
+                            <td style={{
+                                padding: '8px 16px',
+                                position: 'sticky',
+                                left: 0,
+                                backgroundColor: 'var(--color-ec-bg-base)',
+                                zIndex: 10,
+                                borderRight: '1px solid var(--color-ec-border)',
+                                textAlign: 'center',
+                                transition: 'background-color 150ms ease',
+                            }}>
                                 <button
                                     onClick={() => {
                                         const url = `/analysis/${row.ticker}/${row.date}`;
                                         window.open(url, '_blank', 'noreferrer');
                                     }}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-secondary)', padding: 4, borderRadius: 5 }}
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        color: 'var(--color-ec-text-secondary)',
+                                        padding: '4px',
+                                        borderRadius: '4px',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        transition: 'all 150ms ease',
+                                    }}
                                     title="View Intraday Chart in New Window"
-                                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-ec-bg-elevated)'; }}
-                                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.color = 'var(--color-ec-copper)';
+                                        e.currentTarget.style.backgroundColor = 'rgba(216, 122, 61, 0.1)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.color = 'var(--color-ec-text-secondary)';
+                                        e.currentTarget.style.backgroundColor = 'transparent';
+                                    }}
                                 >
-                                    <Eye className="w-4 h-4" />
+                                    <Eye style={{ width: 14, height: 14 }} />
                                 </button>
                             </td>
-                            {columns.map((col) => (
-                                <td key={`${i}-${col}`} style={{ padding: '8px 12px', whiteSpace: 'nowrap', color: 'var(--color-ec-text-primary)', fontWeight: 500, fontSize: 12 }}>
-                                    {typeof row[col] === 'number'
-                                        ? row[col].toLocaleString(undefined, { maximumFractionDigits: 2 })
-                                        : row[col]
+                            {columns.map((col) => {
+                                const val = row[col];
+                                const isNumber = typeof val === 'number';
+                                
+                                let cellColor = 'var(--color-ec-text-primary)';
+                                let fontWeight = 500;
+
+                                if (col.toLowerCase() === 'ticker') {
+                                    fontWeight = 700;
+                                    cellColor = 'var(--color-ec-text-high)';
+                                } else if (isNumber) {
+                                    const colLower = col.toLowerCase();
+                                    if (
+                                        colLower.includes('change') || 
+                                        colLower.includes('profit') || 
+                                        colLower.includes('gain') || 
+                                        colLower.includes('loss') || 
+                                        colLower.includes('pct') || 
+                                        colLower.includes('run') || 
+                                        colLower.includes('fade') || 
+                                        colLower.includes('spike')
+                                    ) {
+                                        if (val > 0) cellColor = 'var(--color-ec-profit)';
+                                        else if (val < 0) cellColor = 'var(--color-ec-loss)';
                                     }
-                                </td>
-                            ))}
+                                }
+
+                                return (
+                                    <td key={`${i}-${col}`} style={{
+                                        padding: '8px 16px',
+                                        whiteSpace: 'nowrap',
+                                        color: cellColor,
+                                        fontWeight: fontWeight,
+                                        fontSize: '11px',
+                                    }}>
+                                        {isNumber
+                                            ? val.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                            : val
+                                        }
+                                    </td>
+                                );
+                            })}
                         </tr>
                     ))}
                 </tbody>
             </table>
+
+            {/* Pagination */}
             {data.length > PAGE_SIZE && (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 10, fontSize: 12, fontWeight: 500, color: 'var(--color-ec-text-muted)', borderTop: '0.5px solid var(--color-ec-border)' }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '16px',
+                    padding: '12px',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: 'var(--color-ec-text-secondary)',
+                    borderTop: '1px solid var(--color-ec-border)',
+                    backgroundColor: 'var(--color-ec-bg-surface)',
+                    fontFamily: "'General Sans', sans-serif",
+                }}>
                     <button
                         onClick={() => setPage(p => Math.max(0, p - 1))}
                         disabled={page === 0}
-                        style={{ padding: '4px 8px', borderRadius: 5, background: 'var(--color-ec-bg-surface)', border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-secondary)', cursor: page === 0 ? 'default' : 'pointer', opacity: page === 0 ? 0.3 : 1 }}
-                    >← Anterior</button>
-                    <span>{page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, data.length)} de {data.length.toLocaleString()}</span>
+                        style={{
+                            padding: '6px 12px',
+                            borderRadius: '4px',
+                            background: 'var(--color-ec-bg-elevated)',
+                            border: '1px solid var(--color-ec-border)',
+                            color: page === 0 ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)',
+                            cursor: page === 0 ? 'not-allowed' : 'pointer',
+                            opacity: page === 0 ? 0.4 : 1,
+                            transition: 'all 150ms ease',
+                        }}
+                        onMouseEnter={(e) => {
+                            if (page !== 0) {
+                                e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+                                e.currentTarget.style.color = 'var(--color-ec-copper-bright)';
+                            }
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                            e.currentTarget.style.color = page === 0 ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)';
+                        }}
+                    >
+                        ← Anterior
+                    </button>
+                    
+                    <span style={{ letterSpacing: '0.5px' }}>
+                        {page * PAGE_SIZE + 1} - {Math.min((page + 1) * PAGE_SIZE, data.length)} de {data.length.toLocaleString()}
+                    </span>
+                    
                     <button
                         onClick={() => setPage(p => p + 1)}
                         disabled={(page + 1) * PAGE_SIZE >= data.length}
-                        style={{ padding: '4px 8px', borderRadius: 5, background: 'var(--color-ec-bg-surface)', border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-secondary)', cursor: (page + 1) * PAGE_SIZE >= data.length ? 'default' : 'pointer', opacity: (page + 1) * PAGE_SIZE >= data.length ? 0.3 : 1 }}
-                    >Siguiente →</button>
+                        style={{
+                            padding: '6px 12px',
+                            borderRadius: '4px',
+                            background: 'var(--color-ec-bg-elevated)',
+                            border: '1px solid var(--color-ec-border)',
+                            color: (page + 1) * PAGE_SIZE >= data.length ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)',
+                            cursor: (page + 1) * PAGE_SIZE >= data.length ? 'not-allowed' : 'pointer',
+                            opacity: (page + 1) * PAGE_SIZE >= data.length ? 0.4 : 1,
+                            transition: 'all 150ms ease',
+                        }}
+                        onMouseEnter={(e) => {
+                            if ((page + 1) * PAGE_SIZE < data.length) {
+                                e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+                                e.currentTarget.style.color = 'var(--color-ec-copper-bright)';
+                            }
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                            e.currentTarget.style.color = (page + 1) * PAGE_SIZE >= data.length ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)';
+                        }}
+                    >
+                        Siguiente →
+                    </button>
                 </div>
             )}
         </div>

@@ -29,6 +29,22 @@
   --sidebar-foreground: #8A8D92;
   --sidebar-active: #1C1E21;
   --sidebar-hover: #1C1E21;
+
+  /* Exported theme variables for inline styles */
+  --color-ec-copper: #D87A3D;
+  --color-ec-copper-bright: #E89C6A;
+  --color-ec-copper-text: #1A0A00;
+  --color-ec-bg-sidebar: #101213;
+  --color-ec-bg-base: #16181A;
+  --color-ec-bg-surface: #1C1E21;
+  --color-ec-bg-elevated: #232528;
+  --color-ec-border: #2C2F33;
+  --color-ec-text-muted: #6A6D72;
+  --color-ec-text-secondary: #8A8D92;
+  --color-ec-text-primary: #D4D2CF;
+  --color-ec-text-high: #E4E2DF;
+  --color-ec-profit: #4A9D7F;
+  --color-ec-loss: #C94D3F;
 }
 
 * {
@@ -43,3 +59,47 @@ body {
   font-family: 'General Sans', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Ticker Analysis responsive grid layout */
+.ticker-analysis-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+@media (min-width: 1024px) {
+  .ticker-analysis-grid {
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 0 !important;
+  }
+}
+
+.ticker-col-container {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 20px !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  padding: 0 16px !important;
+}
+
+@media (min-width: 1024px) {
+  .ticker-col-1-container {
+    border-right: 1px solid var(--color-ec-border) !important;
+    padding-left: 0 !important;
+    padding-right: 32px !important;
+  }
+  
+  .ticker-col-2-container {
+    border-right: 1px solid var(--color-ec-border) !important;
+    padding-left: 32px !important;
+    padding-right: 32px !important;
+  }
+  
+  .ticker-col-3-container {
+    padding-left: 32px !important;
+    padding-right: 0 !important;
+  }
+}
+

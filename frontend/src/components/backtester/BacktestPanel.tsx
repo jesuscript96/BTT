@@ -26,6 +26,7 @@ export interface BacktestPanelParams {
 
 interface BacktestPanelProps {
   refreshTrigger?: number;
+  onNewStrategy: () => void;
   onRun: (params: {
     dataset_id: string;
     strategy_id: string;
@@ -49,9 +50,22 @@ interface BacktestPanelProps {
   onParamsChange?: (params: BacktestPanelParams) => void;
   loading: boolean;
   isDarkMode?: boolean;
+  onNewDataset: () => void;
+  datasetRefreshTrigger?: number;
+  pendingDatasetSelect?: string;
 }
 
-export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, loading, isDarkMode = false }: BacktestPanelProps) {
+export default function BacktestPanel({
+  refreshTrigger,
+  onNewStrategy,
+  onNewDataset,
+  datasetRefreshTrigger,
+  pendingDatasetSelect,
+  onRun,
+  onParamsChange,
+  loading,
+  isDarkMode = false
+}: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedDataset, setSelectedDataset] = useState("");
@@ -69,12 +83,14 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
   const [useLocates, setUseLocates] = useState(false);
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
-  const [lookAheadPrevention, setLookAheadPrevention] = useState(true);
+  const lookAheadPrevention = true;
   const [riskType, setRiskType] = useState<"FIXED" | "PERCENT" | "KELLY" | "FIXED_RATIO">("FIXED");
   const [fixedRatioDelta, setFixedRatioDelta] = useState(500);
   const [sizeBySl, setSizeBySl] = useState(false);
   const [feeType, setFeeType] = useState<"PERCENT" | "FLAT">("PERCENT");
   const [loadingData, setLoadingData] = useState(true);
+  const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+  const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   const loadData = async () => {
@@ -124,6 +140,18 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
       .then((s) => setStrategies(s))
       .catch((e) => console.error("Error refreshing strategies:", e));
   }, [refreshTrigger]);
+
+  useEffect(() => {
+    if (!datasetRefreshTrigger) return;
+    fetchDatasets()
+      .then((d) => {
+        setDatasets(d);
+        if (pendingDatasetSelect) {
+          setSelectedDataset(pendingDatasetSelect);
+        }
+      })
+      .catch((e) => console.error("Error refreshing datasets:", e));
+  }, [datasetRefreshTrigger, pendingDatasetSelect]);
 
   useEffect(() => {
     onParamsChange?.({
@@ -189,54 +217,208 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
   return (
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 12,
-      }}>
-      {/* CONFIGURACIÓN */}
     <div style={{
       display: 'flex',
       flexDirection: 'column',
-      gap: 20,
+      gap: 16,
     }}>
-        <h2 style={{
-          fontFamily: 'var(--color-ec-sans)',
-          fontSize: 9,
-          fontWeight: 700,
-          textTransform: 'uppercase',
-          letterSpacing: '0.15em',
-          color: 'var(--color-ec-text-muted)',
-          marginBottom: 12,
-        }}>
-          Configuración
-        </h2>
+      {/* CONFIGURACIÓN */}
+      <h2 style={{
+        fontFamily: 'var(--color-ec-sans)',
+        fontSize: 14,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        letterSpacing: '0.12em',
+        color: 'var(--color-ec-text-high)',
+        marginBottom: 4,
+      }}>
+        CONFIGURACIÓN
+      </h2>
 
-        {loadError && (
-          <div className="flex items-center gap-2" style={{
-            backgroundColor: 'color-mix(in srgb, var(--color-ec-loss) 10%, transparent)',
-            border: '0.5px solid color-mix(in srgb, var(--color-ec-loss) 30%, transparent)',
-            borderRadius: 5,
-            padding: '8px 12px',
-            marginBottom: 4,
+      {loadError && (
+        <div className="flex items-center gap-2" style={{
+          backgroundColor: 'color-mix(in srgb, var(--color-ec-loss) 10%, transparent)',
+          border: '0.5px solid color-mix(in srgb, var(--color-ec-loss) 30%, transparent)',
+          borderRadius: 5,
+          padding: '8px 12px',
+          marginBottom: 4,
+        }}>
+          <span style={{
+            fontFamily: 'var(--color-ec-sans)',
+            fontSize: 11,
+            color: 'var(--color-ec-loss)',
+            flex: 1,
+          }}>Error al conectar con el servidor</span>
+          <button
+            onClick={loadData}
+            className="text-xs font-medium underline hover:no-underline cursor-pointer"
+            style={{ color: 'var(--color-ec-loss)' }}
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        <div>
+          <label style={{
+            display: 'block',
+            fontFamily: 'var(--color-ec-sans)',
+            fontSize: 9,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+            color: 'var(--color-ec-text-muted)',
+            marginBottom: 5,
           }}>
+            Cargar Dataset Guardado
+          </label>
+          {loadingData ? (
+            <div className="h-9 bg-gray-100 rounded animate-pulse" />
+          ) : (
+            <select
+              value={selectedDataset}
+              onChange={(e) => setSelectedDataset(e.target.value)}
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '7px 10px',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+                cursor: 'pointer',
+              }}
+            >
+              {datasets.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            onClick={onNewDataset}
+            onMouseEnter={() => setHoveredBtn("dataset")}
+            onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+            onMouseDown={() => setActiveBtn("dataset")}
+            onMouseUp={() => setActiveBtn(null)}
+            style={{
+              width: '100%',
+              padding: '8px 0',
+              borderRadius: 5,
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              border: hoveredBtn === "dataset" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
+              backgroundColor: hoveredBtn === "dataset" ? 'var(--color-ec-copper)' : 'transparent',
+              color: hoveredBtn === "dataset" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
+              fontFamily: 'var(--color-ec-sans)',
+              marginTop: 6,
+              marginBottom: 2,
+              boxShadow: hoveredBtn === "dataset" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
+              transform: activeBtn === "dataset" ? 'scale(0.98)' : hoveredBtn === "dataset" ? 'scale(1.015)' : 'scale(1)',
+              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+          >
+            + NUEVO DATASET
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+          <label style={{
+            display: 'block',
+            fontFamily: 'var(--color-ec-sans)',
+            fontSize: 9,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+            color: 'var(--color-ec-text-muted)',
+          }}>
+            cargar estrategia guardada
+          </label>
+          {loadingData ? (
+            <div className="h-9 bg-gray-100 rounded animate-pulse" />
+          ) : (
+            <select
+              value={selectedStrategy}
+              onChange={(e) => setSelectedStrategy(e.target.value)}
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '7px 10px',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+                cursor: 'pointer',
+              }}
+            >
+              {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {selectedStrat?.description && (
             <span style={{
               fontFamily: 'var(--color-ec-sans)',
+              fontSize: 10,
+              color: 'var(--color-ec-text-secondary)',
+              fontStyle: 'italic',
+              marginTop: 4,
+              lineHeight: '1.3',
+              display: 'block',
+            }}>{selectedStrat.description}</span>
+          )}
+          
+          <button
+            type="button"
+            onClick={onNewStrategy}
+            onMouseEnter={() => setHoveredBtn("strategy")}
+            onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+            onMouseDown={() => setActiveBtn("strategy")}
+            onMouseUp={() => setActiveBtn(null)}
+            style={{
+              width: '100%',
+              padding: '8px 0',
+              borderRadius: 5,
               fontSize: 11,
-              color: 'var(--color-ec-loss)',
-              flex: 1,
-            }}>Error al conectar con el servidor</span>
-            <button
-              onClick={loadData}
-              className="text-xs font-medium underline hover:no-underline cursor-pointer"
-              style={{ color: 'var(--color-ec-loss)' }}
-            >
-              Reintentar
-            </button>
-          </div>
-        )}
+              fontWeight: 700,
+              letterSpacing: '1px',
+              textTransform: 'uppercase',
+              cursor: 'pointer',
+              border: hoveredBtn === "strategy" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
+              backgroundColor: hoveredBtn === "strategy" ? 'var(--color-ec-copper)' : 'transparent',
+              color: hoveredBtn === "strategy" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
+              fontFamily: 'var(--color-ec-sans)',
+              marginTop: 4,
+              marginBottom: 8,
+              boxShadow: hoveredBtn === "strategy" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
+              transform: activeBtn === "strategy" ? 'scale(0.98)' : hoveredBtn === "strategy" ? 'scale(1.015)' : 'scale(1)',
+              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+          >
+            + Nueva Estrategia
+          </button>
+        </div>
 
-        <div className="space-y-3">
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 8,
+          marginBottom: 8,
+        }}>
           <div>
             <label style={{
               display: 'block',
@@ -248,14 +430,69 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
               color: 'var(--color-ec-text-muted)',
               marginBottom: 5,
             }}>
-              Dataset
+              Capital ($)
             </label>
-            {loadingData ? (
-              <div className="h-9 bg-gray-100 rounded animate-pulse" />
-            ) : (
+            <input
+              type="number"
+              value={initCash}
+              onChange={(e) => setInitCash(Number(e.target.value))}
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '7px 10px',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+              }}
+            />
+          </div>
+          <div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 5,
+            }}>
+              <label style={{
+                display: 'block',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                color: 'var(--color-ec-text-muted)',
+              }}>
+                1R
+              </label>
               <select
-                value={selectedDataset}
-                onChange={(e) => setSelectedDataset(e.target.value)}
+                value={riskType}
+                onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT" | "KELLY")}
+                style={{
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 600,
+                  color: 'var(--color-ec-copper)',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="FIXED">Fijo ($)</option>
+                <option value="PERCENT">% Eq</option>
+                <option value="KELLY">Kelly</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                step={riskType === "PERCENT" ? "0.1" : "1"}
+                value={riskR}
+                onChange={(e) => setRiskR(Number(e.target.value))}
                 style={{
                   backgroundColor: 'var(--color-ec-bg-elevated)',
                   border: '0.5px solid var(--color-ec-border)',
@@ -267,18 +504,72 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
                   color: 'var(--color-ec-text-primary)',
                   outline: 'none',
                   width: '100%',
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: 8,
+        }}>
+          <div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 5,
+            }}>
+              <label style={{
+                display: 'block',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.12em',
+                color: 'var(--color-ec-text-muted)',
+              }}>
+                Fees {feeType === "PERCENT" ? "(%)" : "($)"}
+              </label>
+              <select
+                value={feeType}
+                onChange={(e) => setFeeType(e.target.value as "PERCENT" | "FLAT")}
+                style={{
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 9,
+                  fontWeight: 600,
+                  color: 'var(--color-ec-copper)',
                   cursor: 'pointer',
                 }}
               >
-                {datasets.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : ""}
-                  </option>
-                ))}
+                <option value="PERCENT">%</option>
+                <option value="FLAT">$</option>
               </select>
-            )}
+            </div>
+            <input
+              type="number"
+              step="0.01"
+              value={fees}
+              onChange={(e) => setFees(Number(e.target.value))}
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '7px 10px',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+              }}
+            />
           </div>
-
           <div>
             <label style={{
               display: 'block',
@@ -290,272 +581,127 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
               color: 'var(--color-ec-text-muted)',
               marginBottom: 5,
             }}>
-              Estrategia
+              Slippage (%)
             </label>
-            {loadingData ? (
-              <div className="h-9 bg-gray-100 rounded animate-pulse" />
-            ) : (
-              <select
-                value={selectedStrategy}
-                onChange={(e) => setSelectedStrategy(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  border: '0.5px solid var(--color-ec-border)',
-                  borderRadius: 5,
-                  padding: '7px 10px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                  width: '100%',
-                  cursor: 'pointer',
-                }}
-              >
-                {strategies.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            )}
-            {selectedStrat?.description && (
-              <p className="text-xs text-[var(--muted)] mt-1">{selectedStrat.description}</p>
-            )}
-          </div>
-
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 8,
-            marginBottom: 8,
-          }}>
-            <div>
-              <label style={{
-                display: 'block',
+            <input
+              type="number"
+              step="0.01"
+              value={slippage}
+              onChange={(e) => setSlippage(Number(e.target.value))}
+              style={{
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '7px 10px',
                 fontFamily: 'var(--color-ec-sans)',
-                fontSize: 9,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.12em',
-                color: 'var(--color-ec-text-muted)',
-                marginBottom: 5,
-              }}>
-                Capital ($)
-              </label>
-              <input
-                type="number"
-                value={initCash}
-                onChange={(e) => setInitCash(Number(e.target.value))}
-                style={{
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  border: '0.5px solid var(--color-ec-border)',
-                  borderRadius: 5,
-                  padding: '7px 10px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                  width: '100%',
-                }}
-              />
-            </div>
-            <div>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 5,
-              }}>
-                <label style={{
-                  display: 'block',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 9,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.12em',
-                  color: 'var(--color-ec-text-muted)',
-                }}>
-                  Riesgo 1R
-                </label>
-                <select
-                  value={riskType}
-                  onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT" | "KELLY" | "FIXED_RATIO")}
-                  style={{
-                    backgroundColor: 'transparent',
-                    border: 'none',
-                    outline: 'none',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 9,
-                    fontWeight: 600,
-                    color: 'var(--color-ec-copper)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="FIXED">Fijo ($)</option>
-                  <option value="PERCENT">% Eq</option>
-                  <option value="KELLY">Kelly</option>
-                  <option value="FIXED_RATIO">Fixed Ratio</option>
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step={riskType === "PERCENT" ? "0.1" : "1"}
-                  value={riskR}
-                  onChange={(e) => setRiskR(Number(e.target.value))}
-                  style={{
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    border: '0.5px solid var(--color-ec-border)',
-                    borderRadius: 5,
-                    padding: '7px 10px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                    width: '100%',
-                  }}
-                />
-                {riskType === "FIXED_RATIO" && (
-                  <input
-                    type="number"
-                    step="50"
-                    placeholder="Delta ($)"
-                    value={fixedRatioDelta}
-                    onChange={(e) => setFixedRatioDelta(Number(e.target.value))}
-                    title="Delta ($) requerido para +1 unidad de riesgo"
-                  style={{
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    border: '0.5px solid var(--color-ec-border)',
-                    borderRadius: 5,
-                    padding: '7px 10px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                    width: 80,
-                  }}
-                  />
-                )}
-              </div>
-            </div>
+                fontSize: 12,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-primary)',
+                outline: 'none',
+                width: '100%',
+              }}
+            />
           </div>
+        </div>
 
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          paddingTop: 16,
+          marginTop: 12,
+          borderTop: '0.5px solid var(--color-ec-border)',
+        }}>
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
+            display: 'flex',
+            alignItems: 'center',
             gap: 8,
           }}>
-            <div>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: 5,
-              }}>
-                <label style={{
-                  display: 'block',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 9,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.12em',
-                  color: 'var(--color-ec-text-muted)',
-                }}>
-                  Fees {feeType === "PERCENT" ? "(%)" : "($)"}
-                </label>
-                <select
-                  value={feeType}
-                  onChange={(e) => setFeeType(e.target.value as "PERCENT" | "FLAT")}
-                  style={{
-                    backgroundColor: 'transparent',
-                    border: 'none',
-                    outline: 'none',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 9,
-                    fontWeight: 600,
-                    color: 'var(--color-ec-copper)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="PERCENT">%</option>
-                  <option value="FLAT">$</option>
-                </select>
-              </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useLocates}
+                onChange={() => setUseLocates(!useLocates)}
+                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+              />
+              <span style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-secondary)',
+              }}>Locates estimados $/100</span>
+            </label>
+            {useLocates && (
               <input
                 type="number"
                 step="0.01"
-                value={fees}
-                onChange={(e) => setFees(Number(e.target.value))}
+                value={locatesCost}
+                onChange={(e) => setLocatesCost(Number(e.target.value))}
+                className="w-20 border border-[var(--color-ec-border)]"
                 style={{
                   backgroundColor: 'var(--color-ec-bg-elevated)',
-                  border: '0.5px solid var(--color-ec-border)',
                   borderRadius: 5,
-                  padding: '7px 10px',
+                  padding: '6px 8px',
                   fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 12,
-                  fontWeight: 500,
+                  fontSize: 11,
                   color: 'var(--color-ec-text-primary)',
                   outline: 'none',
-                  width: '100%',
                 }}
               />
-            </div>
-            <div>
-              <label style={{
-                display: 'block',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 9,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.12em',
-                color: 'var(--color-ec-text-muted)',
-                marginBottom: 5,
-              }}>
-                Slippage (%)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={slippage}
-                onChange={(e) => setSlippage(Number(e.target.value))}
-                style={{
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  border: '0.5px solid var(--color-ec-border)',
-                  borderRadius: 5,
-                  padding: '7px 10px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                  width: '100%',
-                }}
-              />
-            </div>
+            )}
           </div>
 
           <div style={{
             display: 'flex',
-            flexDirection: 'column',
+            alignItems: 'center',
             gap: 8,
-            padding: '10px 0',
-            borderTop: '0.5px solid var(--color-ec-border)',
-            borderBottom: '0.5px solid var(--color-ec-border)',
           }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useMonthlyExpenses}
+                onChange={() => setUseMonthlyExpenses(!useMonthlyExpenses)}
+                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+              />
+              <span style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                fontWeight: 500,
+                color: 'var(--color-ec-text-secondary)',
+              }}>Gastos fijos mensuales ($)</span>
+            </label>
+            {useMonthlyExpenses && (
+              <input
+                type="number"
+                step="1"
+                value={monthlyExpenses}
+                onChange={(e) => setMonthlyExpenses(Number(e.target.value))}
+                className="w-20 border border-[var(--color-ec-border)]"
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  borderRadius: 5,
+                  padding: '6px 8px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                }}
+              />
+            )}
+          </div>
+
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            paddingTop: 4,
+          }}>
+            <div className="flex flex-col">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={useLocates}
-                  onChange={() => setUseLocates(!useLocates)}
+                  checked={sizeBySl}
+                  onChange={() => setSizeBySl(!sizeBySl)}
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
                 <span style={{
@@ -563,118 +709,18 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
                   fontSize: 11,
                   fontWeight: 500,
                   color: 'var(--color-ec-text-secondary)',
-                }}>Locates $/100</span>
+                }}>Size por Distancia al SL</span>
               </label>
-              {useLocates && (
-                <input
-                  type="number"
-                  step="0.01"
-                  value={locatesCost}
-                  onChange={(e) => setLocatesCost(Number(e.target.value))}
-                  className="w-20 border border-[var(--color-ec-border)]"
-                  style={{
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    borderRadius: 5,
-                    padding: '6px 8px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                  }}
-                />
-              )}
-            </div>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useMonthlyExpenses}
-                  onChange={() => setUseMonthlyExpenses(!useMonthlyExpenses)}
-                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                />
-                <span style={{
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-secondary)',
-                }}>Gastos fijos mensuales ($)</span>
-              </label>
-              {useMonthlyExpenses && (
-                <input
-                  type="number"
-                  step="1"
-                  value={monthlyExpenses}
-                  onChange={(e) => setMonthlyExpenses(Number(e.target.value))}
-                  className="w-20 border border-[var(--color-ec-border)]"
-                  style={{
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    borderRadius: 5,
-                    padding: '6px 8px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                  }}
-                />
-              )}
-            </div>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              paddingTop: 4,
-            }}>
-              <div className="flex flex-col">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={sizeBySl}
-                    onChange={() => setSizeBySl(!sizeBySl)}
-                    className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                  />
-                  <span style={{
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11,
-                    fontWeight: 500,
-                    color: 'var(--color-ec-text-secondary)',
-                  }}>Size por Distancia al SL</span>
-                </label>
-                <span className="text-[10px] text-[var(--muted)] mt-1 ml-6 leading-tight">
-                  Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
-                </span>
-              </div>
-            </div>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              paddingTop: 8,
-              marginTop: 4,
-              borderTop: '0.5px solid var(--color-ec-border)',
-            }}>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={lookAheadPrevention}
-                  onChange={() => setLookAheadPrevention(!lookAheadPrevention)}
-                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                />
-                <span style={{
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-secondary)',
-                }}>Look Ahead Prevention</span>
-              </label>
-              <span className="text-[10px] text-[var(--muted)]">
-                {lookAheadPrevention ? "ON" : "OFF"}
+              <span style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 10,
+                color: 'var(--color-ec-text-secondary)',
+                fontStyle: 'italic',
+                marginLeft: 24,
+                marginTop: 4,
+                lineHeight: '1.3',
+              }}>
+                Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
               </span>
             </div>
           </div>
@@ -685,8 +731,8 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
       <div style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 12,
-        paddingTop: 4,
+        gap: 6,
+        paddingTop: 16,
         borderTop: '0.5px solid var(--color-ec-border)',
       }}>
         <h2 style={{
@@ -696,9 +742,9 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
           textTransform: 'uppercase',
           letterSpacing: '0.15em',
           color: 'var(--color-ec-text-muted)',
-          marginBottom: 12,
+          marginBottom: 4,
         }}>
-          Rango de fechas
+          Rango de fechas IS-OOS
         </h2>
         <div style={{
           display: 'grid',
@@ -724,7 +770,7 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
               min={selectedDs?.min_date}
               max={endDate || selectedDs?.max_date}
               onChange={(e) => setStartDate(e.target.value)}
-              className="w-full border border-[var(--color-ec-border)]"
+              className="w-full border border-[var(--border)]"
               style={{
                 backgroundColor: 'var(--color-ec-bg-elevated)',
                 borderRadius: 5,
@@ -757,7 +803,7 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
               min={startDate || selectedDs?.min_date}
               max={selectedDs?.max_date}
               onChange={(e) => setEndDate(e.target.value)}
-              className="w-full border border-[var(--color-ec-border)]"
+              className="w-full border border-[var(--border)]"
               style={{
                 backgroundColor: 'var(--color-ec-bg-elevated)',
                 borderRadius: 5,
@@ -778,8 +824,8 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
       <div style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 10,
-        paddingTop: 4,
+        gap: 6,
+        paddingTop: 16,
         borderTop: '0.5px solid var(--color-ec-border)',
       }}>
         <h2 style={{
@@ -789,7 +835,7 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
           textTransform: 'uppercase',
           letterSpacing: '0.15em',
           color: 'var(--color-ec-text-muted)',
-          marginBottom: 12,
+          marginBottom: 4,
         }}>
           Sesión de mercado
         </h2>
@@ -832,23 +878,61 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
               </div>
 
               {session.id === "custom" && marketSessions.includes("custom") && (
-                <div className="grid grid-cols-2 gap-2 mt-2 pl-6">
+                <div className="grid grid-cols-2 gap-2 mt-3 pl-6">
                   <div>
-                    <label className="block text-[10px] font-medium mb-1 text-[var(--muted)]">Desde</label>
+                    <label style={{
+                      display: "block",
+                      fontFamily: "var(--color-ec-sans)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-secondary)",
+                      fontStyle: "italic",
+                      marginBottom: 4,
+                    }}>Desde</label>
                     <input
                       type="time"
                       value={customStartTime}
                       onChange={(e) => setCustomStartTime(e.target.value)}
-                      className="w-full border border-[var(--border)] rounded-md px-2 py-1 text-[10px] bg-[var(--card-muted-bg)]"
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '6px 10px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
+                      }}
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-medium mb-1 text-[var(--muted)]">Hasta</label>
+                    <label style={{
+                      display: "block",
+                      fontFamily: "var(--color-ec-sans)",
+                      fontSize: 11,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-secondary)",
+                      fontStyle: "italic",
+                      marginBottom: 4,
+                    }}>Hasta</label>
                     <input
                       type="time"
                       value={customEndTime}
                       onChange={(e) => setCustomEndTime(e.target.value)}
-                      className="w-full border border-[var(--border)] rounded-md px-2 py-1 text-[10px] bg-[var(--card-muted-bg)]"
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '6px 10px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
+                      }}
                     />
                   </div>
                 </div>
@@ -861,8 +945,12 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
       <button
         onClick={handleRun}
         disabled={loading || !selectedDataset || !selectedStrategy}
+        onMouseEnter={() => setHoveredBtn("run")}
+        onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+        onMouseDown={() => setActiveBtn("run")}
+        onMouseUp={() => setActiveBtn(null)}
         style={{
-            background: 'var(--color-ec-copper)',
+            backgroundColor: 'var(--color-ec-copper)',
             color: 'var(--color-ec-copper-text)',
             border: 'none',
             borderRadius: 5,
@@ -872,9 +960,13 @@ export default function BacktestPanel({ refreshTrigger, onRun, onParamsChange, l
             fontWeight: 700,
             letterSpacing: '1.2px',
             textTransform: 'uppercase',
-            cursor: 'pointer',
+            cursor: loading || !selectedDataset || !selectedStrategy ? 'not-allowed' : 'pointer',
             width: '100%',
             marginTop: 8,
+            opacity: loading || !selectedDataset || !selectedStrategy ? 0.5 : 1,
+            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(1.015)' : 'scale(1)',
+            transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
       >
         {loading ? (

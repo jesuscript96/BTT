@@ -45,11 +45,11 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
   }, [pnlByDate]);
 
   if (!dayResults.length) {
-    return <p className="text-[11px] text-[var(--muted)] font-mono">Sin resultados</p>;
+    return <p className="text-[11px] text-[var(--color-ec-text-muted)] font-mono">Sin resultados</p>;
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" style={{ paddingTop: 24 }}>
       {months.map((monthStr) => {
         const [year, month] = monthStr.split("-").map(Number);
         const firstDay = new Date(year, month - 1, 1);
@@ -68,14 +68,14 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
 
         return (
           <div key={monthStr}>
-            <div className="pb-1.5 mb-2" style={{ borderBottom: '1px solid var(--border)' }}>
-              <span className="text-[11px] font-semibold text-[var(--foreground)] uppercase tracking-tight">
+            <div className="pb-1.5 mb-2" style={{ borderBottom: '0.5px solid rgba(255, 255, 255, 0.3)' }}>
+              <span className="text-[11px] font-semibold uppercase tracking-tight" style={{ color: 'var(--color-ec-text-high)' }}>
                 {monthName}
               </span>
             </div>
             <div className="grid grid-cols-7 gap-[3px]">
               {["L", "M", "X", "J", "V", "S", "D"].map((l) => (
-                <div key={l} className="text-[8px] font-bold text-[var(--muted)] text-center mb-0.5 font-mono">
+                <div key={l} className="text-[12px] font-bold text-center mb-1 font-mono" style={{ color: 'var(--color-ec-text-primary)' }}>
                   {l}
                 </div>
               ))}
@@ -86,16 +86,16 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
 
                 return (
                   <div
-                    key={day.date}
-                    className="aspect-square rounded-[2px] flex items-center justify-center text-[9px] flex-col leading-none transition-colors"
-                    title={hasPnl ? `${day.date}: $${day.pnl?.toFixed(2)}` : day.date}
-                    style={{
-                      backgroundColor: hasPnl ? pnlColor(day.pnl!, maxAbsPnl, isDarkMode) : "transparent",
-                    }}
+                     key={day.date}
+                     className="aspect-square rounded-[2px] flex items-center justify-center text-[11px] flex-col leading-none transition-colors"
+                     title={hasPnl ? `${day.date}: $${day.pnl?.toFixed(2)}` : day.date}
+                     style={{
+                       backgroundColor: hasPnl ? pnlColor(day.pnl!, maxAbsPnl, isDarkMode) : "transparent",
+                     }}
                   >
-                    <span className={`font-mono font-semibold ${hasPnl ? "text-[var(--text-data)]" : "text-[var(--muted)] opacity-20"}`}>
-                      {dayNum}
-                    </span>
+                     <span className={`font-mono font-semibold`} style={{ color: hasPnl ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-secondary)', opacity: hasPnl ? 1 : 0.7 }}>
+                       {dayNum}
+                     </span>
                   </div>
                 );
               })}

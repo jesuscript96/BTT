@@ -48,6 +48,13 @@ def _establish_connection():
 def get_db_connection(read_only=False):
     if not hasattr(_local, "conn") or _local.conn is None:
         _local.conn = _establish_connection()
+    else:
+        # Verify the cached connection is still alive
+        try:
+            _local.conn.execute("SELECT 1")
+        except Exception:
+            # Connection was closed or broken — re-establish
+            _local.conn = _establish_connection()
     return _local.conn
 
 def reset_connection():

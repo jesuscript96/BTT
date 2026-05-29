@@ -11,6 +11,19 @@ router = APIRouter(
     tags=["ticker-analysis"]
 )
 
+import threading
+from datetime import timedelta
+
+# Cache for ticker analysis data (15 minutes TTL)
+_analysis_cache = {}
+_analysis_cache_lock = threading.Lock()
+ANALYSIS_CACHE_TTL = timedelta(minutes=15)
+
+# Cache for SEC filings data (30 minutes TTL)
+_filings_cache = {}
+_filings_cache_lock = threading.Lock()
+FILINGS_CACHE_TTL = timedelta(minutes=30)
+
 def safe_float(val):
     try:
         if val is None: return None
@@ -20,12 +33,199 @@ def safe_float(val):
     except:
         return None
 
+def scrape_knowthefloat(ticker: str) -> dict:
+    import requests
+    import urllib3
+    import re
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://knowthefloat.com/ticker/{ticker}"
+    try:
+        r = requests.get(url, headers=headers, verify=False, timeout=3)
+        if r.status_code != 200:
+            return {}
+            
+        html = r.text
+        sources = [
+            {"name": "Yahoo Finance", "img": "yahooFinance.png"},
+            {"name": "Finviz", "img": "finviz.png"},
+            {"name": "Wall Street Journal", "img": "wsj.png"},
+            {"name": "Dilution Tracker", "img": "dt.png"}
+        ]
+        
+        results = {}
+        for src in sources:
+            parts = html.split(src["img"])
+            if len(parts) > 1:
+                card_text = parts[1][:1200]
+                
+                # Float
+                float_val = ""
+                float_match = re.search(r'class="float-section"[^>]*>\s*<h3>Float</h3>\s*<p>([^<]*)</p>', card_text, re.DOTALL | re.IGNORECASE)
+                if float_match:
+                    float_val = float_match.group(1).strip()
+                
+                # Short %
+                short_val = ""
+                short_match = re.search(r'class="short-percent-section"[^>]*>\s*<h3>Short % of Float</h3>\s*<p>([^<]*)</p>', card_text, re.DOTALL | re.IGNORECASE)
+                if short_match:
+                    short_val = short_match.group(1).strip()
+                    
+                # Outstanding
+                out_val = ""
+                out_match = re.search(r'class="outstanding-shares-section"[^>]*>\s*<h3>Oustanding Shares</h3>\s*<p>([^<]*)</p>', card_text, re.DOTALL | re.IGNORECASE)
+                if out_match:
+                    out_val = out_match.group(1).strip()
+                    
+                results[src["name"]] = {
+                    "float": float_val,
+                    "short_percent": short_val,
+                    "outstanding": out_val
+                }
+        return results
+    except Exception as e:
+        print(f"Error scraping knowthefloat for {ticker}: {e}")
+        return {}
+
+def safe_mean(series):
+    if series is None or len(series) == 0:
+        return None
+    val = series.mean()
+    if pd.isna(val) or np.isnan(val) or np.isinf(val):
+        return None
+    return float(val)
+
+def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
+    ticker = ticker.upper()
+    
+    # 1. Try GCS hot cache in memory (filtered to gap_pct >= 20.0) because it is in-memory (0ms)
+    try:
+        from app.services.cache_service import get_hot_daily_cache
+        df_hot = get_hot_daily_cache()
+        if df_hot is not None and not df_hot.empty:
+            ticker_gcs = df_hot[(df_hot['ticker'] == ticker) & (df_hot['gap_pct'] >= 20.0)]
+            if not ticker_gcs.empty:
+                high_spike = ticker_gcs['rth_run_pct']
+                low_spike = (ticker_gcs['rth_open'] - ticker_gcs['rth_low']) / ticker_gcs['rth_open'] * 100
+                pm_fade = (ticker_gcs['pm_high'] - ticker_gcs['rth_open']) / ticker_gcs['pm_high'] * 100
+                rthh_fade = (ticker_gcs['rth_high'] - ticker_gcs['rth_close']) / ticker_gcs['rth_high'] * 100
+                
+                neg_close = (ticker_gcs['rth_close'] < ticker_gcs['rth_open']).astype(float) * 100
+                close_above_pmh = (ticker_gcs['rth_close'] > ticker_gcs['pm_high']).astype(float) * 100
+                
+                mid_point = (ticker_gcs['rth_high'] + ticker_gcs['rth_low']) / 2.0
+                close_below_vwap = (ticker_gcs['rth_close'] < mid_point).astype(float) * 100
+                
+                return {
+                    "source": "database_hot_cache",
+                    "gap_days_count": len(ticker_gcs),
+                    "high_rth_spike_avg": safe_mean(high_spike),
+                    "low_rth_spike_avg": safe_mean(low_spike),
+                    "pm_fade_avg": safe_mean(pm_fade),
+                    "rthh_fade_avg": safe_mean(rthh_fade),
+                    "neg_close_freq": safe_mean(neg_close),
+                    "close_above_pmh_freq": safe_mean(close_above_pmh),
+                    "close_below_vwap_freq": safe_mean(close_below_vwap)
+                }
+    except Exception as e:
+        print(f"Error calculating stats from hot cache: {e}")
+        
+    # 2. Fallback to daily_history (1y from yfinance, filtered to gap_pct >= 20.0)
+    if daily_history:
+        try:
+            df = pd.DataFrame(daily_history)
+            if not df.empty and 'close' in df.columns:
+                df['prev_close'] = df['close'].shift(1)
+                df['gap_pct'] = (df['open'] - df['prev_close']) / df['prev_close'] * 100
+                
+                # Filter for gap days (gap >= 20.0%)
+                gap_yf = df[df['gap_pct'] >= 20.0].copy()
+                if not gap_yf.empty:
+                    high_spike = (gap_yf['high'] - gap_yf['open']) / gap_yf['open'] * 100
+                    low_spike = (gap_yf['open'] - gap_yf['low']) / gap_yf['open'] * 100
+                    rthh_fade = (gap_yf['high'] - gap_yf['close']) / gap_yf['high'] * 100
+                    
+                    neg_close = (gap_yf['close'] < gap_yf['open']).astype(float) * 100
+                    
+                    mid_point = (gap_yf['high'] + gap_yf['low']) / 2.0
+                    close_below_vwap = (gap_yf['close'] < mid_point).astype(float) * 100
+                    
+                    return {
+                        "source": "yfinance_1y_history",
+                        "gap_days_count": len(gap_yf),
+                        "high_rth_spike_avg": safe_mean(high_spike),
+                        "low_rth_spike_avg": safe_mean(low_spike),
+                        "pm_fade_avg": None,
+                        "rthh_fade_avg": safe_mean(rthh_fade),
+                        "neg_close_freq": safe_mean(neg_close),
+                        "close_above_pmh_freq": None,
+                        "close_below_vwap_freq": safe_mean(close_below_vwap)
+                    }
+        except Exception as e:
+            print(f"Error calculating stats from daily_history: {e}")
+            
+    return {
+        "source": "none",
+        "gap_days_count": 0,
+        "high_rth_spike_avg": None,
+        "low_rth_spike_avg": None,
+        "pm_fade_avg": None,
+        "rthh_fade_avg": None,
+        "neg_close_freq": None,
+        "close_above_pmh_freq": None,
+        "close_below_vwap_freq": None
+    }
+
 @router.get("/{ticker}")
 def get_ticker_analysis(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    # Cache lookup
+    with _analysis_cache_lock:
+        if ticker in _analysis_cache:
+            cached_data, expiry = _analysis_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached ticker analysis for {ticker}")
+                return cached_data
+
     try:
-        ticker = ticker.upper()
-        stock = yf.Ticker(ticker)
-        info = stock.info
+        import requests
+        import urllib3
+        from requests.adapters import HTTPAdapter
+        
+        # Subclass HTTPAdapter to set default request timeout for yfinance calls
+        class TimeoutHTTPAdapter(HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = kwargs.pop('timeout', 5)
+                super().__init__(*args, **kwargs)
+            def send(self, request, **kwargs):
+                kwargs['timeout'] = kwargs.get('timeout', self.timeout)
+                return super().send(request, **kwargs)
+                
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        session = requests.Session()
+        session.verify = False
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
+        
+        # Mount the timeout adapter to HTTP and HTTPS
+        adapter = TimeoutHTTPAdapter(timeout=5)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        stock = yf.Ticker(ticker, session=session)
+        info = {}
+        try:
+            info = stock.info
+            if not isinstance(info, dict):
+                info = {}
+        except Exception as e:
+            print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
 
         # --- Profile ---
         profile = {
@@ -66,9 +266,14 @@ def get_ticker_analysis(ticker: str):
         # --- Performance ---
         # Note: yfinance info often has 52WeekChange, but specific periods might need history
         # Let's fetch 1y history to calculate exact performance
-        hist = stock.history(period="1y")
+        hist = pd.DataFrame()
+        try:
+            hist = stock.history(period="1y")
+        except Exception as e:
+            print(f"[WARN] Failed to fetch yfinance history for {ticker}: {e}")
         
         perf = {}
+        daily_history = []
         if not hist.empty:
             current = hist["Close"].iloc[-1]
             def get_ret(days):
@@ -91,9 +296,35 @@ def get_ticker_analysis(ticker: str):
             else:
                  perf["ytd"] = None
 
+            # Extract daily history for chart
+            try:
+                hist_reset = hist.reset_index()
+                date_col = 'Date' if 'Date' in hist_reset.columns else hist_reset.columns[0]
+                for _, r in hist_reset.iterrows():
+                    dt = r[date_col]
+                    if hasattr(dt, 'strftime'):
+                        date_str = dt.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(dt)[:10]
+                    
+                    daily_history.append({
+                        "time": date_str,
+                        "open": safe_float(r.get('Open')),
+                        "high": safe_float(r.get('High')),
+                        "low": safe_float(r.get('Low')),
+                        "close": safe_float(r.get('Close')),
+                        "volume": safe_float(r.get('Volume'))
+                    })
+            except Exception as e:
+                print(f"Error extracting daily history for {ticker}: {e}")
+
         # --- Charts (Sparklines from Balance Sheet) ---
         # yfinance balance sheet is annual or quarterly. Let's get quarterly for more points.
-        bs = stock.quarterly_balance_sheet
+        bs = pd.DataFrame()
+        try:
+            bs = stock.quarterly_balance_sheet
+        except Exception as e:
+            print(f"[WARN] Failed to fetch yfinance quarterly balance sheet for {ticker}: {e}")
         charts = {
             "cash_history": [],
             "debt_history": [],
@@ -117,23 +348,34 @@ def get_ticker_analysis(ticker: str):
             
             # Working Capital = Current Assets - Current Liabilities
             if "Total Current Assets" in bs_T.columns and "Total Current Liabilities" in bs_T.columns:
-                 wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
-                 charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]
+                wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
+                charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]
             elif "Working Capital" in bs_T.columns:
-                 charts["working_capital_history"] = get_series("working capital")
+                charts["working_capital_history"] = get_series("working capital")
 
         # Refine Financials if info was missing
         if financials["working_capital"] is None and charts["working_capital_history"]:
              financials["working_capital"] = charts["working_capital_history"][-1]["value"]
 
+        # --- Scrape KnowTheFloat ---
+        know_the_float = scrape_knowthefloat(ticker)
 
-        return {
+        # --- Gap Day Statistics ---
+        gap_stats = get_gap_stats(ticker, daily_history)
+
+        res = {
             "profile": profile,
             "market": market,
             "financials": financials,
             "performance": perf,
-            "charts": charts
+            "charts": charts,
+            "daily_history": daily_history,
+            "know_the_float": know_the_float,
+            "gap_stats": gap_stats
         }
+        with _analysis_cache_lock:
+            _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
+        return res
 
     except Exception as e:
         print(f"Error fetching ticker analysis for {ticker}: {e}")
@@ -146,6 +388,15 @@ def get_sec_filings(ticker: str):
     Fetches latest filings from SEC EDGAR RSS feed.
     No API key required.
     """
+    ticker = ticker.upper()
+    now = datetime.now()
+    with _filings_cache_lock:
+        if ticker in _filings_cache:
+            cached_data, expiry = _filings_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached SEC filings for {ticker}")
+                return cached_data
+
     try:
         # SEC RSS Feed URL pattern
         # CIKS are usually mapped, but searching by Ticker works on this endpoint often, 
@@ -158,8 +409,10 @@ def get_sec_filings(ticker: str):
         # User-Agent is required by SEC
         # Using requests to handle SSL/User-Agent better than feedparser's internal urllib
         import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         headers = {'User-Agent': 'MyStrategyBuilder/1.0 (contact@mystrategybuilder.fun)'}
-        response = requests.get(rss_url, headers=headers)
+        response = requests.get(rss_url, headers=headers, verify=False, timeout=5)
         
         feed = feedparser.parse(response.content)
 
@@ -200,6 +453,8 @@ def get_sec_filings(ticker: str):
             else:
                 filings["others"].append(item)
 
+        with _filings_cache_lock:
+            _filings_cache[ticker] = (filings, now + FILINGS_CACHE_TTL)
         return filings
 
     except Exception as e:
