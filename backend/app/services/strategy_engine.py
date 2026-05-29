@@ -258,6 +258,7 @@ def _compute_from_config(
         time_condition=cfg.get("time_condition"),
         band_line=cfg.get("band_line"),
         orb_minutes=cfg.get("orb_minutes"),
+        ap_session=cfg.get("ap_session"),
         daily_stats=daily_stats,
         cache=cache,
     )

@@ -549,12 +549,13 @@ def compute_indicator(
     time_condition: str | None = None,
     band_line: str | None = None,
     orb_minutes: int | None = None,
+    ap_session: str | None = None,
     daily_stats: dict | None = None,
     cache: dict | None = None,
 ) -> pd.Series:
     name = normalize_indicator_name(name)
     cache_key = (name, period, period2, period3, std_dev, multiplier, offset,
-                 days_lookback, calc_on_heikin, time_hour, time_minute, time_condition)
+                 days_lookback, calc_on_heikin, time_hour, time_minute, time_condition, ap_session)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -581,7 +582,7 @@ def compute_indicator(
         name, close, high, low, open_, volume,
         period, period2, period3, std_dev, multiplier,
         days_lookback, time_hour, time_minute, time_condition,
-        band_line, orb_minutes, daily_stats, df,
+        band_line, orb_minutes, ap_session, daily_stats, df,
     )
 
     if offset and offset != 0:
@@ -611,6 +612,7 @@ def _compute_raw(
     time_condition: str | None,
     band_line: str | None,
     orb_minutes: int | None,
+    ap_session: str | None,
     daily_stats: dict | None,
     df: pd.DataFrame,
 ) -> pd.Series:
@@ -655,6 +657,77 @@ def _compute_raw(
     if name == "Min of last X days":
         val = ds.get("min_last_x", np.nan)
         return pd.Series(val, index=close.index)
+
+    if name == "Previous max":
+        timestamps = pd.to_datetime(df["timestamp"])
+        hours = timestamps.dt.hour
+        minutes = timestamps.dt.minute
+        if ap_session == "ap.RTH":
+            start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
+        elif ap_session == "ap.AM":
+            start_mask = hours >= 16
+        else:  # ap.PM default
+            start_mask = pd.Series(True, index=df.index)
+        result = pd.Series(np.nan, index=close.index)
+        running_max = np.nan
+        started = False
+        for i in range(len(close)):
+            if not started and start_mask.iloc[i]:
+                started = True
+            if started:
+                if np.isnan(running_max):
+                    running_max = high.iloc[i]
+                else:
+                    running_max = max(running_max, high.iloc[i])
+                result.iloc[i] = running_max
+        return result
+
+    if name == "Previous min":
+        timestamps = pd.to_datetime(df["timestamp"])
+        hours = timestamps.dt.hour
+        minutes = timestamps.dt.minute
+        if ap_session == "ap.RTH":
+            start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
+        elif ap_session == "ap.AM":
+            start_mask = hours >= 16
+        else:  # ap.PM default
+            start_mask = pd.Series(True, index=df.index)
+        result = pd.Series(np.nan, index=close.index)
+        running_min = np.nan
+        started = False
+        for i in range(len(close)):
+            if not started and start_mask.iloc[i]:
+                started = True
+            if started:
+                if np.isnan(running_min):
+                    running_min = low.iloc[i]
+                else:
+                    running_min = min(running_min, low.iloc[i])
+                result.iloc[i] = running_min
+        return result
+
+    if name == "PM Open":
+        timestamps = pd.to_datetime(df["timestamp"])
+        hours = timestamps.dt.hour
+        minutes = timestamps.dt.minute
+        pm_mask = (hours < 9) | ((hours == 9) & (minutes < 30))
+        pm_bars = open_[pm_mask]
+        if len(pm_bars) > 0:
+            pm_open_val = float(pm_bars.iloc[0])
+        else:
+            pm_open_val = float(ds.get("rth_open", np.nan))
+        return pd.Series(pm_open_val, index=close.index)
+
+    if name == "AM Open":
+        timestamps = pd.to_datetime(df["timestamp"])
+        hours = timestamps.dt.hour
+        am_mask = hours >= 16
+        am_bars = open_[am_mask]
+        if len(am_bars) > 0:
+            am_open_val = float(am_bars.iloc[0])
+        else:
+            am_open_val = np.nan
+        return pd.Series(am_open_val, index=close.index)
 
     # --- Trend / MA ---
     if name == "SMA":
@@ -964,6 +1037,25 @@ def _compute_raw(
         if len(low) >= n:
             return pd.Series(low.iloc[:n].min(), index=close.index)
         return pd.Series(low.min(), index=close.index)
+
+    if name == "Yesterday Volume":
+        yesterday_volume = ds.get("eod_volume", np.nan)
+        return pd.Series(float(yesterday_volume), index=close.index)
+
+    if name == "Candle Range %":
+        candle_range = ((close - open_) / open_.abs()) * 100
+        return candle_range.abs()
+
+    if name in ("Elapsed Time from Last High", "Elapsed time from last High"):
+        elapsed = pd.Series(0, index=close.index, dtype=float)
+        last_high_idx = 0
+        current_high = high.iloc[0] if len(high) > 0 else 0
+        for i in range(len(high)):
+            if high.iloc[i] > current_high:
+                current_high = high.iloc[i]
+                last_high_idx = i
+            elapsed.iloc[i] = i - last_high_idx
+        return elapsed
 
     return pd.Series(np.nan, index=close.index)
 
