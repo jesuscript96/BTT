@@ -62,7 +62,7 @@ def create_strategy(strategy: StrategyCreate):
 def list_strategies():
     con = get_user_db_connection()
     try:
-        rows = con.execute("SELECT definition FROM strategies ORDER BY created_at DESC").fetchall()
+        rows = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies ORDER BY created_at DESC").fetchall()
     except Exception as e:
         print(f"list_strategies DB error: {e}")
         return []
@@ -70,9 +70,9 @@ def list_strategies():
         con.close()
     strategies = []
     for row in rows:
-        if not row or row[0] is None:
+        if not row or row[5] is None:
             continue
-        raw = row[0]
+        raw = row[5]
         if isinstance(raw, dict):
             strategy_dict = raw
         else:
@@ -82,6 +82,11 @@ def list_strategies():
                 print(f"Error parsing strategy JSON: {e}")
                 continue
         try:
+            strategy_dict["id"] = row[0]
+            strategy_dict["name"] = row[1]
+            strategy_dict["description"] = row[2]
+            strategy_dict["created_at"] = str(row[3]) if row[3] else None
+            strategy_dict["updated_at"] = str(row[4]) if row[4] else None
             strategies.append(Strategy(**strategy_dict))
         except Exception as e:
             print(f"Error building Strategy: {e}")
@@ -92,10 +97,16 @@ def list_strategies():
 def get_strategy(strategy_id: str):
     con = get_user_db_connection()
     try:
-        row = con.execute("SELECT definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        row = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Strategy not found")
-        return Strategy(**json.loads(row[0]))
+        strategy_dict = json.loads(row[5]) if isinstance(row[5], str) else (row[5] or {})
+        strategy_dict["id"] = row[0]
+        strategy_dict["name"] = row[1]
+        strategy_dict["description"] = row[2]
+        strategy_dict["created_at"] = str(row[3]) if row[3] else None
+        strategy_dict["updated_at"] = str(row[4]) if row[4] else None
+        return Strategy(**strategy_dict)
     finally:
         con.close()
 

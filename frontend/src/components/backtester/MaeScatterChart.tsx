@@ -95,7 +95,8 @@ const CustomTooltip = ({ active, payload, isDarkMode }: { active?: boolean, payl
 const CustomDot = (props: { cx?: number, cy?: number, dotColor?: string }) => {
     const { cx, cy, dotColor } = props;
     if (!cx || !cy) return null;
-    return <circle cx={cx} cy={cy} r={1.5} stroke={dotColor || "#f97316"} fill="transparent" strokeWidth={1} />;
+    const finalColor = dotColor || "#D87A3D";
+    return <circle cx={cx} cy={cy} r={2} stroke={finalColor} fill={finalColor} />;
 };
 
 export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartProps) {
@@ -151,28 +152,40 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
         return <div className="p-4 text-center text-[var(--muted)] text-[11px] font-mono">Sin datos</div>;
     }
 
-    const dotColor = isDarkMode ? "#ffffff" : "#000000";
-    const gridColor = isDarkMode ? "#303033" : "#f0eeea";
-    const tickColor = isDarkMode ? "#94a3b8" : "#a8a29e";
+    const dotColor = "#D87A3D"; // Color ec-copper de la app
+    const gridColor = "#2C2F33"; // Color ec-border
+    const tickColor = "#8A8D92"; // Color ec-text-secondary
 
     return (
         <div className="flex flex-col h-full transition-colors relative">
             <div className="px-1 py-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-[0.12em]">
+                <span className="text-[10px] font-semibold text-[#ffffff] uppercase tracking-[0.12em]">
                     MAE/MFE vs Rets
                 </span>
-                <div className="flex gap-3 text-[10px] text-[var(--muted)] font-mono">
-                    <span>avg mae: <strong className="text-[var(--text-data)]">{processed.avgMae.toFixed(2)}%</strong></span>
-                    <span>avg mfe: <strong className="text-[var(--text-data)]">{processed.avgMfe.toFixed(2)}%</strong></span>
+                <div className="flex items-center gap-4 text-[10px] text-[#ffffff] font-mono">
+                    <div className="flex items-center gap-3 mr-2">
+                        <span className="flex items-center gap-1 opacity-80">
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: dotColor }}></span>
+                            ops
+                        </span>
+                        <span className="flex items-center gap-1.5 opacity-85">
+                            <span className="w-3 border-b border-dashed inline-block align-middle" style={{ borderColor: '#ffffff', marginBottom: '1px' }}></span>
+                            trend
+                        </span>
+                    </div>
+                    <div className="flex gap-3">
+                        <span>avg mae: <strong className="text-[#ffffff]">{processed.avgMae.toFixed(2)}%</strong></span>
+                        <span>avg mfe: <strong className="text-[#ffffff]">{processed.avgMfe.toFixed(2)}%</strong></span>
+                    </div>
                 </div>
             </div>
             <div className="flex-1 min-h-[140px] relative">
-                <div className="absolute top-2 right-3 text-[9px] text-[var(--muted)] flex flex-col items-end gap-0.5 pointer-events-none z-10 font-mono">
+                <div className="absolute top-2 right-3 text-[9px] text-[#ffffff] flex flex-col items-end gap-0.5 pointer-events-none z-10 font-mono">
                     {processed.winR2 !== undefined && <span>W R² = {(processed.winR2 * 100).toFixed(1)}%</span>}
                     {processed.lossR2 !== undefined && <span>L R² = {(processed.lossR2 * 100).toFixed(1)}%</span>}
                 </div>
                 <ResponsiveContainer width="100%" height="100%">
-                    <ScatterChart margin={{ top: 10, right: 10, bottom: 5, left: -20 }}>
+                    <ScatterChart margin={{ top: 10, right: 10, bottom: 0, left: -20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                         <XAxis
                             type="number"
@@ -183,6 +196,7 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                             tickFormatter={(v: number) => `${v.toFixed(0)}`}
                             axisLine={false}
                             tickLine={false}
+                            height={25}
                         />
                         <YAxis
                             type="number"
@@ -230,16 +244,6 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                         )}
                     </ScatterChart>
                 </ResponsiveContainer>
-            </div>
-            <div className="flex justify-center gap-4 pb-1 text-[9px] text-[var(--muted)] font-mono">
-                <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full" style={{ borderColor: dotColor, border: `1px solid ${dotColor}` }}></div>
-                    <span>ops</span>
-                </div>
-                <div className="flex items-center gap-1">
-                    <div className="w-3 border-b border-dashed" style={{ borderColor: isDarkMode ? '#94a3b8' : '#44403c' }}></div>
-                    <span>trend</span>
-                </div>
             </div>
         </div>
     );

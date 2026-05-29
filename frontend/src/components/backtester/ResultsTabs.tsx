@@ -109,7 +109,7 @@ export default function ResultsTabs({
         </nav>
       </div>
 
-      <div className="pt-5 pb-2">
+      <div className="pb-2">
         <div style={{ display: activeTab === "performance" ? "block" : "none" }}>
           <PerformanceTab
             dayResults={result.day_results}
