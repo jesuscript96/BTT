@@ -192,10 +192,12 @@ const getTimestamp = (t: any): number | null => {
 // Lightweight-charts Daily Candlestick Stock Chart
 const DailyStockChart = ({ 
     dailyData,
-    finvizNews
+    finvizNews,
+    filings
 }: { 
     dailyData?: DailyDataPoint[];
     finvizNews?: FinvizNewsItem[];
+    filings?: FilingsData | null;
 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -661,7 +663,36 @@ const DailyStockChart = ({
                             <tbody>
                                 {gaps.map((gap, index) => {
                                     const isExpanded = expandedDate === gap.time;
-                                    const dayNews = finvizNews?.filter(item => item.date === gap.time) || [];
+                                    let dayNews = finvizNews?.filter(item => item.date === gap.time) || [];
+                                    if (dayNews.length === 0 && filings) {
+                                        const dateFilings: any[] = [];
+                                        if (filings.news) {
+                                            filings.news.forEach((f: any) => {
+                                                if (f.date === gap.time) {
+                                                    dateFilings.push({
+                                                        time: "SEC",
+                                                        source: f.type,
+                                                        title: f.title,
+                                                        link: f.link
+                                                    });
+                                                }
+                                            });
+                                        }
+                                        if (filings.prospectuses) {
+                                            filings.prospectuses.forEach((f: any) => {
+                                                if (f.date === gap.time) {
+                                                    dateFilings.push({
+                                                        time: "SEC",
+                                                        source: f.type,
+                                                        title: f.title,
+                                                        link: f.link
+                                                    });
+                                                }
+                                            });
+                                        }
+                                        dayNews = dateFilings;
+                                    }
+
                                     return (
                                         <React.Fragment key={index}>
                                             <tr 
@@ -703,7 +734,7 @@ const DailyStockChart = ({
                                                             </span>
                                                             {dayNews.length === 0 ? (
                                                                 <span style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
-                                                                    No news found on Finviz for this day.
+                                                                    No news
                                                                 </span>
                                                             ) : (
                                                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
@@ -1641,7 +1672,47 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         );
     }
 
-    // Helpers (moved to top-level)
+    const getLatestNewsItem = () => {
+        const items: any[] = [];
+        if (finvizNews && finvizNews.length > 0) {
+            items.push(...finvizNews);
+        }
+        if (filings?.news) {
+            filings.news.forEach((f: any) => {
+                items.push({
+                    date: f.date,
+                    time: "SEC",
+                    source: f.type,
+                    title: f.title,
+                    link: f.link
+                });
+            });
+        }
+        if (filings?.prospectuses) {
+            filings.prospectuses.forEach((f: any) => {
+                items.push({
+                    date: f.date,
+                    time: "SEC",
+                    source: f.type,
+                    title: f.title,
+                    link: f.link
+                });
+            });
+        }
+
+        if (items.length === 0) return null;
+
+        // Sort by date descending
+        items.sort((a, b) => {
+            const dateA = new Date(`${a.date} ${a.time === 'SEC' ? '00:00' : a.time}`).getTime();
+            const dateB = new Date(`${b.date} ${b.time === 'SEC' ? '00:00' : b.time}`).getTime();
+            return dateB - dateA;
+        });
+
+        return items[0];
+    };
+
+    const latestNews = getLatestNewsItem();
 
     return (
         <div style={{
@@ -1813,10 +1884,61 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         />
                     </div>
 
+                    {/* Latest News Banner */}
+                    {latestNews && (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '8px 12px',
+                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                            borderLeft: '2px solid var(--color-ec-copper)',
+                            borderBottom: '1px solid var(--color-ec-border)',
+                            borderRadius: '0 4px 4px 0',
+                            fontSize: 11,
+                            fontFamily: "'General Sans', sans-serif",
+                            margin: '8px 0 -8px 0'
+                        }}>
+                            <span style={{ 
+                                fontSize: 8, 
+                                fontWeight: 700, 
+                                color: 'var(--color-ec-copper)', 
+                                textTransform: 'uppercase', 
+                                letterSpacing: '1px',
+                                flexShrink: 0
+                            }}>
+                                Latest News ({latestNews.date}):
+                            </span>
+                            {latestNews.source && (
+                                <span style={{ color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, flexShrink: 0 }}>
+                                    [{latestNews.source}]
+                                </span>
+                            )}
+                            <a
+                                href={latestNews.link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                    color: 'var(--color-ec-text-primary)',
+                                    textDecoration: 'none',
+                                    fontWeight: 600,
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    width: '100%'
+                                }}
+                                className="hover:text-[var(--color-ec-copper-bright)] transition-colors"
+                            >
+                                {latestNews.title}
+                            </a>
+                            <ExternalLink size={10} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
+                        </div>
+                    )}
+
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
                         <div className="lg:col-span-2">
-                            <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} />
+                            <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
                         </div>
                         <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
                             <KnowTheFloatTable floatData={data?.know_the_float} />
