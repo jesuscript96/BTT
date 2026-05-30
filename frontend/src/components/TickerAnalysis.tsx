@@ -1870,8 +1870,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         display: 'grid',
                         gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
                         gap: 24,
-                        borderBottom: '1px solid var(--color-ec-border)',
-                        paddingBottom: 20
+                        paddingBottom: 0
                     }}>
                         <MetricCard title="Market Cap" value={formatNumber(data?.market?.market_cap)} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
                         <MetricCard title="Shares Outstanding" value={formatNumber(data?.market?.shares_outstanding).replace('$', '')} icon={<Users size={12} />} indicatorColor="var(--color-ec-copper)" />
@@ -1897,7 +1896,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                             borderRadius: '0 4px 4px 0',
                             fontSize: 11,
                             fontFamily: "'General Sans', sans-serif",
-                            margin: '8px 0 -8px 0'
+                            margin: '0 0 -8px 0'
                         }}>
                             <span style={{ 
                                 fontSize: 8, 
