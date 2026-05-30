@@ -644,6 +644,11 @@ def get_finviz_news(ticker: str):
                 continue
                 
             link = a_tag.get('href', '')
+            if link and not (link.startswith('http://') or link.startswith('https://')):
+                if link.startswith('/'):
+                    link = f"https://finviz.com{link}"
+                else:
+                    link = f"https://finviz.com/{link}"
             title = a_tag.text.strip()
             
             span = tds[1].find('span')
