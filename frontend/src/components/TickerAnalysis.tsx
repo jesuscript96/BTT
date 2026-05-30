@@ -184,6 +184,7 @@ const getTimestamp = (t: any): number | null => {
 const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const [activeTab, setActiveTab] = useState<'chart' | 'gapList'>('chart');
 
     // Keep chart references in refs so we can access them in the redraw function
     // without triggering full chart rebuilds on zoom/pan updates.
@@ -344,6 +345,20 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
         }
     };
 
+    // Keep chart container layout in sync when tabs change
+    useEffect(() => {
+        if (activeTab === 'chart') {
+            const timer = setTimeout(() => {
+                const chart = chartRef.current;
+                if (chart && chartContainerRef.current) {
+                    chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+                }
+                redrawVolumeProfile();
+            }, 50);
+            return () => clearTimeout(timer);
+        }
+    }, [activeTab]);
+
     useEffect(() => {
         if (!chartContainerRef.current || !dailyData || dailyData.length === 0) return;
 
@@ -498,6 +513,40 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
         );
     }
 
+    // Calculate gap days from dailyData (gap_pct >= 20.0%)
+    const gaps: Array<{
+        time: string;
+        gapPct: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        isPositive: boolean;
+    }> = [];
+    
+    if (dailyData && dailyData.length > 1) {
+        for (let i = 1; i < dailyData.length; i++) {
+            const prevClose = dailyData[i - 1].close;
+            const d = dailyData[i];
+            if (prevClose > 0) {
+                const gapPct = ((d.open - prevClose) / prevClose) * 100;
+                if (gapPct >= 20.0) {
+                    gaps.push({
+                        time: d.time,
+                        gapPct,
+                        open: d.open,
+                        high: d.high,
+                        low: d.low,
+                        close: d.close,
+                        isPositive: d.close >= d.open
+                    });
+                }
+            }
+        }
+    }
+    // Sort gaps descending by date (most recent first)
+    gaps.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
             <div style={{
@@ -510,11 +559,113 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
                     Daily Stock Chart
                 </span>
+
+                {/* Sub-tabs toggle */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                    {(['chart', 'gapList'] as const).map(tab => {
+                        const label = tab === 'chart' ? 'Chart' : 'Gap List';
+                        const isActive = activeTab === tab;
+                        return (
+                            <button
+                                key={tab}
+                                onClick={() => setActiveTab(tab)}
+                                style={{
+                                    background: isActive ? 'var(--color-ec-copper)' : 'transparent',
+                                    border: 'none',
+                                    borderRadius: 3,
+                                    color: isActive ? '#ffffff' : 'var(--color-ec-text-secondary)',
+                                    fontSize: 8,
+                                    fontWeight: 700,
+                                    padding: '2px 6px',
+                                    cursor: 'pointer',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    transition: 'all 150ms ease'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-high)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-secondary)';
+                                }}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })}
+                </div>
             </div>
-            <div style={{ position: 'relative', width: '100%', height: '420px' }}>
+
+            {/* Chart view container (always in DOM to keep zoom/pan layout state) */}
+            <div style={{ 
+                position: 'relative', 
+                width: '100%', 
+                height: '420px',
+                display: activeTab === 'chart' ? 'block' : 'none'
+            }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
                 <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }} />
             </div>
+
+            {/* Gap List view container */}
+            {activeTab === 'gapList' && (
+                <div style={{ 
+                    overflowY: 'auto', 
+                    width: '100%', 
+                    height: '420px',
+                    border: '1px solid var(--color-ec-border)',
+                    borderRadius: 6,
+                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                    padding: '8px 12px'
+                }}>
+                    {gaps.length === 0 ? (
+                        <div style={{
+                            height: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: 'var(--color-ec-text-muted)',
+                            fontSize: '11px'
+                        }}>
+                            No gap days detected (gap &ge; 20.0%).
+                        </div>
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'General Sans', sans-serif" }}>
+                            <thead>
+                                <tr style={{ borderBottom: '1px solid var(--color-ec-border)', textAlign: 'left', position: 'sticky', top: 0, backgroundColor: 'var(--color-ec-bg-sidebar)', zIndex: 1 }}>
+                                    <th style={{ padding: '6px 4px 6px 0', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600 }}>Date</th>
+                                    <th style={{ padding: '6px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Gap %</th>
+                                    <th style={{ padding: '6px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Open</th>
+                                    <th style={{ padding: '6px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>High</th>
+                                    <th style={{ padding: '6px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Low</th>
+                                    <th style={{ padding: '6px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Close</th>
+                                    <th style={{ padding: '6px 0 6px 4px', color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, textAlign: 'right' }}>Close Dir</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {gaps.map((gap, index) => (
+                                    <tr key={index} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
+                                        <td style={{ padding: '6px 4px 6px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{gap.time}</td>
+                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-copper-bright)' }}>+{gap.gapPct.toFixed(2)}%</td>
+                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.open.toFixed(2)}</td>
+                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.high.toFixed(2)}</td>
+                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.low.toFixed(2)}</td>
+                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.close.toFixed(2)}</td>
+                                        <td style={{ 
+                                            padding: '6px 0 6px 4px', 
+                                            textAlign: 'right', 
+                                            fontWeight: 700, 
+                                            color: gap.isPositive ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)' 
+                                        }}>
+                                            {gap.isPositive ? 'Positive' : 'Negative'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+            )}
         </div>
     );
 };
