@@ -184,18 +184,11 @@ const getTimestamp = (t: any): number | null => {
 const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [showVolumeProfile, setShowVolumeProfile] = useState<boolean>(false);
 
     // Keep chart references in refs so we can access them in the redraw function
-    // without triggering full chart rebuilds on state/zoom/pan updates.
+    // without triggering full chart rebuilds on zoom/pan updates.
     const chartRef = useRef<any>(null);
     const candleSeriesRef = useRef<any>(null);
-    const showVolumeProfileRef = useRef<boolean>(showVolumeProfile);
-
-    // Keep the showVolumeProfile ref in sync
-    useEffect(() => {
-        showVolumeProfileRef.current = showVolumeProfile;
-    }, [showVolumeProfile]);
 
     const redrawVolumeProfile = () => {
         const chart = chartRef.current;
@@ -209,7 +202,7 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        if (!showVolumeProfileRef.current || !dailyData || dailyData.length === 0) return;
+        if (!dailyData || dailyData.length === 0) return;
 
         // Set up High-DPI scaling
         const rect = canvas.getBoundingClientRect();
@@ -350,11 +343,6 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
             ctx.fillText('POC', rect.width - 55, pocY + 3);
         }
     };
-
-    // Handle toggling volume profile overlay
-    useEffect(() => {
-        redrawVolumeProfile();
-    }, [showVolumeProfile]);
 
     useEffect(() => {
         if (!chartContainerRef.current || !dailyData || dailyData.length === 0) return;
@@ -522,30 +510,6 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
                     Daily Stock Chart
                 </span>
-                <button
-                    onClick={() => setShowVolumeProfile(!showVolumeProfile)}
-                    style={{
-                        background: showVolumeProfile ? 'var(--color-ec-copper)' : 'transparent',
-                        border: 'none',
-                        borderRadius: 3,
-                        color: showVolumeProfile ? '#ffffff' : 'var(--color-ec-text-secondary)',
-                        fontSize: 8,
-                        fontWeight: 700,
-                        padding: '2px 6px',
-                        cursor: 'pointer',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        transition: 'all 150ms ease'
-                    }}
-                    onMouseEnter={(e) => {
-                        if (!showVolumeProfile) e.currentTarget.style.color = 'var(--color-ec-text-high)';
-                    }}
-                    onMouseLeave={(e) => {
-                        if (!showVolumeProfile) e.currentTarget.style.color = 'var(--color-ec-text-secondary)';
-                    }}
-                >
-                    Vol. Profile {showVolumeProfile ? 'ON' : 'OFF'}
-                </button>
             </div>
             <div style={{ position: 'relative', width: '100%', height: '420px' }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
