@@ -588,3 +588,102 @@ def get_sec_filings(ticker: str):
         print(f"Error fetching SEC filings for {ticker}: {e}")
         # Return empty structure rather than 500 to not break entire dashboard
         return {k: [] for k in ["financials", "prospectuses", "news", "ownership", "proxies", "others"]}
+
+
+_finviz_news_cache = {}
+_finviz_news_cache_lock = threading.Lock()
+FINVIZ_NEWS_CACHE_TTL = timedelta(minutes=15)
+
+@router.get("/{ticker}/finviz-news")
+def get_finviz_news(ticker: str):
+    """
+    Scrapes the latest news items from Finviz for the specified ticker.
+    Returns a list of news items including converted YYYY-MM-DD dates.
+    """
+    ticker = ticker.upper()
+    now = datetime.now()
+    with _finviz_news_cache_lock:
+        if ticker in _finviz_news_cache:
+            cached_data, expiry = _finviz_news_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached Finviz news for {ticker}")
+                return cached_data
+
+    import requests
+    from bs4 import BeautifulSoup
+    import urllib3
+    import re
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    
+    try:
+        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        if response.status_code != 200:
+            return []
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table', id='news-table')
+        if not table:
+            return []
+            
+        news_items = []
+        current_date_str = ""
+        
+        for row in table.find_all('tr'):
+            tds = row.find_all('td')
+            if len(tds) < 2:
+                continue
+                
+            time_text = tds[0].text.strip() # e.g. "May-19-26 08:58AM" or "09:07AM"
+            a_tag = tds[1].find('a')
+            if not a_tag:
+                continue
+                
+            link = a_tag.get('href', '')
+            title = a_tag.text.strip()
+            
+            span = tds[1].find('span')
+            source = span.text.strip() if span else ""
+            if not source:
+                match = re.search(r'\(([^)]+)\)\s*$', tds[1].text)
+                if match:
+                    source = match.group(1).strip()
+            
+            # Handle date logic
+            if " " in time_text:
+                parts = time_text.split(" ")
+                current_date_str = parts[0] # "May-19-26"
+                time_only = parts[1]        # "08:58AM"
+            else:
+                time_only = time_text       # "09:07AM"
+                
+            # Convert Finviz date format "May-19-26" to "2026-05-19"
+            iso_date = ""
+            if current_date_str:
+                try:
+                    dt = datetime.strptime(current_date_str, '%b-%d-%y')
+                    iso_date = dt.strftime('%Y-%m-%d')
+                except Exception:
+                    iso_date = current_date_str
+            
+            news_items.append({
+                "date": iso_date,
+                "time": time_only,
+                "title": title,
+                "link": link,
+                "source": source
+            })
+            
+        with _finviz_news_cache_lock:
+            _finviz_news_cache[ticker] = (news_items, now + FINVIZ_NEWS_CACHE_TTL)
+            
+        return news_items
+        
+    except Exception as e:
+        print(f"Error scraping Finviz news for {ticker}: {e}")
+        return []
+

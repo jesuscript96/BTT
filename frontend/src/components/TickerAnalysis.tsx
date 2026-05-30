@@ -10,7 +10,8 @@ import {
     getTickerSecFilings, 
     getTickerChart, 
     getTickerBalanceSheet, 
-    getTickerGapStats 
+    getTickerGapStats,
+    getTickerFinvizNews
 } from '@/lib/api';
 
 interface TickerAnalysisProps {
@@ -77,6 +78,14 @@ interface DailyDataPoint {
     low: number;
     close: number;
     volume: number;
+}
+
+interface FinvizNewsItem {
+    date: string;
+    time: string;
+    title: string;
+    link: string;
+    source: string;
 }
 
 interface FloatSourceData {
@@ -181,10 +190,17 @@ const getTimestamp = (t: any): number | null => {
 };
 
 // Lightweight-charts Daily Candlestick Stock Chart
-const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
+const DailyStockChart = ({ 
+    dailyData,
+    finvizNews
+}: { 
+    dailyData?: DailyDataPoint[];
+    finvizNews?: FinvizNewsItem[];
+}) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [activeTab, setActiveTab] = useState<'chart' | 'gapList'>('chart');
+    const [expandedDate, setExpandedDate] = useState<string | null>(null);
 
     // Keep chart references in refs so we can access them in the redraw function
     // without triggering full chart rebuilds on zoom/pan updates.
@@ -643,24 +659,90 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {gaps.map((gap, index) => (
-                                    <tr key={index} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
-                                        <td style={{ padding: '6px 4px 6px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{gap.time}</td>
-                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-copper-bright)' }}>+{gap.gapPct.toFixed(2)}%</td>
-                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.open.toFixed(2)}</td>
-                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.high.toFixed(2)}</td>
-                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.low.toFixed(2)}</td>
-                                        <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.close.toFixed(2)}</td>
-                                        <td style={{ 
-                                            padding: '6px 0 6px 4px', 
-                                            textAlign: 'right', 
-                                            fontWeight: 700, 
-                                            color: gap.isPositive ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)' 
-                                        }}>
-                                            {gap.isPositive ? 'Positive' : 'Negative'}
-                                        </td>
-                                    </tr>
-                                ))}
+                                {gaps.map((gap, index) => {
+                                    const isExpanded = expandedDate === gap.time;
+                                    const dayNews = finvizNews?.filter(item => item.date === gap.time) || [];
+                                    return (
+                                        <React.Fragment key={index}>
+                                            <tr 
+                                                onClick={() => setExpandedDate(isExpanded ? null : gap.time)}
+                                                style={{ 
+                                                    borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                                                    cursor: 'pointer',
+                                                    backgroundColor: isExpanded ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
+                                                    transition: 'background-color 150ms ease'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    if (!isExpanded) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.03)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    if (!isExpanded) e.currentTarget.style.backgroundColor = 'transparent';
+                                                }}
+                                            >
+                                                <td style={{ padding: '6px 4px 6px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{gap.time}</td>
+                                                <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-copper-bright)' }}>+{gap.gapPct.toFixed(2)}%</td>
+                                                <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.open.toFixed(2)}</td>
+                                                <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.high.toFixed(2)}</td>
+                                                <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.low.toFixed(2)}</td>
+                                                <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.close.toFixed(2)}</td>
+                                                <td style={{ 
+                                                    padding: '6px 0 6px 4px', 
+                                                    textAlign: 'right', 
+                                                    fontWeight: 700, 
+                                                    color: gap.isPositive ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)' 
+                                                }}>
+                                                    {gap.isPositive ? 'Positive' : 'Negative'}
+                                                </td>
+                                            </tr>
+                                            {isExpanded && (
+                                                <tr style={{ backgroundColor: 'var(--color-ec-bg-base)' }}>
+                                                    <td colSpan={7} style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-ec-border)' }}>
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                                News for {gap.time}
+                                                            </span>
+                                                            {dayNews.length === 0 ? (
+                                                                <span style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
+                                                                    No news found on Finviz for this day.
+                                                                </span>
+                                                            ) : (
+                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                                                                    {dayNews.map((news, nIdx) => (
+                                                                        <div key={nIdx} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 10 }}>
+                                                                            <span style={{ color: 'var(--color-ec-text-muted)', fontWeight: 600, flexShrink: 0 }}>
+                                                                                {news.time}
+                                                                            </span>
+                                                                            {news.source && (
+                                                                                <span style={{ color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, flexShrink: 0 }}>
+                                                                                    [{news.source}]
+                                                                                </span>
+                                                                            )}
+                                                                            <a
+                                                                                href={news.link}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                style={{
+                                                                                    color: 'var(--color-ec-copper-bright)',
+                                                                                    textDecoration: 'none',
+                                                                                    fontWeight: 500,
+                                                                                    lineHeight: 1.3
+                                                                                }}
+                                                                                onClick={(e) => e.stopPropagation()} // Prevent collapsing when clicking the link
+                                                                                className="hover:underline hover:text-white transition-colors"
+                                                                            >
+                                                                                {news.title}
+                                                                            </a>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     )}
@@ -1380,6 +1462,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<TickerAnalysisData | null>(null);
     const [filings, setFilings] = useState<FilingsData | null>(null);
+    const [finvizNews, setFinvizNews] = useState<FinvizNewsItem[]>([]);
     const [showFullDesc, setShowFullDesc] = useState(false);
     const [logoFailed, setLogoFailed] = useState(false);
 
@@ -1402,14 +1485,16 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
 
         const fetchData = async () => {
             setLoading(true);
+            setFinvizNews([]);
             try {
                 // Parallel fetching of all ticker-related data endpoints
-                const [analysisRes, filingsRes, chartRes, bsRes, gapRes] = await Promise.allSettled([
+                const [analysisRes, filingsRes, chartRes, bsRes, gapRes, newsRes] = await Promise.allSettled([
                     getTickerAnalysis(selectedTicker),
                     getTickerSecFilings(selectedTicker),
                     getTickerChart(selectedTicker),
                     getTickerBalanceSheet(selectedTicker),
-                    getTickerGapStats(selectedTicker)
+                    getTickerGapStats(selectedTicker),
+                    getTickerFinvizNews(selectedTicker)
                 ]);
 
                 let combinedData: TickerAnalysisData = {};
@@ -1441,6 +1526,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     setFilings(filingsRes.value as FilingsData);
                 } else {
                     setFilings(null);
+                }
+
+                if (newsRes.status === 'fulfilled' && newsRes.value) {
+                    setFinvizNews(newsRes.value as FinvizNewsItem[]);
+                } else {
+                    setFinvizNews([]);
                 }
 
             } catch (error) {
@@ -1725,7 +1816,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
                         <div className="lg:col-span-2">
-                            <DailyStockChart dailyData={data?.daily_history} />
+                            <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} />
                         </div>
                         <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
                             <KnowTheFloatTable floatData={data?.know_the_float} />

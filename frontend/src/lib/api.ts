@@ -221,6 +221,15 @@ export function getTickerGapStats(
   );
 }
 
+export function getTickerFinvizNews(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/finviz-news`,
+  );
+}
+
+
 // ─── Market Data ────────────────────────────────────────────
 export function getScreener(
   params: URLSearchParams | string,
