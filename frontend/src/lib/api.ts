@@ -197,6 +197,30 @@ export function getTickerSecFilings(
   );
 }
 
+export function getTickerChart(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/chart`,
+  );
+}
+
+export function getTickerBalanceSheet(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/balance-sheet`,
+  );
+}
+
+export function getTickerGapStats(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/gap-stats`,
+  );
+}
+
 // ─── Market Data ────────────────────────────────────────────
 export function getScreener(
   params: URLSearchParams | string,

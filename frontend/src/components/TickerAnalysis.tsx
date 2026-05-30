@@ -4,8 +4,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     Activity, Users, ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
-import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
-import { getTickerAnalysis, getTickerSecFilings } from '@/lib/api';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
+import { 
+    getTickerAnalysis, 
+    getTickerSecFilings, 
+    getTickerChart, 
+    getTickerBalanceSheet, 
+    getTickerGapStats 
+} from '@/lib/api';
 
 interface TickerAnalysisProps {
     ticker?: string;
@@ -51,6 +57,8 @@ interface TickerAnalysisData {
     daily_history?: DailyDataPoint[];
     know_the_float?: FloatData;
     gap_stats?: GapStats;
+    gap_stats_plus_1?: GapStats;
+    gap_stats_plus_2?: GapStats;
 }
 
 interface FilingsData {
@@ -152,14 +160,205 @@ const formatPercent = (num: number | null | undefined) => {
     return `${(num * 100).toFixed(2)}%`;
 };
 
+// Helper to parse Lightweight Charts time objects or YYYY-MM-DD strings to millisecond timestamps
+const getTimestamp = (t: any): number | null => {
+    if (!t) return null;
+    if (typeof t === 'string') {
+        const parts = t.split('-');
+        if (parts.length === 3) {
+            return Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        }
+        return new Date(t).getTime();
+    }
+    if (typeof t === 'number') {
+        if (t < 5e10) return t * 1000; // UNIX timestamp in seconds
+        return t; // UNIX timestamp in ms
+    }
+    if (t.year && t.month && t.day) {
+        return Date.UTC(t.year, t.month - 1, t.day);
+    }
+    return null;
+};
+
 // Lightweight-charts Daily Candlestick Stock Chart
 const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const [showVolumeProfile, setShowVolumeProfile] = useState<boolean>(false);
+
+    // Keep chart references in refs so we can access them in the redraw function
+    // without triggering full chart rebuilds on state/zoom/pan updates.
+    const chartRef = useRef<any>(null);
+    const candleSeriesRef = useRef<any>(null);
+    const showVolumeProfileRef = useRef<boolean>(showVolumeProfile);
+
+    // Keep the showVolumeProfile ref in sync
+    useEffect(() => {
+        showVolumeProfileRef.current = showVolumeProfile;
+    }, [showVolumeProfile]);
+
+    const redrawVolumeProfile = () => {
+        const chart = chartRef.current;
+        const candleSeries = candleSeriesRef.current;
+        const canvas = canvasRef.current;
+        if (!chart || !candleSeries || !canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!showVolumeProfileRef.current || !dailyData || dailyData.length === 0) return;
+
+        // Set up High-DPI scaling
+        const rect = canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+
+        // Get visible logical/time range
+        const visibleRange = chart.timeScale().getVisibleRange();
+        if (!visibleRange) return;
+
+        const fromTs = getTimestamp(visibleRange.from);
+        const toTs = getTimestamp(visibleRange.to);
+        if (!fromTs || !toTs) return;
+
+        // Filter daily data points within the visible range
+        const visibleData = dailyData.filter(d => {
+            const ts = getTimestamp(d.time);
+            return ts !== null && ts >= fromTs && ts <= toTs;
+        });
+
+        if (visibleData.length === 0) return;
+
+        // Calculate visible price range
+        let minPrice = Infinity;
+        let maxPrice = -Infinity;
+        for (const d of visibleData) {
+            if (d.low < minPrice) minPrice = d.low;
+            if (d.high > maxPrice) maxPrice = d.high;
+        }
+
+        if (minPrice === Infinity || maxPrice === -Infinity || minPrice === maxPrice) return;
+
+        // Distribute prices into 24 equal buckets
+        const numBuckets = 24;
+        const bucketSize = (maxPrice - minPrice) / numBuckets;
+        const buckets = Array.from({ length: numBuckets }, () => ({
+            volume: 0,
+            upVolume: 0,
+            downVolume: 0
+        }));
+
+        for (const d of visibleData) {
+            const overlappingIndices: number[] = [];
+            for (let i = 0; i < numBuckets; i++) {
+                const bMin = minPrice + i * bucketSize;
+                const bMax = bMin + bucketSize;
+                if (d.low <= bMax && d.high >= bMin) {
+                    overlappingIndices.push(i);
+                }
+            }
+
+            if (overlappingIndices.length > 0) {
+                // Distribute volume equally among all buckets overlapping the daily candle range
+                const volPerBucket = d.volume / overlappingIndices.length;
+                for (const idx of overlappingIndices) {
+                    buckets[idx].volume += volPerBucket;
+                    if (d.close >= d.open) {
+                        buckets[idx].upVolume += volPerBucket;
+                    } else {
+                        buckets[idx].downVolume += volPerBucket;
+                    }
+                }
+            }
+        }
+
+        // Find Point of Control (POC) bucket (max volume)
+        let maxBucketVol = 0;
+        let pocIndex = 0;
+        for (let i = 0; i < numBuckets; i++) {
+            if (buckets[i].volume > maxBucketVol) {
+                maxBucketVol = buckets[i].volume;
+                pocIndex = i;
+            }
+        }
+
+        if (maxBucketVol === 0) return;
+
+        // Render horizontal bars on the left side (up to 30% of chart width)
+        const maxBarWidth = rect.width * 0.3;
+
+        for (let i = 0; i < numBuckets; i++) {
+            const bMin = minPrice + i * bucketSize;
+            const bMax = bMin + bucketSize;
+
+            const yMin = candleSeries.priceToCoordinate(bMin);
+            const yMax = candleSeries.priceToCoordinate(bMax);
+
+            if (yMin !== null && yMax !== null) {
+                const y = yMax;
+                const height = yMin - yMax;
+
+                if (height <= 0) continue;
+
+                const b = buckets[i];
+                const barWidth = (b.volume / maxBucketVol) * maxBarWidth;
+
+                if (i === pocIndex) {
+                    // Highlight POC bucket in copper
+                    ctx.fillStyle = 'rgba(216, 122, 61, 0.25)';
+                    ctx.fillRect(0, y, barWidth, height);
+                    ctx.strokeStyle = 'rgba(216, 122, 61, 0.6)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(0, y, barWidth, height);
+                } else {
+                    // Render split volume (up vs down)
+                    const upWidth = b.volume > 0 ? (b.upVolume / b.volume) * barWidth : 0;
+                    const downWidth = barWidth - upWidth;
+
+                    // Green for up/buy volume
+                    ctx.fillStyle = 'rgba(74, 157, 127, 0.25)';
+                    ctx.fillRect(0, y, upWidth, height);
+
+                    // Red for down/sell volume
+                    ctx.fillStyle = 'rgba(201, 77, 63, 0.25)';
+                    ctx.fillRect(upWidth, y, downWidth, height);
+                }
+            }
+        }
+
+        // Draw POC reference line across the chart
+        const pocPrice = minPrice + pocIndex * bucketSize + bucketSize / 2;
+        const pocY = candleSeries.priceToCoordinate(pocPrice);
+        if (pocY !== null) {
+            ctx.beginPath();
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = 'rgba(216, 122, 61, 0.8)';
+            ctx.lineWidth = 1.5;
+            ctx.moveTo(0, pocY);
+            ctx.lineTo(rect.width - 60, pocY);
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset dash
+
+            // Draw POC text label
+            ctx.fillStyle = '#D87A3D';
+            ctx.font = 'bold 9px "General Sans", sans-serif';
+            ctx.fillText('POC', rect.width - 55, pocY + 3);
+        }
+    };
+
+    // Handle toggling volume profile overlay
+    useEffect(() => {
+        redrawVolumeProfile();
+    }, [showVolumeProfile]);
 
     useEffect(() => {
         if (!chartContainerRef.current || !dailyData || dailyData.length === 0) return;
 
-        // Clear container to prevent duplicate chart instances in React StrictMode
         chartContainerRef.current.innerHTML = '';
 
         const chart = createChart(chartContainerRef.current, {
@@ -203,6 +402,33 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
         }));
         candleSeries.setData(formattedCandles);
 
+        // Save chart/series in refs
+        chartRef.current = chart;
+        candleSeriesRef.current = candleSeries;
+
+        // Set markers for gap days (gap_pct >= 20.0%)
+        const markers = [];
+        for (let i = 1; i < dailyData.length; i++) {
+            const prevClose = dailyData[i - 1].close;
+            const currentOpen = dailyData[i].open;
+            if (prevClose > 0) {
+                const gapPct = ((currentOpen - prevClose) / prevClose) * 100;
+                if (gapPct >= 20.0) {
+                    markers.push({
+                        time: dailyData[i].time,
+                        position: 'aboveBar' as const,
+                        color: '#D87A3D',
+                        shape: 'arrowDown' as const,
+                        text: `GAP (${gapPct.toFixed(0)}%)`,
+                        size: 2,
+                    });
+                }
+            }
+        }
+        if (markers.length > 0) {
+            createSeriesMarkers(candleSeries, markers);
+        }
+
         // Volume overlay
         const volumeSeries = chart.addSeries(HistogramSeries, {
             priceFormat: { type: 'volume' },
@@ -240,16 +466,30 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
 
         chart.timeScale().fitContent();
 
+        // Subscribe to range/zoom updates
+        chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+            redrawVolumeProfile();
+        });
+
+        // Trigger an initial redraw after the chart layouts
+        const timer = setTimeout(() => {
+            redrawVolumeProfile();
+        }, 50);
+
         const handleResize = () => {
             if (chartContainerRef.current) {
                 chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+                setTimeout(redrawVolumeProfile, 0);
             }
         };
         window.addEventListener('resize', handleResize);
 
         return () => {
+            clearTimeout(timer);
             window.removeEventListener('resize', handleResize);
             chart.remove();
+            chartRef.current = null;
+            candleSeriesRef.current = null;
         };
     }, [dailyData]);
 
@@ -272,10 +512,45 @@ const DailyStockChart = ({ dailyData }: { dailyData?: DailyDataPoint[] }) => {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
-            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
-                Daily Stock Chart
-            </span>
-            <div ref={chartContainerRef} style={{ width: '100%', height: '420px' }} />
+            <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderBottom: '1px solid var(--color-ec-border)',
+                paddingBottom: 4
+            }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+                    Daily Stock Chart
+                </span>
+                <button
+                    onClick={() => setShowVolumeProfile(!showVolumeProfile)}
+                    style={{
+                        background: showVolumeProfile ? 'var(--color-ec-copper)' : 'transparent',
+                        border: 'none',
+                        borderRadius: 3,
+                        color: showVolumeProfile ? '#ffffff' : 'var(--color-ec-text-secondary)',
+                        fontSize: 8,
+                        fontWeight: 700,
+                        padding: '2px 6px',
+                        cursor: 'pointer',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        transition: 'all 150ms ease'
+                    }}
+                    onMouseEnter={(e) => {
+                        if (!showVolumeProfile) e.currentTarget.style.color = 'var(--color-ec-text-high)';
+                    }}
+                    onMouseLeave={(e) => {
+                        if (!showVolumeProfile) e.currentTarget.style.color = 'var(--color-ec-text-secondary)';
+                    }}
+                >
+                    Vol. Profile {showVolumeProfile ? 'ON' : 'OFF'}
+                </button>
+            </div>
+            <div style={{ position: 'relative', width: '100%', height: '420px' }}>
+                <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
+                <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 10 }} />
+            </div>
         </div>
     );
 };
@@ -341,7 +616,22 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
 };
 
 // Gap day statistics sub-component
-const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
+const GapStatsSection = ({ 
+    gapStats, 
+    gapStatsPlus1, 
+    gapStatsPlus2 
+}: { 
+    gapStats?: GapStats; 
+    gapStatsPlus1?: GapStats; 
+    gapStatsPlus2?: GapStats; 
+}) => {
+    const [activeSubTab, setActiveSubTab] = useState<'day0' | 'day1' | 'day2'>('day0');
+    
+    const currentStats = 
+        activeSubTab === 'day0' ? gapStats : 
+        activeSubTab === 'day1' ? gapStatsPlus1 : 
+        gapStatsPlus2;
+
     if (!gapStats || gapStats.gap_days_count === 0) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
@@ -364,204 +654,265 @@ const GapStatsSection = ({ gapStats }: { gapStats?: GapStats }) => {
         );
     }
 
-    const formatVal = (val: number | null) => {
+    const formatVal = (val: number | null | undefined) => {
         if (val === null || val === undefined) return '-';
         return `${val.toFixed(2)}%`;
     };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
-            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
-                Gap Day Statistics ({gapStats.gap_days_count} gaps)
-            </span>
-            
-            {/* 2x2 Numeric Metrics Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>High RTH Spike</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.high_rth_spike_avg)}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low RTH Spike</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.low_rth_spike_avg)}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% PM Fade</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.pm_fade_avg)}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% RTHH Fade</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(gapStats.rthh_fade_avg)}</span>
+            <div style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                borderBottom: '1px solid var(--color-ec-border)', 
+                paddingBottom: 4 
+            }}>
+                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+                    Gap Stats {currentStats && currentStats.gap_days_count > 0 ? `(${currentStats.gap_days_count} gaps)` : ''}
+                </span>
+                
+                {/* Day offset sub-tabs */}
+                <div style={{ display: 'flex', gap: 4 }}>
+                    {(['day0', 'day1', 'day2'] as const).map(tab => {
+                        const label = tab === 'day0' ? 'Day 0' : tab === 'day1' ? 'Day +1' : 'Day +2';
+                        const isActive = activeSubTab === tab;
+                        return (
+                            <button
+                                key={tab}
+                                onClick={() => setActiveSubTab(tab)}
+                                style={{
+                                    background: isActive ? 'var(--color-ec-copper)' : 'transparent',
+                                    border: 'none',
+                                    borderRadius: 3,
+                                    color: isActive ? '#ffffff' : 'var(--color-ec-text-secondary)',
+                                    fontSize: 8,
+                                    fontWeight: 700,
+                                    padding: '2px 6px',
+                                    cursor: 'pointer',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    transition: 'all 150ms ease'
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-high)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-secondary)';
+                                }}
+                            >
+                                {label}
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
-            {/* Frequencies and Progress Bars */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
-                {/* Negative Close Frequency (Bidirectional Bar) */}
-                {(() => {
-                    const negClose = gapStats.neg_close_freq ?? 0;
-                    const posClose = 100 - negClose;
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
-                                <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
-                            </div>
-                            <div style={{
-                                height: 18,
-                                width: '100%',
-                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                borderRadius: 4,
-                                overflow: 'hidden',
-                                display: 'flex',
-                                fontFamily: "'General Sans', sans-serif",
-                                fontSize: 9,
-                                fontWeight: 700
-                            }}>
-                                {negClose > 0 && (
-                                    <div style={{
-                                        height: '100%',
-                                        width: `${negClose}%`,
-                                        backgroundColor: 'var(--color-ec-loss)',
-                                        color: '#ffffff',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'width 0.3s ease',
-                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
-                                    }}>
-                                        {negClose >= 10 ? `${negClose.toFixed(1)}%` : ''}
-                                    </div>
-                                )}
-                                {posClose > 0 && (
-                                    <div style={{
-                                        height: '100%',
-                                        width: `${posClose}%`,
-                                        backgroundColor: 'var(--color-ec-profit)',
-                                        color: '#ffffff',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'width 0.3s ease',
-                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
-                                    }}>
-                                        {posClose >= 10 ? `${posClose.toFixed(1)}%` : ''}
-                                    </div>
-                                )}
-                            </div>
+            {!currentStats || currentStats.gap_days_count === 0 ? (
+                <div style={{
+                    height: '140px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-ec-text-muted)',
+                    fontSize: '11px',
+                    border: '1px dashed var(--color-ec-border)',
+                    borderRadius: '6px',
+                    marginTop: 4
+                }}>
+                    No stats available for this offset.
+                </div>
+            ) : (
+                <>
+                    {/* 2x2 Numeric Metrics Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>High RTH Spike</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.high_rth_spike_avg)}</span>
                         </div>
-                    );
-                })()}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low RTH Spike</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.low_rth_spike_avg)}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% PM Fade</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.pm_fade_avg)}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% RTHH Fade</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.rthh_fade_avg)}</span>
+                        </div>
+                    </div>
 
-                {/* Close Above PMH Frequency */}
-                {gapStats.close_above_pmh_freq !== null && (() => {
-                    const val = gapStats.close_above_pmh_freq ?? 0;
-                    const restVal = 100 - val;
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
-                                <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
-                            </div>
-                            <div style={{
-                                height: 18,
-                                width: '100%',
-                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                borderRadius: 4,
-                                overflow: 'hidden',
-                                display: 'flex',
-                                fontFamily: "'General Sans', sans-serif",
-                                fontSize: 9,
-                                fontWeight: 700
-                            }}>
-                                {restVal > 0 && (
-                                    <div style={{
-                                        height: '100%',
-                                        width: `${restVal}%`,
-                                        backgroundColor: 'var(--color-ec-loss)',
-                                        color: '#ffffff',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'width 0.3s ease',
-                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
-                                    }}>
-                                        {restVal >= 10 ? `${restVal.toFixed(1)}%` : ''}
+                    {/* Frequencies and Progress Bars */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
+                        {/* Negative Close Frequency (Bidirectional Bar) */}
+                        {(() => {
+                            const negClose = currentStats.neg_close_freq ?? 0;
+                            const posClose = 100 - negClose;
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+                                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
                                     </div>
-                                )}
-                                {val > 0 && (
                                     <div style={{
-                                        height: '100%',
-                                        width: `${val}%`,
-                                        backgroundColor: 'var(--color-ec-profit)',
-                                        color: '#ffffff',
+                                        height: 18,
+                                        width: '100%',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        borderRadius: 4,
+                                        overflow: 'hidden',
                                         display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'width 0.3s ease',
-                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                        fontFamily: "'General Sans', sans-serif",
+                                        fontSize: 9,
+                                        fontWeight: 700
                                     }}>
-                                        {val >= 10 ? `${val.toFixed(1)}%` : ''}
+                                        {negClose > 0 && (
+                                            <div style={{
+                                                height: '100%',
+                                                width: `${negClose}%`,
+                                                backgroundColor: 'var(--color-ec-loss)',
+                                                color: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                transition: 'width 0.3s ease',
+                                                textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                            }}>
+                                                {negClose >= 10 ? `${negClose.toFixed(1)}%` : ''}
+                                            </div>
+                                        )}
+                                        {posClose > 0 && (
+                                            <div style={{
+                                                height: '100%',
+                                                width: `${posClose}%`,
+                                                backgroundColor: 'var(--color-ec-profit)',
+                                                color: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                transition: 'width 0.3s ease',
+                                                textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                            }}>
+                                                {posClose >= 10 ? `${posClose.toFixed(1)}%` : ''}
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
+                                </div>
+                            );
+                        })()}
 
-                {/* Close Below VWAP Frequency */}
-                {(() => {
-                    const val = gapStats.close_below_vwap_freq ?? 0;
-                    const restVal = 100 - val;
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
-                                <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
-                            </div>
-                            <div style={{
-                                height: 18,
-                                width: '100%',
-                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                borderRadius: 4,
-                                overflow: 'hidden',
-                                display: 'flex',
-                                fontFamily: "'General Sans', sans-serif",
-                                fontSize: 9,
-                                fontWeight: 700
-                            }}>
-                                {val > 0 && (
-                                    <div style={{
-                                        height: '100%',
-                                        width: `${val}%`,
-                                        backgroundColor: 'var(--color-ec-loss)',
-                                        color: '#ffffff',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'width 0.3s ease',
-                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
-                                    }}>
-                                        {val >= 10 ? `${val.toFixed(1)}%` : ''}
+                        {/* Close Above PMH Frequency */}
+                        {currentStats.close_above_pmh_freq !== null && currentStats.close_above_pmh_freq !== undefined && (() => {
+                            const val = currentStats.close_above_pmh_freq ?? 0;
+                            const restVal = 100 - val;
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+                                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
                                     </div>
-                                )}
-                                {restVal > 0 && (
                                     <div style={{
-                                        height: '100%',
-                                        width: `${restVal}%`,
-                                        backgroundColor: 'var(--color-ec-profit)',
-                                        color: '#ffffff',
+                                        height: 18,
+                                        width: '100%',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        borderRadius: 4,
+                                        overflow: 'hidden',
                                         display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        transition: 'width 0.3s ease',
-                                        textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                        fontFamily: "'General Sans', sans-serif",
+                                        fontSize: 9,
+                                        fontWeight: 700
                                     }}>
-                                        {restVal >= 10 ? `${restVal.toFixed(1)}%` : ''}
+                                        {restVal > 0 && (
+                                            <div style={{
+                                                height: '100%',
+                                                width: `${restVal}%`,
+                                                backgroundColor: 'var(--color-ec-loss)',
+                                                color: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                transition: 'width 0.3s ease',
+                                                textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                            }}>
+                                                {restVal >= 10 ? `${restVal.toFixed(1)}%` : ''}
+                                            </div>
+                                        )}
+                                        {val > 0 && (
+                                            <div style={{
+                                                height: '100%',
+                                                width: `${val}%`,
+                                                backgroundColor: 'var(--color-ec-profit)',
+                                                color: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                transition: 'width 0.3s ease',
+                                                textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                            }}>
+                                                {val >= 10 ? `${val.toFixed(1)}%` : ''}
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
-            </div>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Close Below VWAP Frequency */}
+                        {(() => {
+                            const val = currentStats.close_below_vwap_freq ?? 0;
+                            const restVal = 100 - val;
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+                                        <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
+                                    </div>
+                                    <div style={{
+                                        height: 18,
+                                        width: '100%',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        borderRadius: 4,
+                                        overflow: 'hidden',
+                                        display: 'flex',
+                                        fontFamily: "'General Sans', sans-serif",
+                                        fontSize: 9,
+                                        fontWeight: 700
+                                    }}>
+                                        {val > 0 && (
+                                            <div style={{
+                                                height: '100%',
+                                                width: `${val}%`,
+                                                backgroundColor: 'var(--color-ec-loss)',
+                                                color: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                transition: 'width 0.3s ease',
+                                                textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                            }}>
+                                                {val >= 10 ? `${val.toFixed(1)}%` : ''}
+                                            </div>
+                                        )}
+                                        {restVal > 0 && (
+                                            <div style={{
+                                                height: '100%',
+                                                width: `${restVal}%`,
+                                                backgroundColor: 'var(--color-ec-profit)',
+                                                color: '#ffffff',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                transition: 'width 0.3s ease',
+                                                textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+                                            }}>
+                                                {restVal >= 10 ? `${restVal.toFixed(1)}%` : ''}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                    </div>
+                </>
+            )}
         </div>
     );
 };
@@ -937,9 +1288,45 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         const fetchData = async () => {
             setLoading(true);
             try {
-                // Parallel fetching — each independent so one failure doesn't block the other
-                try { setData((await getTickerAnalysis(selectedTicker)) as TickerAnalysisData); } catch { /* ignore */ }
-                try { setFilings((await getTickerSecFilings(selectedTicker)) as FilingsData); } catch { /* ignore */ }
+                // Parallel fetching of all ticker-related data endpoints
+                const [analysisRes, filingsRes, chartRes, bsRes, gapRes] = await Promise.allSettled([
+                    getTickerAnalysis(selectedTicker),
+                    getTickerSecFilings(selectedTicker),
+                    getTickerChart(selectedTicker),
+                    getTickerBalanceSheet(selectedTicker),
+                    getTickerGapStats(selectedTicker)
+                ]);
+
+                let combinedData: TickerAnalysisData = {};
+
+                if (analysisRes.status === 'fulfilled' && analysisRes.value) {
+                    combinedData = { ...combinedData, ...(analysisRes.value as object) };
+                }
+                if (chartRes.status === 'fulfilled' && chartRes.value) {
+                    combinedData = { ...combinedData, ...(chartRes.value as object) };
+                }
+                if (bsRes.status === 'fulfilled' && bsRes.value) {
+                    const bsVal = bsRes.value as { charts?: any; working_capital?: number | null };
+                    combinedData = { 
+                        ...combinedData, 
+                        charts: bsVal.charts,
+                        financials: {
+                            ...combinedData.financials,
+                            working_capital: bsVal.working_capital
+                        }
+                    };
+                }
+                if (gapRes.status === 'fulfilled' && gapRes.value) {
+                    combinedData = { ...combinedData, ...(gapRes.value as object) };
+                }
+
+                setData(combinedData);
+
+                if (filingsRes.status === 'fulfilled' && filingsRes.value) {
+                    setFilings(filingsRes.value as FilingsData);
+                } else {
+                    setFilings(null);
+                }
 
             } catch (error) {
                 console.error("Error fetching ticker analysis:", error);
@@ -1022,6 +1409,10 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 if (availableTickers.includes(val)) {
                                     setSelectedTicker(val);
                                 }
+                            }}
+                            onBlur={(e) => {
+                                const val = e.target.value.toUpperCase().trim();
+                                if (val) setSelectedTicker(val);
                             }}
                             style={{
                                 background: 'transparent',
@@ -1223,7 +1614,11 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         </div>
                         <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
                             <KnowTheFloatTable floatData={data?.know_the_float} />
-                            <GapStatsSection gapStats={data?.gap_stats} />
+                            <GapStatsSection 
+                                gapStats={data?.gap_stats} 
+                                gapStatsPlus1={data?.gap_stats_plus_1} 
+                                gapStatsPlus2={data?.gap_stats_plus_2} 
+                            />
                         </div>
                     </div>
 

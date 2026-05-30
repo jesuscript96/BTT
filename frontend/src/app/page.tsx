@@ -29,6 +29,7 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'screener' | 'ticker'>('screener');
+  const [selectedTicker, setSelectedTicker] = useState<string | undefined>(undefined);
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [aggregateSeries, setAggregateSeries] = useState<any[] | null>([]);
@@ -425,6 +426,10 @@ export default function Home() {
                   <DataGrid
                     data={memoizedData}
                     isLoading={isLoading}
+                    onSelectTicker={(ticker) => {
+                      setSelectedTicker(ticker);
+                      setActiveTab('ticker');
+                    }}
                   />
                 </div>
               </div>
@@ -435,7 +440,7 @@ export default function Home() {
 
         {activeTab === 'ticker' && (
           <TickerAnalysis
-            ticker={currentFilters.ticker || (data.length > 0 ? data[0].ticker : undefined)}
+            ticker={selectedTicker || currentFilters.ticker || (data.length > 0 ? data[0].ticker : undefined)}
             availableTickers={Array.from(new Set(data.map(d => d.ticker)))}
           />
         )}
