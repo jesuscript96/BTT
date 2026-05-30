@@ -110,36 +110,99 @@ def safe_mean(series):
         return None
     return float(val)
 
+def _fetch_yfinance_history(ticker: str, period: str = "5y") -> pd.DataFrame:
+    """Fetch yfinance history to avoid streaming hangs.
+    Uses 5y period by default to load historical gaps and news."""
+    try:
+        session = get_yfinance_session()
+        stock = yf.Ticker(ticker, session=session)
+        hist = stock.history(period=period)
+        if not hist.empty:
+            df = hist.reset_index()
+            df = df.rename(columns={
+                'Date': 'timestamp', 
+                'Datetime': 'timestamp',
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume'
+            })
+            return df
+    except Exception as e:
+        print(f"[ERROR] yfinance history for {ticker}: {e}")
+    return pd.DataFrame()
+
+
 def get_gap_stats_all_days(ticker: str) -> dict:
     ticker = ticker.upper()
     df = pd.DataFrame()
     
-    # 1. Try to query database daily_metrics
+    # 1. Try to query database daily_metrics using partition pruning with hot cache
     try:
-        from app.database import get_db_connection
-        con = get_db_connection()
-        df = con.execute("SELECT * FROM daily_metrics WHERE ticker = ? ORDER BY timestamp ASC", [ticker]).fetchdf()
+        from app.services.cache_service import get_hot_daily_cache
+        cache_df = get_hot_daily_cache()
+        if cache_df is not None and not cache_df.empty:
+            ticker_cache = cache_df[(cache_df['ticker'] == ticker) & (cache_df['gap_pct'] >= 20.0)]
+            if ticker_cache.empty:
+                # No gap days found in hot cache, so we can return empty stats immediately
+                empty_stats = {
+                    "source": "database",
+                    "gap_days_count": 0,
+                    "high_rth_spike_avg": None,
+                    "low_rth_spike_avg": None,
+                    "pm_fade_avg": None,
+                    "rthh_fade_avg": None,
+                    "neg_close_freq": None,
+                    "close_above_pmh_freq": None,
+                    "close_below_vwap_freq": None
+                }
+                return {
+                    "gap_stats": empty_stats,
+                    "gap_stats_plus_1": empty_stats,
+                    "gap_stats_plus_2": empty_stats
+                }
+            
+            # Determine needed year/month partitions
+            needed_partitions = set()
+            for timestamp in ticker_cache['timestamp']:
+                dt = pd.to_datetime(timestamp)
+                needed_partitions.add((dt.year, dt.month))
+                # Also include next month in case the next 2 days fall into it
+                next_day = dt + pd.Timedelta(days=5)
+                needed_partitions.add((next_day.year, next_day.month))
+                
+            # Build partition filter clause
+            clauses = []
+            for y, m in needed_partitions:
+                clauses.append(f"(year = {y} AND month = {m})")
+            partition_filter = " OR ".join(clauses)
+            
+            from app.database import get_db_connection
+            con = get_db_connection()
+            query = f"""
+                SELECT * FROM daily_metrics 
+                WHERE ticker = ? 
+                  AND ({partition_filter})
+                ORDER BY timestamp ASC
+            """
+            df = con.execute(query, [ticker]).fetchdf()
     except Exception as e:
-        print(f"Error querying daily_metrics for {ticker}: {e}")
+        print(f"Error querying optimized daily_metrics for {ticker}: {e}")
         
-    # 2. If empty, fallback to yfinance
+    # Fallback to unpruned database query if empty or error occurred
     if df.empty:
         try:
-            session = get_yfinance_session()
-            stock = yf.Ticker(ticker, session=session)
-            hist = stock.history(period="5y")
-            if not hist.empty:
-                df = hist.reset_index()
-                # Rename columns to match daily_metrics if needed, or map them
-                df = df.rename(columns={
-                    'Date': 'timestamp', 
-                    'Datetime': 'timestamp',
-                    'Open': 'open',
-                    'High': 'high',
-                    'Low': 'low',
-                    'Close': 'close',
-                    'Volume': 'volume'
-                })
+            from app.database import get_db_connection
+            con = get_db_connection()
+            df = con.execute("SELECT * FROM daily_metrics WHERE ticker = ? ORDER BY timestamp ASC", [ticker]).fetchdf()
+        except Exception as e:
+            print(f"Error querying daily_metrics fallback for {ticker}: {e}")
+        
+    # 2. If empty, fallback to yfinance (with timeout to prevent hanging)
+    if df.empty:
+        try:
+            df = _fetch_yfinance_history(ticker)
         except Exception as e:
             print(f"Error fetching yfinance history fallback for {ticker}: {e}")
             
@@ -283,15 +346,39 @@ def get_ticker_analysis(ticker: str):
                 return cached_data
 
     try:
-        session = get_yfinance_session()
-        stock = yf.Ticker(ticker, session=session)
         info = {}
         try:
-            info = stock.info
-            if not isinstance(info, dict):
-                info = {}
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+            def _fetch_info():
+                session = get_yfinance_session()
+                stock = yf.Ticker(ticker, session=session)
+                return stock.info
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_info)
+                result = future.result(timeout=10)
+                if isinstance(result, dict):
+                    info = result
+        except FuturesTimeoutError:
+            print(f"[TIMEOUT] yfinance info for {ticker} timed out after 10s")
         except Exception as e:
             print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
+
+        # Fallback to database tickers info if yfinance failed or returned empty
+        if not info or not info.get("longName"):
+            try:
+                from app.database import get_db_connection
+                con = get_db_connection()
+                ticker_df = con.execute("SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]).fetchdf()
+                if not ticker_df.empty:
+                    db_name = ticker_df.iloc[0]['name']
+                    db_ex = ticker_df.iloc[0]['primary_exchange']
+                    if not info:
+                        info = {}
+                    info["longName"] = db_name
+                    info["exchange"] = db_ex
+                    print(f"[INFO] Loaded profile info from database for {ticker}: name={db_name}, exchange={db_ex}")
+            except Exception as e:
+                print(f"Error fetching database tickers info fallback for {ticker}: {e}")
 
         # --- Profile ---
         profile = {
@@ -355,13 +442,45 @@ def get_ticker_chart(ticker: str):
                 return cached_data
 
     try:
-        session = get_yfinance_session()
-        stock = yf.Ticker(ticker, session=session)
         hist = pd.DataFrame()
         try:
-            hist = stock.history(period="5y")
+            hist_df = _fetch_yfinance_history(ticker)
+            if not hist_df.empty:
+                rename_back = {
+                    'timestamp': 'Date', 'open': 'Open', 'high': 'High',
+                    'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                }
+                hist = hist_df.rename(columns=rename_back)
+                if 'Date' in hist.columns:
+                    hist = hist.set_index('Date')
         except Exception as e:
             print(f"[WARN] Failed to fetch yfinance history for {ticker}: {e}")
+
+        # Fallback to database daily_metrics if yfinance returned empty
+        if hist.empty:
+            try:
+                from app.database import get_db_connection
+                con = get_db_connection()
+                db_df = con.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM daily_metrics 
+                    WHERE ticker = ? 
+                    ORDER BY timestamp ASC
+                """, [ticker]).fetchdf()
+                if not db_df.empty:
+                    hist = db_df.rename(columns={
+                        'timestamp': 'Date',
+                        'open': 'Open',
+                        'high': 'High',
+                        'low': 'Low',
+                        'close': 'Close',
+                        'volume': 'Volume'
+                    })
+                    hist['Date'] = pd.to_datetime(hist['Date']).dt.date
+                    hist = hist.set_index('Date')
+                    print(f"[INFO] Loaded chart history from database for {ticker}: {len(hist)} rows")
+            except Exception as e:
+                print(f"Error fetching daily_metrics chart fallback for {ticker}: {e}")
         
         perf = {}
         daily_history = []
@@ -433,11 +552,18 @@ def get_ticker_balance_sheet(ticker: str):
                 return cached_data
 
     try:
-        session = get_yfinance_session()
-        stock = yf.Ticker(ticker, session=session)
         bs = pd.DataFrame()
         try:
-            bs = stock.quarterly_balance_sheet
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+            def _fetch_bs():
+                session = get_yfinance_session()
+                stock = yf.Ticker(ticker, session=session)
+                return stock.quarterly_balance_sheet
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_bs)
+                bs = future.result(timeout=15)
+        except FuturesTimeoutError:
+            print(f"[TIMEOUT] yfinance balance sheet for {ticker} timed out")
         except Exception as e:
             print(f"[WARN] Failed to fetch yfinance quarterly balance sheet for {ticker}: {e}")
         charts = {

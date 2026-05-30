@@ -27,18 +27,23 @@ def init_db():
             # In GCS mode, we create views pointing to the parquet files directly
             # Optimization: Using precise glob patterns to avoid recursive scanning overhead.
             # daily_metrics and intraday_1m are partitioned: year=*/month=*/data.parquet
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/daily_metrics/*/*/*.parquet', hive_partitioning=true)")
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/intraday_1m/*/*/*.parquet', hive_partitioning=true)")
+            cur.execute("""
+                CREATE OR REPLACE VIEW massive.daily_metrics AS 
+                SELECT * EXCLUDE (pmh_gap_pct), 
+                       ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct 
+                FROM read_parquet('gs://strategybuilderbbdd/cold_storage/daily_metrics/*/*/*.parquet', hive_partitioning=true)
+            """)
+            cur.execute("CREATE OR REPLACE VIEW massive.intraday_1m AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/intraday_1m/*/*/*.parquet', hive_partitioning=true)")
             
             # tickers and splits are non-partitioned single files or flat directories
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/tickers/*.parquet')")
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/splits/*.parquet')")
+            cur.execute("CREATE OR REPLACE VIEW massive.tickers AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/tickers/*.parquet')")
+            cur.execute("CREATE OR REPLACE VIEW massive.splits AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/splits/*.parquet')")
             
             # Also create aliases in the main schema (of users.duckdb) for convenience
-            cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.daily_metrics")
-            cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.intraday_1m")
-            cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.tickers")
-            cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.splits")
+            cur.execute("CREATE OR REPLACE VIEW daily_metrics AS SELECT * FROM massive.daily_metrics")
+            cur.execute("CREATE OR REPLACE VIEW intraday_1m AS SELECT * FROM massive.intraday_1m")
+            cur.execute("CREATE OR REPLACE VIEW tickers AS SELECT * FROM massive.tickers")
+            cur.execute("CREATE OR REPLACE VIEW splits AS SELECT * FROM massive.splits")
             
             print("[INFO] Optimized GCS views initialized (non-recursive globs)")
         elif provider == "local":
@@ -127,10 +132,15 @@ def init_db():
             # because they are already tables in the main schema.
             print("[INFO] Local market data views virtualized in massive schema")
         else:
-            cur.execute("CREATE VIEW IF NOT EXISTS daily_metrics AS SELECT * FROM massive.main.daily_metrics")
-            cur.execute("CREATE VIEW IF NOT EXISTS intraday_1m AS SELECT * FROM massive.main.intraday_1m")
-            cur.execute("CREATE VIEW IF NOT EXISTS tickers AS SELECT * FROM massive.main.tickers")
-            cur.execute("CREATE VIEW IF NOT EXISTS splits AS SELECT * FROM massive.main.splits")
+            cur.execute("""
+                CREATE OR REPLACE VIEW daily_metrics AS 
+                SELECT * EXCLUDE (pmh_gap_pct), 
+                       ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct 
+                FROM massive.main.daily_metrics
+            """)
+            cur.execute("CREATE OR REPLACE VIEW intraday_1m AS SELECT * FROM massive.main.intraday_1m")
+            cur.execute("CREATE OR REPLACE VIEW tickers AS SELECT * FROM massive.main.tickers")
+            cur.execute("CREATE OR REPLACE VIEW splits AS SELECT * FROM massive.main.splits")
             print("[INFO] Market data views initialized from MotherDuck")
     except Exception as e:
         print(f"[WARN] Warning: Could not initialize market data views: {e}")
@@ -212,6 +222,13 @@ def init_db():
         seed_mock_data()
     except Exception as e:
         print(f"[WARN] Could not seed mock data: {e}")
+
+    # Migration: Recalculate pmh_gap_pct to use the correct Premarket High vs Prev Close formula
+    try:
+        cur.execute("UPDATE daily_metrics SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) WHERE prev_close IS NOT NULL AND prev_close > 0")
+        print("[INFO] Successfully migrated local daily_metrics pmh_gap_pct calculation")
+    except Exception as e:
+        print(f"[WARN] Could not update local daily_metrics pmh_gap_pct: {e}")
 
 if __name__ == "__main__":
     init_db()

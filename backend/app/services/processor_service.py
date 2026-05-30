@@ -81,8 +81,8 @@ def process_daily_metrics(df, con=None):
             float(pm_session[~pm_session["is_resampled"]]["volume"].sum()) if not pm_session.empty else 0.0
         )
 
-        # PMH Gap %: Open vs PM High
-        pmh_gap_pct = ((rth_open - pm_high) / pm_high * 100) if pm_high > 0 else 0.0
+        # PMH Gap %: Premarket High vs Previous Close
+        pmh_gap_pct = ((pm_high - prev_close) / prev_close * 100) if (prev_close and prev_close > 0 and pm_high > 0) else 0.0
 
         # PM Fade: (PMH - Open) / PMH
         pmh_fade_pct = ((pm_high - rth_open) / pm_high * 100) if pm_high > 0 else 0.0

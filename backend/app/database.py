@@ -20,6 +20,7 @@ def _establish_connection():
     try:
         if provider == "gcs":
             con = duckdb.connect('users.duckdb')
+            con.execute("SET enable_progress_bar = false;")
             print("[INFO] Connected to local users.duckdb (GCS data mode)")
             access_key = os.getenv("GCS_HMAC_KEY")
             secret = os.getenv("GCS_HMAC_SECRET")
@@ -34,16 +35,24 @@ def _establish_connection():
                 print("[WARN] GCS HMAC credentials not found.")
             return con
         elif provider == "local":
-            return duckdb.connect('local_data.duckdb')
+            con = duckdb.connect('local_data.duckdb')
+            con.execute("SET enable_progress_bar = false;")
+            return con
         else:
             token = os.getenv("MOTHERDUCK_TOKEN", "").strip()
             conn_str = f"md:?motherduck_token={token}" if token else "md:"
             con = duckdb.connect(conn_str)
+            con.execute("SET enable_progress_bar = false;")
             con.execute("SET search_path = 'main'")
             return con
     except Exception as e:
         print(f"[ERROR] Connection Error: {e}")
-        return duckdb.connect()
+        con = duckdb.connect()
+        try:
+            con.execute("SET enable_progress_bar = false;")
+        except:
+            pass
+        return con
 
 def get_db_connection(read_only=False):
     if not hasattr(_local, "conn") or _local.conn is None:

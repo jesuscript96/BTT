@@ -29,21 +29,40 @@ export class ApiError extends Error {
 // ─── Core request helper ────────────────────────────────────
 async function apiRequest<T>(
   path: string,
-  options?: RequestInit,
+  options?: RequestInit & { timeoutMs?: number },
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
+  const timeoutMs = options?.timeoutMs ?? 20_000; // Default 20s timeout
 
   const hasBody = !!options?.body;
   let response: Response;
   try {
-    response = await fetch(url, {
-      ...options,
-      headers: {
-        ...(hasBody ? { "Content-Type": "application/json" } : {}),
-        ...(options?.headers as Record<string, string> || {}),
-      },
-    });
+    // Wire up AbortController for timeout (skip if caller already provided a signal)
+    const controller = new AbortController();
+    const existingSignal = options?.signal;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // If caller already provided a signal, abort our controller when theirs fires
+    if (existingSignal) {
+      existingSignal.addEventListener("abort", () => controller.abort());
+    }
+
+    try {
+      response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...(hasBody ? { "Content-Type": "application/json" } : {}),
+          ...(options?.headers as Record<string, string> || {}),
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(0, `Request timed out after ${timeoutMs / 1000}s: ${path}`);
+    }
     throw new ApiError(0, "No se pudo conectar con el backend", error);
   }
 
