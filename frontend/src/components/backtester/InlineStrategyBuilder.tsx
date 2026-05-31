@@ -281,10 +281,10 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
       <div style={{ 
         flex: 1, 
         overflowY: "auto", 
-        padding: "20px 16px 80px 16px",
+        padding: "0 20px 80px 20px",
         display: "flex",
         flexDirection: "column",
-        gap: "24px"
+        gap: "0px"
       }}>
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />

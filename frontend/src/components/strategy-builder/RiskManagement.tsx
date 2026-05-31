@@ -72,7 +72,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
         <div style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: 24,
+            gap: 0,
         }}>
 
             {/* Hard Stop Loss Card */}
@@ -80,10 +80,9 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 16,
-                padding: '16px 20px',
-                backgroundColor: 'var(--color-ec-bg-surface)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 7,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                borderBottom: '0.5px solid var(--color-ec-border)',
             }}>
                 {/* Header */}
                 <div style={{
@@ -94,14 +93,23 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     borderBottom: (risk.use_hard_stop !== false) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <h2 style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            color: 'var(--color-ec-text-high)',
-                        }}>Hard Stop Loss</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-loss)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Hard Stop Loss</h2>
+                        </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
                             fontSize: 10,
@@ -175,10 +183,9 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 16,
-                padding: '16px 20px',
-                backgroundColor: 'var(--color-ec-bg-surface)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 7,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                borderBottom: '0.5px solid var(--color-ec-border)',
             }}>
                 {/* Header */}
                 <div style={{
@@ -189,14 +196,23 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     borderBottom: (risk.use_take_profit !== false) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <h2 style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            color: 'var(--color-ec-text-high)',
-                        }}>Take Profit</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-profit)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Take Profit</h2>
+                        </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
                             fontSize: 10,
@@ -449,10 +465,9 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 16,
-                padding: '16px 20px',
-                backgroundColor: 'var(--color-ec-bg-surface)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 7,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                borderBottom: '0.5px solid var(--color-ec-border)',
             }}>
                 {/* Header */}
                 <div style={{
@@ -463,14 +478,23 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     borderBottom: (risk.trailing_stop.active) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <h2 style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            color: 'var(--color-ec-text-high)',
-                        }}>Trailing Stop</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-copper)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Trailing Stop</h2>
+                        </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
                             fontSize: 10,
@@ -550,10 +574,9 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 16,
-                padding: '16px 20px',
-                backgroundColor: 'var(--color-ec-bg-surface)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 7,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                borderBottom: '0.5px solid var(--color-ec-border)',
             }}>
                 <div style={{
                     display: 'flex',
@@ -561,14 +584,23 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     justifyContent: 'space-between',
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <h2 style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            color: 'var(--color-ec-text-high)',
-                        }}>Accept Re-entries</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-copper)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Accept Re-entries</h2>
+                        </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
                             fontSize: 10,

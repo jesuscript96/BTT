@@ -898,34 +898,43 @@ export const LogicBuilder = ({
     onConditionChange: (g: ConditionGroup) => void;
     accentColor?: 'blue' | 'rose' | 'amber';
 }) => {
+    const headerAccentColor = accentColor === 'blue' ? '#3b82f6' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
+
     return (
         <div style={{
             display: 'flex',
             flexDirection: 'column',
             gap: 16,
-            padding: '16px 20px',
-            backgroundColor: 'var(--color-ec-bg-surface)',
-            border: '0.5px solid var(--color-ec-border)',
-            borderRadius: 7,
+            padding: '20px 0',
+            backgroundColor: 'transparent',
+            borderBottom: '0.5px solid var(--color-ec-border)',
         }}>
             {/* Header with Title and Global Timeframe */}
             <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                paddingBottom: 12,
-                borderBottom: '0.5px solid var(--color-ec-border)',
+                paddingBottom: 4,
                 marginBottom: 4,
             }}>
                 <div className="flex flex-col gap-1">
-                    <h2 style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 13,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.08em',
-                        color: 'var(--color-ec-text-high)',
-                    }}>{title}</h2>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{
+                            width: 3,
+                            height: 14,
+                            borderRadius: 1,
+                            backgroundColor: headerAccentColor,
+                        }} />
+                        <h2 style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                            color: 'var(--color-ec-text-high)',
+                            margin: 0,
+                        }}>{title}</h2>
+                    </div>
                     <span style={{
                         fontFamily: 'var(--color-ec-sans)',
                         fontSize: 10,
@@ -934,8 +943,6 @@ export const LogicBuilder = ({
                         marginTop: 2,
                     }}>Define logic conditions and timeframe execution</span>
                 </div>
-                
-
             </div>
 
             {/* Root Condition Group */}
