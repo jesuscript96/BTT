@@ -307,7 +307,21 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {})
                LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_volume_2,
                LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_gap_pct_2,
                LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2,
-               LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_range_pct_2
+               LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_range_pct_2,
+
+               LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1,
+               LEAD(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pmh_gap_pct_1,
+               LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1,
+               LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1,
+               LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1,
+               LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_1,
+
+               LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2,
+               LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pmh_gap_pct_2,
+               LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2,
+               LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2,
+               LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2,
+               LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_2
         FROM read_parquet({year_paths}, hive_partitioning=true)
     ) i
     """
