@@ -816,7 +816,7 @@ export const GroupDisplay = ({
         timeframe: parentTimeframe
     });
 
-    const activeAccentColor = accentColor === 'blue' ? '#3b82f6' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
+    const activeAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
     const handleSaveCondition = () => {
         if (editingIndex !== null) {
@@ -1382,7 +1382,7 @@ export const LogicBuilder = ({
     onConditionChange: (g: ConditionGroup) => void;
     accentColor?: 'blue' | 'rose' | 'amber';
 }) => {
-    const headerAccentColor = accentColor === 'blue' ? '#3b82f6' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
+    const headerAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
     return (
         <div style={{

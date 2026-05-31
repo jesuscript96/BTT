@@ -342,7 +342,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
         }}>
           {getGroupSummaryText(entryLogic.root_condition) && (
             <div style={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.4 }}>
-              <span style={{ fontWeight: 700, color: "#3b82f6", marginRight: 4 }}>ENTRY LOGIC:</span>
+              <span style={{ fontWeight: 700, color: "var(--color-ec-profit)", marginRight: 4 }}>ENTRY LOGIC:</span>
               <code style={{ color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)", fontSize: 10 }}>{getGroupSummaryText(entryLogic.root_condition)}</code>
             </div>
           )}
