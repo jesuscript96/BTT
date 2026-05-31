@@ -206,6 +206,7 @@ export interface Strategy {
     name: string;
     description?: string;
     bias: 'long' | 'short';
+    apply_day?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
     universe_filters?: UniverseFilters;
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;
