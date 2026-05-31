@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
@@ -366,26 +366,10 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
         <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
 
         {/* SECTION: APPLY DAY SELECTOR */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0 24px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', fontSize: 11, fontFamily: 'var(--color-ec-sans)' }}>
+            <span style={{ fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Aplicar en:</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{
-                    width: 3,
-                    height: 14,
-                    borderRadius: 1,
-                    backgroundColor: 'var(--color-ec-copper)',
-                }} />
-                <h2 style={{
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 13,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    color: 'var(--color-ec-text-high)',
-                    margin: 0,
-                }}>Aplicar estrategia en</h2>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-                {(['gap_day', 'gap_1_day', 'gap_2_day'] as const).map((day) => {
+                {(['gap_day', 'gap_1_day', 'gap_2_day'] as const).map((day, idx) => {
                     const isActive = applyDay === day;
                     const labels: Record<string, string> = {
                         gap_day: 'Gap Day',
@@ -393,38 +377,27 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
                         gap_2_day: 'Gap +2 Day',
                     };
                     return (
-                        <button
-                            key={day}
-                            onClick={() => setApplyDay(day)}
-                            style={{
-                                flex: 1,
-                                padding: '10px 16px',
-                                borderRadius: 6,
-                                border: isActive ? '1px solid var(--color-ec-copper)' : '1px solid var(--color-ec-border)',
-                                backgroundColor: isActive ? 'var(--color-ec-bg-elevated)' : 'transparent',
-                                color: isActive ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
-                                fontFamily: 'var(--color-ec-sans)',
-                                fontSize: 12,
-                                fontWeight: isActive ? 700 : 500,
-                                cursor: 'pointer',
-                                transition: 'all 150ms ease',
-                                textAlign: 'center',
-                            }}
-                            onMouseEnter={(e) => {
-                                if (!isActive) {
-                                    e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
-                                    e.currentTarget.style.color = 'var(--color-ec-text-primary)';
-                                }
-                            }}
-                            onMouseLeave={(e) => {
-                                if (!isActive) {
-                                    e.currentTarget.style.borderColor = 'var(--color-ec-border)';
-                                    e.currentTarget.style.color = 'var(--color-ec-text-muted)';
-                                }
-                            }}
-                        >
-                            {labels[day]}
-                        </button>
+                        <Fragment key={day}>
+                            {idx > 0 && <span style={{ color: 'var(--color-ec-border)', fontSize: 9 }}>/</span>}
+                            <span
+                                onClick={() => setApplyDay(day)}
+                                style={{
+                                    color: isActive ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                                    fontWeight: isActive ? 700 : 400,
+                                    cursor: 'pointer',
+                                    transition: 'color 150ms ease',
+                                    fontSize: 11,
+                                }}
+                                onMouseEnter={(e) => {
+                                    if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                }}
+                            >
+                                {labels[day]}
+                            </span>
+                        </Fragment>
                     );
                 })}
             </div>
