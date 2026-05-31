@@ -390,17 +390,20 @@ export const IndicatorParams = ({
 export const SourceIndicatorInput = ({
     value,
     onChange,
-    exclude = []
+    exclude = [],
+    allowedTargets
 }: {
     value: IndicatorConfig;
     onChange: (val: IndicatorConfig) => void;
     exclude?: IndicatorType[];
+    allowedTargets?: IndicatorType[];
 }) => {
     return (
         <div className="flex gap-1.5 items-center bg-muted/5 border border-border/20 rounded px-1.5 py-1">
             <IndicatorSelector
                 value={value.name}
                 exclude={exclude}
+                allowedTargets={allowedTargets}
                 onChange={(nameStr) => {
                     const name = nameStr as IndicatorType;
                     const defaultParams = getDefaultParamsForIndicator(name);
@@ -564,6 +567,10 @@ export const ConditionRow = ({
                         <SourceIndicatorInput
                             value={condition.level}
                             exclude={[]}
+                            allowedTargets={getAllowedTargets(
+                                condition.source?.name as IndicatorType,
+                                'price_level_distance'
+                            )}
                             onChange={(val) => onChange({ ...condition, level: val })}
                         />
                         <div className="flex items-center gap-1.5 ml-2 border-l border-border/30 pl-2">
@@ -674,6 +681,7 @@ export const ConditionRow = ({
                 }}
             >
                 <option value="indicator_comparison">Indicator</option>
+                <option value="price_level_distance">Distance</option>
             </select>
 
             <div style={{
