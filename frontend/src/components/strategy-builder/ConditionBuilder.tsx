@@ -99,8 +99,6 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.YESTERDAY_CLOSE]: "Yesterday Close",
     [IndicatorType.YESTERDAY_HIGH]: "Yesterday High",
     [IndicatorType.YESTERDAY_LOW]: "Yesterday Low",
-    [IndicatorType.YESTERDAY_AM_HIGH]: "Yesterday AM High",
-    [IndicatorType.YESTERDAY_AM_LOW]: "Yesterday AM Low",
     [IndicatorType.HIGH_X_DAYS]: "High of last X days",
     [IndicatorType.LOW_X_DAYS]: "Low of last X days",
     [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Elapsed Time Last High",
@@ -457,11 +455,13 @@ export const SourceIndicatorInput = ({
     value,
     onChange,
     exclude = [],
+    allowedTargets,
     hideOffset = false
 }: {
     value: IndicatorConfig;
     onChange: (val: IndicatorConfig) => void;
     exclude?: IndicatorType[];
+    allowedTargets?: IndicatorType[];
     hideOffset?: boolean;
 }) => {
     return (
@@ -469,6 +469,7 @@ export const SourceIndicatorInput = ({
             <IndicatorSelector
                 value={value.name}
                 exclude={exclude}
+                allowedTargets={allowedTargets}
                 onChange={(nameStr) => {
                     const name = nameStr as IndicatorType;
                     const defaultParams = getDefaultParamsForIndicator(name);
@@ -635,6 +636,10 @@ export const ConditionRow = ({
                         <SourceIndicatorInput
                             value={condition.level}
                             exclude={[]}
+                            allowedTargets={getAllowedTargets(
+                                condition.source?.name as IndicatorType,
+                                'price_level_distance'
+                            )}
                             onChange={(val) => onChange({ ...condition, level: val })}
                         />
                         <div className="flex items-center gap-1.5 ml-2 border-l border-border/30 pl-2">
@@ -745,6 +750,7 @@ export const ConditionRow = ({
                 }}
             >
                 <option value="indicator_comparison">Indicator</option>
+                <option value="price_level_distance">Distance</option>
             </select>
 
             <div style={{

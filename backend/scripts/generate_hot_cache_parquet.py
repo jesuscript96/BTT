@@ -22,21 +22,45 @@ daily_path = f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/*/*/*.parquet"
 print(f"Cargando gap days desde {daily_path}...")
 t_start = pd.Timestamp.now()
 df = con.execute(f"""
-    SELECT 
-        ticker, timestamp, year, month,
-        gap_pct, open, close, high, low, volume,
-        pm_volume, pm_high, pm_low, pm_high_time, pm_low_time,
-        rth_volume, rth_open, rth_high, rth_low, rth_close,
-        rth_run_pct, day_return_pct, rth_range_pct,
-        pmh_gap_pct, pmh_fade_pct, rth_fade_pct,
-        hod_time, lod_time,
-        m15_return_pct, m30_return_pct, m60_return_pct, m180_return_pct,
-        close_1559, last_close, prev_close, eod_volume,
-        transactions
-    FROM read_parquet('{daily_path}', hive_partitioning=true)
-    WHERE gap_pct >= 10.0
-    AND gap_pct <= 500.0
-    AND open > 0.10
+    WITH runner_and_gap_days AS (
+        SELECT DISTINCT ticker, CAST(timestamp AS DATE) as anchor_date
+        FROM read_parquet('{daily_path}', hive_partitioning=true)
+        WHERE (
+            (gap_pct >= 10.0 AND gap_pct <= 500.0)
+            OR
+            (pm_high > 0 AND prev_close > 0
+             AND ((pm_high - prev_close) / prev_close * 100) >= 20)
+        )
+        AND open > 0.10
+    ),
+    all_trading_days AS (
+        SELECT DISTINCT ticker, CAST(timestamp AS DATE) as date
+        FROM read_parquet('{daily_path}', hive_partitioning=true)
+    ),
+    expanded_dates AS (
+        SELECT DISTINCT a.ticker, a.date
+        FROM all_trading_days a
+        INNER JOIN runner_and_gap_days r
+            ON a.ticker = r.ticker
+            AND a.date BETWEEN r.anchor_date - INTERVAL 2 DAY
+                           AND r.anchor_date + INTERVAL 2 DAY
+    )
+    SELECT
+        d.ticker, d.timestamp, d.year, d.month,
+        d.gap_pct, d.open, d.close, d.high, d.low, d.volume,
+        d.pm_volume, d.pm_high, d.pm_low, d.pm_high_time, d.pm_low_time,
+        d.rth_volume, d.rth_open, d.rth_high, d.rth_low, d.rth_close,
+        d.rth_run_pct, d.day_return_pct, d.rth_range_pct,
+        d.pmh_gap_pct, d.pmh_fade_pct, d.rth_fade_pct,
+        d.hod_time, d.lod_time,
+        d.m15_return_pct, d.m30_return_pct, d.m60_return_pct, d.m180_return_pct,
+        d.close_1559, d.last_close, d.prev_close, d.eod_volume,
+        d.transactions
+    FROM read_parquet('{daily_path}', hive_partitioning=true) d
+    INNER JOIN expanded_dates e
+        ON d.ticker = e.ticker
+        AND CAST(d.timestamp AS DATE) = e.date
+    WHERE d.open > 0.10
 """).fetchdf()
 t_elapsed = (pd.Timestamp.now() - t_start).total_seconds()
 

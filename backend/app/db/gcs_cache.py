@@ -31,6 +31,7 @@ import pandas as pd
 import os
 
 GCS_BUCKET = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+ALLOW_MOCK_DATA = os.getenv("ALLOW_MOCK_DATA", "false").lower() == "true"
 INTRADAY_BATCH_SIZE = int(os.getenv("INTRADAY_BATCH_SIZE", "500"))
 CACHE_DIR = os.getenv("CACHE_DIR", ".cache/intraday")
 
@@ -311,7 +312,21 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {})
                LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_volume_2,
                LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_gap_pct_2,
                LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2,
-               LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_range_pct_2
+               LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_range_pct_2,
+
+               LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1,
+               LEAD(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pmh_gap_pct_1,
+               LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1,
+               LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1,
+               LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1,
+               LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_1,
+
+               LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2,
+               LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pmh_gap_pct_2,
+               LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2,
+               LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2,
+               LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2,
+               LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_2
         FROM raw_daily
     ) i
     """
@@ -442,21 +457,23 @@ def fetch_intraday_batch(
             pass
 
     if not src_path:
-        logger.error(f"    batch {year}-{month:02d}: no parquet glob. Generating mock data.")
-        # Try generating mock data
-        dates = qualifying_dates if qualifying_dates else pd.date_range(date_from, date_to).strftime('%Y-%m-%d').tolist()
-        pairs = pd.DataFrame([{'ticker': t, 'date': d} for t in tickers for d in dates])
-        if not pairs.empty:
-            try:
-                mock_df = _generate_mock_intraday_df(pairs)
-                for col in ("open", "high", "low", "close"):
-                    if col in mock_df.columns:
-                        mock_df[col] = mock_df[col].astype("float32")
-                if "volume" in mock_df.columns:
-                    mock_df["volume"] = pd.to_numeric(mock_df["volume"], errors="coerce").fillna(0).astype("int32")
-                return mock_df
-            except Exception as mock_err:
-                logger.error(f"Failed generating mock batch: {mock_err}")
+        if ALLOW_MOCK_DATA:
+            logger.warning(f"[MOCK] batch {year}-{month:02d}: no parquet glob. Using synthetic data.")
+            dates = qualifying_dates if qualifying_dates else pd.date_range(date_from, date_to).strftime('%Y-%m-%d').tolist()
+            pairs = pd.DataFrame([{'ticker': t, 'date': d} for t in tickers for d in dates])
+            if not pairs.empty:
+                try:
+                    mock_df = _generate_mock_intraday_df(pairs)
+                    for col in ("open", "high", "low", "close"):
+                        if col in mock_df.columns:
+                            mock_df[col] = mock_df[col].astype("float32")
+                    if "volume" in mock_df.columns:
+                        mock_df["volume"] = pd.to_numeric(mock_df["volume"], errors="coerce").fillna(0).astype("int32")
+                    return mock_df
+                except Exception as mock_err:
+                    logger.error(f"Failed generating mock batch: {mock_err}")
+        else:
+            logger.error(f"[ERROR] batch {year}-{month:02d}: no parquet glob found in GCS.")
         return pd.DataFrame()
 
     ticker_filter = "i.ticker IN ('" + "', '".join(tickers) + "')"
@@ -487,20 +504,23 @@ def fetch_intraday_batch(
         logger.info(f"    batch {year}-{month:02d}: {len(df)} rows ({round(time.time() - t0, 2)}s)")
         return df
     except Exception as e:
-        logger.error(f"    batch {year}-{month:02d} FAILED: {e}. Generating mock data.")
-        dates = qualifying_dates if qualifying_dates else pd.date_range(date_from, date_to).strftime('%Y-%m-%d').tolist()
-        pairs = pd.DataFrame([{'ticker': t, 'date': d} for t in tickers for d in dates])
-        if not pairs.empty:
-            try:
-                mock_df = _generate_mock_intraday_df(pairs)
-                for col in ("open", "high", "low", "close"):
-                    if col in mock_df.columns:
-                        mock_df[col] = mock_df[col].astype("float32")
-                if "volume" in mock_df.columns:
-                    mock_df["volume"] = pd.to_numeric(mock_df["volume"], errors="coerce").fillna(0).astype("int32")
-                return mock_df
-            except Exception as mock_err:
-                logger.error(f"Failed generating mock batch: {mock_err}")
+        if ALLOW_MOCK_DATA:
+            logger.warning(f"[MOCK] batch {year}-{month:02d} FAILED: {e}. Using synthetic data.")
+            dates = qualifying_dates if qualifying_dates else pd.date_range(date_from, date_to).strftime('%Y-%m-%d').tolist()
+            pairs = pd.DataFrame([{'ticker': t, 'date': d} for t in tickers for d in dates])
+            if not pairs.empty:
+                try:
+                    mock_df = _generate_mock_intraday_df(pairs)
+                    for col in ("open", "high", "low", "close"):
+                        if col in mock_df.columns:
+                            mock_df[col] = mock_df[col].astype("float32")
+                    if "volume" in mock_df.columns:
+                        mock_df["volume"] = pd.to_numeric(mock_df["volume"], errors="coerce").fillna(0).astype("int32")
+                    return mock_df
+                except Exception as mock_err:
+                    logger.error(f"Failed generating mock batch: {mock_err}")
+        else:
+            logger.error(f"[ERROR] batch {year}-{month:02d} FAILED: {e}.")
         return pd.DataFrame()
 
 
@@ -531,10 +551,6 @@ def _fetch_and_cache_month(
     
     cache_key = _get_cache_hash(y, m, path, tickers_month, valid_dates)
     cache_file = os.path.join(LOCAL_CACHE_DIR, f"{cache_key}.parquet")
-    print(f"[CACHE KEY] {y}-{m:02d}: key={cache_key}, file_exists={os.path.exists(cache_file)}")
-    print(f"[CACHE KEY] tickers sample: {sorted(tickers_month)[:3]}")
-    print(f"[CACHE KEY] dates sample: {sorted(valid_dates)[:3]}")
-
     if os.path.exists(cache_file):
         try:
             df = pd.read_parquet(cache_file)
@@ -574,23 +590,26 @@ def _fetch_and_cache_month(
                 month_chunks.append(chunk)
 
         if not month_chunks:
-            logger.info(f"  [DONE] Month {y}-{m:02d}: 0 GCS rows. Generating mock data.")
-            try:
-                intraday = _generate_mock_intraday_df(valid_pairs_month)
-                if not intraday.empty:
-                    for col in ("open", "high", "low", "close"):
-                        if col in intraday.columns:
-                            intraday[col] = intraday[col].astype("float32")
-                    if "volume" in intraday.columns:
-                        intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
-                    intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                    try:
-                        intraday.to_parquet(cache_file)
-                    except:
-                        pass
-                    return intraday
-            except Exception as mock_err:
-                logger.error(f"Failed generating mock data: {mock_err}")
+            if ALLOW_MOCK_DATA:
+                logger.warning(f"[MOCK] Month {y}-{m:02d}: 0 GCS rows. Using synthetic data.")
+                try:
+                    intraday = _generate_mock_intraday_df(valid_pairs_month)
+                    if not intraday.empty:
+                        for col in ("open", "high", "low", "close"):
+                            if col in intraday.columns:
+                                intraday[col] = intraday[col].astype("float32")
+                        if "volume" in intraday.columns:
+                            intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
+                        intraday = intraday.sort_values(["date", "ticker", "timestamp"])
+                        try:
+                            intraday.to_parquet(cache_file)
+                        except:
+                            pass
+                        return intraday
+                except Exception as mock_err:
+                    logger.error(f"Failed generating mock data: {mock_err}")
+            else:
+                logger.warning(f"[WARN] Month {y}-{m:02d}: 0 GCS rows. No data available.")
             return None
 
         intraday = pd.concat(month_chunks, ignore_index=True)
@@ -603,23 +622,26 @@ def _fetch_and_cache_month(
         intraday = intraday.merge(vp_copy, on=["ticker", "date"], how="inner")
 
         if intraday.empty:
-            logger.info(f"  [DONE] Month {y}-{m:02d}: merged 0 rows. Generating mock data.")
-            try:
-                intraday = _generate_mock_intraday_df(valid_pairs_month)
-                if not intraday.empty:
-                    for col in ("open", "high", "low", "close"):
-                        if col in intraday.columns:
-                            intraday[col] = intraday[col].astype("float32")
-                    if "volume" in intraday.columns:
-                        intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
-                    intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                    try:
-                        intraday.to_parquet(cache_file)
-                    except:
-                        pass
-                    return intraday
-            except Exception as mock_err:
-                logger.error(f"Failed generating mock data: {mock_err}")
+            if ALLOW_MOCK_DATA:
+                logger.warning(f"[MOCK] Month {y}-{m:02d}: merged 0 rows. Using synthetic data.")
+                try:
+                    intraday = _generate_mock_intraday_df(valid_pairs_month)
+                    if not intraday.empty:
+                        for col in ("open", "high", "low", "close"):
+                            if col in intraday.columns:
+                                intraday[col] = intraday[col].astype("float32")
+                        if "volume" in intraday.columns:
+                            intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
+                        intraday = intraday.sort_values(["date", "ticker", "timestamp"])
+                        try:
+                            intraday.to_parquet(cache_file)
+                        except:
+                            pass
+                        return intraday
+                except Exception as mock_err:
+                    logger.error(f"Failed generating mock data: {mock_err}")
+            else:
+                logger.warning(f"[WARN] Month {y}-{m:02d}: merged 0 rows. No data available.")
             return None
 
         for col in ("open", "high", "low", "close"):
@@ -642,23 +664,26 @@ def _fetch_and_cache_month(
         return intraday
 
     except Exception as e:
-        logger.error(f"  [ERROR] Month {y}-{m:02d} FAILED: {e}. Generating mock data.")
-        try:
-            intraday = _generate_mock_intraday_df(valid_pairs_month)
-            if not intraday.empty:
-                for col in ("open", "high", "low", "close"):
-                    if col in intraday.columns:
-                        intraday[col] = intraday[col].astype("float32")
-                if "volume" in intraday.columns:
-                    intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
-                intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                try:
-                    intraday.to_parquet(cache_file)
-                except:
-                    pass
-                return intraday
-        except Exception as mock_err:
-            logger.error(f"Failed generating mock data: {mock_err}")
+        if ALLOW_MOCK_DATA:
+            logger.warning(f"[MOCK] Month {y}-{m:02d} FAILED: {e}. Using synthetic data.")
+            try:
+                intraday = _generate_mock_intraday_df(valid_pairs_month)
+                if not intraday.empty:
+                    for col in ("open", "high", "low", "close"):
+                        if col in intraday.columns:
+                            intraday[col] = intraday[col].astype("float32")
+                    if "volume" in intraday.columns:
+                        intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
+                    intraday = intraday.sort_values(["date", "ticker", "timestamp"])
+                    try:
+                        intraday.to_parquet(cache_file)
+                    except:
+                        pass
+                    return intraday
+            except Exception as mock_err:
+                logger.error(f"Failed generating mock data: {mock_err}")
+        else:
+            logger.error(f"  [ERROR] Month {y}-{m:02d} FAILED: {e}.")
         return None
 
 
@@ -668,7 +693,6 @@ def iter_intraday_groups_streamed(
     date_to: str,
 ):
     global _warned_raw_intraday_slow
-    print(f"[DEBUG] iter_intraday_streamed CALLED: empty={qualifying_df.empty}, shape={qualifying_df.shape}, date_from={date_from}, date_to={date_to}")
     if qualifying_df.empty:
         return
 
@@ -727,16 +751,13 @@ def iter_intraday_groups_streamed(
     # Sequential iteration to strictly keep correct chronological time series
     for future, y, m in futures:
         month_intraday = future.result()
-        print(f"[STREAM] month {y}-{m}: month_intraday shape={month_intraday.shape if month_intraday is not None else None}")
         if month_intraday is None or month_intraday.empty:
             continue
 
         grouped = month_intraday.groupby(["date", "ticker"])
         n_groups = len(grouped)
-        print(f"[STREAM] month {y}-{m}: n_groups={n_groups}")
         for (date, ticker), day_df in grouped:
             total_groups += 1
-            print(f"[STREAM] yielding group: ticker={ticker}, date={date}")
             yield (date, ticker), day_df
 
         del month_intraday, grouped

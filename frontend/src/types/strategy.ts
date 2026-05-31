@@ -19,8 +19,6 @@ export enum IndicatorType {
     YESTERDAY_CLOSE = "Yesterday Close",
     YESTERDAY_HIGH = "Yesterday High",
     YESTERDAY_LOW = "Yesterday Low",
-    YESTERDAY_AM_HIGH = "Yesterday AM High",
-    YESTERDAY_AM_LOW = "Yesterday AM Low",
     HIGH_X_DAYS = "High of last X days",
     LOW_X_DAYS = "Low of last X days",
 

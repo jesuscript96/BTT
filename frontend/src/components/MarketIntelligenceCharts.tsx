@@ -48,10 +48,10 @@ export const MarketIntelligenceCharts: React.FC = () => {
       try {
         // Fetch both screener records and 15-min intraday aggregate data
         const [resScreener, resIntraday] = await Promise.all([
-          getScreener("limit=1000&min_gap_at_open_pct=5") as any,
-          getAggregateIntraday("interval=15&limit=1000&min_gap_at_open_pct=5") as any
+          getScreener("limit=1000&min_gap_at_open_pct=20") as any,
+          getAggregateIntraday("interval=15&limit=1000&min_gap_at_open_pct=20") as any
         ]);
-        
+
         const records = Array.isArray(resScreener) ? resScreener : resScreener.records || [];
         setData(records);
         setIntradayData(Array.isArray(resIntraday) ? resIntraday : []);

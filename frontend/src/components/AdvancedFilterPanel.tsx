@@ -54,7 +54,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
 }) => {
     // Local state for UI responsiveness, synced with parent
     const [ticker, setTicker] = React.useState(filters.ticker || "");
-    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "");
+    const [minGap, setMinGap] = React.useState(filters.min_gap_pct?.toString() || "20");
     const [maxGap, setMaxGap] = React.useState(filters.max_gap_pct?.toString() || "");
     const [minPmGap, setMinPmGap] = React.useState(filters.min_pmh_gap_pct?.toString() || "");
     const [maxPmGap, setMaxPmGap] = React.useState(filters.max_pmh_gap_pct?.toString() || "");
@@ -73,7 +73,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
     // Sync from props (when loading datasets)
     React.useEffect(() => {
         setTicker(filters.ticker || "");
-        setMinGap(filters.min_gap_pct?.toString() || "");
+        setMinGap(filters.min_gap_pct?.toString() || "20");
         setMaxGap(filters.max_gap_pct?.toString() || "");
         setMinPmGap(filters.min_pmh_gap_pct?.toString() || "");
         setMaxPmGap(filters.max_pmh_gap_pct?.toString() || "");
@@ -139,8 +139,8 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                             marginRight: 6,
                             whiteSpace: 'nowrap'
                         }}>Filtros básicos</span>
-                        
-                        <FilterInput label="Min RTH Gap" value={minGap} onChange={(v: string) => { setMinGap(v); updateParent('min_gap_pct', v ? parseFloat(v) : undefined); }} />
+
+                        <FilterInput label="Min RTH Gap" value={minGap} onChange={(v: string) => { const n = parseFloat(v); const val = v && !isNaN(n) && n < 20 ? "20" : v; setMinGap(val); updateParent('min_gap_pct', val ? parseFloat(val) : undefined); }} />
                         <FilterInput label="Max RTH Gap" value={maxGap} onChange={(v: string) => { setMaxGap(v); updateParent('max_gap_pct', v ? parseFloat(v) : undefined); }} />
                         <FilterInput label="Min PM Gap" value={minPmGap} onChange={(v: string) => { setMinPmGap(v); updateParent('min_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
                         <FilterInput label="Max PM Gap" value={maxPmGap} onChange={(v: string) => { setMaxPmGap(v); updateParent('max_pmh_gap_pct', v ? parseFloat(v) : undefined); }} />
