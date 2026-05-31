@@ -261,7 +261,7 @@ export default function TrunkPage() {
       setBacktests(backtestsList?.strategies || [])
       
       if (strategiesData.length > 0) {
-        setSelectedStrategyId(strategiesData[0].id)
+        setSelectedStrategyId(strategiesData[0].id ?? null)
       }
     } catch (err: any) {
       console.error(err)
@@ -1044,7 +1044,7 @@ export default function TrunkPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(44, 47, 51, 0.25)', paddingBottom: 4 }}>
                           <span style={{ fontSize: 7, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>PERIOD</span>
                           <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-high)' }}>
-                            {activeStats.period}
+                            {activeStats?.period}
                           </span>
                         </div>
 
@@ -1058,7 +1058,7 @@ export default function TrunkPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '0.5px solid rgba(44, 47, 51, 0.25)', paddingBottom: 4 }}>
                           <span style={{ fontSize: 7, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>AVG R/DAY</span>
                           <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-profit)' }}>
-                            {activeStats.avgRDay !== null ? `${activeStats.avgRDay.toFixed(2)} R` : '—'}
+                            {activeStats?.avgRDay != null ? `${activeStats.avgRDay.toFixed(2)} R` : '—'}
                           </span>
                         </div>
 
@@ -1154,7 +1154,7 @@ export default function TrunkPage() {
                         <DetailedEquityChart points={sampledCurve} />
                         {activeStats?.winRate && (
                           <div style={{ textAlign: 'center', marginTop: 4, fontSize: 7, color: 'var(--color-ec-text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            {activeStats.isReal ? 'Live Backtest Session' : 'Sample Preset Simulation'}
+                            {activeStats?.isReal ? 'Live Backtest Session' : 'Sample Preset Simulation'}
                           </div>
                         )}
                       </div>

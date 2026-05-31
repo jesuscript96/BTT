@@ -399,7 +399,7 @@ export const MarketIntelligenceCharts: React.FC = () => {
                 />
                 <Tooltip 
                   contentStyle={tooltipStyle} 
-                  formatter={(value: number) => [`${value.toFixed(2)}%`]} 
+                  formatter={(value) => [`${Number(value).toFixed(2)}%`]}
                 />
                 <Legend 
                   verticalAlign="top" 
