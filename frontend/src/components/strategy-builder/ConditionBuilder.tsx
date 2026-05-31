@@ -935,36 +935,7 @@ export const LogicBuilder = ({
                     }}>Define logic conditions and timeframe execution</span>
                 </div>
                 
-                <div className="flex items-center gap-3">
-                    <span style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.12em',
-                        color: 'var(--color-ec-text-muted)',
-                    }}>Global TF:</span>
-                    <select
-                        value={timeframe}
-                        onChange={(e) => onTimeframeChange(e.target.value as Timeframe)}
-                        style={{
-                            backgroundColor: 'var(--color-ec-bg-elevated)',
-                            border: '0.5px solid var(--color-ec-copper)',
-                            borderRadius: 4,
-                            padding: '3px 8px',
-                            fontSize: 11,
-                            fontWeight: 700,
-                            color: 'var(--color-ec-copper)',
-                            fontFamily: 'var(--color-ec-sans)',
-                            outline: 'none',
-                            cursor: 'pointer',
-                        }}
-                    >
-                        {Object.values(Timeframe).map(tf => (
-                            <option key={tf} value={tf}>{tf}</option>
-                        ))}
-                    </select>
-                </div>
+
             </div>
 
             {/* Root Condition Group */}

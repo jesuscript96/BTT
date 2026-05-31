@@ -75,29 +75,48 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
             gap: 24,
         }}>
 
-            {/* Hard Stop */}
+            {/* Hard Stop Loss Card */}
             <div style={{
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 10,
-                paddingBottom: 20,
+                gap: 16,
+                padding: '16px 20px',
+                backgroundColor: 'var(--color-ec-bg-surface)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 7,
             }}>
+                {/* Header */}
                 <div style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    marginBottom: 10,
+                    paddingBottom: (risk.use_hard_stop !== false) ? 12 : 0,
+                    borderBottom: (risk.use_hard_stop !== false) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
-                    <label style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.15em',
-                        color: 'var(--color-ec-text-muted)',
-                    }}>Hard Stop Loss</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <h2 style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                            color: 'var(--color-ec-text-high)',
+                        }}>Hard Stop Loss</h2>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Define maximum loss tolerance per trade</span>
+                    </div>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-muted-foreground/60">{risk.use_hard_stop !== false ? 'ON' : 'OFF'}</span>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.use_hard_stop !== false ? 'ON' : 'OFF'}</span>
                         <div
                             className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop !== false ? 'bg-ec-loss/70' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, use_hard_stop: risk.use_hard_stop === false })}
@@ -106,8 +125,10 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                         </div>
                     </div>
                 </div>
+
+                {/* Body */}
                 {(risk.use_hard_stop !== false) && (
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 animate-in fade-in duration-200">
                         <select
                             value={risk.hard_stop.type}
                             onChange={(e) => updateRiskSetting('hard_stop', 'type', e.target.value)}
@@ -121,6 +142,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                 color: 'var(--color-ec-text-primary)',
                                 fontFamily: 'var(--color-ec-sans)',
                                 outline: 'none',
+                                cursor: 'pointer',
                             }}
                         >
                             {Object.values(RiskType).map(type => (
@@ -148,29 +170,48 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 )}
             </div>
 
-            {/* Take Profit */}
+            {/* Take Profit Card */}
             <div style={{
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 10,
-                paddingBottom: 20,
+                gap: 16,
+                padding: '16px 20px',
+                backgroundColor: 'var(--color-ec-bg-surface)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 7,
             }}>
+                {/* Header */}
                 <div style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    marginBottom: 10,
+                    paddingBottom: (risk.use_take_profit !== false) ? 12 : 0,
+                    borderBottom: (risk.use_take_profit !== false) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
-                    <label style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.15em',
-                        color: 'var(--color-ec-text-muted)',
-                    }}>Take Profit</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <h2 style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                            color: 'var(--color-ec-text-high)',
+                        }}>Take Profit</h2>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Define target profit and exit scaling</span>
+                    </div>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-muted-foreground/60">{risk.use_take_profit !== false ? 'ON' : 'OFF'}</span>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.use_take_profit !== false ? 'ON' : 'OFF'}</span>
                         <div
                             className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit !== false ? 'bg-ec-profit/70' : 'bg-muted'}`}
                             onClick={() => onChange({ ...risk, use_take_profit: risk.use_take_profit === false })}
@@ -179,8 +220,10 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                         </div>
                     </div>
                 </div>
+
+                {/* Body */}
                 {(risk.use_take_profit !== false) && (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-top-1">
+                    <div className="space-y-4 animate-in fade-in duration-200">
                         {/* Mode Toggle */}
                         <div style={{
                             display: 'flex',
@@ -193,6 +236,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                             <button
                                 onClick={() => onChange({ ...risk, take_profit_mode: TakeProfitMode.FULL })}
                                 style={risk.take_profit_mode === TakeProfitMode.FULL ? {
+                                    flex: 1,
                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
                                     color: 'var(--color-ec-text-high)',
                                     fontFamily: 'var(--color-ec-sans)',
@@ -200,11 +244,12 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                     fontWeight: 700,
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.12em',
-                                    padding: '4px 12px',
+                                    padding: '6px 12px',
                                     borderRadius: 4,
                                     border: '0.5px solid var(--color-ec-border)',
                                     cursor: 'pointer',
                                 } : {
+                                    flex: 1,
                                     backgroundColor: 'transparent',
                                     color: 'var(--color-ec-text-muted)',
                                     fontFamily: 'var(--color-ec-sans)',
@@ -212,7 +257,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                     fontWeight: 700,
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.12em',
-                                    padding: '4px 12px',
+                                    padding: '6px 12px',
                                     borderRadius: 4,
                                     border: 'none',
                                     cursor: 'pointer',
@@ -223,6 +268,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                             <button
                                 onClick={() => onChange({ ...risk, take_profit_mode: TakeProfitMode.PARTIAL })}
                                 style={risk.take_profit_mode === TakeProfitMode.PARTIAL ? {
+                                    flex: 1,
                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
                                     color: 'var(--color-ec-text-high)',
                                     fontFamily: 'var(--color-ec-sans)',
@@ -230,11 +276,12 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                     fontWeight: 700,
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.12em',
-                                    padding: '4px 12px',
+                                    padding: '6px 12px',
                                     borderRadius: 4,
                                     border: '0.5px solid var(--color-ec-border)',
                                     cursor: 'pointer',
                                 } : {
+                                    flex: 1,
                                     backgroundColor: 'transparent',
                                     color: 'var(--color-ec-text-muted)',
                                     fontFamily: 'var(--color-ec-sans)',
@@ -242,7 +289,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                     fontWeight: 700,
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.12em',
-                                    padding: '4px 12px',
+                                    padding: '6px 12px',
                                     borderRadius: 4,
                                     border: 'none',
                                     cursor: 'pointer',
@@ -267,6 +314,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                         color: 'var(--color-ec-text-primary)',
                                         fontFamily: 'var(--color-ec-sans)',
                                         outline: 'none',
+                                        cursor: 'pointer',
                                     }}
                                 >
                                     {Object.values(RiskType).map(type => (
@@ -396,71 +444,48 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                 )}
             </div>
 
-            {/* Re-entries Option */}
+            {/* Trailing Stop Card */}
             <div style={{
-                paddingTop: 20,
-                borderTop: '0.5px solid var(--color-ec-border)',
-                marginTop: 4,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 10,
-                paddingBottom: 20,
+                gap: 16,
+                padding: '16px 20px',
+                backgroundColor: 'var(--color-ec-bg-surface)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 7,
             }}>
+                {/* Header */}
                 <div style={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    marginBottom: 10,
+                    paddingBottom: (risk.trailing_stop.active) ? 12 : 0,
+                    borderBottom: (risk.trailing_stop.active) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
-                    <div>
-                        <label style={{
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <h2 style={{
                             fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 9,
+                            fontSize: 13,
                             fontWeight: 700,
                             textTransform: 'uppercase',
-                            letterSpacing: '0.15em',
+                            letterSpacing: '0.08em',
+                            color: 'var(--color-ec-text-high)',
+                        }}>Trailing Stop</h2>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
-                        }}>Accept Re-entries</label>
-                        <p className="text-[9px] text-muted-foreground/50 mt-0.5">Allow entering again if a trade for this ticker was closed.</p>
+                            marginTop: 2,
+                        }}>Adjust stop loss dynamically as price hits targets</span>
                     </div>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-muted-foreground/60">{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
-                        <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
-                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
-                        >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Trailing Stop */}
-            <div style={{
-                paddingTop: 20,
-                borderTop: '0.5px solid var(--color-ec-border)',
-                marginTop: 4,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
-                paddingBottom: 20,
-            }}>
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: 10,
-                }}>
-                    <label style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.15em',
-                        color: 'var(--color-ec-text-muted)',
-                    }}>Trailing Stop</label>
-                    <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-muted-foreground/60">{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
                         <div
                             className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
                             onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
@@ -470,14 +495,26 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     </div>
                 </div>
 
+                {/* Body */}
                 {risk.trailing_stop.active && (
-                    <div className="grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-top-1">
+                    <div className="grid grid-cols-2 gap-3 animate-in fade-in duration-200">
                         <div>
                             <label className="block text-[9px] font-bold text-muted-foreground uppercase mb-1.5 opacity-50">Type</label>
                             <select
                                 value={risk.trailing_stop.type}
                                 onChange={(e) => setTrailingField('type', e.target.value)}
-                                className="w-full bg-muted/20 border border-border/50 rounded-md px-2 py-1.5 text-xs font-medium text-foreground"
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '7px 10px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                }}
                             >
                                 <option value="Percentage">Percentage</option>
                                 <option value="EMA13">EMA 13</option>
@@ -491,12 +528,72 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                 step="0.1"
                                 value={risk.trailing_stop.buffer_pct}
                                 onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
-                                className="w-full bg-muted/20 border border-border/50 rounded-md px-2 py-1.5 text-xs font-medium text-foreground"
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '7px 10px',
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                }}
                             />
                         </div>
                     </div>
                 )}
             </div>
+
+            {/* Re-entries Card */}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '16px 20px',
+                backgroundColor: 'var(--color-ec-bg-surface)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 7,
+            }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <h2 style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                            color: 'var(--color-ec-text-high)',
+                        }}>Accept Re-entries</h2>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Allow entering trade again if closed on stop/target</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </div>
     );
 };

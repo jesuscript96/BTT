@@ -278,7 +278,14 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
       </div>
 
       {/* Entry / Exit / Risk */}
-      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 80 }}>
+      <div style={{ 
+        flex: 1, 
+        overflowY: "auto", 
+        padding: "20px 16px 80px 16px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "24px"
+      }}>
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
