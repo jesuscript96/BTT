@@ -202,7 +202,7 @@ def load_hot_daily_cache() -> None:
             _hot_daily_cache = con.execute(f"""
                 SELECT {", ".join(all_cols)}
                 FROM daily_metrics
-                WHERE gap_pct >= 10.0 AND gap_pct <= 500.0 AND open > 0.10
+                WHERE gap_pct >= 5.0 AND gap_pct <= 500.0 AND open > 0.10
             """).fetchdf()
             for col in _hot_daily_cache.select_dtypes(include=['float64']).columns:
                 _hot_daily_cache[col] = _hot_daily_cache[col].astype('float32')

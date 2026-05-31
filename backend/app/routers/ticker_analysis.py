@@ -24,6 +24,19 @@ _filings_cache = {}
 _filings_cache_lock = threading.Lock()
 FILINGS_CACHE_TTL = timedelta(minutes=30)
 
+# Caches for split endpoints (15 minutes TTL)
+_chart_cache = {}
+_chart_cache_lock = threading.Lock()
+CHART_CACHE_TTL = timedelta(minutes=15)
+
+_balance_sheet_cache = {}
+_balance_sheet_cache_lock = threading.Lock()
+BALANCE_SHEET_CACHE_TTL = timedelta(minutes=15)
+
+_gap_stats_cache = {}
+_gap_stats_cache_lock = threading.Lock()
+GAP_STATS_CACHE_TTL = timedelta(minutes=15)
+
 def safe_float(val):
     try:
         if val is None: return None
@@ -97,86 +110,227 @@ def safe_mean(series):
         return None
     return float(val)
 
-def get_gap_stats(ticker: str, daily_history: list[dict]) -> dict:
+def _fetch_yfinance_history(ticker: str, period: str = "5y") -> pd.DataFrame:
+    """Fetch yfinance history to avoid streaming hangs.
+    Uses 5y period by default to load historical gaps and news."""
+    try:
+        session = get_yfinance_session()
+        stock = yf.Ticker(ticker, session=session)
+        hist = stock.history(period=period)
+        if not hist.empty:
+            df = hist.reset_index()
+            df = df.rename(columns={
+                'Date': 'timestamp', 
+                'Datetime': 'timestamp',
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Volume': 'volume'
+            })
+            return df
+    except Exception as e:
+        print(f"[ERROR] yfinance history for {ticker}: {e}")
+    return pd.DataFrame()
+
+
+def get_gap_stats_all_days(ticker: str) -> dict:
     ticker = ticker.upper()
+    df = pd.DataFrame()
     
-    # 1. Try GCS hot cache in memory (filtered to gap_pct >= 20.0) because it is in-memory (0ms)
+    # 1. Try to query database daily_metrics using partition pruning with hot cache
     try:
         from app.services.cache_service import get_hot_daily_cache
-        df_hot = get_hot_daily_cache()
-        if df_hot is not None and not df_hot.empty:
-            ticker_gcs = df_hot[(df_hot['ticker'] == ticker) & (df_hot['gap_pct'] >= 20.0)]
-            if not ticker_gcs.empty:
-                high_spike = ticker_gcs['rth_run_pct']
-                low_spike = (ticker_gcs['rth_open'] - ticker_gcs['rth_low']) / ticker_gcs['rth_open'] * 100
-                pm_fade = (ticker_gcs['pm_high'] - ticker_gcs['rth_open']) / ticker_gcs['pm_high'] * 100
-                rthh_fade = (ticker_gcs['rth_high'] - ticker_gcs['rth_close']) / ticker_gcs['rth_high'] * 100
-                
-                neg_close = (ticker_gcs['rth_close'] < ticker_gcs['rth_open']).astype(float) * 100
-                close_above_pmh = (ticker_gcs['rth_close'] > ticker_gcs['pm_high']).astype(float) * 100
-                
-                mid_point = (ticker_gcs['rth_high'] + ticker_gcs['rth_low']) / 2.0
-                close_below_vwap = (ticker_gcs['rth_close'] < mid_point).astype(float) * 100
-                
-                return {
-                    "source": "database_hot_cache",
-                    "gap_days_count": len(ticker_gcs),
-                    "high_rth_spike_avg": safe_mean(high_spike),
-                    "low_rth_spike_avg": safe_mean(low_spike),
-                    "pm_fade_avg": safe_mean(pm_fade),
-                    "rthh_fade_avg": safe_mean(rthh_fade),
-                    "neg_close_freq": safe_mean(neg_close),
-                    "close_above_pmh_freq": safe_mean(close_above_pmh),
-                    "close_below_vwap_freq": safe_mean(close_below_vwap)
+        cache_df = get_hot_daily_cache()
+        if cache_df is not None and not cache_df.empty:
+            ticker_cache = cache_df[(cache_df['ticker'] == ticker) & (cache_df['gap_pct'] >= 20.0)]
+            if ticker_cache.empty:
+                # No gap days found in hot cache, so we can return empty stats immediately
+                empty_stats = {
+                    "source": "database",
+                    "gap_days_count": 0,
+                    "high_rth_spike_avg": None,
+                    "low_rth_spike_avg": None,
+                    "pm_fade_avg": None,
+                    "rthh_fade_avg": None,
+                    "neg_close_freq": None,
+                    "close_above_pmh_freq": None,
+                    "close_below_vwap_freq": None
                 }
-    except Exception as e:
-        print(f"Error calculating stats from hot cache: {e}")
-        
-    # 2. Fallback to daily_history (1y from yfinance, filtered to gap_pct >= 20.0)
-    if daily_history:
-        try:
-            df = pd.DataFrame(daily_history)
-            if not df.empty and 'close' in df.columns:
-                df['prev_close'] = df['close'].shift(1)
-                df['gap_pct'] = (df['open'] - df['prev_close']) / df['prev_close'] * 100
-                
-                # Filter for gap days (gap >= 20.0%)
-                gap_yf = df[df['gap_pct'] >= 20.0].copy()
-                if not gap_yf.empty:
-                    high_spike = (gap_yf['high'] - gap_yf['open']) / gap_yf['open'] * 100
-                    low_spike = (gap_yf['open'] - gap_yf['low']) / gap_yf['open'] * 100
-                    rthh_fade = (gap_yf['high'] - gap_yf['close']) / gap_yf['high'] * 100
-                    
-                    neg_close = (gap_yf['close'] < gap_yf['open']).astype(float) * 100
-                    
-                    mid_point = (gap_yf['high'] + gap_yf['low']) / 2.0
-                    close_below_vwap = (gap_yf['close'] < mid_point).astype(float) * 100
-                    
-                    return {
-                        "source": "yfinance_1y_history",
-                        "gap_days_count": len(gap_yf),
-                        "high_rth_spike_avg": safe_mean(high_spike),
-                        "low_rth_spike_avg": safe_mean(low_spike),
-                        "pm_fade_avg": None,
-                        "rthh_fade_avg": safe_mean(rthh_fade),
-                        "neg_close_freq": safe_mean(neg_close),
-                        "close_above_pmh_freq": None,
-                        "close_below_vwap_freq": safe_mean(close_below_vwap)
-                    }
-        except Exception as e:
-            print(f"Error calculating stats from daily_history: {e}")
+                return {
+                    "gap_stats": empty_stats,
+                    "gap_stats_plus_1": empty_stats,
+                    "gap_stats_plus_2": empty_stats
+                }
             
+            # Determine needed year/month partitions
+            needed_partitions = set()
+            for timestamp in ticker_cache['timestamp']:
+                dt = pd.to_datetime(timestamp)
+                needed_partitions.add((dt.year, dt.month))
+                # Also include next month in case the next 2 days fall into it
+                next_day = dt + pd.Timedelta(days=5)
+                needed_partitions.add((next_day.year, next_day.month))
+                
+            # Build partition filter clause
+            clauses = []
+            for y, m in needed_partitions:
+                clauses.append(f"(year = {y} AND month = {m})")
+            partition_filter = " OR ".join(clauses)
+            
+            from app.database import get_db_connection
+            con = get_db_connection()
+            query = f"""
+                SELECT * FROM daily_metrics 
+                WHERE ticker = ? 
+                  AND ({partition_filter})
+                ORDER BY timestamp ASC
+            """
+            df = con.execute(query, [ticker]).fetchdf()
+    except Exception as e:
+        print(f"Error querying optimized daily_metrics for {ticker}: {e}")
+        
+    # Fallback to unpruned database query if empty or error occurred
+    if df.empty:
+        try:
+            from app.database import get_db_connection
+            con = get_db_connection()
+            df = con.execute("SELECT * FROM daily_metrics WHERE ticker = ? ORDER BY timestamp ASC", [ticker]).fetchdf()
+        except Exception as e:
+            print(f"Error querying daily_metrics fallback for {ticker}: {e}")
+        
+    # 2. If empty, fallback to yfinance (with timeout to prevent hanging)
+    if df.empty:
+        try:
+            df = _fetch_yfinance_history(ticker)
+        except Exception as e:
+            print(f"Error fetching yfinance history fallback for {ticker}: {e}")
+            
+    if df.empty:
+        empty_stats = {
+            "source": "none",
+            "gap_days_count": 0,
+            "high_rth_spike_avg": None,
+            "low_rth_spike_avg": None,
+            "pm_fade_avg": None,
+            "rthh_fade_avg": None,
+            "neg_close_freq": None,
+            "close_above_pmh_freq": None,
+            "close_below_vwap_freq": None
+        }
+        return {
+            "gap_stats": empty_stats,
+            "gap_stats_plus_1": empty_stats,
+            "gap_stats_plus_2": empty_stats
+        }
+
+    # Ensure chronologically sorted
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values('timestamp').reset_index(drop=True)
+    
+    # Calculate gap_pct if not exists
+    if 'gap_pct' not in df.columns or df['gap_pct'].isnull().all():
+        if 'close' in df.columns and 'open' in df.columns:
+            df['prev_close'] = df['close'].shift(1)
+            df['gap_pct'] = (df['open'] - df['prev_close']) / df['prev_close'] * 100
+        else:
+            df['gap_pct'] = 0.0
+
+    # Locate gap day indices (gap_pct >= 20.0)
+    gap_indices = df[df['gap_pct'] >= 20.0].index.tolist()
+
+    def compute_stats_for_offset(offset):
+        target_indices = [idx + offset for idx in gap_indices if idx + offset < len(df)]
+        if not target_indices:
+            return {
+                "source": "database" if 'pmh_gap_pct' in df.columns else "yfinance",
+                "gap_days_count": 0,
+                "high_rth_spike_avg": None,
+                "low_rth_spike_avg": None,
+                "pm_fade_avg": None,
+                "rthh_fade_avg": None,
+                "neg_close_freq": None,
+                "close_above_pmh_freq": None,
+                "close_below_vwap_freq": None
+            }
+        
+        sub_df = df.loc[target_indices].copy()
+        
+        has_rth = all(col in sub_df.columns for col in ['rth_open', 'rth_high', 'rth_low', 'rth_close'])
+        if has_rth:
+            o = sub_df['rth_open']
+            h = sub_df['rth_high']
+            l = sub_df['rth_low']
+            c = sub_df['rth_close']
+        else:
+            o = sub_df['open']
+            h = sub_df['high']
+            l = sub_df['low']
+            c = sub_df['close']
+            
+        high_spike = (h - o) / o * 100
+        low_spike = (o - l) / o * 100
+        rthh_fade = (h - c) / h * 100
+        neg_close = (c < o).astype(float) * 100
+        
+        mid_point = (h + l) / 2.0
+        close_below_vwap = (c < mid_point).astype(float) * 100
+        
+        pm_fade = None
+        close_above_pmh = None
+        
+        if 'pm_high' in sub_df.columns:
+            pm_h = sub_df['pm_high']
+            pm_fade = (pm_h - o) / pm_h * 100
+            pm_fade = pm_fade.mask(pm_h <= 0, None)
+            
+            close_above_pmh = (c > pm_h).astype(float) * 100
+            close_above_pmh = close_above_pmh.mask(pm_h <= 0, None)
+            
+        return {
+            "source": "database" if has_rth else "yfinance",
+            "gap_days_count": len(sub_df),
+            "high_rth_spike_avg": safe_mean(high_spike),
+            "low_rth_spike_avg": safe_mean(low_spike),
+            "pm_fade_avg": safe_mean(pm_fade),
+            "rthh_fade_avg": safe_mean(rthh_fade),
+            "neg_close_freq": safe_mean(neg_close),
+            "close_above_pmh_freq": safe_mean(close_above_pmh),
+            "close_below_vwap_freq": safe_mean(close_below_vwap)
+        }
+
     return {
-        "source": "none",
-        "gap_days_count": 0,
-        "high_rth_spike_avg": None,
-        "low_rth_spike_avg": None,
-        "pm_fade_avg": None,
-        "rthh_fade_avg": None,
-        "neg_close_freq": None,
-        "close_above_pmh_freq": None,
-        "close_below_vwap_freq": None
+        "gap_stats": compute_stats_for_offset(0),
+        "gap_stats_plus_1": compute_stats_for_offset(1),
+        "gap_stats_plus_2": compute_stats_for_offset(2)
     }
+
+def get_yfinance_session():
+    import requests
+    import urllib3
+    from requests.adapters import HTTPAdapter
+    
+    class TimeoutHTTPAdapter(HTTPAdapter):
+        def __init__(self, *args, **kwargs):
+            self.timeout = kwargs.pop('timeout', 5)
+            super().__init__(*args, **kwargs)
+        def send(self, request, **kwargs):
+            kwargs['timeout'] = kwargs.get('timeout', self.timeout)
+            return super().send(request, **kwargs)
+            
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    
+    adapter = TimeoutHTTPAdapter(timeout=5)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
 
 @router.get("/{ticker}")
 def get_ticker_analysis(ticker: str):
@@ -192,40 +346,50 @@ def get_ticker_analysis(ticker: str):
                 return cached_data
 
     try:
-        import requests
-        import urllib3
-        from requests.adapters import HTTPAdapter
-        
-        # Subclass HTTPAdapter to set default request timeout for yfinance calls
-        class TimeoutHTTPAdapter(HTTPAdapter):
-            def __init__(self, *args, **kwargs):
-                self.timeout = kwargs.pop('timeout', 5)
-                super().__init__(*args, **kwargs)
-            def send(self, request, **kwargs):
-                kwargs['timeout'] = kwargs.get('timeout', self.timeout)
-                return super().send(request, **kwargs)
-                
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        session = requests.Session()
-        session.verify = False
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        })
-        
-        # Mount the timeout adapter to HTTP and HTTPS
-        adapter = TimeoutHTTPAdapter(timeout=5)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        
-        stock = yf.Ticker(ticker, session=session)
         info = {}
         try:
-            info = stock.info
-            if not isinstance(info, dict):
-                info = {}
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+            def _fetch_info():
+                session = get_yfinance_session()
+                stock = yf.Ticker(ticker, session=session)
+                return stock.info
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_info)
+                result = future.result(timeout=10)
+                if isinstance(result, dict):
+                    info = result
+        except FuturesTimeoutError:
+            print(f"[TIMEOUT] yfinance info for {ticker} timed out after 10s")
         except Exception as e:
             print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
+
+        # Fallback to database tickers info if yfinance failed or returned empty
+        if not info or not info.get("longName"):
+            try:
+                from app.database import get_db_connection
+                con = get_db_connection()
+                ticker_df = con.execute("SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]).fetchdf()
+                if not ticker_df.empty:
+                    db_name = ticker_df.iloc[0]['name']
+                    db_ex = ticker_df.iloc[0]['primary_exchange']
+                    if not info:
+                        info = {}
+                    info["longName"] = db_name
+                    info["exchange"] = db_ex
+                    print(f"[INFO] Loaded profile info from database for {ticker}: name={db_name}, exchange={db_ex}")
+            except Exception as e:
+                print(f"Error fetching database tickers info fallback for {ticker}: {e}")
+
+        # Try to resolve website domain for Clearbit, fallback to FMP ticker-based logo
+        logo_url = None
+        if info.get("website"):
+            try:
+                domain = info.get("website").replace("https://", "").replace("http://", "").split("/")[0]
+                logo_url = f"https://logo.clearbit.com/{domain}"
+            except:
+                pass
+        if not logo_url:
+            logo_url = f"https://financialmodelingprep.com/image-stock/{ticker}.png"
 
         # --- Profile ---
         profile = {
@@ -240,7 +404,7 @@ def get_ticker_analysis(ticker: str):
             "country": info.get("country"),
             "exchange": info.get("exchange"),
             "name": info.get("longName"),
-            "logo_url": f"https://logo.clearbit.com/{info.get('website').replace('https://', '').replace('http://', '').split('/')[0]}" if info.get("website") else None
+            "logo_url": logo_url
         }
 
         # --- Market ---
@@ -260,17 +424,74 @@ def get_ticker_analysis(ticker: str):
             "enterprise_value": info.get("enterpriseValue"),
             "cash": info.get("totalCash"),
             "total_debt": info.get("totalDebt"),
-            "working_capital": None # Calculated below if possible, or from balance sheet
+            "working_capital": None # Loaded via balance-sheet endpoint
         }
 
-        # --- Performance ---
-        # Note: yfinance info often has 52WeekChange, but specific periods might need history
-        # Let's fetch 1y history to calculate exact performance
+        res = {
+            "profile": profile,
+            "market": market,
+            "financials": financials
+        }
+        with _analysis_cache_lock:
+            _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
+        return res
+
+    except Exception as e:
+        print(f"Error fetching ticker analysis for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ticker}/chart")
+def get_ticker_chart(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    with _chart_cache_lock:
+        if ticker in _chart_cache:
+            cached_data, expiry = _chart_cache[ticker]
+            if now < expiry:
+                return cached_data
+
+    try:
         hist = pd.DataFrame()
         try:
-            hist = stock.history(period="1y")
+            hist_df = _fetch_yfinance_history(ticker)
+            if not hist_df.empty:
+                rename_back = {
+                    'timestamp': 'Date', 'open': 'Open', 'high': 'High',
+                    'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                }
+                hist = hist_df.rename(columns=rename_back)
+                if 'Date' in hist.columns:
+                    hist = hist.set_index('Date')
         except Exception as e:
             print(f"[WARN] Failed to fetch yfinance history for {ticker}: {e}")
+
+        # Fallback to database daily_metrics if yfinance returned empty
+        if hist.empty:
+            try:
+                from app.database import get_db_connection
+                con = get_db_connection()
+                db_df = con.execute("""
+                    SELECT timestamp, open, high, low, close, volume 
+                    FROM daily_metrics 
+                    WHERE ticker = ? 
+                    ORDER BY timestamp ASC
+                """, [ticker]).fetchdf()
+                if not db_df.empty:
+                    hist = db_df.rename(columns={
+                        'timestamp': 'Date',
+                        'open': 'Open',
+                        'high': 'High',
+                        'low': 'Low',
+                        'close': 'Close',
+                        'volume': 'Volume'
+                    })
+                    hist['Date'] = pd.to_datetime(hist['Date']).dt.date
+                    hist = hist.set_index('Date')
+                    print(f"[INFO] Loaded chart history from database for {ticker}: {len(hist)} rows")
+            except Exception as e:
+                print(f"Error fetching daily_metrics chart fallback for {ticker}: {e}")
         
         perf = {}
         daily_history = []
@@ -318,11 +539,42 @@ def get_ticker_analysis(ticker: str):
             except Exception as e:
                 print(f"Error extracting daily history for {ticker}: {e}")
 
-        # --- Charts (Sparklines from Balance Sheet) ---
-        # yfinance balance sheet is annual or quarterly. Let's get quarterly for more points.
+        res = {
+            "daily_history": daily_history,
+            "performance": perf
+        }
+        with _chart_cache_lock:
+            _chart_cache[ticker] = (res, now + CHART_CACHE_TTL)
+        return res
+    except Exception as e:
+        print(f"Error fetching chart for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ticker}/balance-sheet")
+def get_ticker_balance_sheet(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    with _balance_sheet_cache_lock:
+        if ticker in _balance_sheet_cache:
+            cached_data, expiry = _balance_sheet_cache[ticker]
+            if now < expiry:
+                return cached_data
+
+    try:
         bs = pd.DataFrame()
         try:
-            bs = stock.quarterly_balance_sheet
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+            def _fetch_bs():
+                session = get_yfinance_session()
+                stock = yf.Ticker(ticker, session=session)
+                return stock.quarterly_balance_sheet
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_bs)
+                bs = future.result(timeout=15)
+        except FuturesTimeoutError:
+            print(f"[TIMEOUT] yfinance balance sheet for {ticker} timed out")
         except Exception as e:
             print(f"[WARN] Failed to fetch yfinance quarterly balance sheet for {ticker}: {e}")
         charts = {
@@ -330,55 +582,67 @@ def get_ticker_analysis(ticker: str):
             "debt_history": [],
             "working_capital_history": []
         }
+        working_capital = None
 
         if not bs.empty:
-            # Transpose to have dates as index
             bs_T = bs.T.sort_index()
             
-            # Helper to extract series
             def get_series(key_pattern):
-                # Try exact match or contains
                 col = next((c for c in bs_T.columns if key_pattern in str(c).lower()), None)
                 if col:
                     return [{"date": str(d.date()), "value": safe_float(v)} for d, v in bs_T[col].items()]
                 return []
 
-            charts["cash_history"] = get_series("cash") # "CashAndCashEquivalents" usually
-            charts["debt_history"] = get_series("debt") # "TotalDebt"
+            charts["cash_history"] = get_series("cash")
+            charts["debt_history"] = get_series("debt")
             
-            # Working Capital = Current Assets - Current Liabilities
             if "Total Current Assets" in bs_T.columns and "Total Current Liabilities" in bs_T.columns:
                 wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
                 charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]
             elif "Working Capital" in bs_T.columns:
                 charts["working_capital_history"] = get_series("working capital")
 
-        # Refine Financials if info was missing
-        if financials["working_capital"] is None and charts["working_capital_history"]:
-             financials["working_capital"] = charts["working_capital_history"][-1]["value"]
-
-        # --- Scrape KnowTheFloat ---
-        know_the_float = scrape_knowthefloat(ticker)
-
-        # --- Gap Day Statistics ---
-        gap_stats = get_gap_stats(ticker, daily_history)
+            if charts["working_capital_history"]:
+                 working_capital = charts["working_capital_history"][-1]["value"]
 
         res = {
-            "profile": profile,
-            "market": market,
-            "financials": financials,
-            "performance": perf,
             "charts": charts,
-            "daily_history": daily_history,
-            "know_the_float": know_the_float,
-            "gap_stats": gap_stats
+            "working_capital": working_capital
         }
-        with _analysis_cache_lock:
-            _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
+        with _balance_sheet_cache_lock:
+            _balance_sheet_cache[ticker] = (res, now + BALANCE_SHEET_CACHE_TTL)
         return res
-
     except Exception as e:
-        print(f"Error fetching ticker analysis for {ticker}: {e}")
+        print(f"Error fetching balance sheet for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ticker}/gap-stats")
+def get_ticker_gap_stats(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    with _gap_stats_cache_lock:
+        if ticker in _gap_stats_cache:
+            cached_data, expiry = _gap_stats_cache[ticker]
+            if now < expiry:
+                return cached_data
+
+    try:
+        know_the_float = scrape_knowthefloat(ticker)
+        all_stats = get_gap_stats_all_days(ticker)
+
+        res = {
+            "know_the_float": know_the_float,
+            "gap_stats": all_stats["gap_stats"],
+            "gap_stats_plus_1": all_stats["gap_stats_plus_1"],
+            "gap_stats_plus_2": all_stats["gap_stats_plus_2"]
+        }
+        with _gap_stats_cache_lock:
+            _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
+        return res
+    except Exception as e:
+        print(f"Error fetching gap stats for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -461,3 +725,107 @@ def get_sec_filings(ticker: str):
         print(f"Error fetching SEC filings for {ticker}: {e}")
         # Return empty structure rather than 500 to not break entire dashboard
         return {k: [] for k in ["financials", "prospectuses", "news", "ownership", "proxies", "others"]}
+
+
+_finviz_news_cache = {}
+_finviz_news_cache_lock = threading.Lock()
+FINVIZ_NEWS_CACHE_TTL = timedelta(minutes=15)
+
+@router.get("/{ticker}/finviz-news")
+def get_finviz_news(ticker: str):
+    """
+    Scrapes the latest news items from Finviz for the specified ticker.
+    Returns a list of news items including converted YYYY-MM-DD dates.
+    """
+    ticker = ticker.upper()
+    now = datetime.now()
+    with _finviz_news_cache_lock:
+        if ticker in _finviz_news_cache:
+            cached_data, expiry = _finviz_news_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached Finviz news for {ticker}")
+                return cached_data
+
+    import requests
+    from bs4 import BeautifulSoup
+    import urllib3
+    import re
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    
+    try:
+        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        if response.status_code != 200:
+            return []
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table', id='news-table')
+        if not table:
+            return []
+            
+        news_items = []
+        current_date_str = ""
+        
+        for row in table.find_all('tr'):
+            tds = row.find_all('td')
+            if len(tds) < 2:
+                continue
+                
+            time_text = tds[0].text.strip() # e.g. "May-19-26 08:58AM" or "09:07AM"
+            a_tag = tds[1].find('a')
+            if not a_tag:
+                continue
+                
+            link = a_tag.get('href', '')
+            if link and not (link.startswith('http://') or link.startswith('https://')):
+                if link.startswith('/'):
+                    link = f"https://finviz.com{link}"
+                else:
+                    link = f"https://finviz.com/{link}"
+            title = a_tag.text.strip()
+            
+            span = tds[1].find('span')
+            source = span.text.strip() if span else ""
+            if not source:
+                match = re.search(r'\(([^)]+)\)\s*$', tds[1].text)
+                if match:
+                    source = match.group(1).strip()
+            
+            # Handle date logic
+            if " " in time_text:
+                parts = time_text.split(" ")
+                current_date_str = parts[0] # "May-19-26"
+                time_only = parts[1]        # "08:58AM"
+            else:
+                time_only = time_text       # "09:07AM"
+                
+            # Convert Finviz date format "May-19-26" to "2026-05-19"
+            iso_date = ""
+            if current_date_str:
+                try:
+                    dt = datetime.strptime(current_date_str, '%b-%d-%y')
+                    iso_date = dt.strftime('%Y-%m-%d')
+                except Exception:
+                    iso_date = current_date_str
+            
+            news_items.append({
+                "date": iso_date,
+                "time": time_only,
+                "title": title,
+                "link": link,
+                "source": source
+            })
+            
+        with _finviz_news_cache_lock:
+            _finviz_news_cache[ticker] = (news_items, now + FINVIZ_NEWS_CACHE_TTL)
+            
+        return news_items
+        
+    except Exception as e:
+        print(f"Error scraping Finviz news for {ticker}: {e}")
+        return []
+

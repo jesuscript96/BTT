@@ -29,21 +29,40 @@ export class ApiError extends Error {
 // ─── Core request helper ────────────────────────────────────
 async function apiRequest<T>(
   path: string,
-  options?: RequestInit,
+  options?: RequestInit & { timeoutMs?: number },
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
+  const timeoutMs = options?.timeoutMs ?? 20_000; // Default 20s timeout
 
   const hasBody = !!options?.body;
   let response: Response;
   try {
-    response = await fetch(url, {
-      ...options,
-      headers: {
-        ...(hasBody ? { "Content-Type": "application/json" } : {}),
-        ...(options?.headers as Record<string, string> || {}),
-      },
-    });
+    // Wire up AbortController for timeout (skip if caller already provided a signal)
+    const controller = new AbortController();
+    const existingSignal = options?.signal;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    // If caller already provided a signal, abort our controller when theirs fires
+    if (existingSignal) {
+      existingSignal.addEventListener("abort", () => controller.abort());
+    }
+
+    try {
+      response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...(hasBody ? { "Content-Type": "application/json" } : {}),
+          ...(options?.headers as Record<string, string> || {}),
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiError(0, `Request timed out after ${timeoutMs / 1000}s: ${path}`);
+    }
     throw new ApiError(0, "No se pudo conectar con el backend", error);
   }
 
@@ -74,7 +93,7 @@ async function apiRequest<T>(
 
 // ─── Strategies ─────────────────────────────────────────────
 export function getStrategies(): Promise<Strategy[]> {
-  return apiRequest<Strategy[]>("/strategies/");
+  return apiRequest<Strategy[]>(`/strategies/?t=${Date.now()}`);
 }
 
 export function getStrategy(id: string): Promise<Strategy> {
@@ -106,7 +125,7 @@ export interface SavedQuery {
 }
 
 export function getQueries(): Promise<SavedQuery[]> {
-  return apiRequest<SavedQuery[]>("/queries/");
+  return apiRequest<SavedQuery[]>(`/queries/?t=${Date.now()}`);
 }
 
 export function createQuery(
@@ -154,6 +173,11 @@ export function exportStrategies(
   );
 }
 
+export function getSavedBacktests(limit = 100): Promise<{ strategies: any[]; total_count: number }> {
+  return apiRequest<{ strategies: any[]; total_count: number }>(`/strategy-search/list?limit=${limit}`);
+}
+
+
 // ─── Backtest ───────────────────────────────────────────────
 export function runBacktest(
   data: BacktestRequest,
@@ -196,6 +220,39 @@ export function getTickerSecFilings(
     `/ticker-analysis/${encodeURIComponent(ticker)}/sec-filings`,
   );
 }
+
+export function getTickerChart(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/chart`,
+  );
+}
+
+export function getTickerBalanceSheet(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/balance-sheet`,
+  );
+}
+
+export function getTickerGapStats(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/gap-stats`,
+  );
+}
+
+export function getTickerFinvizNews(
+  ticker: string,
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/finviz-news`,
+  );
+}
+
 
 // ─── Market Data ────────────────────────────────────────────
 export function getScreener(

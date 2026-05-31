@@ -294,6 +294,11 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {})
     
     subquery = f"""
     (
+        WITH raw_daily AS (
+            SELECT * EXCLUDE (pmh_gap_pct),
+                   ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct
+            FROM read_parquet({year_paths}, hive_partitioning=true)
+        )
         SELECT *,
                LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1,
                LAG(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pmh_gap_pct_1,
@@ -322,7 +327,7 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {})
                LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2,
                LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2,
                LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_2
-        FROM read_parquet({year_paths}, hive_partitioning=true)
+        FROM raw_daily
     ) i
     """
     

@@ -373,11 +373,22 @@ def list_datasets():
                 ).fetchall()
                 for row in rows:
                     filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
+                    pair_count = 0
+                    try:
+                        pc_row = con.execute(
+                            "SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?",
+                            (row[0],)
+                        ).fetchone()
+                        pair_count = pc_row[0] if pc_row else 0
+                    except Exception as pc_err:
+                        print(f"[WARN] Could not query pair count for dataset {row[0]}: {pc_err}")
+                        pair_count = filters.get("pair_count", 0)
+
                     results.append({
                         "id": row[0],
                         "name": row[1],
                         "filters": filters,
-                        "pair_count": filters.get("pair_count", 0),
+                        "pair_count": pair_count,
                         "min_date": filters.get("start_date") or filters.get("date_from"),
                         "max_date": filters.get("end_date") or filters.get("date_to"),
                         "created_at": str(row[3]) if row[3] else None,
@@ -416,11 +427,22 @@ def get_dataset(dataset_id: str):
             ).fetchone()
             if row:
                 filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
+                pair_count = 0
+                try:
+                    pc_row = con.execute(
+                        "SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?",
+                        (row[0],)
+                    ).fetchone()
+                    pair_count = pc_row[0] if pc_row else 0
+                except Exception as pc_err:
+                    print(f"[WARN] Could not query pair count for dataset {row[0]}: {pc_err}")
+                    pair_count = filters.get("pair_count", 0)
+
                 return {
                     "id": row[0],
                     "name": row[1],
                     "filters": filters,
-                    "pair_count": filters.get("pair_count", 0),
+                    "pair_count": pair_count,
                     "min_date": filters.get("start_date") or filters.get("date_from"),
                     "max_date": filters.get("end_date") or filters.get("date_to"),
                     "created_at": str(row[3]) if row[3] else None,

@@ -199,12 +199,12 @@ export async function runMonteCarlo(params: {
 }
 
 export async function fetchDatasets(): Promise<Dataset[]> {
-  const { data } = await api.get("/data/datasets");
+  const { data } = await api.get(`/data/datasets?t=${Date.now()}`);
   return data;
 }
 
 export async function fetchStrategies(): Promise<Strategy[]> {
-  const { data } = await api.get("/data/strategies");
+  const { data } = await api.get(`/data/strategies?t=${Date.now()}`);
   return data;
 }
 
@@ -356,6 +356,31 @@ export async function fetchOptimizationProgress(task_id: string): Promise<number
 
 export async function fetchOptimizationResult(task_id: string): Promise<OptimizationResult | { status: string; progress: number }> {
   const { data } = await api.get(`/optimization/result/${task_id}`);
+  return data;
+}
+
+export interface PrecacheStatus {
+  status: string;
+  percent: number;
+  current: number;
+  total: number;
+  error?: string;
+}
+
+export async function fetchPrecacheStatus(datasetId: string): Promise<PrecacheStatus> {
+  const { data } = await api.get(`/queries/precache-status/${encodeURIComponent(datasetId)}?t=${Date.now()}`);
+  return data;
+}
+
+export interface BacktestProgress {
+  status: string;
+  percent: number;
+  current: number;
+  total: number;
+}
+
+export async function fetchBacktestProgress(datasetId: string): Promise<BacktestProgress> {
+  const { data } = await api.get(`/backtest/progress/${encodeURIComponent(datasetId)}?t=${Date.now()}`);
   return data;
 }
 

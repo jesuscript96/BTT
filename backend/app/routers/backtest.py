@@ -16,6 +16,14 @@ logger = logging.getLogger("backtester.backtest")
 
 router = APIRouter(prefix="/api", tags=["backtest"])
 
+backtest_progress = {}
+
+@router.get("/backtest/progress/{dataset_id}")
+def get_backtest_progress(dataset_id: str):
+    if dataset_id not in backtest_progress:
+        return {"status": "not_running", "percent": 0.0, "current": 0, "total": 0}
+    return backtest_progress[dataset_id]
+
 
 class MonteCarloRequest(BaseModel):
     pnls: list[float]
@@ -32,6 +40,16 @@ class WhatIfRequest(BaseModel):
 
 @router.post("/backtest")
 def run_backtest_endpoint(req: BacktestRequest):
+    # Check if dataset precache is running
+    from app.routers.query import precache_status
+    if req.dataset_id in precache_status:
+        status_info = precache_status[req.dataset_id]
+        if status_info.get("status") == "running":
+            percent = status_info.get("percent", 0.0)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Espera a que se cargue el dataset (progreso: {percent}%)"
+            )
     return run_backtest_orchestrator(req)
 
 

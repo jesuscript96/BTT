@@ -29,10 +29,13 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'screener' | 'ticker'>('screener');
+  const [selectedTicker, setSelectedTicker] = useState<string | undefined>(undefined);
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
   const [aggregateSeries, setAggregateSeries] = useState<any[] | null>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [chartInterval, setChartInterval] = useState<number>(1);
+  const lastQueryParamsRef = React.useRef<URLSearchParams | null>(null);
   // Initialize filters with defaults matching the panel UI
   const [currentFilters, setCurrentFilters] = useState<any>({
     min_gap_pct: 20,
@@ -154,6 +157,9 @@ export default function Home() {
     // Always add limit (User requested more results, default was 100)
     queryParams.append("limit", "5000");
 
+    // Save queryParams for refetching later on interval changes
+    lastQueryParamsRef.current = queryParams;
+
     // Cancel any previous pending request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -178,7 +184,9 @@ export default function Home() {
 
       // 2. SLOW FETCH: Get Aggregate Intraday (Chart) - Background Path
       setIsAggregateLoading(true);
-      getAggregateIntraday(queryParams, controller.signal)
+      const chartParams = new URLSearchParams(queryParams);
+      chartParams.append("interval", chartInterval.toString());
+      getAggregateIntraday(chartParams, controller.signal)
         .then(aggregateResult => {
           setAggregateSeries(Array.isArray(aggregateResult) && aggregateResult.length > 0 ? aggregateResult : []);
         })
@@ -195,6 +203,25 @@ export default function Home() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (isFirstMount.current) return;
+    if (lastQueryParamsRef.current) {
+      setIsAggregateLoading(true);
+      const chartParams = new URLSearchParams(lastQueryParamsRef.current);
+      chartParams.set("interval", chartInterval.toString());
+      getAggregateIntraday(chartParams)
+        .then(aggregateResult => {
+          setAggregateSeries(Array.isArray(aggregateResult) && aggregateResult.length > 0 ? aggregateResult : []);
+        })
+        .catch(err => {
+          console.error("Error fetching aggregate data on interval change:", err);
+        })
+        .finally(() => {
+          setIsAggregateLoading(false);
+        });
+    }
+  }, [chartInterval]);
 
 
   const handleExport = async () => {
@@ -411,7 +438,7 @@ export default function Home() {
                 boxSizing: 'border-box',
               }}>
                 {/* Dashboard & DataGrid Stack */}
-                <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} />
+                <Dashboard stats={stats} data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isAggregateLoading} interval={chartInterval} onIntervalChange={setChartInterval} />
 
                 <div style={{
                   flex: 1,
@@ -425,6 +452,10 @@ export default function Home() {
                   <DataGrid
                     data={memoizedData}
                     isLoading={isLoading}
+                    onSelectTicker={(ticker) => {
+                      setSelectedTicker(ticker);
+                      setActiveTab('ticker');
+                    }}
                   />
                 </div>
               </div>
@@ -435,7 +466,7 @@ export default function Home() {
 
         {activeTab === 'ticker' && (
           <TickerAnalysis
-            ticker={currentFilters.ticker || (data.length > 0 ? data[0].ticker : undefined)}
+            ticker={selectedTicker || currentFilters.ticker || (data.length > 0 ? data[0].ticker : undefined)}
             availableTickers={Array.from(new Set(data.map(d => d.ticker)))}
           />
         )}

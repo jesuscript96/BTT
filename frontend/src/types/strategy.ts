@@ -173,7 +173,7 @@ export interface ExitLogic {
 
 export interface RiskSettings {
     type: RiskType;
-    value: number;
+    value: number | string;
 }
 
 export interface PartialTakeProfit {
@@ -204,6 +204,7 @@ export interface Strategy {
     name: string;
     description?: string;
     bias: 'long' | 'short';
+    apply_day?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
     universe_filters?: UniverseFilters;
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;

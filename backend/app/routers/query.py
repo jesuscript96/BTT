@@ -17,6 +17,8 @@ class SavedQuery(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
+precache_status = {}
+
 def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
     """Pre-cache intraday data for a dataset in background thread.
     Receives pairs_df in memory — does NOT open users.duckdb."""
@@ -26,17 +28,52 @@ def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
 
         if pairs_df.empty:
             print(f"[PRECACHE] Dataset {dataset_id}: no pairs to cache")
+            precache_status[dataset_id] = {
+                "status": "completed",
+                "current": 0,
+                "total": 0,
+                "percent": 100.0
+            }
             return
         
-        print(f"[PRECACHE] Starting for dataset {dataset_id}: {len(pairs_df)} pairs, {date_from} -> {date_to}")
+        total = len(pairs_df)
+        print(f"[PRECACHE] Starting for dataset {dataset_id}: {total} pairs, {date_from} -> {date_to}")
+        precache_status[dataset_id] = {
+            "status": "running",
+            "current": 0,
+            "total": total,
+            "percent": 0.0
+        }
         
         count = 0
         for _ in iter_intraday_groups_streamed(pairs_df, date_from, date_to):
             count += 1
+            percent = min(100.0, round((count / total) * 100.0, 1)) if total > 0 else 100.0
+            precache_status[dataset_id].update({
+                "current": count,
+                "percent": percent
+            })
         
+        precache_status[dataset_id].update({
+            "status": "completed",
+            "percent": 100.0
+        })
         print(f"[PRECACHE] Completed: {count} day-groups cached for dataset {dataset_id}")
     except Exception as e:
         print(f"[PRECACHE] Error pre-caching dataset {dataset_id}: {e}")
+        precache_status[dataset_id] = {
+            "status": "failed",
+            "current": count if 'count' in locals() else 0,
+            "total": total if 'total' in locals() else 0,
+            "percent": min(100.0, round((count / total) * 100.0, 1)) if ('total' in locals() and total > 0 and 'count' in locals()) else 0.0,
+            "error": str(e)
+        }
+
+@router.get("/precache-status/{dataset_id}")
+def get_precache_status(dataset_id: str):
+    if dataset_id not in precache_status:
+        return {"status": "completed", "percent": 100.0, "current": 0, "total": 0}
+    return precache_status[dataset_id]
 
 @router.post("/", response_model=SavedQuery)
 def create_saved_query(query: SavedQuery):
@@ -70,19 +107,19 @@ def create_saved_query(query: SavedQuery):
                 subquery_lagged = """
                 (
                     SELECT *,
-                           LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_1,
-                           LAG(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_1,
-                           LAG(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_1,
-                           LAG(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_1,
-                           LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_1,
-                           LAG(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_1,
+                           LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_1,
+                           LEAD(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_1,
+                           LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_1,
+                           LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_1,
+                           LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_1,
+                           LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_1,
                            
-                           LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_2,
-                           LAG(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_2,
-                           LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_2,
-                           LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_2,
-                           LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_2,
-                           LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_2
+                           LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_2,
+                           LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_2,
+                           LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_2,
+                           LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_2,
+                           LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_2,
+                           LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_2
                     FROM daily_metrics
                 ) dm_lagged
                 """
@@ -90,7 +127,7 @@ def create_saved_query(query: SavedQuery):
                     INSERT INTO dataset_pairs (dataset_id, ticker, date)
                     SELECT ? as dataset_id, ticker, CAST(timestamp AS DATE) as date
                     FROM {subquery_lagged}
-                    WHERE {where_m_stats}
+                    WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
                 """
                 
                 con.execute(insert_sql, [query_id] + params)
