@@ -65,6 +65,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
     const [bias, setBias] = useState<'long' | 'short'>('long');
+    const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
     const [entryLogic, setEntryLogic] = useState<EntryLogic>(initialEntryLogic);
     const [exitLogic, setExitLogic] = useState<ExitLogic>(initialExitLogic);
     const [riskManagement, setRiskManagement] = useState<RiskManagement>(initialRiskManagement);
@@ -108,6 +109,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             name: name || 'Untitled Strategy',
             description,
             bias,
+            apply_day: applyDay,
             entry_logic: entryLogic,
             exit_logic: exitLogic,
             risk_management: riskManagement
@@ -383,6 +385,83 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                             </div>
                         </div>
                     </section>
+
+                    {/* DIVIDER 1 */}
+                    <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+
+                    {/* SECTION: PRE-GAP CONDITIONS */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-text-muted)',
+                                opacity: 0.5,
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-muted)',
+                                margin: 0,
+                                opacity: 0.7,
+                            }}>Condiciones previas para estrategias post gap</h2>
+                        </div>
+                        <p style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 11,
+                            color: 'var(--color-ec-text-muted)',
+                            margin: 0,
+                            opacity: 0.5,
+                            fontStyle: 'italic',
+                        }}>
+                            (Sección en desarrollo - Próximamente disponible)
+                        </p>
+                    </div>
+
+                    {/* DIVIDER 2 */}
+                    <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+
+                    {/* SECTION: APPLY DAY SELECTOR */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', fontSize: 11, fontFamily: 'var(--color-ec-sans)' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Aplicar en:</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {(['gap_day', 'gap_1_day', 'gap_2_day'] as const).map((day, idx) => {
+                                const isActive = applyDay === day;
+                                const labels: Record<string, string> = {
+                                    gap_day: 'Gap Day',
+                                    gap_1_day: 'Gap +1 Day',
+                                    gap_2_day: 'Gap +2 Day',
+                                };
+                                return (
+                                    <React.Fragment key={day}>
+                                        {idx > 0 && <span style={{ color: 'var(--color-ec-border)', fontSize: 9 }}>/</span>}
+                                        <span
+                                            onClick={() => setApplyDay(day)}
+                                            style={{
+                                                color: isActive ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                                                fontWeight: isActive ? 700 : 400,
+                                                cursor: 'pointer',
+                                                transition: 'color 150ms ease',
+                                                fontSize: 11,
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                            }}
+                                        >
+                                            {labels[day]}
+                                        </span>
+                                    </React.Fragment>
+                                );
+                            })}
+                        </div>
+                    </div>
 
                     {/* FULL-WIDTH: Entry Logic */}
                     <section style={{

@@ -38,7 +38,7 @@ def screen_market(
         # ── Hot Cache Fast Path ──
         hot_df = get_hot_daily_df()
         effective_gap = max(min_gap, min_gap_at_open_pct)
-        if hot_df is not None and effective_gap >= 10.0:
+        if hot_df is not None and effective_gap >= 5.0:
             result = hot_df.copy()
             if effective_gap:
                 result = result[result['gap_pct'] >= effective_gap]
@@ -263,10 +263,12 @@ def get_aggregate_intraday(
     min_gap_at_open_pct: float = 0.0,
     min_run: float = 0.0, min_volume: float = 0.0,
     trade_date: Optional[date] = None, start_date: Optional[date] = None,
-    end_date: Optional[date] = None, ticker: Optional[str] = None
+    end_date: Optional[date] = None, ticker: Optional[str] = None,
+    interval: int = 1
 ):
     con = None
     try:
+        interval_filter = "AND minute(i.timestamp) % 15 = 0" if interval == 15 else ""
         filters = dict(request.query_params)
         filters.update({
             'min_gap': min_gap, 'max_gap': max_gap,
@@ -280,7 +282,7 @@ def get_aggregate_intraday(
         hot_df = get_hot_daily_df()
         effective_gap = max(min_gap, min_gap_at_open_pct)
 
-        if hot_df is not None and effective_gap >= 10.0:
+        if hot_df is not None and effective_gap >= 5.0:
             result_df = hot_df.copy()
             if effective_gap:
                 result_df = result_df[result_df['gap_pct'] >= effective_gap]
@@ -297,45 +299,62 @@ def get_aggregate_intraday(
                 return []
 
             target_date = pd.Timestamp(result_df.iloc[0]['timestamp']).date()
-            tickers = result_df[result_df['timestamp'].dt.date == target_date]['ticker'].unique().tolist()[:50]
-
-            if not tickers:
+            top_pairs = result_df.head(50)[['ticker', 'timestamp']]
+            if top_pairs.empty:
                 return []
 
-            # daily_opens from hot cache (using open as day_open and prev_close as close_4am)
-            opens_df = result_df[result_df['timestamp'].dt.date == target_date][['ticker', 'open', 'prev_close']].copy()
-            opens_df = opens_df.rename(columns={'open': 'day_open', 'prev_close': 'close_4am'})
-            opens_df = opens_df[opens_df['close_4am'] > 0]
+            val_list = []
+            for _, r in top_pairs.iterrows():
+                ticker_val = str(r['ticker']).replace("'", "''")
+                date_val = str(r['timestamp'].date())
+                val_list.append(f"('{ticker_val}', '{date_val}'::DATE)")
+            
+            values_clause = ", ".join(val_list)
 
-            # FASE 2: intraday_1m query (sin daily_opens CTE — el merge es en pandas)
-            placeholders = ','.join(['?'] * len(tickers))
             con = get_db_connection(read_only=True)
-            intra_query = f"""
-                SELECT i.timestamp, i.ticker, i.close
-                FROM intraday_1m i
-                WHERE i.date = CAST(? AS DATE)
-                AND i.ticker IN ({placeholders})
+            agg_query = f"""
+                WITH screen_res AS (
+                    SELECT * FROM (
+                        VALUES {values_clause}
+                    ) AS t(ticker, date)
+                ),
+                daily_opens AS (
+                    SELECT i.ticker, i.date, i.close as day_open
+                    FROM (
+                        SELECT i.ticker, i.date, i.close,
+                               ROW_NUMBER() OVER (PARTITION BY i.ticker, i.date ORDER BY i.timestamp ASC) as rn
+                        FROM intraday_1m i
+                        JOIN screen_res s ON i.ticker = s.ticker AND i.date = s.date
+                        WHERE i.timestamp >= CAST(i.date || ' 09:30:00' AS TIMESTAMP)
+                    ) i
+                    WHERE rn = 1
+                ),
+                joined_intraday AS (
+                    SELECT i.timestamp, i.ticker, i.date, i.close, d.day_open,
+                           ((i.close - d.day_open) / NULLIF(d.day_open, 0) * 100) as pct_change
+                    FROM intraday_1m i
+                    JOIN screen_res s ON i.ticker = s.ticker AND i.date = s.date
+                    JOIN daily_opens d ON i.ticker = d.ticker AND i.date = d.date
+                    WHERE d.day_open > 0
+                    {interval_filter}
+                )
+                SELECT 
+                    strftime(timestamp, '%H:%M') as minute,
+                    AVG(pct_change) as avg_change,
+                    QUANTILE_CONT(pct_change, 0.5) as median_change
+                FROM joined_intraday
+                GROUP BY 1
+                ORDER BY 1
             """
-            intra_rows = con.execute(intra_query, [target_date] + tickers).fetchall()
-
-            if not intra_rows:
-                return []
-
-            intraday_df = pd.DataFrame(intra_rows, columns=['timestamp', 'ticker', 'close'])
-            intraday_df = intraday_df.merge(opens_df, on='ticker', how='inner')
-            intraday_df['pct_change'] = (intraday_df['close'] - intraday_df['day_open']) / intraday_df['close_4am'] * 100
-            intraday_df['minute'] = pd.to_datetime(intraday_df['timestamp']).dt.strftime('%H:%M')
-            grouped = intraday_df.groupby('minute').agg(
-                avg_change=('pct_change', 'mean'),
-                median_change=('pct_change', 'median')
-            ).reset_index()
+            agg_cur = con.execute(agg_query)
+            agg_rows = agg_cur.fetchall()
 
             result = []
-            for _, r in grouped.iterrows():
+            for r in agg_rows:
                 result.append({
-                    "time": r['minute'],
-                    "avg_change": safe_float(r['avg_change']),
-                    "median_change": safe_float(r['median_change'])
+                    "time": r[0],
+                    "avg_change": safe_float(r[1]),
+                    "median_change": safe_float(r[2])
                 })
             return result
 
@@ -345,44 +364,29 @@ def get_aggregate_intraday(
 
         screener_query, sql_p = build_aggregate_query(filters)
 
-        ticker_query = f"WITH screen_res AS ({screener_query}) SELECT ticker, gap_pct, timestamp FROM screen_res"
-        cur = con.execute(ticker_query, sql_p)
-        rows = cur.fetchall()
-
-        if not rows:
-            return []
-
-        target_date = trade_date
-        if not target_date and rows:
-            if rows[0][2]:
-                target_date = rows[0][2].date()
-
-        if not target_date:
-            return []
-
-        tickers = list(set([r[0] for r in rows]))
-
-        if not tickers:
-            return []
-
-        placeholders = ','.join(['?'] * len(tickers))
-
         agg_query = f"""
-            WITH daily_opens AS (
-                 SELECT ticker, open as day_open, prev_close as close_4am
-                 FROM daily_metrics 
-                 WHERE DATE_TRUNC('day', timestamp) = CAST(? AS DATE)
-                 AND ticker IN ({placeholders})
+            WITH screen_res AS (
+                {screener_query}
+            ),
+            daily_opens AS (
+                SELECT i.ticker, i.date, i.close as day_open
+                FROM (
+                    SELECT i.ticker, i.date, i.close,
+                           ROW_NUMBER() OVER (PARTITION BY i.ticker, i.date ORDER BY i.timestamp ASC) as rn
+                    FROM intraday_1m i
+                    JOIN screen_res s ON i.ticker = s.ticker AND i.date = CAST(s.timestamp AS DATE)
+                    WHERE i.timestamp >= CAST(i.date || ' 09:30:00' AS TIMESTAMP)
+                ) i
+                WHERE rn = 1
             ),
             joined_intraday AS (
-                SELECT 
-                    i.timestamp, i.ticker, i.close, d.day_open, d.close_4am,
-                    ((i.close - d.day_open) / NULLIF(d.close_4am, 0) * 100) as pct_change
+                SELECT i.timestamp, i.ticker, i.date, i.close, d.day_open,
+                       ((i.close - d.day_open) / NULLIF(d.day_open, 0) * 100) as pct_change
                 FROM intraday_1m i
-                JOIN daily_opens d ON i.ticker = d.ticker
-                WHERE i.date = CAST(? AS DATE)
-                AND i.ticker IN ({placeholders})
-                AND d.close_4am > 0
+                JOIN screen_res s ON i.ticker = s.ticker AND i.date = CAST(s.timestamp AS DATE)
+                JOIN daily_opens d ON i.ticker = d.ticker AND i.date = d.date
+                WHERE d.day_open > 0
+                {interval_filter}
             )
             SELECT 
                 strftime(timestamp, '%H:%M') as minute,
@@ -393,8 +397,7 @@ def get_aggregate_intraday(
             ORDER BY 1
         """
 
-        params = [target_date] + tickers + [target_date] + tickers
-        agg_cur = con.execute(agg_query, params)
+        agg_cur = con.execute(agg_query, sql_p)
         agg_rows = agg_cur.fetchall()
 
         result = []

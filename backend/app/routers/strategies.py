@@ -26,6 +26,7 @@ def create_strategy(strategy: StrategyCreate):
 
             definition_json = json.dumps({
                 "bias": strategy.bias,
+                "apply_day": strategy.apply_day,
                 "universe_filters": strategy.universe_filters.model_dump() if strategy.universe_filters else None,
                 "entry_logic": strategy.entry_logic.model_dump() if strategy.entry_logic else None,
                 "exit_logic": strategy.exit_logic.model_dump() if strategy.exit_logic else None,

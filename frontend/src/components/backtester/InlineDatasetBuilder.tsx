@@ -19,10 +19,10 @@ const SECTION_PARAMS: ParameterConfig[] = [
   { key: "rth_close", label: "Min Open price", unit: "$", placeholder: "0.00" },
   { key: "pmh_gap_pct_min", label: "PM High Gap min", unit: "%", placeholder: "10.0", min: 10 },
   { key: "pmh_gap_pct_max", label: "PM High Gap max", unit: "%", placeholder: "0.0" },
-  { key: "pm_volume", label: "Premarket total volume", unit: "M", placeholder: "0.0" },
+  { key: "pm_volume", label: "Min Premarket total volume", unit: "M", placeholder: "0.0" },
   { key: "gap_pct_min", label: "Gap min", unit: "%", placeholder: "10.0", min: 10 },
   { key: "gap_pct_max", label: "Gap max", unit: "%", placeholder: "0.0" },
-  { key: "rth_volume", label: "RTH Total Volume", unit: "%", placeholder: "0.0" },
+  { key: "rth_volume", label: "Min RTH Total Volume", unit: "M", placeholder: "0.0" },
   { key: "rth_range_pct", label: "Bar RTH Range", unit: "%", placeholder: "0.0" },
 ];
 
@@ -30,19 +30,19 @@ const PARAM_DESCRIPTIONS: Record<string, string> = {
   rth_close: "Precio mínimo de la acción en la apertura de mercado",
   pmh_gap_pct_min: "Precio mínimo de la sesión de premarket",
   pmh_gap_pct_max: "Precio máximo de la sesión de premarket",
-  pm_volume: "Volumen total acumulado durante el premarket",
+  pm_volume: "Volumen mínimo acumulado durante el premarket",
   gap_pct_min: "% de Gap mínimo",
   gap_pct_max: "% de Gap máximo",
-  rth_volume: "Volumen total durante la sesión de mercado",
+  rth_volume: "Volumen mínimo durante la sesión de mercado REGULAR",
   rth_range_pct: "Rango de la vela en temporalidad diaria, es decir, el % de subida o bajada que ha hecho la vela este día (se permite buscar tanto para +% como para -%)",
 };
 
-type SectionId = "gap_day" | "gap_1_day" | "gap_2_day";
+type SectionId = "gap_day" | "gap_plus_1_day" | "gap_plus_2_day";
 
 const SECTION_LABELS: Record<SectionId, string> = {
   gap_day: "GAP DAY",
-  gap_1_day: "GAP-1 DAY",
-  gap_2_day: "GAP-2 DAY",
+  gap_plus_1_day: "GAP+1 DAY",
+  gap_plus_2_day: "GAP+2 DAY",
 };
 
 interface IncludedCondition {
@@ -58,17 +58,19 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
   const [dateFrom, setDateFrom] = useState("2024-01-01");
   const [dateTo, setDateTo] = useState("2024-12-31");
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [tempName, setTempName] = useState("");
   const [values, setValues] = useState<Record<SectionId, Record<string, string>>>({
     gap_day: {},
-    gap_1_day: {},
-    gap_2_day: {},
+    gap_plus_1_day: {},
+    gap_plus_2_day: {},
   });
 
   const [includedConditions, setIncludedConditions] = useState<IncludedCondition[]>([]);
   const [expandedSections, setExpandedSections] = useState<Record<SectionId, boolean>>({
     gap_day: true,
-    gap_1_day: true,
-    gap_2_day: true,
+    gap_plus_1_day: true,
+    gap_plus_2_day: true,
   });
 
   const [activeTooltip, setActiveTooltip] = useState<{
@@ -148,7 +150,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
     );
   };
 
-  const handleSave = async () => {
+  const handleSave = async (datasetName: string) => {
     // Construct the filters object from the included conditions
     const rules: any[] = [];
     let min_gap_pct: number | undefined = undefined;
@@ -181,25 +183,28 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
           max_gap_pct = c.value;
         } else if (c.paramKey === "rth_volume") {
           fieldName = "EOD Volume";
-          min_rth_volume = c.value;
+          finalVal = c.value * 1000000; // in Millions
+          min_rth_volume = finalVal;
         } else if (c.paramKey === "rth_range_pct") fieldName = "RTH Range %";
       } else {
-        // GAP-1 or GAP-2
-        const lagSuffix = c.section === "gap_1_day" ? "_1" : "_2";
-        if (c.paramKey === "rth_close") fieldName = `lag_rth_close${lagSuffix}`;
-        else if (c.paramKey === "pmh_gap_pct_min") fieldName = `lag_pmh_gap_pct${lagSuffix}`;
+        // GAP+1 or GAP+2
+        const lagSuffix = c.section === "gap_plus_1_day" ? "_1" : "_2";
+        if (c.paramKey === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
+        else if (c.paramKey === "pmh_gap_pct_min") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
         else if (c.paramKey === "pmh_gap_pct_max") {
-          fieldName = `lag_pmh_gap_pct${lagSuffix}`;
+          fieldName = `lead_pmh_gap_pct${lagSuffix}`;
           operator = "LESS_THAN_OR_EQUAL";
         } else if (c.paramKey === "pm_volume") {
-          fieldName = `lag_pm_volume${lagSuffix}`;
+          fieldName = `lead_pm_volume${lagSuffix}`;
           finalVal = c.value * 1000000; // in Millions
-        } else if (c.paramKey === "gap_pct_min") fieldName = `lag_gap_pct${lagSuffix}`;
+        } else if (c.paramKey === "gap_pct_min") fieldName = `lead_gap_pct${lagSuffix}`;
         else if (c.paramKey === "gap_pct_max") {
-          fieldName = `lag_gap_pct${lagSuffix}`;
+          fieldName = `lead_gap_pct${lagSuffix}`;
           operator = "LESS_THAN_OR_EQUAL";
-        } else if (c.paramKey === "rth_volume") fieldName = `lag_rth_volume${lagSuffix}`;
-        else if (c.paramKey === "rth_range_pct") fieldName = `lag_rth_range_pct${lagSuffix}`;
+        } else if (c.paramKey === "rth_volume") {
+          fieldName = `lead_rth_volume${lagSuffix}`;
+          finalVal = c.value * 1000000; // in Millions
+        } else if (c.paramKey === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
       }
 
       if (fieldName) {
@@ -224,7 +229,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
       rules,
     };
 
-    await onSave(name, filters);
+    await onSave(datasetName, filters);
   };
 
   return (
@@ -338,7 +343,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
           </div>
         </div>
 
-        {(["gap_day", "gap_1_day", "gap_2_day"] as SectionId[]).map((sectionId) => {
+        {(["gap_day", "gap_plus_1_day", "gap_plus_2_day"] as SectionId[]).map((sectionId) => {
           const isExpanded = expandedSections[sectionId];
           return (
             <div
@@ -694,7 +699,10 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
         }}
       >
         <button
-          onClick={handleSave}
+          onClick={() => {
+            setTempName(name);
+            setShowSaveModal(true);
+          }}
           disabled={includedConditions.length === 0}
           style={{
             width: "100%",
@@ -715,6 +723,135 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
           Guardar y Probar
         </button>
       </div>
+      {showSaveModal && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(0,0,0,0.5)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10000,
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: "var(--color-ec-bg-sidebar)",
+              border: "0.5px solid var(--color-ec-border)",
+              borderRadius: 8,
+              padding: "20px",
+              width: "280px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span
+                style={{
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--color-ec-text-high)",
+                }}
+              >
+                Guardar Dataset
+              </span>
+              <span
+                style={{
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 10,
+                  color: "var(--color-ec-text-muted)",
+                }}
+              >
+                Introduce el nombre del dataset para guardarlo:
+              </span>
+            </div>
+            
+            <input
+              type="text"
+              value={tempName}
+              onChange={(e) => setTempName(e.target.value)}
+              placeholder="Nombre del dataset..."
+              autoFocus
+              onFocus={(e) => e.target.select()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && tempName.trim()) {
+                  const finalName = tempName.trim();
+                  setName(finalName);
+                  setShowSaveModal(false);
+                  handleSave(finalName);
+                } else if (e.key === "Escape") {
+                  setShowSaveModal(false);
+                }
+              }}
+              style={{
+                backgroundColor: "var(--color-ec-bg-elevated)",
+                border: "0.5px solid var(--color-ec-border)",
+                borderRadius: 5,
+                padding: "8px 10px",
+                fontFamily: "var(--color-ec-sans)",
+                fontSize: 12,
+                color: "var(--color-ec-text-primary)",
+                outline: "none",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setShowSaveModal(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--color-ec-text-muted)",
+                  cursor: "pointer",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  padding: "6px 12px",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (tempName.trim()) {
+                    const finalName = tempName.trim();
+                    setName(finalName);
+                    setShowSaveModal(false);
+                    handleSave(finalName);
+                  }
+                }}
+                disabled={!tempName.trim()}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 4,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                  border: "none",
+                  backgroundColor: "var(--color-ec-copper)",
+                  color: "var(--color-ec-copper-text)",
+                  opacity: !tempName.trim() ? 0.5 : 1,
+                }}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {activeTooltip && (
         <div
           style={{

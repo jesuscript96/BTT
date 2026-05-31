@@ -5,9 +5,10 @@ interface DataGridProps {
     data: any[];
     isLoading: boolean;
     onViewDay?: (row: any) => void;
+    onSelectTicker?: (ticker: string) => void;
 }
 
-export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }) => {
+export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay, onSelectTicker }) => {
     const [page, setPage] = React.useState(0);
     const PAGE_SIZE = 100;
     const visibleData = data.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -203,7 +204,40 @@ export const DataGrid: React.FC<DataGridProps> = ({ data, isLoading, onViewDay }
 
                                 if (col.toLowerCase() === 'ticker') {
                                     fontWeight = 700;
-                                    cellColor = 'var(--color-ec-text-high)';
+                                    cellColor = 'var(--color-ec-copper-bright)';
+                                    return (
+                                        <td key={`${i}-${col}`} style={{
+                                            padding: '8px 16px',
+                                            whiteSpace: 'nowrap',
+                                            color: cellColor,
+                                            fontWeight: fontWeight,
+                                            fontSize: '11px',
+                                        }}>
+                                            <button
+                                                onClick={() => onSelectTicker?.(val)}
+                                                style={{
+                                                    background: 'none',
+                                                    border: 'none',
+                                                    cursor: 'pointer',
+                                                    color: 'inherit',
+                                                    fontWeight: 'inherit',
+                                                    fontFamily: 'inherit',
+                                                    fontSize: 'inherit',
+                                                    padding: 0,
+                                                    textDecoration: 'underline',
+                                                    textUnderlineOffset: '2px',
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.color = 'var(--color-ec-copper)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.color = cellColor;
+                                                }}
+                                            >
+                                                {val}
+                                            </button>
+                                        </td>
+                                    );
                                 } else if (isNumber) {
                                     const colLower = col.toLowerCase();
                                     if (

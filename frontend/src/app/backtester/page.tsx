@@ -28,6 +28,7 @@ export default function Home() {
   const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [backtestProgress, setBacktestProgress] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -80,7 +81,29 @@ export default function Home() {
       return;
     }
 
+    try {
+      const { fetchPrecacheStatus } = await import("@/lib/api_backtester");
+      const statusData = await fetchPrecacheStatus(p.dataset_id);
+      if (statusData && statusData.status === "running") {
+        setError(`Espera a que se cargue el dataset (progreso: ${statusData.percent}%)`);
+        return;
+      }
+    } catch (e) {
+      console.warn("Could not check dataset precache status before run:", e);
+    }
+
     setLoading(true);
+    setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
+    const pollTimer = setInterval(async () => {
+      try {
+        const { fetchBacktestProgress } = await import("@/lib/api_backtester");
+        const prog = await fetchBacktestProgress(p.dataset_id);
+        setBacktestProgress(prog);
+      } catch (err) {
+        console.warn("Could not fetch backtest progress:", err);
+      }
+    }, 500);
+
     setError(null);
     setResult(null);
     setSelectedDay(0);
@@ -146,6 +169,8 @@ export default function Home() {
       setError(msg);
     } finally {
       setLoading(false);
+      clearInterval(pollTimer);
+      setBacktestProgress(null);
     }
   };
 
@@ -164,6 +189,17 @@ export default function Home() {
     monthly_expenses?: number;
   }) => {
     setLoading(true);
+    setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
+    const pollTimer = setInterval(async () => {
+      try {
+        const { fetchBacktestProgress } = await import("@/lib/api_backtester");
+        const prog = await fetchBacktestProgress(params.dataset_id);
+        setBacktestProgress(prog);
+      } catch (err) {
+        console.warn("Could not fetch backtest progress:", err);
+      }
+    }, 500);
+
     setError(null);
     setResult(null);
     setSelectedDay(0);
@@ -205,6 +241,8 @@ export default function Home() {
       setError(msg);
     } finally {
       setLoading(false);
+      clearInterval(pollTimer);
+      setBacktestProgress(null);
     }
   };
 
@@ -379,14 +417,34 @@ export default function Home() {
 
           {loading && (
             <div className="flex items-center justify-center h-64">
-              <div className="text-center space-y-3">
-                <svg className="animate-spin h-8 w-8 text-[var(--accent)] mx-auto" viewBox="0 0 24 24">
+              <div className="text-center space-y-4 w-full max-w-sm px-6">
+                <svg className="animate-spin h-7 w-7 text-[var(--color-ec-copper)] mx-auto" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                <p className="text-sm text-[var(--muted)]">
-                  Ejecutando backtest con VectorBT...
-                </p>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-end">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-ec-text-primary)]">
+                      Ejecutando backtest
+                    </p>
+                    {backtestProgress && backtestProgress.percent !== undefined && (
+                      <span className="text-xs font-mono font-bold text-[var(--color-ec-copper)]">
+                        {backtestProgress.percent}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="h-1.5 w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[var(--color-ec-copper)] rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${backtestProgress?.percent ?? 0}%` }}
+                    />
+                  </div>
+                  {backtestProgress && backtestProgress.total > 0 && (
+                    <p className="text-[10px] text-[var(--color-ec-text-muted)] font-mono text-right">
+                      {backtestProgress.current} / {backtestProgress.total} días procesados
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           )}

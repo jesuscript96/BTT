@@ -57,6 +57,7 @@ def run_backtest(
     n_groups_hint: int = 0,
     monthly_expenses: float = 0.0,
     _signal_cache: dict | None = None,
+    progress_callback=None,
 ) -> dict:
     t_total = time.time()
 
@@ -109,6 +110,8 @@ def run_backtest(
 
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
+        if progress_callback is not None and scanned % 10 == 0:
+            progress_callback(scanned, n_groups)
         day_df = day_df.sort_values("timestamp").reset_index(drop=True)
         if len(day_df) < 5:
             continue

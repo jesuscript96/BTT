@@ -238,6 +238,7 @@ class StrategyCreate(BaseModel):
     name: str
     description: Optional[str] = None
     bias: Literal['long', 'short'] = 'long'
+    apply_day: Optional[Literal['gap_day', 'gap_1_day', 'gap_2_day']] = 'gap_day'
     universe_filters: Optional[UniverseFilters] = None
     entry_logic: EntryLogic
     exit_logic: Optional[ExitLogic] = None

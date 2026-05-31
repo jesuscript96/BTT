@@ -215,7 +215,15 @@ def build_screener_query(
         'min_pmh_gap_pct': 'pmh_gap_pct', 'max_pmh_gap_pct': 'pmh_gap_pct',
         'min_pmh_fade_to_open_pct': 'pmh_fade_pct', 'max_pmh_fade_to_open_pct': 'pmh_fade_pct',
         'min_high_spike_pct': 'rth_run_pct', 
-        'min_low_spike_pct': 'rth_range_pct'
+        'min_low_spike_pct': 'rth_range_pct',
+        
+        # UI Rules mapping for gap_day
+        "Close Price": "rth_close",
+        "PMH Gap %": "pmh_gap_pct",
+        "Premarket Volume": "pm_volume",
+        "Open Gap %": "gap_pct",
+        "EOD Volume": "rth_volume",
+        "RTH Range %": "rth_range_pct"
     }
     
     for k, v in filters.items():

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Dataset, Strategy } from "@/lib/api_backtester";
-import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
+import type { Dataset, Strategy, PrecacheStatus } from "@/lib/api_backtester";
+import { fetchDatasets, fetchStrategies, fetchPrecacheStatus } from "@/lib/api_backtester";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -92,6 +92,7 @@ export default function BacktestPanel({
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [precacheStatus, setPrecacheStatus] = useState<PrecacheStatus | null>(null);
 
   const loadData = async () => {
     setLoadingData(true);
@@ -154,6 +155,41 @@ export default function BacktestPanel({
   }, [datasetRefreshTrigger, pendingDatasetSelect]);
 
   useEffect(() => {
+    if (!selectedDataset) {
+      setPrecacheStatus(null);
+      return;
+    }
+
+    let isMounted = true;
+    let timer: NodeJS.Timeout | null = null;
+
+    const checkStatus = async () => {
+      try {
+        const statusData = await fetchPrecacheStatus(selectedDataset);
+        if (!isMounted) return;
+
+        setPrecacheStatus(statusData);
+
+        if (statusData.status === "running") {
+          timer = setTimeout(checkStatus, 1500);
+        }
+      } catch (err) {
+        console.error("Error fetching precache status:", err);
+        if (isMounted) {
+          timer = setTimeout(checkStatus, 3000);
+        }
+      }
+    };
+
+    checkStatus();
+
+    return () => {
+      isMounted = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [selectedDataset]);
+
+  useEffect(() => {
     onParamsChange?.({
       dataset_id: selectedDataset,
       init_cash: initCash,
@@ -183,6 +219,10 @@ export default function BacktestPanel({
 
   const handleRun = () => {
     if (!selectedDataset || !selectedStrategy) return;
+    if (precacheStatus?.status === "running") {
+      alert(`Espera a que se cargue el dataset (progreso: ${precacheStatus.percent}%)`);
+      return;
+    }
     onRun({
       dataset_id: selectedDataset,
       strategy_id: selectedStrategy,
@@ -329,6 +369,54 @@ export default function BacktestPanel({
           >
             + NUEVO DATASET
           </button>
+          {precacheStatus && precacheStatus.status === "running" && (
+            <div style={{
+              marginTop: 8,
+              padding: '8px 10px',
+              backgroundColor: 'var(--color-ec-bg-elevated)',
+              border: '0.5px solid var(--color-ec-border)',
+              borderRadius: 5,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+            }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--color-ec-copper)',
+              }}>
+                <span>Cargando dataset...</span>
+                <span>{precacheStatus.percent}%</span>
+              </div>
+              <div style={{
+                height: 4,
+                backgroundColor: 'rgba(216, 122, 61, 0.15)',
+                borderRadius: 2,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${precacheStatus.percent}%`,
+                  backgroundColor: 'var(--color-ec-copper)',
+                  borderRadius: 2,
+                  transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                }} />
+              </div>
+              <div style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                color: 'var(--color-ec-text-muted)',
+                textAlign: 'right',
+              }}>
+                {precacheStatus.current} / {precacheStatus.total} pares
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
