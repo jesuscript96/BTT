@@ -905,10 +905,25 @@ export const GroupDisplay = ({
     const subGroups = group.conditions.filter(c => c.type === 'group') as ConditionGroup[];
 
     return (
-        <div className={`
-            flex flex-col gap-3 relative
-            ${level > 0 ? 'ml-6 pl-4 border-l-2 border-dashed border-border/40' : ''}
-        `}>
+        <div 
+            style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                position: 'relative',
+                marginLeft: level > 0 ? 16 : 0,
+                paddingLeft: level > 0 ? 16 : 0,
+                paddingRight: level > 0 ? 12 : 0,
+                paddingTop: level > 0 ? 12 : 0,
+                paddingBottom: level > 0 ? 12 : 0,
+                borderLeft: level > 0 ? `2.5px solid ${activeAccentColor}` : 'none',
+                backgroundColor: level > 0 ? 'color-mix(in srgb, var(--color-ec-bg-surface) 40%, transparent)' : 'transparent',
+                borderRadius: level > 0 ? '0 6px 6px 0' : 0,
+                borderTop: level > 0 ? '0.5px solid var(--color-ec-border)' : 'none',
+                borderBottom: level > 0 ? '0.5px solid var(--color-ec-border)' : 'none',
+                borderRight: level > 0 ? '0.5px solid var(--color-ec-border)' : 'none',
+            }}
+        >
             {/* Group Header */}
             <div className="flex items-center gap-3">
                 <div
@@ -943,7 +958,19 @@ export const GroupDisplay = ({
                 </div>
 
                 {level > 0 && (
-                    <span className="text-xs text-muted-foreground/50 font-mono">Grupo</span>
+                    <span style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        color: activeAccentColor,
+                        letterSpacing: '0.08em',
+                        fontFamily: 'var(--color-ec-sans)',
+                        backgroundColor: `color-mix(in srgb, ${activeAccentColor} 10%, transparent)`,
+                        padding: '2px 6px',
+                        borderRadius: 3,
+                    }}>
+                        Grupo Lógico
+                    </span>
                 )}
 
                 {onDelete && (
