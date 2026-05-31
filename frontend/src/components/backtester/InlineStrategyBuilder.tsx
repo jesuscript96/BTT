@@ -13,7 +13,9 @@ import type {
   EntryLogic as EntryLogicType,
   ExitLogic as ExitLogicType,
   RiskManagement as RiskManagementType,
+  ConditionGroup,
 } from "@/types/strategy";
+import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
 
 const STORAGE_KEY = "btt_draft_strategies";
 
@@ -25,6 +27,39 @@ export interface Draft {
   exit_logic: ExitLogicType;
   risk_management: RiskManagementType;
   created_at: string;
+}
+
+function getGroupSummaryText(group: ConditionGroup): string {
+  if (!group.conditions || group.conditions.length === 0) return "";
+  
+  const parts = group.conditions.map(c => {
+    if (c.type === 'group') {
+      const subText = getGroupSummaryText(c);
+      return subText ? `(${subText})` : "";
+    } else {
+      const tfStr = c.timeframe ? `[${c.timeframe}] ` : '';
+      if (c.type === 'indicator_comparison') {
+        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
+        let targetStr = '';
+        if (typeof c.target === 'number') {
+          targetStr = String(c.target);
+        } else {
+          targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+        }
+        return `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
+      } else if (c.type === 'price_level_distance') {
+        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
+        const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
+        return `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%`;
+      }
+      return "";
+    }
+  }).filter(Boolean);
+
+  if (parts.length === 0) return "";
+  return parts.join(` ${group.operator} `);
 }
 
 interface Props {
@@ -290,6 +325,35 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
       </div>
+
+      {/* Strategy Summary Panel */}
+      {(getGroupSummaryText(entryLogic.root_condition) || getGroupSummaryText(exitLogic.root_condition)) && (
+        <div style={{
+          padding: "12px 16px",
+          backgroundColor: "var(--color-ec-bg-surface)",
+          borderTop: "0.5px solid var(--color-ec-border)",
+          fontFamily: "var(--color-ec-sans)",
+          fontSize: 10,
+          color: "var(--color-ec-text-secondary)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          flexShrink: 0,
+        }}>
+          {getGroupSummaryText(entryLogic.root_condition) && (
+            <div style={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.4 }}>
+              <span style={{ fontWeight: 700, color: "#3b82f6", marginRight: 4 }}>ENTRY LOGIC:</span>
+              <code style={{ color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)", fontSize: 10 }}>{getGroupSummaryText(entryLogic.root_condition)}</code>
+            </div>
+          )}
+          {getGroupSummaryText(exitLogic.root_condition) && (
+            <div style={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.4 }}>
+              <span style={{ fontWeight: 700, color: "var(--color-ec-loss)", marginRight: 4 }}>EXIT LOGIC:</span>
+              <code style={{ color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)", fontSize: 10 }}>{getGroupSummaryText(exitLogic.root_condition)}</code>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
       <div
