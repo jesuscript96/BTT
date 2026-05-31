@@ -175,7 +175,7 @@ export interface ExitLogic {
 
 export interface RiskSettings {
     type: RiskType;
-    value: number;
+    value: number | string;
 }
 
 export interface PartialTakeProfit {

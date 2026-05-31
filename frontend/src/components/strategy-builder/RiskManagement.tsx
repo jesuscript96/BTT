@@ -139,7 +139,17 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                     <div className="flex gap-2 animate-in fade-in duration-200">
                         <select
                             value={risk.hard_stop.type}
-                            onChange={(e) => updateRiskSetting('hard_stop', 'type', e.target.value)}
+                            onChange={(e) => {
+                                const newType = e.target.value as RiskType;
+                                const newValue = newType === RiskType.MARKET_STRUCTURE ? 'LOD' : 2.0;
+                                onChange({
+                                    ...risk,
+                                    hard_stop: {
+                                        type: newType,
+                                        value: newValue
+                                    }
+                                });
+                            }}
                             style={{
                                 backgroundColor: 'var(--color-ec-bg-sidebar)',
                                 border: '0.5px solid var(--color-ec-border)',
@@ -153,27 +163,53 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                 cursor: 'pointer',
                             }}
                         >
-                            {Object.values(RiskType).map(type => (
-                                <option key={type} value={type}>{type}</option>
-                            ))}
+                            <option value={RiskType.PERCENTAGE}>%</option>
+                            <option value={RiskType.MARKET_STRUCTURE}>Market Structure</option>
                         </select>
-                        <input
-                            type="number"
-                            value={risk.hard_stop.value}
-                            onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
-                            style={{
-                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                border: '0.5px solid var(--color-ec-border)',
-                                borderRadius: 5,
-                                padding: '7px 10px',
-                                fontSize: 13,
-                                fontWeight: 600,
-                                color: 'var(--color-ec-text-primary)',
-                                fontFamily: 'var(--color-ec-sans)',
-                                outline: 'none',
-                                flex: 1,
-                            }}
-                        />
+                        {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
+                            <select
+                                value={risk.hard_stop.value || 'LOD'}
+                                onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value)}
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '7px 10px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    flex: 1,
+                                }}
+                            >
+                                <option value="HOD">HOD (High of Day)</option>
+                                <option value="LOD">LOD (Low of Day)</option>
+                                <option value="PMH">PMH (Premarket High)</option>
+                                <option value="PML">PML (Premarket Low)</option>
+                                <option value="Previous Max">Previous Max (Yesterday High)</option>
+                                <option value="Previous Low">Previous Low (Yesterday Low)</option>
+                            </select>
+                        ) : (
+                            <input
+                                type="number"
+                                value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
+                                onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '7px 10px',
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    flex: 1,
+                                }}
+                            />
+                        )}
                     </div>
                 )}
             </div>
@@ -333,9 +369,7 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                         cursor: 'pointer',
                                     }}
                                 >
-                                    {Object.values(RiskType).map(type => (
-                                        <option key={type} value={type}>{type}</option>
-                                    ))}
+                                    <option value={RiskType.PERCENTAGE}>%</option>
                                 </select>
                                 <div className="relative flex-1">
                                     <input
@@ -541,8 +575,6 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
                                 }}
                             >
                                 <option value="Percentage">Percentage</option>
-                                <option value="EMA13">EMA 13</option>
-                                <option value="HWM">High Water Mark</option>
                             </select>
                         </div>
                         <div>

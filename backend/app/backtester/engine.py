@@ -113,6 +113,10 @@ def _core_backtest_jit(
     pm_highs,        # float64 array
     pm_lows,         # float64 array
     vwaps,           # float64 array
+    hods,            # float64 array
+    lods,            # float64 array
+    prev_highs,      # float64 array
+    prev_lows,       # float64 array
     
     # Pre-calculated time components
     row_hours,       # int64 array
@@ -312,8 +316,22 @@ def _core_backtest_jit(
                                 val_atr = atrs[i] if atrs[i] > 0 else entry_px * 0.02
                                 stop_loss = entry_px - (val_atr * sl_val)
                             elif sl_type == RISK_STRUCTURE:
-                                val_pm = pm_lows[i] if pm_lows[i] > 0 else entry_px * 0.95
-                                stop_loss = val_pm
+                                val_struct = entry_px * 0.95
+                                if sl_val == 1.0:
+                                    val_struct = hods[i] if hods[i] > 0 else entry_px * 0.95
+                                elif sl_val == 2.0:
+                                    val_struct = lods[i] if lods[i] > 0 else entry_px * 0.95
+                                elif sl_val == 3.0:
+                                    val_struct = pm_highs[i] if pm_highs[i] > 0 else entry_px * 0.95
+                                elif sl_val == 4.0:
+                                    val_struct = pm_lows[i] if pm_lows[i] > 0 else entry_px * 0.95
+                                elif sl_val == 5.0:
+                                    val_struct = prev_highs[i] if prev_highs[i] > 0 else entry_px * 0.95
+                                elif sl_val == 6.0:
+                                    val_struct = prev_lows[i] if prev_lows[i] > 0 else entry_px * 0.95
+                                else:
+                                    val_struct = pm_lows[i] if pm_lows[i] > 0 else entry_px * 0.95
+                                stop_loss = val_struct
                             else: stop_loss = entry_px * 0.95
                             if strat_use_hard_stop[s] == 0:
                                 stop_loss = 0.0
@@ -324,8 +342,22 @@ def _core_backtest_jit(
                                 val_atr = atrs[i] if atrs[i] > 0 else entry_px * 0.02
                                 stop_loss = entry_px + (val_atr * sl_val)
                             elif sl_type == RISK_STRUCTURE:
-                                val_pm = pm_highs[i] if pm_highs[i] > 0 else entry_px * 1.05
-                                stop_loss = val_pm
+                                val_struct = entry_px * 1.05
+                                if sl_val == 1.0:
+                                    val_struct = hods[i] if hods[i] > 0 else entry_px * 1.05
+                                elif sl_val == 2.0:
+                                    val_struct = lods[i] if lods[i] > 0 else entry_px * 1.05
+                                elif sl_val == 3.0:
+                                    val_struct = pm_highs[i] if pm_highs[i] > 0 else entry_px * 1.05
+                                elif sl_val == 4.0:
+                                    val_struct = pm_lows[i] if pm_lows[i] > 0 else entry_px * 1.05
+                                elif sl_val == 5.0:
+                                    val_struct = prev_highs[i] if prev_highs[i] > 0 else entry_px * 1.05
+                                elif sl_val == 6.0:
+                                    val_struct = prev_lows[i] if prev_lows[i] > 0 else entry_px * 1.05
+                                else:
+                                    val_struct = pm_highs[i] if pm_highs[i] > 0 else entry_px * 1.05
+                                stop_loss = val_struct
                             else: stop_loss = entry_px * 1.05
                             if strat_use_hard_stop[s] == 0:
                                 stop_loss = entry_px * 2.0
@@ -911,6 +943,13 @@ class BacktestEngine:
         row_hours = df['timestamp'].dt.hour.values.astype(np.int64)
         row_minutes = df['timestamp'].dt.minute.values.astype(np.int64)
         
+        # Calculate daily HOD, LOD, prev_highs, and prev_lows arrays
+        date_series = df['timestamp'].dt.date
+        hods = df.groupby(['ticker', date_series])['high'].transform('cummax').values.astype(np.float64)
+        lods = df.groupby(['ticker', date_series])['low'].transform('cummin').values.astype(np.float64)
+        prev_highs = df['prev_high'].fillna(df['high']).values.astype(np.float64) if 'prev_high' in df.columns else df['high'].values.astype(np.float64)
+        prev_lows = df['prev_low'].fillna(df['low']).values.astype(np.float64) if 'prev_low' in df.columns else df['low'].values.astype(np.float64)
+        
         # 2. Prepare Strategies Config
         entry_signals = self.generate_boolean_signals("entry")
         exit_signals = self.generate_boolean_signals("exit")
@@ -977,7 +1016,24 @@ class BacktestEngine:
                 take_profit = dict(take_profit) if take_profit else {}
             sl_val = hard_stop.get('value', 2.0)
             sl_type_str = hard_stop.get('type', RiskType.PERCENTAGE)
-            strat_sl_types.append(_risk_type_to_int(sl_type_str))
+            sl_type_int = _risk_type_to_int(sl_type_str)
+            strat_sl_types.append(sl_type_int)
+            
+            # Map Market Structure string values to float codes
+            if sl_type_int == RISK_STRUCTURE:
+                sl_map = {
+                    "HOD": 1.0,
+                    "LOD": 2.0,
+                    "PMH": 3.0,
+                    "PML": 4.0,
+                    "Previous Max": 5.0,
+                    "Previous Low": 6.0,
+                    "PrevMax": 5.0,
+                    "PrevLow": 6.0,
+                }
+                if isinstance(sl_val, str):
+                    sl_val = sl_map.get(sl_val, 2.0) # default to LOD (2.0) if not matched
+                    
             strat_sl_values.append(float(sl_val))
             
             tp_val = take_profit.get('value', 6.0)
@@ -1011,6 +1067,7 @@ class BacktestEngine:
             self.slippage_pct,
             float(self.max_holding_minutes * 60.0),
             atrs, pm_highs, pm_lows, vwaps,
+            hods, lods, prev_highs, prev_lows,
             row_hours, row_minutes
         )
         
@@ -1180,7 +1237,7 @@ class BacktestEngine:
 
     def _calculate_ev_by_day(self) -> Dict[str, float]:
         day_buckets = {}
-        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         for trade in self.closed_trades:
             if trade.r_multiple is None: continue
             day_name = day_names[trade.entry_time.weekday()]
