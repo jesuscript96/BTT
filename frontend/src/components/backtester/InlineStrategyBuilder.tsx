@@ -23,6 +23,7 @@ export interface Draft {
   id: string;
   name: string;
   bias: "long" | "short";
+  apply_day?: "gap_day" | "gap_1_day" | "gap_2_day";
   entry_logic: EntryLogicType;
   exit_logic: ExitLogicType;
   risk_management: RiskManagementType;
@@ -70,6 +71,7 @@ interface Props {
 export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
+  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
@@ -86,6 +88,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   const resetForm = () => {
     setName("Nueva Estrategia");
     setBias("long");
+    setApplyDay("gap_day");
     setEntryLogic(initialEntryLogic);
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
@@ -95,6 +98,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
     id: `draft_${Date.now()}`,
     name,
     bias,
+    apply_day: applyDay,
     entry_logic: entryLogic,
     exit_logic: exitLogic,
     risk_management: riskManagement,
@@ -114,6 +118,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   const handleLoadDraft = (draft: Draft) => {
     setName(draft.name);
     setBias(draft.bias);
+    setApplyDay(draft.apply_day || 'gap_day');
     setEntryLogic(draft.entry_logic);
     setExitLogic(draft.exit_logic);
     setRiskManagement(draft.risk_management);
@@ -321,6 +326,110 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
         flexDirection: "column",
         gap: "0px"
       }}>
+        {/* DIVIDER 1 */}
+        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+
+        {/* SECTION: PRE-GAP CONDITIONS */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                    width: 3,
+                    height: 14,
+                    borderRadius: 1,
+                    backgroundColor: 'var(--color-ec-text-muted)',
+                    opacity: 0.5,
+                }} />
+                <h2 style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    color: 'var(--color-ec-text-muted)',
+                    margin: 0,
+                    opacity: 0.7,
+                }}>Condiciones previas para estrategias post gap</h2>
+            </div>
+            <p style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 11,
+                color: 'var(--color-ec-text-muted)',
+                margin: 0,
+                opacity: 0.5,
+                fontStyle: 'italic',
+            }}>
+                (Sección en desarrollo - Próximamente disponible)
+            </p>
+        </div>
+
+        {/* DIVIDER 2 */}
+        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+
+        {/* SECTION: APPLY DAY SELECTOR */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0 24px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                    width: 3,
+                    height: 14,
+                    borderRadius: 1,
+                    backgroundColor: 'var(--color-ec-copper)',
+                }} />
+                <h2 style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    color: 'var(--color-ec-text-high)',
+                    margin: 0,
+                }}>Aplicar estrategia en</h2>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+                {(['gap_day', 'gap_1_day', 'gap_2_day'] as const).map((day) => {
+                    const isActive = applyDay === day;
+                    const labels: Record<string, string> = {
+                        gap_day: 'Gap Day',
+                        gap_1_day: 'Gap +1 Day',
+                        gap_2_day: 'Gap +2 Day',
+                    };
+                    return (
+                        <button
+                            key={day}
+                            onClick={() => setApplyDay(day)}
+                            style={{
+                                flex: 1,
+                                padding: '10px 16px',
+                                borderRadius: 6,
+                                border: isActive ? '1px solid var(--color-ec-copper)' : '1px solid var(--color-ec-border)',
+                                backgroundColor: isActive ? 'var(--color-ec-bg-elevated)' : 'transparent',
+                                color: isActive ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 12,
+                                fontWeight: isActive ? 700 : 500,
+                                cursor: 'pointer',
+                                transition: 'all 150ms ease',
+                                textAlign: 'center',
+                            }}
+                            onMouseEnter={(e) => {
+                                if (!isActive) {
+                                    e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+                                    e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                }
+                            }}
+                            onMouseLeave={(e) => {
+                                if (!isActive) {
+                                    e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                                    e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                }
+                            }}
+                        >
+                            {labels[day]}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
