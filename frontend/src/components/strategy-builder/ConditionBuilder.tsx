@@ -1045,10 +1045,31 @@ export const GroupDisplay = ({
                                     <span style={labelStyle}>Indicador</span>
                                     <select
                                         value={formCondition.type}
-                                        style={{ ...selectStyle, opacity: 0.7, cursor: 'not-allowed' }}
-                                        disabled
+                                        style={selectStyle}
+                                        onChange={(e) => {
+                                            const type = e.target.value;
+                                            if (type === 'indicator_comparison') {
+                                                setFormCondition({
+                                                    type: 'indicator_comparison',
+                                                    source: { name: IndicatorType.BAR_CLOSE },
+                                                    comparator: Comparator.GT,
+                                                    target: { name: IndicatorType.VWAP },
+                                                    timeframe: formCondition.timeframe,
+                                                });
+                                            } else if (type === 'price_level_distance') {
+                                                setFormCondition({
+                                                    type: 'price_level_distance',
+                                                    source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
+                                                    level: { name: IndicatorType.PM_HIGH, offset: 0 },
+                                                    comparator: 'DISTANCE_LT',
+                                                    value_pct: 2.0,
+                                                    timeframe: formCondition.timeframe,
+                                                });
+                                            }
+                                        }}
                                     >
                                         <option value="indicator_comparison">Comparación</option>
+                                        <option value="price_level_distance">Distancia %</option>
                                     </select>
                                 </div>
                             </div>
