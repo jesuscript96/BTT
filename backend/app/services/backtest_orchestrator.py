@@ -156,6 +156,25 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         print(f"[DEBUG ORCH] strategy_def type: {type(strategy_def)}")
         print(f"[DEBUG ORCH] strategy_def keys: {strategy_def.keys() if isinstance(strategy_def, dict) else 'NOT A DICT'}")
         print(f"[DEBUG ORCH] bias: {strategy_def.get('bias') if isinstance(strategy_def, dict) else 'N/A'}")
+
+        # Initialize progress tracking
+        from app.routers.backtest import backtest_progress
+        backtest_progress[req.dataset_id] = {
+            "status": "running",
+            "current": 0,
+            "total": n_qualifying,
+            "percent": 0.0
+        }
+
+        def update_prog(current, total):
+            pct = min(100.0, round((current / total) * 100.0, 1)) if total > 0 else 100.0
+            backtest_progress[req.dataset_id] = {
+                "status": "running",
+                "current": current,
+                "total": total,
+                "percent": pct
+            }
+
         results = run_backtest(
             qualifying_df=qualifying,
             strategy_def=strategy_def,
@@ -175,7 +194,15 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
             day_group_iter=intraday_stream,
             n_groups_hint=n_qualifying,
             monthly_expenses=req.monthly_expenses,
+            progress_callback=update_prog,
         )
+
+        backtest_progress[req.dataset_id] = {
+            "status": "completed",
+            "current": n_qualifying,
+            "total": n_qualifying,
+            "percent": 100.0
+        }
 
         t_end = time.time()
         gc.collect()

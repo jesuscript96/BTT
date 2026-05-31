@@ -93,7 +93,7 @@ async function apiRequest<T>(
 
 // ─── Strategies ─────────────────────────────────────────────
 export function getStrategies(): Promise<Strategy[]> {
-  return apiRequest<Strategy[]>("/strategies/");
+  return apiRequest<Strategy[]>(`/strategies/?t=${Date.now()}`);
 }
 
 export function getStrategy(id: string): Promise<Strategy> {
@@ -125,7 +125,7 @@ export interface SavedQuery {
 }
 
 export function getQueries(): Promise<SavedQuery[]> {
-  return apiRequest<SavedQuery[]>("/queries/");
+  return apiRequest<SavedQuery[]>(`/queries/?t=${Date.now()}`);
 }
 
 export function createQuery(

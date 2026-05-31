@@ -158,11 +158,9 @@ export default function OptimizationSurfaceTab({
         }
       }, 500);
 
-    } catch (err: unknown) {
-      const msg =
-        err && typeof err === "object" && "message" in err
-          ? (err as { message: string }).message
-          : "Error al iniciar la optimización";
+    } catch (err: any) {
+      console.error("Error starting optimization:", err);
+      const msg = err.response?.data?.detail || err.message || "Error al iniciar la optimización";
       setError(msg);
       setLoading(false);
     }

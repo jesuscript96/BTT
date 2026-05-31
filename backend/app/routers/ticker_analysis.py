@@ -380,6 +380,17 @@ def get_ticker_analysis(ticker: str):
             except Exception as e:
                 print(f"Error fetching database tickers info fallback for {ticker}: {e}")
 
+        # Try to resolve website domain for Clearbit, fallback to FMP ticker-based logo
+        logo_url = None
+        if info.get("website"):
+            try:
+                domain = info.get("website").replace("https://", "").replace("http://", "").split("/")[0]
+                logo_url = f"https://logo.clearbit.com/{domain}"
+            except:
+                pass
+        if not logo_url:
+            logo_url = f"https://financialmodelingprep.com/image-stock/{ticker}.png"
+
         # --- Profile ---
         profile = {
             "sector": info.get("sector"),
@@ -393,7 +404,7 @@ def get_ticker_analysis(ticker: str):
             "country": info.get("country"),
             "exchange": info.get("exchange"),
             "name": info.get("longName"),
-            "logo_url": f"https://logo.clearbit.com/{info.get('website').replace('https://', '').replace('http://', '').split('/')[0]}" if info.get("website") else None
+            "logo_url": logo_url
         }
 
         # --- Market ---

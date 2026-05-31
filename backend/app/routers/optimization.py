@@ -122,6 +122,16 @@ def _run_optimization_in_background(req_data: dict, task_id: str):
 
 @router.post("/optimization/surface")
 def run_surface(req: SurfaceRequest):
+    # Check if dataset precache is running
+    from app.routers.query import precache_status
+    if req.dataset_id in precache_status:
+        status_info = precache_status[req.dataset_id]
+        if status_info.get("status") == "running":
+            percent = status_info.get("percent", 0.0)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Espera a que se cargue el dataset (progreso: {percent}%)"
+            )
     task_id = req.task_id or f"opt_{id(req)}"
 
     # Initialize progress tracking

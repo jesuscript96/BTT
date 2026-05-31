@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { getScreener } from "@/lib/api";
+import { getScreener, getAggregateIntraday } from "@/lib/api";
 import {
   ResponsiveContainer,
   ScatterChart,
@@ -17,7 +17,8 @@ import {
   Pie,
   Legend,
   AreaChart,
-  Area
+  Area,
+  Line
 } from "recharts";
 import { Activity, TrendingDown, Percent, BarChart3, Database } from "lucide-react";
 
@@ -39,15 +40,21 @@ interface ScreenerRecord {
 
 export const MarketIntelligenceCharts: React.FC = () => {
   const [data, setData] = useState<ScreenerRecord[]>([]);
+  const [intradayData, setIntradayData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadMarketData = async () => {
       try {
-        // Fetch up to 1000 records of gap data to analyze
-        const res = await getScreener("limit=1000&min_gap_at_open_pct=5") as any;
-        const records = Array.isArray(res) ? res : res.records || [];
+        // Fetch both screener records and 15-min intraday aggregate data
+        const [resScreener, resIntraday] = await Promise.all([
+          getScreener("limit=1000&min_gap_at_open_pct=5") as any,
+          getAggregateIntraday("interval=15&limit=1000&min_gap_at_open_pct=5") as any
+        ]);
+        
+        const records = Array.isArray(resScreener) ? resScreener : resScreener.records || [];
         setData(records);
+        setIntradayData(Array.isArray(resIntraday) ? resIntraday : []);
       } catch (err) {
         console.error("Error loading market intelligence data:", err);
       } finally {
@@ -142,14 +149,8 @@ export const MarketIntelligenceCharts: React.FC = () => {
     { name: "Closed Green", value: closedGreenCount, percentage: totalClosed ? ((closedGreenCount / totalClosed) * 100).toFixed(1) : 0 }
   ];
 
-  // 4. Area Chart Data: Average Intraday Fade Profile (simulated from metrics)
-  // Let's bucket the metrics into return cohorts
-  const returnCohorts = [
-    { name: "Gap Open", value: 0 },
-    { name: "PMH Gap", value: data.reduce((acc, r) => acc + r.pmh_gap_pct, 0) / (data.length || 1) },
-    { name: "PM Fade", value: -data.reduce((acc, r) => acc + r.pmh_fade_pct, 0) / (data.length || 1) },
-    { name: "Day Return", value: data.reduce((acc, r) => acc + r.day_return_pct, 0) / (data.length || 1) }
-  ];
+  // 4. Area Chart Data is now fetched directly via intradayData
+
 
   return (
     <div style={{
@@ -369,12 +370,12 @@ export const MarketIntelligenceCharts: React.FC = () => {
         {/* Chart 4: Average Fade Progression */}
         <div style={chartContainerStyle}>
           <div style={chartHeaderStyle}>
-            <h3 style={chartTitleStyle}>Average Fade Signature</h3>
-            <span style={chartSubtitleStyle}>Mean return trajectory relative to Pre-Market High</span>
+            <h3 style={chartTitleStyle}>Intraday Average Performance</h3>
+            <span style={chartSubtitleStyle}>Minute-by-minute return trajectory relative to Regular Market Open (15m intervals)</span>
           </div>
           <div style={{ height: "300px", width: "100%" }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={returnCohorts} margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
+              <AreaChart data={intradayData} margin={{ top: 10, right: 10, bottom: 10, left: 0 }}>
                 <defs>
                   <linearGradient id="fadeGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="var(--color-ec-copper)" stopOpacity={0.3}/>
@@ -383,7 +384,7 @@ export const MarketIntelligenceCharts: React.FC = () => {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-ec-border)" vertical={false} />
                 <XAxis
-                  dataKey="name"
+                  dataKey="time"
                   stroke="var(--color-ec-text-muted)"
                   fontSize={9}
                   tickLine={false}
@@ -396,14 +397,43 @@ export const MarketIntelligenceCharts: React.FC = () => {
                   axisLine={false}
                   tickFormatter={(v) => `${v.toFixed(1)}%`}
                 />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip 
+                  contentStyle={tooltipStyle} 
+                  formatter={(value: number) => [`${value.toFixed(2)}%`]} 
+                />
+                <Legend 
+                  verticalAlign="top" 
+                  height={36} 
+                  iconType="circle"
+                  formatter={(value) => (
+                    <span style={{
+                      fontFamily: "'General Sans', sans-serif",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "var(--color-ec-text-muted)",
+                      textTransform: "uppercase"
+                    }}>
+                      {value === "avg_change" ? "Mean Return" : "Median Return"}
+                    </span>
+                  )}
+                />
                 <Area
+                  name="avg_change"
                   type="monotone"
-                  dataKey="value"
+                  dataKey="avg_change"
                   stroke="var(--color-ec-copper)"
                   strokeWidth={2}
                   fillOpacity={1}
                   fill="url(#fadeGrad)"
+                />
+                <Line 
+                  name="median_change"
+                  type="monotone" 
+                  dataKey="median_change" 
+                  stroke="var(--color-ec-text-high)" 
+                  strokeDasharray="5 5"
+                  strokeWidth={1.5}
+                  dot={false}
                 />
               </AreaChart>
             </ResponsiveContainer>

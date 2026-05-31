@@ -1018,31 +1018,10 @@ export const GroupDisplay = ({
                                     <span style={labelStyle}>Indicador</span>
                                     <select
                                         value={formCondition.type}
-                                        onChange={(e) => {
-                                            const type = e.target.value;
-                                            if (type === 'indicator_comparison') {
-                                                setFormCondition({
-                                                    type: 'indicator_comparison',
-                                                    source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
-                                                    comparator: Comparator.GT,
-                                                    target: { name: IndicatorType.VWAP, offset: 0 },
-                                                    timeframe: formCondition.timeframe || parentTimeframe
-                                                });
-                                            } else {
-                                                setFormCondition({
-                                                    type: 'price_level_distance',
-                                                    source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
-                                                    level: { name: IndicatorType.PM_HIGH, offset: 0 },
-                                                    comparator: 'DISTANCE_LT',
-                                                    value_pct: 2.0,
-                                                    timeframe: formCondition.timeframe || parentTimeframe
-                                                });
-                                            }
-                                        }}
-                                        style={selectStyle}
+                                        style={{ ...selectStyle, opacity: 0.7, cursor: 'not-allowed' }}
+                                        disabled
                                     >
                                         <option value="indicator_comparison">Comparación</option>
-                                        <option value="price_level_distance">Distancia %</option>
                                     </select>
                                 </div>
                             </div>

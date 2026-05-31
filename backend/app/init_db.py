@@ -30,6 +30,7 @@ def init_db():
             cur.execute("""
                 CREATE OR REPLACE VIEW massive.daily_metrics AS 
                 SELECT * EXCLUDE (pmh_gap_pct), 
+                       gap_pct AS gap_at_open_pct,
                        ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct 
                 FROM read_parquet('gs://strategybuilderbbdd/cold_storage/daily_metrics/*/*/*.parquet', hive_partitioning=true)
             """)
@@ -64,6 +65,7 @@ def init_db():
                     year INTEGER,
                     month INTEGER,
                     gap_pct DOUBLE,
+                    gap_at_open_pct DOUBLE,
                     open DOUBLE,
                     close DOUBLE,
                     high DOUBLE,

@@ -1496,6 +1496,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [finvizNews, setFinvizNews] = useState<FinvizNewsItem[]>([]);
     const [showFullDesc, setShowFullDesc] = useState(false);
     const [logoFailed, setLogoFailed] = useState(false);
+    const [logoUrlIndex, setLogoUrlIndex] = useState(0);
 
     // Adjust state when props/state change during render (standard React pattern)
     const [prevInitialTicker, setPrevInitialTicker] = useState(initialTicker);
@@ -1508,7 +1509,23 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     if (selectedTicker !== prevSelectedTicker) {
         setPrevSelectedTicker(selectedTicker);
         setLogoFailed(false);
+        setLogoUrlIndex(0);
     }
+
+    // Generate candidate logo URLs to try sequentially
+    const logoCandidates = React.useMemo(() => {
+        const candidates: string[] = [];
+        if (data?.profile?.logo_url) {
+            candidates.push(data.profile.logo_url);
+        }
+        if (selectedTicker) {
+            candidates.push(`https://financialmodelingprep.com/image-stock/${selectedTicker.toUpperCase()}.png`);
+            candidates.push(`https://images.financialmodelingprep.com/symbol/${selectedTicker.toUpperCase()}.png`);
+        }
+        return Array.from(new Set(candidates.filter(Boolean)));
+    }, [data?.profile?.logo_url, selectedTicker]);
+
+    const currentLogoUrl = logoCandidates[logoUrlIndex];
 
     // Fetch Data
     useEffect(() => {
@@ -1740,11 +1757,17 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 paddingBottom: 16
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {!logoFailed && data?.profile?.logo_url ? (
+                    {!logoFailed && currentLogoUrl ? (
                         <img 
-                            src={data.profile.logo_url} 
+                            src={currentLogoUrl} 
                             alt={selectedTicker} 
-                            onError={() => setLogoFailed(true)}
+                            onError={() => {
+                                if (logoUrlIndex < logoCandidates.length - 1) {
+                                    setLogoUrlIndex(prev => prev + 1);
+                                } else {
+                                    setLogoFailed(true);
+                                }
+                            }}
                             style={{
                                 width: 40,
                                 height: 40,

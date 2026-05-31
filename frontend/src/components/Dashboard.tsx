@@ -8,6 +8,23 @@ import {
 import { getTickerIntraday } from "@/lib/api";
 import { MarketIntelligenceCharts } from "./MarketIntelligenceCharts";
 
+const CustomAreaLabel: React.FC<{ value?: string, x?: number, y?: number, width?: number, height?: number }> = ({ x, y, width, height, value }) => {
+    return (
+        <text
+            x={(x ?? 0) + (width ?? 0) / 2}
+            y={(y ?? 0) + 15}
+            fill="var(--color-ec-text-muted)"
+            fontSize={8}
+            fontWeight={700}
+            fontFamily="'General Sans', sans-serif"
+            textAnchor="middle"
+            letterSpacing="1px"
+        >
+            {value}
+        </text>
+    );
+};
+
 interface DistributionItem {
     label: string;
     value: number;
@@ -51,6 +68,8 @@ interface DashboardProps {
     data: unknown[];
     aggregateSeries?: TimeSeriesItem[] | null;
     isLoadingAggregate?: boolean;
+    interval?: number;
+    onIntervalChange?: (interval: number) => void;
 }
 
 type StatMode = 'avg' | 'p25' | 'p50' | 'p75';
@@ -142,7 +161,7 @@ const formatLargeNumber = (num: number) => {
 };
 
 // ─── Main Dashboard ───────────────────────────────────────────────────
-export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data, isLoadingAggregate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, data, isLoadingAggregate, interval = 1, onIntervalChange }) => {
     const [mode, setMode] = React.useState<StatMode>('avg');
 
     const averages = stats?.[mode] ?? stats?.avg;
@@ -395,7 +414,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
                     flexDirection: 'column',
                 }}>
                     <div style={{ height: '480px', width: '100%' }}>
-                        <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isLoadingAggregate} />
+                        <IntradayDashboardChart data={data} aggregateSeries={aggregateSeries} isLoadingAggregate={isLoadingAggregate} interval={interval} onIntervalChange={onIntervalChange} />
                     </div>
                 </div>
             </div>
@@ -404,7 +423,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ stats, aggregateSeries, da
 };
 
 // ─── Intraday Chart (Pure inline styles & custom variables) ───────────
-const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: { data: any[], aggregateSeries?: TimeSeriesItem[] | null, isLoadingAggregate?: boolean }) => {
+const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate, interval = 1, onIntervalChange }: { data: any[], aggregateSeries?: TimeSeriesItem[] | null, isLoadingAggregate?: boolean, interval?: number, onIntervalChange?: (interval: number) => void }) => {
     const [chartData, setChartData] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(false);
     const [activeTicker, setActiveTicker] = React.useState<string>("");
@@ -420,6 +439,27 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
         () => !!(aggregateSeries && aggregateSeries.length > 0),
         [aggregateSeries]
     );
+
+    const preBounds = React.useMemo(() => {
+        const times = chartData.map(d => d.time || d.timeShort).filter(Boolean);
+        const valid = times.filter(t => t >= "04:00" && t < "09:30");
+        if (valid.length === 0) return null;
+        return { x1: valid[0], x2: valid[valid.length - 1] };
+    }, [chartData]);
+
+    const marketBounds = React.useMemo(() => {
+        const times = chartData.map(d => d.time || d.timeShort).filter(Boolean);
+        const valid = times.filter(t => t >= "09:30" && t < "16:00");
+        if (valid.length === 0) return null;
+        return { x1: valid[0], x2: valid[valid.length - 1] };
+    }, [chartData]);
+
+    const postBounds = React.useMemo(() => {
+        const times = chartData.map(d => d.time || d.timeShort).filter(Boolean);
+        const valid = times.filter(t => t >= "16:00" && t < "20:00");
+        if (valid.length === 0) return null;
+        return { x1: valid[0], x2: valid[valid.length - 1] };
+    }, [chartData]);
 
     React.useEffect(() => {
         if (aggregateSeries === null) return;
@@ -594,7 +634,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, pre: e.target.checked }))}
                                     style={{ display: 'none' }}
                                 />
-                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.pre ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.pre ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.pre ? '#38bdf8' : 'var(--color-ec-text-muted)', background: sessions.pre ? '#38bdf8' : 'transparent', transition: 'all 150ms' }} />
                                 <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.pre ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Pre</span>
                             </label>
                             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
@@ -604,7 +644,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     onChange={(e) => setSessions(prev => ({ ...prev, market: e.target.checked }))}
                                     style={{ display: 'none' }}
                                 />
-                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.market ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.market ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
+                                <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.market ? 'var(--color-ec-profit)' : 'var(--color-ec-text-muted)', background: sessions.market ? 'var(--color-ec-profit)' : 'transparent', transition: 'all 150ms' }} />
                                 <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.market ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Market</span>
                             </label>
                             <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
@@ -615,10 +655,43 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                     style={{ display: 'none' }}
                                 />
                                 <div style={{ width: 11, height: 11, borderRadius: 2, border: '0.5px solid', borderColor: sessions.post ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)', background: sessions.post ? 'var(--color-ec-copper)' : 'transparent', transition: 'all 150ms' }} />
-                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.post ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>Post</span>
+                                <span style={{ fontFamily: "'General Sans', sans-serif", fontSize: 10, fontWeight: 500, color: sessions.post ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)' }}>After-market</span>
                             </label>
                         </div>
                     </div>
+
+                    {/* Interval Toggle Control */}
+                    {isAggregate && onIntervalChange && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Interval:</span>
+                            <div style={{
+                                display: 'flex',
+                                backgroundColor: 'var(--color-ec-bg-elevated)',
+                                borderRadius: '4px',
+                                padding: '2px',
+                                border: '0.5px solid var(--color-ec-border)'
+                            }}>
+                                {([1, 15] as const).map((val) => (
+                                    <span
+                                        key={val}
+                                        onClick={() => onIntervalChange(val)}
+                                        style={{
+                                            cursor: 'pointer',
+                                            padding: '2px 8px',
+                                            borderRadius: '3px',
+                                            fontSize: '9px',
+                                            fontWeight: 700,
+                                            color: interval === val ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                                            background: interval === val ? 'var(--color-ec-copper)' : 'transparent',
+                                            transition: 'all 150ms ease'
+                                        }}
+                                    >
+                                        {val}m
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '9px', fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Smoothing:</span>
@@ -717,14 +790,40 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                                 formatter={(value: any) => [value.toFixed(2) + (isAggregate ? "%" : ""), ""]}
                             />
 
-                            {sessions.pre && (
-                                <ReferenceArea x1="04:00" x2="09:30" fill="var(--color-ec-text-muted)" fillOpacity={0.04} />
+                            {sessions.pre && preBounds && (
+                                <ReferenceArea 
+                                    x1={preBounds.x1} 
+                                    x2={preBounds.x2} 
+                                    fill="rgba(56, 189, 248, 0.04)" 
+                                    label={<CustomAreaLabel value="PRE-MARKET" />}
+                                />
                             )}
-                            {sessions.market && (
-                                <ReferenceArea x1="09:30" x2="16:00" fill="var(--color-ec-profit)" fillOpacity={0.02} />
+                            {sessions.market && marketBounds && (
+                                <ReferenceArea 
+                                    x1={marketBounds.x1} 
+                                    x2={marketBounds.x2} 
+                                    fill="transparent" 
+                                    label={<CustomAreaLabel value="REGULAR SESSION" />}
+                                />
                             )}
-                            {sessions.post && (
-                                <ReferenceArea x1="16:00" x2="20:00" fill="var(--color-ec-copper)" fillOpacity={0.04} />
+                            {sessions.post && postBounds && (
+                                <ReferenceArea 
+                                    x1={postBounds.x1} 
+                                    x2={postBounds.x2} 
+                                    fill="rgba(216, 122, 61, 0.04)" 
+                                    label={<CustomAreaLabel value="AFTER-MARKET" />}
+                                />
+                            )}
+
+                            {/* Session boundaries (dashed lines) */}
+                            {sessions.pre && sessions.market && marketBounds && (
+                                <ReferenceLine x={marketBounds.x1} stroke="var(--color-ec-border)" strokeDasharray="3 3" />
+                            )}
+                            {sessions.market && sessions.post && postBounds && (
+                                <ReferenceLine x={postBounds.x1} stroke="var(--color-ec-border)" strokeDasharray="3 3" />
+                            )}
+                            {sessions.pre && sessions.post && !sessions.market && postBounds && (
+                                <ReferenceLine x={postBounds.x1} stroke="var(--color-ec-border)" strokeDasharray="3 3" />
                             )}
 
                             {isAggregate ? (
@@ -735,7 +834,7 @@ const IntradayDashboardChart = ({ data, aggregateSeries, isLoadingAggregate }: {
                             ) : (
                                 <>
                                     {pmHigh > 0 && <ReferenceLine y={pmHigh} stroke="var(--color-ec-copper)" strokeDasharray="3 3" label={{ position: 'insideRight', value: 'PMH', fill: 'var(--color-ec-copper)', fontSize: 9, fontFamily: 'General Sans' }} />}
-                                    <ReferenceLine x="09:30" stroke="var(--color-ec-border)" strokeDasharray="3 3" />
+                                    {!sessions.pre && <ReferenceLine x="09:30" stroke="var(--color-ec-border)" strokeDasharray="3 3" />}
                                     <Area type="monotone" dataKey="close" stroke="var(--color-ec-profit)" strokeWidth={2} fillOpacity={0.06} fill="var(--color-ec-profit)" dot={false} animationDuration={300} />
                                 </>
                             )}
