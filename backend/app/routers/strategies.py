@@ -59,7 +59,7 @@ def create_strategy(strategy: StrategyCreate):
 
     return full_strategy
 
-@router.get("/", response_model=List[Strategy])
+@router.get("/")
 def list_strategies():
     con = get_user_db_connection()
     try:
@@ -92,27 +92,81 @@ def list_strategies():
         except Exception as e:
             print(f"Error building Strategy: {e}")
             continue
-    return strategies
 
-@router.get("/{strategy_id}", response_model=Strategy)
+    # Fallback: GCS hot cache — return raw dicts (legacy records may not pass Pydantic strict)
+    out: list = [s.model_dump() if hasattr(s, "model_dump") else s for s in strategies]
+    try:
+        from app.db.gcs_cache import get_strategies_df
+        df = get_strategies_df()
+        if df is not None and not df.empty:
+            local_ids = {s.get("id") for s in out}
+            for record in df.to_dict(orient="records"):
+                if record.get("id") not in local_ids:
+                    definition = record.get("definition", {})
+                    if isinstance(definition, str):
+                        try:
+                            definition = json.loads(definition)
+                        except Exception:
+                            definition = {}
+                    out.append({**definition,
+                        "id": record.get("id"),
+                        "name": record.get("name"),
+                        "description": record.get("description"),
+                        "created_at": str(record.get("created_at", "")),
+                        "updated_at": str(record.get("updated_at", "")),
+                    })
+    except Exception as e:
+        print(f"[WARN] Could not read strategies from GCS: {e}")
+
+    return out
+
+@router.get("/{strategy_id}")
 def get_strategy(strategy_id: str):
     con = get_user_db_connection()
     try:
         row = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Strategy not found")
-        strategy_dict = json.loads(row[5]) if isinstance(row[5], str) else (row[5] or {})
-        strategy_dict["id"] = row[0]
-        strategy_dict["name"] = row[1]
-        strategy_dict["description"] = row[2]
-        strategy_dict["created_at"] = str(row[3]) if row[3] else None
-        strategy_dict["updated_at"] = str(row[4]) if row[4] else None
-        return Strategy(**strategy_dict)
+        if row:
+            strategy_dict = json.loads(row[5]) if isinstance(row[5], str) else (row[5] or {})
+            strategy_dict["id"] = row[0]
+            strategy_dict["name"] = row[1]
+            strategy_dict["description"] = row[2]
+            strategy_dict["created_at"] = str(row[3]) if row[3] else None
+            strategy_dict["updated_at"] = str(row[4]) if row[4] else None
+            return strategy_dict
     finally:
         con.close()
 
+    # Fallback: GCS — return raw dict (legacy records may not pass Pydantic strict)
+    try:
+        from app.db.gcs_cache import get_strategies_df
+        df = get_strategies_df()
+        if df is not None and not df.empty:
+            row_gcs = df[df["id"] == strategy_id]
+            if not row_gcs.empty:
+                record = row_gcs.iloc[0].to_dict()
+                definition = record.get("definition", {})
+                if isinstance(definition, str):
+                    try:
+                        definition = json.loads(definition)
+                    except Exception:
+                        definition = {}
+                return {**definition,
+                    "id": record.get("id"),
+                    "name": record.get("name"),
+                    "description": record.get("description"),
+                    "created_at": str(record.get("created_at", "")),
+                    "updated_at": str(record.get("updated_at", "")),
+                }
+    except Exception as e:
+        print(f"[WARN] Could not read strategy {strategy_id} from GCS: {e}")
+
+    raise HTTPException(status_code=404, detail="Strategy not found")
+
 @router.delete("/{strategy_id}")
 def delete_strategy(strategy_id: str):
+    # NOTE: DELETE only works for local strategies.
+    # Strategies that only exist in GCS parquet cannot be deleted from here.
+    # GCS parquet is read-only from the backend.
     lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
