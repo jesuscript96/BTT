@@ -384,13 +384,26 @@ def list_datasets():
                         print(f"[WARN] Could not query pair count for dataset {row[0]}: {pc_err}")
                         pair_count = filters.get("pair_count", 0)
 
+                    # Calcular cobertura real desde dataset_pairs (Prioridad 4 IS-OOS)
+                    try:
+                        date_range = con.execute("""
+                            SELECT MIN(CAST(date AS VARCHAR)), MAX(CAST(date AS VARCHAR))
+                            FROM dataset_pairs
+                            WHERE dataset_id = ?
+                        """, [row[0]]).fetchone()
+                        min_date = date_range[0] if date_range and date_range[0] else (filters.get("start_date") or filters.get("date_from"))
+                        max_date = date_range[1] if date_range and date_range[1] else (filters.get("end_date") or filters.get("date_to"))
+                    except Exception:
+                        min_date = filters.get("start_date") or filters.get("date_from")
+                        max_date = filters.get("end_date") or filters.get("date_to")
+
                     results.append({
                         "id": row[0],
                         "name": row[1],
                         "filters": filters,
                         "pair_count": pair_count,
-                        "min_date": filters.get("start_date") or filters.get("date_from"),
-                        "max_date": filters.get("end_date") or filters.get("date_to"),
+                        "min_date": min_date,
+                        "max_date": max_date,
                         "created_at": str(row[3]) if row[3] else None,
                         "updated_at": str(row[4]) if row[4] else None,
                     })

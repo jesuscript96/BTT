@@ -855,8 +855,8 @@ export default function BacktestPanel({
             <input
               type="date"
               value={startDate}
-              min={selectedDs?.min_date}
-              max={endDate || selectedDs?.max_date}
+              min={selectedDs?.min_date || "2020-01-01"}
+              max={endDate || selectedDs?.max_date || "2030-12-31"}
               onChange={(e) => setStartDate(e.target.value)}
               className="w-full border border-[var(--border)]"
               style={{
@@ -888,8 +888,8 @@ export default function BacktestPanel({
             <input
               type="date"
               value={endDate}
-              min={startDate || selectedDs?.min_date}
-              max={selectedDs?.max_date}
+              min={startDate || selectedDs?.min_date || "2020-01-01"}
+              max={selectedDs?.max_date || "2030-12-31"}
               onChange={(e) => setEndDate(e.target.value)}
               className="w-full border border-[var(--border)]"
               style={{
