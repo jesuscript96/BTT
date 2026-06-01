@@ -9,7 +9,7 @@ import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
 import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
-import { createStrategy, createQuery, getStrategy } from "@/lib/api";
+import { createStrategy, createQuery, getStrategy, saveBacktest } from "@/lib/api";
 import {
   runBacktest,
   runBacktestWithDefinition,
@@ -612,7 +612,7 @@ export default function Home() {
                           }
                         }
                       }
-                      await createStrategy({
+                      const savedStrategy = await createStrategy({
                         name: saveName.trim(),
                         description,
                         bias: strategyToSave.bias,
@@ -620,6 +620,21 @@ export default function Home() {
                         exit_logic: strategyToSave.exit_logic,
                         risk_management: strategyToSave.risk_management,
                       });
+                      const newStrategyId = savedStrategy.id;
+
+                      // Persist the backtest run linked to the newly created strategy so
+                      // the Baul can display real metrics (equity, win rate, sharpe, etc.)
+                      if (result && newStrategyId) {
+                        try {
+                          await saveBacktest({
+                            strategy_ids: [newStrategyId],
+                            results_json: result as unknown as Record<string, unknown>,
+                          });
+                        } catch (e) {
+                          console.warn("No se pudieron guardar los resultados del backtest:", e);
+                        }
+                      }
+
                       setStrategiesRefresh((prev) => prev + 1);
                       setShowSaveModal(false);
                       setDraftStrategy(null);
