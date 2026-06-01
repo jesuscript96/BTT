@@ -414,11 +414,27 @@ def list_datasets():
     
     # Fallback: GCS hot cache (datasets historicos)
     try:
+        import json as _json
         df = get_saved_queries_df()
         if df is not None and not df.empty:
             local_ids = {r["id"] for r in results}
             for record in df.to_dict(orient="records"):
                 if record.get("id") not in local_ids:
+                    # Parsear filters si vino como string del parquet
+                    raw_filters = record.get("filters")
+                    if isinstance(raw_filters, str):
+                        try:
+                            record["filters"] = _json.loads(raw_filters)
+                        except Exception:
+                            record["filters"] = {}
+                    f = record.get("filters") or {}
+                    # Enrich con min_date/max_date desde filters (no hay dataset_pairs en GCS)
+                    if "min_date" not in record:
+                        record["min_date"] = f.get("start_date") or f.get("date_from")
+                    if "max_date" not in record:
+                        record["max_date"] = f.get("end_date") or f.get("date_to")
+                    if "pair_count" not in record:
+                        record["pair_count"] = 0
                     results.append(record)
     except Exception as e:
         print(f"[WARN] Could not read datasets from GCS: {e}")
