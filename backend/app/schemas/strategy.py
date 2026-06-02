@@ -33,7 +33,7 @@ class IndicatorType(str, Enum):
     ATR = "ATR"
     ADX = "ADX"
     BOLLINGER_BANDS = "Bollinger Bands"
-    DONCHIAN = "Donchian Channels"
+    DONCHIAN = "Donchian"
     PARABOLIC_SAR = "Parabolic SAR"
 
     # Volume
@@ -48,8 +48,10 @@ class IndicatorType(str, Enum):
     BAR_OPEN = "Bar Open"
     HIGH_BAR = "High Bar"
     LOW_BAR = "Low Bar"
-    PMH = "Pre-Market High"
-    PML = "Pre-Market Low"
+    PMH = "PM High"
+    PML = "PM Low"
+    PM_OPEN = "PM Open"
+    AM_OPEN = "AM Open"
     RTH_HIGH = "RTH High"
     RTH_LOW = "RTH Low"
     RTH_OPEN = "RTH Open"
@@ -57,8 +59,11 @@ class IndicatorType(str, Enum):
     Y_LOW = "Yesterday Low"
     Y_OPEN = "Yesterday Open"
     Y_CLOSE = "Yesterday Close"
-    MAX_X_DAYS = "Max of last X days"
-    MIN_X_DAYS = "Min of last X days"
+    Y_VOLUME = "Yesterday Volume"
+    MAX_X_DAYS = "High of last X days"
+    MIN_X_DAYS = "Low of last X days"
+    PREVIOUS_MAX = "Previous max"
+    PREVIOUS_MIN = "Previous min"
 
     # Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs"
@@ -72,6 +77,8 @@ class IndicatorType(str, Enum):
     OPENING_RANGE_AM_PLUS = "Opening Range AM +"
     OPENING_RANGE_AM_MINUS = "Opening Range AM -"
     HEIKIN_ASHI = "Heikin-Ashi"
+    CANDLE_RANGE_PCT = "Candle Range %"
+    ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High"
     
     # Time / Others
     TIME_OF_DAY = "Time of Day"
@@ -143,9 +150,21 @@ class IndicatorConfig(BaseModel):
     @classmethod
     def normalize_name(cls, v):
         if isinstance(v, str):
+            # Alias map para compatibilidad con estrategias antiguas
+            LEGACY_ALIASES = {
+                "pre-market high": "PM High",
+                "pre-market low": "PM Low",
+                "max of last x days": "High of last X days",
+                "min of last x days": "Low of last X days",
+                "donchian channels": "Donchian",
+                "pmh": "PM High",
+                "pml": "PM Low",
+            }
             val_lower = v.lower()
+            if val_lower in LEGACY_ALIASES:
+                v = LEGACY_ALIASES[val_lower]
             for item in IndicatorType:
-                if item.value.lower() == val_lower:
+                if item.value.lower() == v.lower():
                     return item
         return v
     period2: Optional[int] = None # Fast period, signal period, etc.

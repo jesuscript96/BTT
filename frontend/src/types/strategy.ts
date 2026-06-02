@@ -44,7 +44,6 @@ export enum IndicatorType {
     DONCHIAN = "Donchian",
     BOLLINGER_BANDS = "Bollinger Bands",
     ACCUMULATED_VOLUME = "Accumulated Volume",
-    YESTERDAY_ACCUMULATED_VOLUME = "Yesterday Accumulated Volume",
     YESTERDAY_VOLUME = "Yesterday Volume",
     RVOL = "RVOL",
     VOLUME = "Volume",

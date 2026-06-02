@@ -63,7 +63,7 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
         IndicatorType.DONCHIAN, IndicatorType.BOLLINGER_BANDS,
-        IndicatorType.ACCUMULATED_VOLUME, IndicatorType.YESTERDAY_ACCUMULATED_VOLUME,
+        IndicatorType.ACCUMULATED_VOLUME,
         IndicatorType.YESTERDAY_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
     ],
@@ -122,7 +122,6 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.DONCHIAN]: "Donchian",
     [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
     [IndicatorType.ACCUMULATED_VOLUME]: "Accum. Volume",
-    [IndicatorType.YESTERDAY_ACCUMULATED_VOLUME]: "Yesterday Accum. Volume",
     [IndicatorType.YESTERDAY_VOLUME]: "Yesterday Volume",
     [IndicatorType.RVOL]: "RVOL",
     [IndicatorType.VOLUME]: "Volume",
