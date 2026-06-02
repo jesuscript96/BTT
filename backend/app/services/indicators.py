@@ -518,7 +518,6 @@ INDICATOR_NAME_MAP = {
     "Donchian": "Donchian Channels",
     "Bollinger Bands": "Bollinger Bands",
     "Accumulated Volume": "Accumulated Volume",
-    "Yesterday Accumulated Volume": "Yesterday Accumulated Volume",
     "Yesterday Volume": "Yesterday Volume",
     "RVOL": "RVOL",
 

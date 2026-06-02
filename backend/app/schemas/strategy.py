@@ -60,7 +60,6 @@ class IndicatorType(str, Enum):
     Y_OPEN = "Yesterday Open"
     Y_CLOSE = "Yesterday Close"
     Y_VOLUME = "Yesterday Volume"
-    Y_ACC_VOLUME = "Yesterday Accumulated Volume"
     MAX_X_DAYS = "High of last X days"
     MIN_X_DAYS = "Low of last X days"
     PREVIOUS_MAX = "Previous max"
