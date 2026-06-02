@@ -17,7 +17,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, _parse_risk_management
+from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def
 from app.services.portfolio_sim import simulate
 
 logger = logging.getLogger("backtester.engine")
@@ -25,6 +25,10 @@ logger = logging.getLogger("backtester.engine")
 # Pre-computed time boundaries for patch mask (avoid recreating per iteration)
 _PATCH_START = datetime.time(8, 0)
 _PATCH_END = datetime.time(8, 45)
+
+# Cache for market session masks. Keyed by timestamp structure (not date),
+# so all days with identical intraday structure share one entry.
+_sessions_mask_cache: dict = {}
 
 
 
@@ -63,6 +67,9 @@ def run_backtest(
 
     qual_lookup = _build_qualifying_lookup(qualifying_df)
     del qualifying_df
+
+    # Pre-compile strategy definition once — saves dict lookups per day inside the loop.
+    compiled_strategy = compile_strategy_def(strategy_def) if strategy_def else None
 
     empty_result = {
         "aggregate_metrics": _aggregate_metrics([], [], [], [], init_cash, risk_r),
@@ -186,7 +193,7 @@ def run_backtest(
                 _parse_risk_management(risk, mini_df, daily_stats, {})
         else:
             try:
-                signals = translate_strategy(mini_df, strategy_def, daily_stats)
+                signals = translate_strategy(mini_df, strategy_def, daily_stats, compiled=compiled_strategy)
             except Exception:
                 del mini_df
                 continue
@@ -339,7 +346,7 @@ def run_backtest(
     del qual_lookup
     if intraday_df is not None:
         del intraday_df
-    gc.collect()
+    # Python's incremental GC handles these dels in background; no need to force.
     _release_memory()
     t_loop = time.time()
     total_days = days_with_entries
@@ -849,47 +856,69 @@ def _aggregate_metrics(
 
 
 def _get_market_sessions_mask(
-    timestamps: pd.Series, 
-    sessions: list[str], 
-    custom_start: str | None = None, 
+    timestamps: pd.Series,
+    sessions: list[str],
+    custom_start: str | None = None,
     custom_end: str | None = None
 ) -> np.ndarray:
     if not sessions or "all" in sessions:
         return np.ones(len(timestamps), dtype=bool)
-    
+
     # Ensure timestamp is datetime
     if not pd.api.types.is_datetime64_any_dtype(timestamps):
         timestamps = pd.to_datetime(timestamps)
-    
+
     total_mins = timestamps.dt.hour * 60 + timestamps.dt.minute
-    mask = np.zeros(len(timestamps), dtype=bool)
-    
+    total_mins_arr = total_mins.values if hasattr(total_mins, "values") else np.asarray(total_mins)
+    n = len(total_mins_arr)
+
+    # Cache lookup: mask depends only on (sessions config, exact minute-of-day
+    # sequence). Bytes-hash the minute array — O(n) memcpy is faster than
+    # recomputing the mask, and always correct (handles holidays / gaps).
+    if n > 0:
+        mins_int16 = total_mins_arr.astype(np.int16, copy=False)
+        cache_key = (
+            tuple(sorted(sessions)),
+            custom_start,
+            custom_end,
+            mins_int16.tobytes(),
+        )
+        cached = _sessions_mask_cache.get(cache_key)
+        if cached is not None:
+            return cached
+    else:
+        cache_key = None
+
+    mask = np.zeros(n, dtype=bool)
+
     import datetime
-    
+
     for s in sessions:
         s = s.lower().strip()
         if s in ("regular", "market"):
             s = "rth"
         if s == "pre":
             # 04:00 - 09:30 (240 - 570)
-            mask |= (total_mins >= 240) & (total_mins < 570)
+            mask |= (total_mins_arr >= 240) & (total_mins_arr < 570)
         elif s == "rth":
             # 09:30 - 16:00 (570 - 960)
-            mask |= (total_mins >= 570) & (total_mins < 960)
+            mask |= (total_mins_arr >= 570) & (total_mins_arr < 960)
         elif s == "post":
             # 16:00 - 20:00 (960 - 1200)
-            mask |= (total_mins >= 960) & (total_mins < 1200)
+            mask |= (total_mins_arr >= 960) & (total_mins_arr < 1200)
         elif s == "custom" and custom_start and custom_end:
             try:
                 c_start = datetime.datetime.strptime(custom_start, "%H:%M")
                 c_end = datetime.datetime.strptime(custom_end, "%H:%M")
                 s_mins = c_start.hour * 60 + c_start.minute
                 e_mins = c_end.hour * 60 + c_end.minute
-                mask |= (total_mins >= s_mins) & (total_mins < e_mins)
+                mask |= (total_mins_arr >= s_mins) & (total_mins_arr < e_mins)
             except Exception:
                 pass
-                
-    return mask.values if hasattr(mask, 'values') else mask
+
+    if cache_key is not None:
+        _sessions_mask_cache[cache_key] = mask
+    return mask
 
 def _safe_float(val) -> float | None:
     try:

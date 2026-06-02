@@ -11,6 +11,82 @@ from app.scheduler import start_scheduler
 from app.database import get_db_connection
 from app.init_db import init_db
 
+
+def _startup_recovery_precache() -> None:
+    """Scan saved_queries created in the last 48h and re-trigger their intraday
+    precache so a backend restart can't leave warm datasets stranded. Runs in
+    a daemon thread — must NOT raise. Idempotent: cached months hit disk cache.
+    """
+    try:
+        import json as _json
+        import threading as _threading
+        from datetime import datetime, timedelta
+        from app.database import get_user_db_connection, get_user_db_lock
+        from app.routers.query import _precache_dataset_intraday
+
+        cutoff = datetime.now() - timedelta(hours=48)
+        lock = get_user_db_lock()
+        with lock:
+            con = get_user_db_connection()
+            try:
+                rows = con.execute(
+                    "SELECT id, name, filters FROM saved_queries "
+                    "WHERE created_at >= ? "
+                    "ORDER BY created_at DESC LIMIT 10",
+                    [cutoff],
+                ).fetchall()
+            finally:
+                con.close()
+
+        if not rows:
+            print("[RECOVERY] No recent datasets (<48h) found; nothing to re-precache.")
+            return
+
+        print(f"[RECOVERY] Found {len(rows)} recent dataset(s); re-triggering precache...")
+        for row in rows:
+            dataset_id, ds_name, raw_filters = row[0], row[1], row[2]
+            # filters comes back as a dict or JSON string depending on DuckDB driver path.
+            if isinstance(raw_filters, str):
+                try:
+                    filters = _json.loads(raw_filters)
+                except Exception:
+                    filters = {}
+            else:
+                filters = raw_filters or {}
+
+            date_from = filters.get("start_date") or filters.get("date_from") or ""
+            date_to = filters.get("end_date") or filters.get("date_to") or ""
+
+            # Fetch the dataset's ticker-date pairs into memory.
+            with lock:
+                con = get_user_db_connection()
+                try:
+                    pairs_df = con.execute(
+                        "SELECT ticker, CAST(date AS VARCHAR) as date "
+                        "FROM dataset_pairs WHERE dataset_id = ?",
+                        [dataset_id],
+                    ).fetchdf()
+                finally:
+                    con.close()
+
+            if pairs_df is None or pairs_df.empty:
+                print(f"[RECOVERY] Dataset {dataset_id} ({ds_name}): no pairs; skipping.")
+                continue
+            if not date_from:
+                date_from = str(pairs_df["date"].min())
+            if not date_to:
+                date_to = str(pairs_df["date"].max())
+
+            print(f"[RECOVERY] -> Re-precaching {dataset_id} ({ds_name}): {len(pairs_df)} pairs, {date_from}..{date_to}")
+            _threading.Thread(
+                target=_precache_dataset_intraday,
+                args=(pairs_df, date_from, date_to, dataset_id),
+                daemon=True,
+            ).start()
+    except Exception as e:
+        print(f"[RECOVERY] startup recovery failed: {e}")
+
+
 # Lifecycle events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -67,6 +143,13 @@ async def lifespan(app: FastAPI):
             else:
                 print(f"[CACHE] intraday disk cache dir not found: {cache_dir}")
             print("[INFO] Hot daily cache loaded at startup")
+
+            # Background recovery: re-trigger precache for recently created
+            # datasets so a backend restart doesn't leave them cold. The
+            # _precache_dataset_intraday call is idempotent — cached months
+            # turn into instant disk-cache hits, only missing ones download.
+            import threading as _threading
+            _threading.Thread(target=_startup_recovery_precache, daemon=True).start()
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:

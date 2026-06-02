@@ -11,10 +11,32 @@ from app.services.indicators import compute_indicator, detect_candle_pattern
 logger = logging.getLogger("backtester.strategy_engine")
 
 
+def compile_strategy_def(strategy_def: dict) -> dict:
+    """Pre-extract all per-strategy fields once so the per-day translate_strategy
+    call avoids repeating dict.get() lookups inside the day loop."""
+    bias = strategy_def.get("bias", "long")
+    entry_logic = strategy_def.get("entry_logic", {}) or {}
+    exit_logic = strategy_def.get("exit_logic", {}) or {}
+    risk = strategy_def.get("risk_management", {}) or {}
+    return {
+        "bias": bias,
+        "direction": "longonly" if bias == "long" else "shortonly",
+        "entry_logic": entry_logic,
+        "exit_logic": exit_logic,
+        "risk_management": risk,
+        "entry_tf": entry_logic.get("timeframe", "1m"),
+        "exit_tf": exit_logic.get("timeframe", "1m"),
+        "entry_root": entry_logic.get("root_condition", {}),
+        "exit_root": exit_logic.get("root_condition", {}),
+        "accept_reentries": risk.get("accept_reentries", False),
+    }
+
+
 def translate_strategy(
     df: pd.DataFrame,
     strategy_def: dict,
     daily_stats: dict | None = None,
+    compiled: dict | None = None,
 ) -> dict:
     """
     Translate strategy definition JSON into simulation parameters.
@@ -27,16 +49,18 @@ def translate_strategy(
         sl_trail: bool
         tp_stop: float | None
         init_cash: passed through
+
+    If `compiled` is provided, dict-lookup overhead from strategy_def is skipped.
     """
-    bias = strategy_def.get("bias", "long")
-    direction = "longonly" if bias == "long" else "shortonly"
+    if compiled is None:
+        compiled = compile_strategy_def(strategy_def)
 
-    entry_logic = strategy_def.get("entry_logic", {})
-    exit_logic = strategy_def.get("exit_logic", {})
-    risk = strategy_def.get("risk_management", {})
-
-    entry_tf = entry_logic.get("timeframe", "1m")
-    exit_tf = exit_logic.get("timeframe", "1m")
+    direction = compiled["direction"]
+    entry_logic = compiled["entry_logic"]
+    exit_logic = compiled["exit_logic"]
+    risk = compiled["risk_management"]
+    entry_tf = compiled["entry_tf"]
+    exit_tf = compiled["exit_tf"]
 
     entry_df = _resample_if_needed(df, entry_tf)
     exit_df = _resample_if_needed(df, exit_tf)
@@ -45,10 +69,10 @@ def translate_strategy(
     exit_cache: dict = entry_cache if entry_tf == exit_tf else {}
 
     entries = _evaluate_condition_group(
-        entry_logic.get("root_condition", {}), entry_df, daily_stats, entry_cache
+        compiled["entry_root"], entry_df, daily_stats, entry_cache
     )
     exits = _evaluate_condition_group(
-        exit_logic.get("root_condition", {}), exit_df, daily_stats, exit_cache
+        compiled["exit_root"], exit_df, daily_stats, exit_cache
     )
 
     if entry_tf != "1m":
@@ -67,7 +91,7 @@ def translate_strategy(
         "sl_trail": sl_trail,
         "tp_stop": tp_stop,
         "trail_pct": trail_pct,
-        "accept_reentries": risk.get("accept_reentries", False),
+        "accept_reentries": compiled["accept_reentries"],
         "partial_take_profits": partial_tps,
     }
 
