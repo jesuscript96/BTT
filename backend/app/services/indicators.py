@@ -635,7 +635,7 @@ def _compute_raw(
     if name == "Bar Open":
         return open_
     if name == "Yesterday Open":
-        return pd.Series(ds.get("yesterday_open", ds.get("rth_open", np.nan)), index=close.index)
+        return pd.Series(ds.get("yesterday_open", np.nan), index=close.index)
     if name == "Yesterday Close" or name == "Previous Close":
         return pd.Series(ds.get("previous_close", np.nan), index=close.index)
     if name == "Yesterday High":
@@ -646,16 +646,22 @@ def _compute_raw(
         return pd.Series(ds.get("pm_high", np.nan), index=close.index)
     if name == "Pre-Market Low":
         return pd.Series(ds.get("pm_low", np.nan), index=close.index)
+    if name in ("RTH Open", "rth_open"):
+        return pd.Series(float(ds.get("rth_open", np.nan)), index=close.index)
+    if name in ("RTH High", "rth_high"):
+        return pd.Series(float(ds.get("rth_high", np.nan)), index=close.index)
+    if name in ("RTH Low", "rth_low"):
+        return pd.Series(float(ds.get("rth_low", np.nan)), index=close.index)
     if name == "High of Day":
         return high.cummax()
     if name == "Low of Day":
         return low.cummin()
-    if name == "Max of last X days":
-        val = ds.get("max_last_x", np.nan)
-        return pd.Series(val, index=close.index)
-    if name == "Min of last X days":
-        val = ds.get("min_last_x", np.nan)
-        return pd.Series(val, index=close.index)
+    if name in ("High of last X days", "Max of last X days"):
+        print("[WARN] 'High of last X days' not implemented — needs hot_daily_cache integration. Returning NaN.")
+        return pd.Series(np.nan, index=close.index)
+    if name in ("Low of last X days", "Min of last X days"):
+        print("[WARN] 'Low of last X days' not implemented — needs hot_daily_cache integration. Returning NaN.")
+        return pd.Series(np.nan, index=close.index)
 
     if name == "Previous max":
         timestamps = pd.to_datetime(df["timestamp"])
@@ -1013,29 +1019,37 @@ def _compute_raw(
         pivots = _pivot_points(ds)
         return pd.Series(pivots.get("S2", np.nan), index=close.index)
 
-    if name in ("Opening Range +", "Opening Range", "Opening Range Plus"):
+    if name in ("Opening Range +", "Opening Range", "Opening Range Plus",
+                "Opening Range -", "Opening Range Minus",
+                "Opening Range AM +", "Opening Range AM Plus",
+                "Opening Range AM -", "Opening Range AM Minus"):
         n = int(orb_minutes) if orb_minutes else 30
-        if len(high) >= n:
-            return pd.Series(high.iloc[:n].max(), index=close.index)
-        return pd.Series(high.max(), index=close.index)
-
-    if name in ("Opening Range -", "Opening Range Minus"):
-        n = int(orb_minutes) if orb_minutes else 30
-        if len(low) >= n:
-            return pd.Series(low.iloc[:n].min(), index=close.index)
-        return pd.Series(low.min(), index=close.index)
-
-    if name in ("Opening Range AM +", "Opening Range AM Plus"):
-        n = int(orb_minutes) if orb_minutes else 30
-        if len(high) >= n:
-            return pd.Series(high.iloc[:n].max(), index=close.index)
-        return pd.Series(high.max(), index=close.index)
-
-    if name in ("Opening Range AM -", "Opening Range AM Minus"):
-        n = int(orb_minutes) if orb_minutes else 30
-        if len(low) >= n:
-            return pd.Series(low.iloc[:n].min(), index=close.index)
-        return pd.Series(low.min(), index=close.index)
+        timestamps = pd.to_datetime(df["timestamp"])
+        if "AM" in name:
+            # After-hours session starts at 16:00 ET
+            session_mask = timestamps.dt.hour >= 16
+        else:
+            # RTH session starts at 9:30 ET
+            session_mask = (timestamps.dt.hour > 9) | (
+                (timestamps.dt.hour == 9) & (timestamps.dt.minute >= 30)
+            )
+        if name.endswith("-") or name.endswith("Minus"):
+            session_low = low[session_mask]
+            if len(session_low) >= n:
+                val = float(session_low.iloc[:n].min())
+            elif len(session_low) > 0:
+                val = float(session_low.min())
+            else:
+                val = float("nan")
+        else:
+            session_high = high[session_mask]
+            if len(session_high) >= n:
+                val = float(session_high.iloc[:n].max())
+            elif len(session_high) > 0:
+                val = float(session_high.max())
+            else:
+                val = float("nan")
+        return pd.Series(val, index=close.index)
 
     if name == "Yesterday Volume":
         yesterday_volume = ds.get("eod_volume", np.nan)
