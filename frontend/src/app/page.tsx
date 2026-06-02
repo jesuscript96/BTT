@@ -28,7 +28,7 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'screener' | 'ticker'>('screener');
+  const [activeTab, setActiveTab] = useState<'screener' | 'ticker'>('ticker');
   const [selectedTicker, setSelectedTicker] = useState<string | undefined>(undefined);
   const [data, setData] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
@@ -64,6 +64,7 @@ export default function Home() {
   const [isAggregateLoading, setIsAggregateLoading] = useState(false);
 
   const fetchData = async (filters: any = currentFilters, rules: any[] = activeRules) => {
+    /* HIDDEN FOR MVP — Market Analysis screener disabled; no server calls
     setIsLoading(true);
     setAggregateSeries([]); // Reset aggregate data on new fetch
 
@@ -202,8 +203,10 @@ export default function Home() {
       console.error("Error fetching data:", error);
       setIsLoading(false);
     }
+    */
   };
 
+  /* HIDDEN FOR MVP — interval refetch disabled
   useEffect(() => {
     if (isFirstMount.current) return;
     if (lastQueryParamsRef.current) {
@@ -222,9 +225,11 @@ export default function Home() {
         });
     }
   }, [chartInterval]);
+  */
 
 
   const handleExport = async () => {
+    /* HIDDEN FOR MVP — export disabled
     try {
       const blob = await exportData({ ...currentFilters, rules: activeRules });
       const url = window.URL.createObjectURL(blob);
@@ -238,17 +243,21 @@ export default function Home() {
       console.error("Export failed:", error);
       alert("Export failed");
     }
+    */
   };
 
-  const handleLoadDataset = (filters: any) => {
+  const handleLoadDataset = (_filters: any) => {
+    /* HIDDEN FOR MVP — load dataset disabled
     const { rules, ...basicFilters } = filters;
     setCurrentFilters(basicFilters);
     setActiveRules(rules || []);
     setFilterPanelKey(prev => prev + 1); // Reset panel with new values
+    */
   };
 
   // Fetch when rules change, skipping initial mount
   const isFirstMount = React.useRef(true);
+  /* HIDDEN FOR MVP — activeRules refetch disabled
   useEffect(() => {
     if (isFirstMount.current) {
       isFirstMount.current = false;
@@ -256,6 +265,7 @@ export default function Home() {
     }
     fetchData(currentFilters, activeRules);
   }, [activeRules]);
+  */
 
   const memoizedData = React.useMemo(() => data, [data]);
 
@@ -264,7 +274,7 @@ export default function Home() {
                   height: '100vh', overflow: 'hidden',
                   backgroundColor: 'var(--color-ec-bg-base)' }}>
       
-      {/* Tab Navigation */}
+      {/* HIDDEN FOR MVP — Tab Navigation disabled
       <div style={{
         backgroundColor: 'var(--color-ec-bg-sidebar)',
         borderBottom: '0.5px solid var(--color-ec-border)',
@@ -276,7 +286,7 @@ export default function Home() {
       }}>
         <button
           onClick={() => setActiveTab('screener')}
-          style={{
+          style={ {
             color: activeTab === 'screener' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
             borderBottom: activeTab === 'screener' ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
             padding: '0 14px',
@@ -290,14 +300,14 @@ export default function Home() {
             alignItems: 'center',
             gap: 6,
             whiteSpace: 'nowrap',
-          }}
+          } }
         >
           <LayoutDashboard size={14} strokeWidth={1.5} />
           Market & Summary
         </button>
         <button
           onClick={() => setActiveTab('ticker')}
-          style={{
+          style={ {
             color: activeTab === 'ticker' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
             borderBottom: activeTab === 'ticker' ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
             padding: '0 14px',
@@ -311,12 +321,13 @@ export default function Home() {
             alignItems: 'center',
             gap: 6,
             whiteSpace: 'nowrap',
-          }}
+          } }
         >
           <Activity size={14} strokeWidth={1.5} />
           Ticker Analysis
         </button>
       </div>
+      */}
 
       <div style={{
         flex: 1,
@@ -325,7 +336,8 @@ export default function Home() {
         backgroundColor: 'var(--color-ec-bg-base)'
       }}>
 
-        {activeTab === 'screener' && (
+        {/* HIDDEN FOR MVP — Market Analysis screener block disabled via `false &&` (kept in source for restoration) */}
+        {false && activeTab === 'screener' && (
           <div style={{
             display: 'flex',
             flexDirection: 'column',
@@ -466,8 +478,8 @@ export default function Home() {
 
         {activeTab === 'ticker' && (
           <TickerAnalysis
-            ticker={selectedTicker || currentFilters.ticker || (data.length > 0 ? data[0].ticker : undefined)}
-            availableTickers={Array.from(new Set(data.map(d => d.ticker)))}
+            ticker={undefined}
+            availableTickers={[]}
           />
         )}
       </div>

@@ -177,6 +177,16 @@ export function getSavedBacktests(limit = 100): Promise<{ strategies: any[]; tot
   return apiRequest<{ strategies: any[]; total_count: number }>(`/strategy-search/list?limit=${limit}`);
 }
 
+export function saveBacktest(data: {
+  strategy_ids: string[];
+  results_json: Record<string, unknown>;
+}): Promise<{ id: string; status: string }> {
+  return apiRequest<{ id: string; status: string }>("/strategy-search/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 
 // ─── Backtest ───────────────────────────────────────────────
 export function runBacktest(

@@ -146,7 +146,7 @@ export const Sidebar = () => {
                     }}
                 >
                     <LayoutDashboard style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Market Analysis</span>
+                    <span style={labelFade(isCollapsed)}>Ticker Analysis</span>
                 </Link>
 
                 {/* Backtester */}

@@ -94,56 +94,12 @@ def load_hot_daily_cache() -> None:
             print(f"[WARN] Failed to load hot cache from GCS: {e}")
             
     if not loaded:
-        # Fallback to local generated mock data so the app can function offline
-        print("[WARN] Using local generated mock data for hot cache")
-        import numpy as np
-        from datetime import datetime, timedelta
-        dates = [datetime.now().date() - timedelta(days=i) for i in range(10)]
-        mock_rows = []
-        for ticker in ['AAPL', 'TSLA', 'NVDA', 'MSFT']:
-            for d in dates:
-                mock_rows.append({
-                    'ticker': ticker,
-                    'timestamp': pd.Timestamp(d),
-                    'year': int(d.year),
-                    'month': int(d.month),
-                    'gap_pct': 12.5 if ticker == 'AAPL' else (15.2 if ticker == 'TSLA' else (9.8 if ticker == 'NVDA' else 14.1)),
-                    'open': 150.0 if ticker == 'AAPL' else (200.0 if ticker == 'TSLA' else (120.0 if ticker == 'NVDA' else 400.0)),
-                    'close': 148.0 if ticker == 'AAPL' else (195.0 if ticker == 'TSLA' else (118.0 if ticker == 'NVDA' else 395.0)),
-                    'high': 152.0 if ticker == 'AAPL' else (205.0 if ticker == 'TSLA' else (122.0 if ticker == 'NVDA' else 405.0)),
-                    'low': 147.0 if ticker == 'AAPL' else (192.0 if ticker == 'TSLA' else (116.0 if ticker == 'NVDA' else 390.0)),
-                    'volume': 1000000.0,
-                    'pm_volume': 50000.0,
-                    'pm_high': 153.0 if ticker == 'AAPL' else (206.0 if ticker == 'TSLA' else 123.0),
-                    'pm_low': 149.0 if ticker == 'AAPL' else (199.0 if ticker == 'TSLA' else 119.0),
-                    'rth_volume': 950000.0,
-                    'rth_open': 150.0 if ticker == 'AAPL' else (200.0 if ticker == 'TSLA' else (120.0 if ticker == 'NVDA' else 400.0)),
-                    'rth_high': 152.0 if ticker == 'AAPL' else (205.0 if ticker == 'TSLA' else (122.0 if ticker == 'NVDA' else 405.0)),
-                    'rth_low': 147.0 if ticker == 'AAPL' else (192.0 if ticker == 'TSLA' else (116.0 if ticker == 'NVDA' else 390.0)),
-                    'rth_close': 148.0 if ticker == 'AAPL' else (195.0 if ticker == 'TSLA' else (118.0 if ticker == 'NVDA' else 395.0)),
-                    'rth_run_pct': 2.5,
-                    'day_return_pct': -1.33,
-                    'rth_range_pct': 3.33,
-                    'pmh_gap_pct': 2.0,
-                    'pmh_fade_pct': 1.5,
-                    'rth_fade_pct': 1.2,
-                    'pm_high_time': '08:30',
-                    'pm_low_time': '09:15',
-                    'hod_time': '10:30',
-                    'lod_time': '14:15',
-                    'm15_return_pct': 0.5,
-                    'm30_return_pct': -0.2,
-                    'm60_return_pct': -0.8,
-                    'm180_return_pct': -1.1,
-                    'close_1559': 148.1 if ticker == 'AAPL' else 195.2,
-                    'last_close': 148.0 if ticker == 'AAPL' else 195.0,
-                    'prev_close': 148.5 if ticker == 'AAPL' else 198.0,
-                    'eod_volume': 1000000.0,
-                    'transactions': 25000.0,
-                    'open_lt_vwap': True if ticker in ['AAPL', 'NVDA'] else False
-                })
-        _hot_daily_cache = pd.DataFrame(mock_rows)
-        print(f"[HOT CACHE] Mock data created: {len(_hot_daily_cache)} rows")
+        # Fail loud rather than fabricating mock data. Downstream callers
+        # (data_service.fetch_qualifying_data, ticker_analysis) already handle
+        # `hot_df is None` by falling through to the real cold path (direct GCS query).
+        print("[ERROR] Failed to load hot cache from GCS. _hot_daily_cache = None; cold path will be used.")
+        _hot_daily_cache = None
+        return
 
     # Optimizar memoria
     for col in _hot_daily_cache.select_dtypes(include=['float64']).columns:

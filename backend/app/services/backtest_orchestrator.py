@@ -1,4 +1,3 @@
-import gc
 import json
 import logging
 import random
@@ -205,7 +204,6 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         }
 
         t_end = time.time()
-        gc.collect()
         total_elapsed = round(t_end - t0, 2)
         n_trades = len(results.get("trades", []))
         n_days = len(results.get("day_results", []))

@@ -23,6 +23,8 @@ from app.services.query_service import build_screener_query, get_stats_sql_logic
 from app.services.cache_service import get_hot_daily_df
 import pandas as pd
 
+# === HIDDEN FOR MVP — Market Analysis /screener endpoint disabled ===
+'''
 @router.get("/screener")
 def screen_market(
     request: Request,
@@ -186,6 +188,8 @@ def screen_market(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if con: con.close()
+'''
+# === END HIDDEN /screener ===
 
 @router.get("/ticker/{ticker}/intraday")
 def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
@@ -256,6 +260,8 @@ def get_latest_market_date():
     finally:
         if con: con.close()
 
+# === HIDDEN FOR MVP — Market Analysis /aggregate/intraday endpoint disabled ===
+'''
 @router.get("/aggregate/intraday")
 def get_aggregate_intraday(
     request: Request,
@@ -413,3 +419,5 @@ def get_aggregate_intraday(
         return []
     finally:
         if con: con.close()
+'''
+# === END HIDDEN /aggregate/intraday ===

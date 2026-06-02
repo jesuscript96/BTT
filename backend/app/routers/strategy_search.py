@@ -6,8 +6,9 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import json
+import uuid
 
-from app.database import get_db_connection
+from app.database import get_db_connection, get_user_db_connection, get_user_db_lock
 
 router = APIRouter()
 
@@ -45,6 +46,72 @@ class SavedStrategyResponse(BaseModel):
     avg_r_multiple: float
     sharpe_ratio: float
     executed_at: str
+
+
+@router.post("/", response_model=dict)
+def save_backtest_result(data: dict):
+    """
+    Persist a backtest run into backtest_results so it shows up in the Baul
+    linked to the corresponding strategy via strategy_ids.
+    """
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            new_id = str(uuid.uuid4())
+            now = datetime.now()
+
+            strategy_ids = data.get("strategy_ids", [])
+            results_json = data.get("results_json", {})
+
+            # AggregateMetrics uses different field names than backtest_results columns;
+            # map carefully so the Baul reads non-zero values.
+            aggregate = results_json.get("aggregate_metrics", {}) or {}
+
+            win_rate = aggregate.get("win_rate_pct", aggregate.get("win_rate", 0)) or 0
+            profit_factor = aggregate.get("avg_profit_factor", aggregate.get("profit_factor", 0)) or 0
+            sharpe = aggregate.get("avg_sharpe", aggregate.get("sharpe_ratio", 0)) or 0
+            avg_r = aggregate.get("avg_r_per_day", aggregate.get("avg_r_multiple", 0)) or 0
+            total_return_pct = aggregate.get("total_return_pct", 0) or 0
+            total_return_r = aggregate.get("total_return_r", 0) or 0
+            max_dd = aggregate.get("max_drawdown_pct", 0) or 0
+            total_trades = aggregate.get("total_trades", 0) or 0
+
+            con.execute("""
+                INSERT INTO backtest_results (
+                    id, strategy_ids, results_json,
+                    total_trades, win_rate, profit_factor,
+                    avg_r_multiple, total_return_r, total_return_pct,
+                    max_drawdown_pct, sharpe_ratio, executed_at,
+                    search_mode, search_space
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, [
+                new_id,
+                json.dumps(strategy_ids),
+                json.dumps(results_json),
+                total_trades,
+                win_rate,
+                profit_factor,
+                avg_r,
+                total_return_r,
+                total_return_pct,
+                max_dd,
+                sharpe,
+                now,
+                "manual",
+                "user_save",
+            ])
+        finally:
+            con.close()
+
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+        print(f"[GCS] users.duckdb uploaded after backtest save {new_id}")
+    except Exception as e:
+        print(f"[WARN] GCS upload failed after save_backtest_result: {e}")
+
+    return {"id": new_id, "status": "saved"}
 
 
 @router.post("/filter")
