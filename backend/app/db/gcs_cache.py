@@ -287,7 +287,7 @@ def get_saved_queries_df() -> pd.DataFrame:
 
 # ---- WARM: qualifying query (runs directly on GCS) -----------------------
 
-def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {}) -> pd.DataFrame:
+def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {}, preconditions: list = None) -> pd.DataFrame:
     """
     Run the qualifying query directly on GCS with glob-optimized paths.
     """
@@ -305,42 +305,76 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {})
     where_full = (
         f"({where_clause}) AND {hive_pred}" if hive_pred else where_clause
     )
+
+    # Build Stage 1 select list (including SMAs)
+    sma_periods = set()
+    if preconditions:
+        for p in preconditions:
+            if p.get("metric") == "close_vs_sma" and p.get("sma_period"):
+                sma_periods.add(int(p.get("sma_period")))
+
+    stage_1_smas = []
+    for P in sorted(sma_periods):
+        stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
+
+    stage_1_sql_cols = "* EXCLUDE (pmh_gap_pct), ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct"
+    if stage_1_smas:
+        stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
+
+    # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
+    stage_2_cols = [
+        "*",
+        # LAG 1
+        'LAG(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_1',
+        'LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1',
+        'LAG(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_1',
+        'LAG(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_1',
+        'LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1',
+        'LAG(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_1',
+
+        # LAG 2
+        'LAG(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_2',
+        'LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2',
+        'LAG(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_2',
+        'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
+        'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
+        'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
+
+        # LEAD 1
+        'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
+        'LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1',
+        'LEAD(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_1',
+        'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
+        'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
+        'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
+
+        # LEAD 2
+        'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
+        'LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2',
+        'LEAD(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_2',
+        'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
+        'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
+        'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
+
+        # Timestamp LEADs for shifting
+        'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
+        'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
+    ]
+    for P in sorted(sma_periods):
+        stage_2_cols.append(f'LAG(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_1')
+        stage_2_cols.append(f'LAG(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_2')
+        stage_2_cols.append(f'LEAD(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_1')
+        stage_2_cols.append(f'LEAD(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_2')
+
+    stage_2_sql_cols = ", ".join(stage_2_cols)
     
     subquery = f"""
     (
         WITH raw_daily AS (
-            SELECT * EXCLUDE (pmh_gap_pct),
-                   ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct
+            SELECT {stage_1_sql_cols}
             FROM read_parquet({year_paths}, hive_partitioning=true)
         )
-        SELECT *,
-               LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1,
-               LAG(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pmh_gap_pct_1,
-               LAG(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_volume_1,
-               LAG(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_gap_pct_1,
-               LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1,
-               LAG(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_range_pct_1,
-               
-               LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2,
-               LAG(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pmh_gap_pct_2,
-               LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_volume_2,
-               LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_gap_pct_2,
-               LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2,
-               LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_range_pct_2,
-
-               LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1,
-               LEAD(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pmh_gap_pct_1,
-               LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1,
-               LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1,
-               LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1,
-               LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_1,
-
-               LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2,
-               LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pmh_gap_pct_2,
-               LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2,
-               LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2,
-               LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2,
-               LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_range_pct_2
+        SELECT {stage_2_sql_cols}
         FROM raw_daily
     ) i
     """

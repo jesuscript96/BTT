@@ -131,6 +131,17 @@ export const INDICATOR_LABELS: Record<string, string> = {
 
 const FIXED_VALUE_KEY = "__FIXED_VALUE__";
 
+export const getInitialTargetForSource = (sourceName: IndicatorType): IndicatorConfig | number => {
+    const allowed = getAllowedTargets(sourceName, 'indicator_comparison');
+    if (allowed.length === 0) {
+        return 0; // Fixed value
+    }
+    if (allowed.includes(IndicatorType.VWAP)) {
+        return { name: IndicatorType.VWAP, offset: 0 };
+    }
+    return { name: allowed[0], offset: 0 };
+};
+
 // ----------------------------------------------------------------------
 // Generic Selector
 // ----------------------------------------------------------------------
@@ -499,6 +510,25 @@ export const TargetInput = ({
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
 
+    React.useEffect(() => {
+        if (!isFixed && allowedTargets) {
+            const currentName = (value as IndicatorConfig).name;
+            if (allowedTargets.length === 0) {
+                onChange(0);
+            } else if (!allowedTargets.includes(currentName)) {
+                if (allowedTargets.includes(IndicatorType.VWAP)) {
+                    onChange({ name: IndicatorType.VWAP, offset: 0 });
+                } else if (allowedTargets.length > 0) {
+                    const name = allowedTargets[0];
+                    const defaultParams = getDefaultParamsForIndicator(name);
+                    onChange({ name, ...defaultParams });
+                } else {
+                    onChange(0);
+                }
+            }
+        }
+    }, [value, isFixed, allowedTargets, onChange]);
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
             <IndicatorSelector
@@ -567,7 +597,19 @@ export const ConditionRow = ({
     const currentTimeframe = condition.timeframe || parentTimeframe;
 
     const handleSourceChange = (newSource: IndicatorConfig) => {
-        onChange({ ...condition, source: newSource });
+        if (condition.type === 'indicator_comparison') {
+            const allowed = getAllowedTargets(newSource.name as IndicatorType, 'indicator_comparison');
+            const currentTargetKey = typeof condition.target === 'number' ? FIXED_VALUE_KEY : (condition.target as IndicatorConfig).name;
+            const isTargetAllowed = currentTargetKey === FIXED_VALUE_KEY || allowed.includes(currentTargetKey as IndicatorType);
+            
+            onChange({
+                ...condition,
+                source: newSource,
+                target: isTargetAllowed ? condition.target : getInitialTargetForSource(newSource.name as IndicatorType)
+            });
+        } else {
+            onChange({ ...condition, source: newSource });
+        }
     };
 
     const handleTargetChange = (newTarget: IndicatorConfig | number) => {
@@ -1088,10 +1130,22 @@ export const GroupDisplay = ({
                                     onChange={(nameStr) => {
                                         const name = nameStr as IndicatorType;
                                         const defaultParams = getDefaultParamsForIndicator(name);
-                                        setFormCondition({
-                                            ...formCondition,
-                                            source: { name, offset: formCondition.source.offset, ...defaultParams }
-                                        });
+                                        if (formCondition.type === 'indicator_comparison') {
+                                            const allowed = getAllowedTargets(name, 'indicator_comparison');
+                                            const currentTargetKey = typeof formCondition.target === 'number' ? FIXED_VALUE_KEY : (formCondition.target as IndicatorConfig).name;
+                                            const isTargetAllowed = currentTargetKey === FIXED_VALUE_KEY || allowed.includes(currentTargetKey as IndicatorType);
+                                            
+                                            setFormCondition({
+                                                ...formCondition,
+                                                source: { name, offset: formCondition.source.offset, ...defaultParams },
+                                                target: isTargetAllowed ? formCondition.target : getInitialTargetForSource(name)
+                                            });
+                                        } else {
+                                            setFormCondition({
+                                                ...formCondition,
+                                                source: { name, offset: formCondition.source.offset, ...defaultParams }
+                                            });
+                                        }
                                     }}
                                 />
                                 <IndicatorParams

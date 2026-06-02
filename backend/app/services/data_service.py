@@ -320,15 +320,115 @@ def _years_from_filters(filters: dict) -> set[int]:
             pass
     return years
 
+def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd.DataFrame:
+    if not preconditions or df.empty:
+        return df
+
+    import numpy as np
+    mask = pd.Series(True, index=df.index)
+
+    for cond in preconditions:
+        day = cond.get("day", "gap_day")
+        metric = cond.get("metric")
+        op = cond.get("operator", ">")
+        val = cond.get("value")
+        sma_period = cond.get("sma_period")
+
+        # Determine source columns based on day
+        if day == "gap_day":
+            close_col = "rth_close"
+            open_col = "rth_open"
+            high_col = "rth_high"
+            low_col = "rth_low"
+            volume_col = "rth_volume"
+            pm_high_col = "pm_high"
+            lag_high_col = "lag_rth_high_1"
+            lag_low_col = "lag_rth_low_1"
+            sma_col = f"sma_{sma_period}" if sma_period else None
+        else: # gap_1_day (T+1)
+            close_col = "lead_rth_close_1"
+            open_col = "lead_rth_open_1"
+            high_col = "lead_rth_high_1"
+            low_col = "lead_rth_low_1"
+            volume_col = "lead_rth_volume_1"
+            pm_high_col = "lead_pm_high_1"
+            lag_high_col = "rth_high" # T is the previous day of T+1
+            lag_low_col = "rth_low"   # T is the previous day of T+1
+            sma_col = f"lead_sma_{sma_period}_1" if sma_period else None
+
+        # Check if required columns exist
+        needed_cols = [close_col, open_col, high_col, low_col, volume_col, pm_high_col]
+        if lag_high_col: needed_cols.append(lag_high_col)
+        if lag_low_col: needed_cols.append(lag_low_col)
+        if sma_col: needed_cols.append(sma_col)
+
+        missing = [c for c in needed_cols if c not in df.columns]
+        if missing:
+            print(f"[WARN] Precondition evaluation skipped for {metric} due to missing columns: {missing}")
+            continue
+
+        # Evaluate condition
+        cond_mask = pd.Series(True, index=df.index)
+        if metric == "volume":
+            if op == ">":
+                cond_mask = df[volume_col] > val
+            else:
+                cond_mask = df[volume_col] < val
+        elif metric == "close_vs_open":
+            if op == ">":
+                cond_mask = df[close_col] > df[open_col]
+            else:
+                cond_mask = df[close_col] < df[open_col]
+        elif metric == "close_vs_high_low":
+            if op == "> High":
+                cond_mask = df[close_col] > df[lag_high_col]
+            elif op == "< Low":
+                cond_mask = df[close_col] < df[lag_low_col]
+        elif metric == "close_vs_pm_high":
+            if op == ">":
+                cond_mask = df[close_col] > df[pm_high_col]
+            else:
+                cond_mask = df[close_col] < df[pm_high_col]
+        elif metric == "close_vs_vwap":
+            vwap = (df[high_col] + df[low_col] + df[close_col]) / 3.0
+            if op == ">":
+                cond_mask = df[close_col] > vwap
+            else:
+                cond_mask = df[close_col] < vwap
+        elif metric == "close_vs_sma":
+            if sma_col in df.columns:
+                if op == ">":
+                    cond_mask = df[close_col] > df[sma_col]
+                else:
+                    cond_mask = df[close_col] < df[sma_col]
+        elif metric == "candle_range_pct":
+            # (Close - Open) / Open * 100
+            range_pct = (df[close_col] - df[open_col]) / df[open_col].replace(0, np.nan) * 100.0
+            if op == ">":
+                cond_mask = range_pct > val
+            else:
+                cond_mask = range_pct < val
+
+        mask = mask & cond_mask
+
+    filtered_df = df[mask].copy()
+    print(f"[PRECONDITIONS] filtered from {len(df)} to {len(filtered_df)} rows")
+    return filtered_df
+
+
+
 def fetch_qualifying_data(
     dataset_id: str,
     req_start_date: str | None = None,
     req_end_date: str | None = None,
+    preconditions: list = None,
+    apply_day: str = 'gap_day',
 ) -> pd.DataFrame:
     """
     Fetch qualifying rows from daily_metrics via hot cache RAM or direct GCS query.
 
-    Uses hot cache when gap >= 10%; otherwise falls back to GCS.
+    Uses hot cache when gap >= 10% and apply_day is gap_day and no preconditions;
+    otherwise falls back to GCS.
     """
     import os
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
@@ -337,28 +437,84 @@ def fetch_qualifying_data(
         return pd.DataFrame()
 
     has_custom_rules = len(filters.get("rules", [])) > 0
-    if provider == "local" and has_custom_rules:
+    use_hot_cache = (apply_day == 'gap_day') and (not preconditions)
+
+    if provider == "local" and (has_custom_rules or not use_hot_cache):
         from app.database import get_db_connection
         con = get_db_connection()
         try:
             where_clause = _build_where_clause(filters)
-            subquery = """
+
+            # Build Stage 1 select list (including SMAs)
+            sma_periods = set()
+            if preconditions:
+                for p in preconditions:
+                    if p.get("metric") == "close_vs_sma" and p.get("sma_period"):
+                        sma_periods.add(int(p.get("sma_period")))
+
+            stage_1_smas = []
+            for P in sorted(sma_periods):
+                stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
+
+            stage_1_sql_cols = "*"
+            if stage_1_smas:
+                stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
+
+            # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
+            stage_2_cols = [
+                "*",
+                # LAG 1
+                'LAG(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_1',
+                'LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1',
+                'LAG(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_1',
+                'LAG(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_1',
+                'LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1',
+                'LAG(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_1',
+
+                # LAG 2
+                'LAG(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_2',
+                'LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2',
+                'LAG(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_2',
+                'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
+                'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
+                'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
+
+                # LEAD 1
+                'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
+                'LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1',
+                'LEAD(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_1',
+                'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
+                'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
+                'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
+
+                # LEAD 2
+                'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
+                'LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2',
+                'LEAD(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_2',
+                'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
+                'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
+                'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
+
+                # Timestamp LEADs for shifting
+                'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
+                'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
+            ]
+            for P in sorted(sma_periods):
+                stage_2_cols.append(f'LAG(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_1')
+                stage_2_cols.append(f'LAG(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_2')
+                stage_2_cols.append(f'LEAD(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_1')
+                stage_2_cols.append(f'LEAD(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_2')
+
+            stage_2_sql_cols = ", ".join(stage_2_cols)
+
+            subquery = f"""
             (
-                SELECT *,
-                       LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_1,
-                       LAG(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_1,
-                       LAG(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_1,
-                       LAG(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_1,
-                       LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_1,
-                       LAG(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_1,
-                       
-                       LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_close_2,
-                       LAG(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pmh_gap_pct_2,
-                       LAG(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_pm_volume_2,
-                       LAG(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_gap_pct_2,
-                       LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_volume_2,
-                       LAG(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lag_rth_range_pct_2
-                FROM daily_metrics
+                WITH raw_daily AS (
+                    SELECT {stage_1_sql_cols}
+                    FROM daily_metrics
+                )
+                SELECT {stage_2_sql_cols}
+                FROM raw_daily
             ) i
             """
             sql = f"""
@@ -369,49 +525,64 @@ def fetch_qualifying_data(
             df = con.execute(sql).fetchdf()
             if not df.empty:
                 df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+
+            # Apply preconditions filtering
+            if preconditions and not df.empty:
+                df = _evaluate_postgap_preconditions(df, preconditions)
+
+            # Apply date shifting
+            if not df.empty:
+                if apply_day == 'gap_1_day':
+                    df = df.dropna(subset=['lead_timestamp_1']).copy()
+                    df['timestamp'] = df['lead_timestamp_1']
+                    df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+                elif apply_day == 'gap_2_day':
+                    df = df.dropna(subset=['lead_timestamp_2']).copy()
+                    df['timestamp'] = df['lead_timestamp_2']
+                    df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
+
             print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
             return df
         except Exception as e:
             print(f"[ERROR] local fetch_qualifying_data failed: {e}")
 
-    from app.services.cache_service import get_hot_daily_cache
+    # Use RAM cache if applicable
+    if use_hot_cache:
+        from app.services.cache_service import get_hot_daily_cache
+        hot_df = get_hot_daily_cache()
+        if hot_df is not None and not hot_df.empty:
+            min_gap_raw = filters.get("min_gap_pct")
+            min_gap = float(min_gap_raw) if min_gap_raw is not None else 0.0
+            max_gap_raw = filters.get("max_gap_pct")
+            max_gap = float(max_gap_raw) if max_gap_raw is not None else 999999.0
+            min_pm_vol_raw = filters.get("min_pm_volume")
+            min_pm_vol = float(min_pm_vol_raw) if min_pm_vol_raw is not None else 0.0
+            start_date = filters.get("start_date")
+            end_date = filters.get("end_date")
 
-    hot_df = get_hot_daily_cache()
-    if hot_df is not None and not hot_df.empty:
-        min_gap_raw = filters.get("min_gap_pct")
-        min_gap = float(min_gap_raw) if min_gap_raw is not None else 0.0
-        max_gap_raw = filters.get("max_gap_pct")
-        max_gap = float(max_gap_raw) if max_gap_raw is not None else 999999.0
-        min_pm_vol_raw = filters.get("min_pm_volume")
-        min_pm_vol = float(min_pm_vol_raw) if min_pm_vol_raw is not None else 0.0
-        start_date = filters.get("start_date")
-        end_date = filters.get("end_date")
+            if min_gap >= 10.0:
+                result = hot_df.copy()
+                result = result[result['gap_pct'] >= min_gap]
+                result = result[result['gap_pct'] <= max_gap]
+                if min_pm_vol:
+                    result = result[result['pm_volume'] >= min_pm_vol]
+                if start_date or end_date:
+                    if 'timestamp' in result.columns:
+                        result['timestamp'] = pd.to_datetime(result['timestamp'])
+                    elif 'date' in result.columns:
+                        result['timestamp'] = pd.to_datetime(result['date'])
+                if start_date:
+                    result = result[result['timestamp'] >= pd.Timestamp(start_date)]
+                if end_date:
+                    result = result[result['timestamp'] <= pd.Timestamp(end_date)]
 
-        if min_gap >= 10.0:
-            result = hot_df.copy()
-            result = result[result['gap_pct'] >= min_gap]
-            result = result[result['gap_pct'] <= max_gap]
-            if min_pm_vol:
-                result = result[result['pm_volume'] >= min_pm_vol]
-            if start_date or end_date:
-                if 'timestamp' in result.columns:
-                    result['timestamp'] = pd.to_datetime(result['timestamp'])
-                elif 'date' in result.columns:
-                    result['timestamp'] = pd.to_datetime(result['date'])
-            if start_date:
-                result = result[result['timestamp'] >= pd.Timestamp(start_date)]
-            if end_date:
-                result = result[result['timestamp'] <= pd.Timestamp(end_date)]
+                if 'date' not in result.columns:
+                    result = result.copy()
+                    result['date'] = pd.to_datetime(result['timestamp']).dt.date
 
-            if 'date' not in result.columns:
-                result = result.copy()
-                result['date'] = pd.to_datetime(result['timestamp']).dt.date
-
-            result = result.reset_index(drop=True)
-            print(f"[HOT CACHE] qualifying from RAM: {len(result)} rows")
-            print(f"[DEBUG] qualifying_df shape: {result.shape}, columns: {list(result.columns) if not result.empty else 'EMPTY'}")
-            print(f"[DEBUG] dataset filters: {filters}")
-            return result
+                result = result.reset_index(drop=True)
+                print(f"[HOT CACHE] qualifying from RAM: {len(result)} rows")
+                return result
 
     # Fallback to GCS query
     filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
@@ -426,19 +597,26 @@ def fetch_qualifying_data(
 
     where_clause = _build_where_clause(filters)
 
-    # Run qualifying query directly on GCS
-    df = query_qualifying_gcs(years, where_clause, filters)
-
-    print(f"[DEBUG] qualifying_df shape: {df.shape}, columns: {list(df.columns) if not df.empty else 'EMPTY'}")
-    print(f"[DEBUG] dataset filters: {filters}")
-    print(f"[DEBUG] years: {years}, where_clause: {where_clause}")
+    # Run qualifying query directly on GCS passing preconditions
+    df = query_qualifying_gcs(years, where_clause, filters, preconditions=preconditions)
 
     if df.empty:
         return df
 
-    # Ensure date column exists
-    if "date" not in df.columns:
-        df["date"] = pd.to_datetime(df["timestamp"]).dt.date
+    # Apply preconditions filtering
+    if preconditions and not df.empty:
+        df = _evaluate_postgap_preconditions(df, preconditions)
+
+    # Apply date shifting
+    if not df.empty:
+        if apply_day == 'gap_1_day':
+            df = df.dropna(subset=['lead_timestamp_1']).copy()
+            df['timestamp'] = df['lead_timestamp_1']
+            df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+        elif apply_day == 'gap_2_day':
+            df = df.dropna(subset=['lead_timestamp_2']).copy()
+            df['timestamp'] = df['lead_timestamp_2']
+            df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
 
     return df
 

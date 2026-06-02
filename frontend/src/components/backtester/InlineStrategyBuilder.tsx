@@ -8,14 +8,18 @@ import {
   initialEntryLogic,
   initialExitLogic,
   initialRiskManagement,
+  IndicatorType,
+  Comparator,
+  Timeframe,
 } from "@/types/strategy";
 import type {
   EntryLogic as EntryLogicType,
   ExitLogic as ExitLogicType,
   RiskManagement as RiskManagementType,
   ConditionGroup,
+  PostGapPrecondition,
 } from "@/types/strategy";
-import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
+import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
 
 const STORAGE_KEY = "btt_draft_strategies";
 
@@ -24,6 +28,7 @@ export interface Draft {
   name: string;
   bias: "long" | "short";
   apply_day?: "gap_day" | "gap_1_day" | "gap_2_day";
+  postgap_preconditions?: PostGapPrecondition[];
   entry_logic: EntryLogicType;
   exit_logic: ExitLogicType;
   risk_management: RiskManagementType;
@@ -72,11 +77,28 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
+  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [showDrafts, setShowDrafts] = useState(false);
+  const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
+  const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct'>('cierre');
+  const [tempOperator, setTempOperator] = useState<'>' | '<'>('>');
+  const [tempTarget, setTempTarget] = useState<'apertura' | 'high_low_previo' | 'pm_high' | 'vwap' | 'sma'>('apertura');
+  const [tempValue, setTempValue] = useState<number>(1000000);
+  const [tempSmaPeriod, setTempSmaPeriod] = useState<number>(20);
+
+  useEffect(() => {
+    if (applyDay === 'gap_day') {
+      setPostgapPreconditions([]);
+    } else if (applyDay === 'gap_1_day') {
+      // Ensure all preconditions use 'gap_day' if we are on Gap +1 Day
+      setPostgapPreconditions(prev => prev.map(p => ({ ...p, day: 'gap_day' })));
+      setTempDay('gap_day');
+    }
+  }, [applyDay]);
 
   useEffect(() => {
     try {
@@ -89,6 +111,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
     setName("Nueva Estrategia");
     setBias("long");
     setApplyDay("gap_day");
+    setPostgapPreconditions([]);
     setEntryLogic(initialEntryLogic);
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
@@ -99,6 +122,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
     name,
     bias,
     apply_day: applyDay,
+    postgap_preconditions: postgapPreconditions,
     entry_logic: entryLogic,
     exit_logic: exitLogic,
     risk_management: riskManagement,
@@ -119,6 +143,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
     setName(draft.name);
     setBias(draft.bias);
     setApplyDay(draft.apply_day || 'gap_day');
+    setPostgapPreconditions(draft.postgap_preconditions || []);
     setEntryLogic(draft.entry_logic);
     setExitLogic(draft.exit_logic);
     setRiskManagement(draft.risk_management);
@@ -330,37 +355,361 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
         <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
 
         {/* SECTION: PRE-GAP CONDITIONS */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0' }}>
+        {applyDay !== 'gap_day' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{
-                    width: 3,
-                    height: 14,
-                    borderRadius: 1,
-                    backgroundColor: 'var(--color-ec-text-muted)',
-                    opacity: 0.5,
-                }} />
-                <h2 style={{
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 13,
-                    fontWeight: 700,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    color: 'var(--color-ec-text-muted)',
-                    margin: 0,
-                    opacity: 0.7,
-                }}>Condiciones previas para estrategias post gap</h2>
+              <div style={{
+                width: 3,
+                height: 14,
+                borderRadius: 1,
+                backgroundColor: 'var(--color-ec-copper)',
+              }} />
+              <h2 style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 13,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--color-ec-text-high)',
+                margin: 0,
+              }}>Condiciones previas post-gap</h2>
             </div>
-            <p style={{
+
+            {/* Form to add preconditions */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              padding: 12,
+              backgroundColor: 'rgba(28, 30, 33, 0.2)',
+              border: '0.5px solid var(--color-ec-border)',
+              borderRadius: 6,
+            }}>
+              {/* Top: Day selector (only for gap_2_day) */}
+              {applyDay === 'gap_2_day' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, borderBottom: '0.5px solid var(--color-ec-border)', paddingBottom: 10, marginBottom: 2 }}>
+                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Evaluar en</label>
+                  <select
+                    value={tempDay}
+                    onChange={(e) => setTempDay(e.target.value as any)}
+                    style={{
+                      background: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-primary)',
+                      fontSize: 11,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      outline: 'none',
+                      fontFamily: 'var(--color-ec-sans)',
+                      width: 'fit-content',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="gap_day">Día del Gap</option>
+                    <option value="gap_1_day">Día Gap +1</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Bottom: Inputs Row */}
+              <div style={{
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'flex-end',
+                flexWrap: 'wrap',
+                gap: 8,
+              }}>
+                {/* Source variable selector */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Variable</label>
+                  <select
+                    value={tempSource}
+                    onChange={(e) => {
+                      const src = e.target.value as 'cierre' | 'volume' | 'candle_range_pct';
+                      setTempSource(src);
+                      
+                      // Set sensible default values/operators
+                      if (src === 'volume') {
+                        setTempValue(1000000);
+                      } else if (src === 'candle_range_pct') {
+                        setTempValue(2.0);
+                      }
+                    }}
+                    style={{
+                      background: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-primary)',
+                      fontSize: 11,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      outline: 'none',
+                      fontFamily: 'var(--color-ec-sans)',
+                      width: 'fit-content',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="cierre">Cierre</option>
+                    <option value="volume">Volumen Total</option>
+                    <option value="candle_range_pct">Rango de Vela %</option>
+                  </select>
+                </div>
+
+                {/* Operator selector */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Operador</label>
+                  <select
+                    value={tempOperator}
+                    onChange={(e) => setTempOperator(e.target.value as any)}
+                    style={{
+                      background: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-primary)',
+                      fontSize: 11,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      outline: 'none',
+                      fontFamily: 'var(--color-ec-sans)',
+                      width: 'fit-content',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value=">">mayor que (&gt;)</option>
+                    <option value="<">menor que (&lt;)</option>
+                  </select>
+                </div>
+
+                {/* Target variable selector (only if source is cierre) */}
+                {tempSource === 'cierre' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Comparado con</label>
+                    <select
+                      value={tempTarget}
+                      onChange={(e) => setTempTarget(e.target.value as any)}
+                      style={{
+                        background: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        color: 'var(--color-ec-text-primary)',
+                        fontSize: 11,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        outline: 'none',
+                        fontFamily: 'var(--color-ec-sans)',
+                        width: 'fit-content',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <option value="apertura">Apertura</option>
+                      <option value="high_low_previo">High/Low Previo</option>
+                      <option value="pm_high">PM High</option>
+                      <option value="vwap">VWAP</option>
+                      <option value="sma">SMA</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* SMA Period input */}
+                {tempSource === 'cierre' && tempTarget === 'sma' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: 60 }}>
+                    <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Periodo</label>
+                    <input
+                      type="number"
+                      value={tempSmaPeriod}
+                      min={2}
+                      max={500}
+                      onChange={(e) => setTempSmaPeriod(parseInt(e.target.value) || 20)}
+                      style={{
+                        background: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        color: 'var(--color-ec-text-primary)',
+                        fontSize: 11,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        outline: 'none',
+                        fontFamily: 'var(--color-ec-sans)',
+                        width: '100%',
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Value input (only for volume and candle_range_pct) */}
+                {tempSource !== 'cierre' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: tempSource === 'volume' ? 90 : 70 }}>
+                    <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Valor</label>
+                    <input
+                      type="number"
+                      value={tempValue}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setTempValue(isNaN(val) ? 0 : val);
+                      }}
+                      style={{
+                        background: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        color: 'var(--color-ec-text-primary)',
+                        fontSize: 11,
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        outline: 'none',
+                        fontFamily: 'var(--color-ec-sans)',
+                        width: '100%',
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Add button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    let metric: PostGapPrecondition['metric'] = 'volume';
+                    let operator: PostGapPrecondition['operator'] = '>';
+                    let value: number | undefined = undefined;
+                    let sma_period: number | undefined = undefined;
+
+                    if (tempSource === 'cierre') {
+                      if (tempTarget === 'apertura') {
+                        metric = 'close_vs_open';
+                        operator = tempOperator;
+                      } else if (tempTarget === 'high_low_previo') {
+                        metric = 'close_vs_high_low';
+                        operator = tempOperator === '>' ? '> High' : '< Low';
+                      } else if (tempTarget === 'pm_high') {
+                        metric = 'close_vs_pm_high';
+                        operator = tempOperator;
+                      } else if (tempTarget === 'vwap') {
+                        metric = 'close_vs_vwap';
+                        operator = tempOperator;
+                      } else if (tempTarget === 'sma') {
+                        metric = 'close_vs_sma';
+                        operator = tempOperator;
+                        sma_period = tempSmaPeriod;
+                      }
+                    } else if (tempSource === 'volume') {
+                      metric = 'volume';
+                      operator = tempOperator;
+                      value = tempValue;
+                    } else if (tempSource === 'candle_range_pct') {
+                      metric = 'candle_range_pct';
+                      operator = tempOperator;
+                      value = tempValue;
+                    }
+
+                    const newCond: PostGapPrecondition = {
+                      id: `precond_${Date.now()}`,
+                      day: applyDay === 'gap_1_day' ? 'gap_day' : tempDay,
+                      metric,
+                      operator,
+                      value,
+                      sma_period,
+                    };
+                    setPostgapPreconditions([...postgapPreconditions, newCond]);
+                  }}
+                  style={{
+                    backgroundColor: 'var(--color-ec-copper)',
+                    color: 'var(--color-ec-copper-text)',
+                    border: 'none',
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    height: 25,
+                  }}
+                >
+                  + Añadir
+                </button>
+              </div>
+            </div>
+
+            {/* Summary Tag List */}
+            {postgapPreconditions.length === 0 ? (
+              <p style={{
                 fontFamily: 'var(--color-ec-sans)',
                 fontSize: 11,
                 color: 'var(--color-ec-text-muted)',
-                margin: 0,
+                margin: '4px 0 0 0',
                 opacity: 0.5,
                 fontStyle: 'italic',
-            }}>
-                (Sección en desarrollo - Próximamente disponible)
-            </p>
-        </div>
+              }}>
+                Sin condiciones previas configuradas. La estrategia se ejecutará en todas las configuraciones.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {postgapPreconditions.map((cond) => {
+                  const dayLabel = cond.day === 'gap_day' ? 'Día del Gap' : 'Día Gap +1';
+                  let metricLabel = 'Cierre';
+                  let valLabel = '';
+                  
+                  if (cond.metric === 'volume') {
+                    metricLabel = 'Volumen Total';
+                    valLabel = `${cond.operator} ${(cond.value ?? 0).toLocaleString()}`;
+                  } else if (cond.metric === 'close_vs_open') {
+                    valLabel = `${cond.operator} Apertura`;
+                  } else if (cond.metric === 'close_vs_high_low') {
+                    valLabel = cond.operator === '> High' ? '> High Previo' : '< Low Previo';
+                  } else if (cond.metric === 'close_vs_pm_high') {
+                    valLabel = `${cond.operator} PM High`;
+                  } else if (cond.metric === 'close_vs_vwap') {
+                    valLabel = `${cond.operator} VWAP`;
+                  } else if (cond.metric === 'close_vs_sma') {
+                    valLabel = `${cond.operator} SMA ${cond.sma_period}`;
+                  } else if (cond.metric === 'candle_range_pct') {
+                    metricLabel = 'Rango de Vela %';
+                    valLabel = `${cond.operator} ${cond.value}%`;
+                  }
+                  
+                  return (
+                    <div
+                      key={cond.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                        border: '0.5px solid var(--color-ec-copper)',
+                        borderRadius: 4,
+                        padding: '4px 8px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: 'var(--color-ec-text-secondary)',
+                      }}
+                    >
+                      <span style={{ color: 'var(--color-ec-copper)' }}>{dayLabel}</span>
+                      <span>•</span>
+                      <span>{metricLabel}:</span>
+                      <strong style={{ color: 'var(--color-ec-text-high)' }}>{valLabel}</strong>
+                      
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPostgapPreconditions(postgapPreconditions.filter(p => p.id !== cond.id));
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-ec-text-muted)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          lineHeight: 1,
+                          padding: '0 2px',
+                          marginLeft: 4,
+                          display: 'flex',
+                          alignItems: 'center',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* DIVIDER 2 */}
         <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />

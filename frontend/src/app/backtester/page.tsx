@@ -42,6 +42,8 @@ export default function Home() {
       setStrategyToSave({
         name: draftStrategy.name,
         bias: draftStrategy.bias,
+        apply_day: draftStrategy.apply_day,
+        postgap_preconditions: draftStrategy.postgap_preconditions,
         entry_logic: draftStrategy.entry_logic,
         exit_logic: draftStrategy.exit_logic,
         risk_management: draftStrategy.risk_management,
@@ -129,6 +131,8 @@ export default function Home() {
         strategy_definition: {
           name: draft.name,
           bias: draft.bias,
+          apply_day: draft.apply_day,
+          postgap_preconditions: draft.postgap_preconditions,
           entry_logic: draft.entry_logic,
           exit_logic: draft.exit_logic,
           risk_management: draft.risk_management,

@@ -332,6 +332,75 @@ def get_yfinance_session():
     session.mount("https://", adapter)
     return session
 
+def scrape_finviz_snapshot(ticker: str) -> dict:
+    import requests
+    from bs4 import BeautifulSoup
+    import urllib3
+    import re
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    try:
+        response = requests.get(url, headers=headers, verify=False, timeout=5)
+        if response.status_code != 200:
+            return {}
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        snapshot_table = soup.find('table', class_=re.compile(r'snapshot-table|table-snapshot|snapshot'))
+        if not snapshot_table:
+            tables = soup.find_all('table')
+            for idx, t in enumerate(tables):
+                txt = t.text
+                if "Shs Outstand" in txt or "Market Cap" in txt:
+                    snapshot_table = t
+                    break
+                    
+        if not snapshot_table:
+            return {}
+            
+        tds = snapshot_table.find_all('td')
+        data = {}
+        
+        def parse_finviz_number(val: str):
+            if not val or val == '-':
+                return None
+            val = val.strip().upper()
+            multiplier = 1.0
+            if val.endswith('K'):
+                multiplier = 1e3
+                val = val[:-1]
+            elif val.endswith('M'):
+                multiplier = 1e6
+                val = val[:-1]
+            elif val.endswith('B'):
+                multiplier = 1e9
+                val = val[:-1]
+            elif val.endswith('T'):
+                multiplier = 1e12
+                val = val[:-1]
+            try:
+                return float(val) * multiplier
+            except ValueError:
+                return None
+
+        for i in range(len(tds) - 1):
+            label = tds[i].text.strip()
+            val = tds[i+1].text.strip()
+            if label == "Market Cap":
+                data["market_cap"] = parse_finviz_number(val)
+            elif label == "Shs Outstand":
+                data["shares_outstanding"] = parse_finviz_number(val)
+            elif label == "Shs Float":
+                data["float_shares"] = parse_finviz_number(val)
+                
+        return data
+    except Exception as e:
+        print(f"Error scraping Finviz snapshot for {ticker}: {e}")
+        return {}
+
 @router.get("/{ticker}")
 def get_ticker_analysis(ticker: str):
     ticker = ticker.upper()
@@ -408,14 +477,28 @@ def get_ticker_analysis(ticker: str):
         }
 
         # --- Market ---
+        # Initialize primary fields from Finviz scraping
+        finviz_data = scrape_finviz_snapshot(ticker)
+        
         market = {
-            "market_cap": info.get("marketCap"),
-            "shares_outstanding": info.get("sharesOutstanding"),
-            "float_shares": info.get("floatShares"),
+            "market_cap": finviz_data.get("market_cap"),
+            "shares_outstanding": finviz_data.get("shares_outstanding"),
+            "float_shares": finviz_data.get("float_shares"),
             "held_percent_institutions": info.get("heldPercentInstitutions"),
             "held_percent_insiders": info.get("heldPercentInsiders"),
             "price": info.get("currentPrice") or info.get("previousClose") # Fallback
         }
+
+        # Fallback to yfinance if any of the three main data values is missing
+        if market["market_cap"] is None or market["shares_outstanding"] is None or market["float_shares"] is None:
+            print(f"[FALLBACK] Missing market data from Finviz for {ticker}. Fetching from yfinance...")
+            if market["market_cap"] is None:
+                market["market_cap"] = info.get("marketCap")
+            if market["shares_outstanding"] is None:
+                market["shares_outstanding"] = info.get("sharesOutstanding")
+            if market["float_shares"] is None:
+                market["float_shares"] = info.get("floatShares")
+            print(f"[FALLBACK] Filled missing market data from yfinance for {ticker}: {market}")
 
         # --- Financials (Snapshot) ---
         financials = {

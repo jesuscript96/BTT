@@ -234,11 +234,20 @@ class RiskManagement(BaseModel):
     trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
     max_drawdown_daily: Optional[float] = None  # Circuit breaker
 
+class PostGapPrecondition(BaseModel):
+    id: str
+    day: Literal['gap_day', 'gap_1_day']
+    metric: Literal['volume', 'close_vs_open', 'close_vs_high_low', 'close_vs_pm_high', 'close_vs_vwap', 'close_vs_sma', 'candle_range_pct']
+    operator: Literal['>', '<', '> High', '< Low']
+    value: Optional[float] = None
+    sma_period: Optional[int] = None
+
 class StrategyCreate(BaseModel):
     name: str
     description: Optional[str] = None
     bias: Literal['long', 'short'] = 'long'
     apply_day: Optional[Literal['gap_day', 'gap_1_day', 'gap_2_day']] = 'gap_day'
+    postgap_preconditions: Optional[List[PostGapPrecondition]] = None
     universe_filters: Optional[UniverseFilters] = None
     entry_logic: EntryLogic
     exit_logic: Optional[ExitLogic] = None
