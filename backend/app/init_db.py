@@ -193,6 +193,19 @@ def init_db():
             )
         """)
 
+        # precache_state: process-shared status of dataset intraday pre-caching.
+        # Survives restarts so the backtest endpoint and clients can know whether
+        # a precache is still running, finished, or failed without relying on
+        # in-process dicts that die with the worker.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS precache_state (
+                dataset_id VARCHAR PRIMARY KEY,
+                status VARCHAR,
+                progress_pct DOUBLE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # backtest_results table
         conn.execute("""
             CREATE TABLE IF NOT EXISTS backtest_results (

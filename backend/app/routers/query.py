@@ -5,6 +5,7 @@ from uuid import uuid4
 from datetime import datetime
 import json
 import threading
+import time
 import pandas as pd
 from app.database import get_user_db_connection, get_user_db_lock
 
@@ -17,63 +18,90 @@ class SavedQuery(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-precache_status = {}
+def _write_precache_state(dataset_id: str, status: str, progress_pct: float) -> None:
+    """Persist precache progress to users.duckdb. Best-effort: never raises."""
+    try:
+        lock = get_user_db_lock()
+        with lock:
+            con = get_user_db_connection()
+            try:
+                con.execute(
+                    "INSERT OR REPLACE INTO precache_state (dataset_id, status, progress_pct, updated_at) "
+                    "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                    [dataset_id, status, float(progress_pct)],
+                )
+            finally:
+                con.close()
+    except Exception as e:
+        print(f"[PRECACHE] Could not persist state for {dataset_id}: {e}")
+
+
+def get_precache_state(dataset_id: str) -> dict | None:
+    """Read precache status from users.duckdb. Returns None if no row exists."""
+    try:
+        lock = get_user_db_lock()
+        with lock:
+            con = get_user_db_connection()
+            try:
+                row = con.execute(
+                    "SELECT status, progress_pct FROM precache_state WHERE dataset_id = ?",
+                    [dataset_id],
+                ).fetchone()
+            finally:
+                con.close()
+    except Exception as e:
+        print(f"[PRECACHE] Could not read state for {dataset_id}: {e}")
+        return None
+    if row is None:
+        return None
+    return {"status": row[0], "percent": float(row[1] or 0.0)}
+
 
 def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
     """Pre-cache intraday data for a dataset in background thread.
-    Receives pairs_df in memory — does NOT open users.duckdb."""
+    Receives pairs_df in memory — does NOT depend on caller's DB connection."""
+    count = 0
+    total = 0
     try:
-        import pandas as pd
         from app.db.gcs_cache import iter_intraday_groups_streamed
 
-        if pairs_df.empty:
+        if pairs_df is None or pairs_df.empty:
             print(f"[PRECACHE] Dataset {dataset_id}: no pairs to cache")
-            precache_status[dataset_id] = {
-                "status": "completed",
-                "current": 0,
-                "total": 0,
-                "percent": 100.0
-            }
+            _write_precache_state(dataset_id, "completed", 100.0)
             return
-        
+
         total = len(pairs_df)
         print(f"[PRECACHE] Starting for dataset {dataset_id}: {total} pairs, {date_from} -> {date_to}")
-        precache_status[dataset_id] = {
-            "status": "running",
-            "current": 0,
-            "total": total,
-            "percent": 0.0
-        }
-        
-        count = 0
+        _write_precache_state(dataset_id, "running", 0.0)
+
+        # Throttle DB writes so we don't acquire the user_db_lock per iteration
+        # (that adds ~5ms per write — at 1000+ iterations it dominates the loop).
+        last_percent_written = 0.0
+        last_write_t = time.time()
+
         for _ in iter_intraday_groups_streamed(pairs_df, date_from, date_to):
             count += 1
             percent = min(100.0, round((count / total) * 100.0, 1)) if total > 0 else 100.0
-            precache_status[dataset_id].update({
-                "current": count,
-                "percent": percent
-            })
-        
-        precache_status[dataset_id].update({
-            "status": "completed",
-            "percent": 100.0
-        })
+            # Write at most every ~5 percentage points OR every 5 seconds — whichever comes first.
+            if percent - last_percent_written >= 5.0 or (time.time() - last_write_t) >= 5.0:
+                _write_precache_state(dataset_id, "running", percent)
+                last_percent_written = percent
+                last_write_t = time.time()
+
+        _write_precache_state(dataset_id, "completed", 100.0)
         print(f"[PRECACHE] Completed: {count} day-groups cached for dataset {dataset_id}")
     except Exception as e:
         print(f"[PRECACHE] Error pre-caching dataset {dataset_id}: {e}")
-        precache_status[dataset_id] = {
-            "status": "failed",
-            "current": count if 'count' in locals() else 0,
-            "total": total if 'total' in locals() else 0,
-            "percent": min(100.0, round((count / total) * 100.0, 1)) if ('total' in locals() and total > 0 and 'count' in locals()) else 0.0,
-            "error": str(e)
-        }
+        percent = min(100.0, round((count / total) * 100.0, 1)) if total > 0 else 0.0
+        _write_precache_state(dataset_id, "failed", percent)
+
 
 @router.get("/precache-status/{dataset_id}")
 def get_precache_status(dataset_id: str):
-    if dataset_id not in precache_status:
+    state = get_precache_state(dataset_id)
+    if state is None:
         return {"status": "completed", "percent": 100.0, "current": 0, "total": 0}
-    return precache_status[dataset_id]
+    return state
 
 @router.post("/", response_model=SavedQuery)
 def create_saved_query(query: SavedQuery):
