@@ -206,23 +206,37 @@ def _tickers_sql_in_clause(tickers: list[str]) -> str:
     return ", ".join("'" + str(t).replace("'", "''") + "'" for t in tickers)
 
 
+# In-process cache for monthly intraday glob lookups. Result depends only on
+# (year, month, bucket) and only changes when new data is uploaded — invalidates
+# at process restart, which is acceptable for an MVP. Includes None entries.
+_glob_cache: dict[tuple[int, int, str], "str | None"] = {}
+
+
 def _select_intraday_glob_for_month(conn, year: int, month: int) -> str | None:
     """Pick optimized or raw intraday glob for one month; try month=09 then month=9."""
+    cache_key = (year, month, GCS_BUCKET)
+    if cache_key in _glob_cache:
+        return _glob_cache[cache_key]
 
+    result: str | None = None
     for pad in (f"{month:02d}", str(month)):
         opt = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
         try:
             if conn.execute(f"SELECT count(*) FROM glob('{opt}')").fetchall()[0][0] > 0:
-                return opt
+                result = opt
+                break
         except Exception:
             pass
         raw = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
         try:
             if conn.execute(f"SELECT count(*) FROM glob('{raw}')").fetchall()[0][0] > 0:
-                return raw
+                result = raw
+                break
         except Exception:
             pass
-    return None
+
+    _glob_cache[cache_key] = result
+    return result
 
 
 # (Using shared get_connection from backend.db.connection)
