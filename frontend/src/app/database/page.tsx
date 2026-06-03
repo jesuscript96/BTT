@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { 
   Briefcase, 
@@ -13,7 +13,9 @@ import {
   Activity,
   Plus,
   Minus,
-  X
+  X,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react'
 import { 
   getStrategies, 
@@ -22,6 +24,7 @@ import {
   deleteStrategy, 
   deleteQuery 
 } from '@/lib/api'
+import { INDICATOR_LABELS, COMPARATOR_LABELS } from '@/components/strategy-builder/ConditionBuilder'
 
 // Pre-seeded strategies realistic stats for display fallback
 const MOCK_STRATEGY_STATS: Record<string, { winRate: number; profitFactor: number; maxDd: number; sharpe: number; trades: number; period: string; avgRDay: number; equityCurve: number[]; isValidated: boolean }> = {
@@ -389,9 +392,146 @@ export default function TrunkPage() {
   
   const [selectedStrategyIds, setSelectedStrategyIds] = useState<string[]>([])
   const [showCharts, setShowCharts] = useState<Record<string, boolean>>({})
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null)
   
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deletingType, setDeletingType] = useState<'strategy' | 'dataset' | null>(null)
+
+  const toggleRowExpand = (id: string) => {
+    setExpandedRowId(prev => prev === id ? null : id)
+  }
+
+  // Formatter helpers for strategy conditions
+  const formatIndicator = (ind: any): string => {
+    if (!ind) return "";
+    const params: string[] = [];
+    if (ind.period !== undefined) params.push(`P:${ind.period}`);
+    if (ind.period2 !== undefined) params.push(`P2:${ind.period2}`);
+    if (ind.stdDev !== undefined) params.push(`SD:${ind.stdDev}`);
+    if (ind.days_lookback !== undefined) params.push(`Lookback:${ind.days_lookback}d`);
+    if (ind.orb_minutes !== undefined) params.push(`ORB:${ind.orb_minutes}m`);
+    if (ind.ap_session !== undefined) params.push(`${ind.ap_session.replace("ap.", "")}`);
+    if (ind.elapsed_minutes !== undefined) params.push(`Elapsed:${ind.elapsed_minutes}m`);
+    if (ind.band_line !== undefined) params.push(`${ind.band_line}`);
+    
+    let offsetStr = "";
+    if (ind.offset && ind.offset > 0) {
+      offsetStr = `[t-${ind.offset}]`;
+    }
+    
+    const paramsStr = params.length > 0 ? `(${params.join(",")})` : "";
+    return `${INDICATOR_LABELS[ind.name] || ind.name}${paramsStr}${offsetStr}`;
+  }
+
+  const formatCondition = (cond: any): string => {
+    if (cond.type === 'indicator_comparison') {
+      const sourceStr = formatIndicator(cond.source);
+      const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator;
+      const targetStr = typeof cond.target === 'number' 
+        ? cond.target.toString() 
+        : formatIndicator(cond.target);
+      const tfStr = cond.timeframe ? `[${cond.timeframe}] ` : "";
+      return `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
+    } else if (cond.type === 'price_level_distance') {
+      const sourceStr = formatIndicator(cond.source);
+      const compStr = cond.comparator === 'DISTANCE_GT' ? ">" : "<";
+      const levelStr = formatIndicator(cond.level);
+      const posStr = cond.position && cond.position !== 'any' ? ` (${cond.position})` : "";
+      const tfStr = cond.timeframe ? `[${cond.timeframe}] ` : "";
+      return `${tfStr}${sourceStr} dist ${compStr} ${cond.value_pct}% to ${levelStr}${posStr}`;
+    }
+    return "";
+  }
+
+  const getConditionTags = (group?: any): string[] => {
+    if (!group) return [];
+    
+    const parseGroup = (g: any): string[] => {
+      let results: string[] = [];
+      const op = g.operator || "AND";
+      
+      if (g.conditions) {
+        g.conditions.forEach((c: any) => {
+          if (c.type === 'group') {
+            results = results.concat(parseGroup(c));
+          } else {
+            const formatted = formatCondition(c);
+            if (formatted) {
+              results.push(`${op}: ${formatted}`);
+            }
+          }
+        });
+      }
+      return results;
+    };
+    
+    return parseGroup(group);
+  }
+
+  const formatPrecondition = (pre: any): string => {
+    const dayLabel = pre.day === 'gap_day' ? 'Gap Day' : 'Gap+1 Day';
+    let metricLabel = 'Cierre';
+    let valLabel = '';
+    
+    if (pre.metric === 'volume') {
+      metricLabel = 'Volumen Total';
+      valLabel = `${pre.operator} ${(pre.value ?? 0).toLocaleString()}`;
+    } else if (pre.metric === 'close_vs_open') {
+      valLabel = `${pre.operator} Apertura`;
+    } else if (pre.metric === 'close_vs_high_low') {
+      valLabel = pre.operator === '> High' ? '> High Previo' : '< Low Previo';
+    } else if (pre.metric === 'close_vs_pm_high') {
+      valLabel = `${pre.operator} PM High`;
+    } else if (pre.metric === 'close_vs_vwap') {
+      valLabel = `${pre.operator} VWAP`;
+    } else if (pre.metric === 'close_vs_sma') {
+      valLabel = `${pre.operator} SMA ${pre.sma_period}`;
+    } else if (pre.metric === 'candle_range_pct') {
+      metricLabel = 'Rango de Vela %';
+      valLabel = `${pre.operator} ${pre.value}%`;
+    }
+    return `${dayLabel} • ${metricLabel}: ${valLabel}`;
+  }
+
+  const getUniverseTags = (filters?: any): string[] => {
+    if (!filters) return [];
+    const tags: string[] = [];
+    if (filters.min_market_cap !== undefined) tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.max_market_cap !== undefined) tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.min_price !== undefined) tags.push(`Min Price: $${filters.min_price}`);
+    if (filters.max_price !== undefined) tags.push(`Max Price: $${filters.max_price}`);
+    if (filters.min_volume !== undefined) tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
+    if (filters.max_shares_float !== undefined) tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
+    if (filters.require_shortable) tags.push("Require Shortable");
+    if (filters.exclude_dilution) tags.push("Exclude Dilution");
+    if (filters.whitelist_sectors && filters.whitelist_sectors.length > 0) {
+      tags.push(`Sectors: ${filters.whitelist_sectors.join(', ')}`);
+    }
+    return tags;
+  }
+
+  const getRiskTags = (risk?: any): string[] => {
+    if (!risk) return [];
+    const tags: string[] = [];
+    if (risk.use_hard_stop) {
+      tags.push(`SL: ${risk.hard_stop.value}% (${risk.hard_stop.type})`);
+    }
+    if (risk.use_take_profit) {
+      tags.push(`TP: ${risk.take_profit.value}% (${risk.take_profit.type})`);
+    }
+    if (risk.take_profit_mode) {
+      tags.push(`TP Mode: ${risk.take_profit_mode}`);
+    }
+    if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
+      risk.partial_take_profits.forEach((pt: any, i: number) => {
+        tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct}%`);
+      });
+    }
+    if (risk.trailing_stop?.active) {
+      tags.push(`TS: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type})`);
+    }
+    return tags;
+  }
 
   const addToIncubator = (strat: any) => {
     if (incubatorStrategies.some(s => s.id === strat.id)) {
@@ -809,111 +949,122 @@ export default function TrunkPage() {
                 const stats = getStats(strat)
                 const isSelected = selectedStrategyIds.includes(strat.id)
                 const isPositive = stats.winRate ? stats.winRate >= 50 : true
+                const isExpanded = expandedRowId === strat.id
                 
                 return (
-                  <tr
-                    key={strat.id}
-                    onClick={() => toggleStrategySelection(strat.id)}
-                    style={{
-                      borderBottom: '0.5px solid rgba(44, 47, 51, 0.25)',
-                      backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.06)' : 'transparent',
-                      borderLeft: isSelected ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
-                      cursor: 'pointer',
-                      transition: 'background-color 150ms ease'
-                    }}
-                    onMouseEnter={e => {
-                      if (!isSelected) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.01)'
-                    }}
-                    onMouseLeave={e => {
-                      if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'
-                    }}
-                  >
-                    <td style={{ padding: '6px 10px' }}>
-                      <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--color-ec-text-high)' }}>{strat.name}</div>
-                      {strat.description && (
-                        <div style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', marginTop: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 120 }}>
-                          {strat.description}
+                  <React.Fragment key={strat.id}>
+                    <tr
+                      onClick={() => toggleStrategySelection(strat.id)}
+                      style={{
+                        borderBottom: '0.5px solid rgba(44, 47, 51, 0.25)',
+                        backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.06)' : 'transparent',
+                        borderLeft: isSelected ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
+                        cursor: 'pointer',
+                        transition: 'background-color 150ms ease'
+                      }}
+                      onMouseEnter={e => {
+                        if (!isSelected) e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.01)'
+                      }}
+                      onMouseLeave={e => {
+                        if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'
+                      }}
+                    >
+                      {/* Name with Chevron Toggle */}
+                      <td style={{ padding: '6px 10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleRowExpand(strat.id);
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              color: 'var(--color-ec-text-muted)',
+                              padding: 2,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transition: 'color 150ms ease',
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.color = 'var(--color-ec-text-high)'}
+                            onMouseLeave={e => e.currentTarget.style.color = 'var(--color-ec-text-muted)'}
+                            title="Expand conditions"
+                          >
+                            {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                          </button>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--color-ec-text-high)' }}>{strat.name}</div>
+                            {strat.description && (
+                              <div style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', marginTop: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 120 }} title={strat.description}>
+                                {strat.description}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '6px 10px' }}>
-                      <span 
-                        style={{ 
-                          fontSize: 8, 
-                          fontWeight: 700, 
-                          padding: '1px 4px', 
-                          borderRadius: 0, 
-                          textTransform: 'uppercase',
-                          backgroundColor: strat.bias === 'short' ? 'rgba(201, 77, 63, 0.12)' : 'rgba(74, 157, 127, 0.12)',
-                          color: strat.bias === 'short' ? 'var(--color-ec-loss)' : 'var(--color-ec-profit)',
-                        }}
-                      >
-                        {strat.bias}
-                      </span>
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 9, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>
-                      {stats.period}
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                      {stats.trades || '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px' }}>
-                      <Sparkline points={stats.equityCurve} isPositive={isPositive} />
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.winRate ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
-                      {stats.winRate !== null ? `${stats.winRate.toFixed(1)}%` : '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.profitFactor ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
-                      {stats.profitFactor !== null ? stats.profitFactor.toFixed(2) : '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.maxDd ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)' }}>
-                      {stats.maxDd !== null ? `-${stats.maxDd.toFixed(1)}%` : '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.sharpe ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
-                      {stats.sharpe !== null ? stats.sharpe.toFixed(2) : '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.avgRDay ? 'var(--color-ec-profit)' : 'var(--color-ec-text-muted)' }}>
-                      {stats.avgRDay !== null ? `${stats.avgRDay.toFixed(2)} R` : '—'}
-                    </td>
-                    <td style={{ padding: '6px 10px' }}>
-                      <span
-                        style={{
-                          fontSize: 8,
-                          fontWeight: 700,
-                          padding: '1px 5px',
-                          borderRadius: 0,
-                          textTransform: 'uppercase',
-                          backgroundColor: stats.isValidated ? 'rgba(74, 157, 127, 0.12)' : 'rgba(201, 77, 63, 0.12)',
-                          color: stats.isValidated ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)',
-                          border: stats.isValidated ? '0.5px solid rgba(74, 157, 127, 0.25)' : '0.5px solid rgba(201, 77, 63, 0.25)'
-                        }}
-                      >
-                        {stats.isValidated ? 'YES' : 'NO'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/backtester?strategy_id=${strat.id}`)
+                      </td>
+                      <td style={{ padding: '6px 10px' }}>
+                        <span 
+                          style={{ 
+                            fontSize: 8, 
+                            fontWeight: 700, 
+                            padding: '1px 4px', 
+                            borderRadius: 0, 
+                            textTransform: 'uppercase',
+                            backgroundColor: strat.bias === 'short' ? 'rgba(201, 77, 63, 0.12)' : 'rgba(74, 157, 127, 0.12)',
+                            color: strat.bias === 'short' ? 'var(--color-ec-loss)' : 'var(--color-ec-profit)',
                           }}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            padding: 2,
-                            cursor: 'pointer',
-                            color: 'var(--color-ec-text-muted)'
-                          }}
-                          title="Run Backtest"
                         >
-                          <Play size={10} fill="currentColor" />
-                        </button>
-                        {!isIncubator ? (
+                          {strat.bias}
+                        </span>
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 9, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>
+                        {stats.period}
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                        {stats.trades || '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px' }}>
+                        <Sparkline points={stats.equityCurve} isPositive={isPositive} />
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.winRate ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
+                        {stats.winRate !== null ? `${stats.winRate.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.profitFactor ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
+                        {stats.profitFactor !== null ? stats.profitFactor.toFixed(2) : '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.maxDd ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)' }}>
+                        {stats.maxDd !== null ? `-${stats.maxDd.toFixed(1)}%` : '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.sharpe ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
+                        {stats.sharpe !== null ? stats.sharpe.toFixed(2) : '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: stats.avgRDay ? 'var(--color-ec-profit)' : 'var(--color-ec-text-muted)' }}>
+                        {stats.avgRDay !== null ? `${stats.avgRDay.toFixed(2)} R` : '—'}
+                      </td>
+                      <td style={{ padding: '6px 10px' }}>
+                        <span
+                          style={{
+                            fontSize: 8,
+                            fontWeight: 700,
+                            padding: '1px 5px',
+                            borderRadius: 0,
+                            textTransform: 'uppercase',
+                            backgroundColor: stats.isValidated ? 'rgba(74, 157, 127, 0.12)' : 'rgba(201, 77, 63, 0.12)',
+                            color: stats.isValidated ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)',
+                            border: stats.isValidated ? '0.5px solid rgba(74, 157, 127, 0.25)' : '0.5px solid rgba(201, 77, 63, 0.25)'
+                          }}
+                        >
+                          {stats.isValidated ? 'YES' : 'NO'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
                           <button
                             onClick={(e) => {
                               e.stopPropagation()
-                              addToIncubator(strat)
+                              router.push(`/backtester?strategy_id=${strat.id}`)
                             }}
                             style={{
                               background: 'transparent',
@@ -922,47 +1073,143 @@ export default function TrunkPage() {
                               cursor: 'pointer',
                               color: 'var(--color-ec-text-muted)'
                             }}
-                            title="Monitor in Incubator"
+                            title="Run Backtest"
                           >
-                            <Plus size={10} />
+                            <Play size={10} fill="currentColor" />
                           </button>
-                        ) : (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              removeFromIncubator(strat.id)
-                            }}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              padding: 2,
-                              cursor: 'pointer',
-                              color: 'var(--color-ec-text-muted)'
-                            }}
-                            title="Remove from Incubator"
-                          >
-                            <Minus size={10} />
-                          </button>
-                        )}
-                        {!isIncubator && (
-                          <button
-                            disabled={deletingId === strat.id}
-                            onClick={(e) => handleDelete(e, strat.id, 'strategy')}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              padding: 2,
-                              cursor: 'pointer',
-                              color: 'var(--color-ec-text-muted)'
-                            }}
-                            title="Delete Strategy"
-                          >
-                            <Trash2 size={10} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                          {!isIncubator ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                addToIncubator(strat)
+                              }}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 2,
+                                cursor: 'pointer',
+                                color: 'var(--color-ec-text-muted)'
+                              }}
+                              title="Monitor in Incubator"
+                            >
+                              <Plus size={10} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                removeFromIncubator(strat.id)
+                              }}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 2,
+                                cursor: 'pointer',
+                                color: 'var(--color-ec-text-muted)'
+                              }}
+                              title="Remove from Incubator"
+                            >
+                              <Minus size={10} />
+                            </button>
+                          )}
+                          {!isIncubator && (
+                            <button
+                              disabled={deletingId === strat.id}
+                              onClick={(e) => handleDelete(e, strat.id, 'strategy')}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 2,
+                                cursor: 'pointer',
+                                color: 'var(--color-ec-text-muted)'
+                              }}
+                              title="Delete Strategy"
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    
+                    {/* Collapsible tags row */}
+                    {isExpanded && (
+                      <tr style={{ backgroundColor: 'rgba(28, 30, 33, 0.25)' }}>
+                        <td colSpan={12} style={{ padding: '10px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {/* Preconditions */}
+                            {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Timing/Preconds:</span>
+                                {strat.apply_day && (
+                                  <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(59, 130, 246, 0.3)', backgroundColor: 'rgba(59, 130, 246, 0.06)', color: '#60a5fa' }}>
+                                    Apply: {strat.apply_day}
+                                  </span>
+                                )}
+                                {strat.postgap_preconditions?.map((pre: any, idx: number) => (
+                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(216, 122, 61, 0.3)', backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)' }}>
+                                    {formatPrecondition(pre)}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Universe filters */}
+                            {getUniverseTags(strat.universe_filters).length > 0 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Universe Filters:</span>
+                                {getUniverseTags(strat.universe_filters).map((tag, idx) => (
+                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(168, 85, 247, 0.3)', backgroundColor: 'rgba(168, 85, 247, 0.06)', color: '#a855f7' }}>
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Entry Logic */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Entry Logic ({strat.entry_logic?.timeframe || 'N/A'}):</span>
+                              {getConditionTags(strat.entry_logic?.root_condition).length === 0 ? (
+                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No entry conditions</span>
+                              ) : (
+                                getConditionTags(strat.entry_logic?.root_condition).map((tag, idx) => (
+                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(74, 157, 127, 0.3)', backgroundColor: 'rgba(74, 157, 127, 0.06)', color: 'var(--color-ec-profit)' }}>
+                                    {tag}
+                                  </span>
+                                ))
+                              )}
+                            </div>
+
+                            {/* Exit Logic */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Exit Logic ({strat.exit_logic?.timeframe || 'N/A'}):</span>
+                              {getConditionTags(strat.exit_logic?.root_condition).length === 0 ? (
+                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No exit conditions</span>
+                              ) : (
+                                getConditionTags(strat.exit_logic?.root_condition).map((tag, idx) => (
+                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(245, 158, 11, 0.3)', backgroundColor: 'rgba(245, 158, 11, 0.06)', color: '#f59e0b' }}>
+                                    {tag}
+                                  </span>
+                                ))
+                              )}
+                            </div>
+
+                            {/* Risk Management */}
+                            {getRiskTags(strat.risk_management).length > 0 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Risk Settings:</span>
+                                {getRiskTags(strat.risk_management).map((tag, idx) => (
+                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.06)', color: '#ef4444' }}>
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
             </tbody>
