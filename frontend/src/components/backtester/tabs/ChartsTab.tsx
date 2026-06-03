@@ -291,7 +291,13 @@ export default function ChartsTab({
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={evByTime30Min} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
-                <XAxis dataKey="time" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
+                <XAxis
+                  dataKey="time"
+                  tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={25}
+                />
                 <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}

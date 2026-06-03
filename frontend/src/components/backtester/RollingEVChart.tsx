@@ -48,13 +48,12 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 dailyEV.push({ date, ev: pWin * avgWin - pLoss * avgLoss });
             }
             dailyEV.sort((a, b) => a.date.localeCompare(b.date));
-
-            const minDaysReq = Math.min(5, Math.ceil(dailyEV.length / 5));
+            const reqDays = Math.min(rollingWindow, dailyEV.length);
             const result: { time: Time; value: number }[] = [];
             for (let i = 0; i < dailyEV.length; i++) {
                 const start = Math.max(0, i - rollingWindow + 1);
                 const slice = dailyEV.slice(start, i + 1);
-                if (slice.length < minDaysReq) continue;
+                if (slice.length < reqDays) continue;
                 const avg = slice.reduce((s, d) => s + d.ev, 0) / slice.length;
                 result.push({ time: dailyEV[i].date as unknown as Time, value: avg });
             }
@@ -64,12 +63,12 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
             const sorted = [...trades].sort(
                 (a, b) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime()
             );
-            const minTradesReq = Math.min(5, Math.ceil(sorted.length / 5));
+            const reqTrades = Math.min(rollingWindow, sorted.length);
             const raw: { date: string; value: number }[] = [];
             for (let i = 0; i < sorted.length; i++) {
                 const start = Math.max(0, i - rollingWindow + 1);
                 const slice = sorted.slice(start, i + 1);
-                if (slice.length < minTradesReq) continue;
+                if (slice.length < reqTrades) continue;
                 const wins = slice.filter((t) => t.pnl > 0);
                 const losses = slice.filter((t) => t.pnl <= 0);
                 const pWin = wins.length / slice.length;

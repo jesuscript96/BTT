@@ -40,6 +40,9 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<WhatIfResult | null>(null);
 
+  const [showEquityExpenses, setShowEquityExpenses] = useState(true);
+  const [showDrawdownExpenses, setShowDrawdownExpenses] = useState(false);
+
   // --- What If Simulation States ---
   const [excludeDays, setExcludeDays] = useState<number[]>([]); // 0=Mon, 4=Fri
   const [excludeMonths, setExcludeMonths] = useState<number[]>([]); // 0=Jan
@@ -204,7 +207,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
     );
 
     // --- Monthly Expenses Curve ---
-    if (monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
+    if (showEquityExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
       const expensesSeries = chart.addSeries(LineSeries, {
         color: "#3b82f6",
         lineWidth: 2,
@@ -289,6 +292,43 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
         })
       );
 
+      // --- Drawdown with Expenses Series ---
+      if (showDrawdownExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
+        const ddExpensesSeries = ddChart.addSeries(LineSeries, {
+          color: "#ef4444",
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+        });
+
+        const startTs = globalEquity[0].time as number;
+        const sPerMonth = 30.436875 * 24 * 60 * 60; // Average seconds per month
+
+        const netEquityValues = globalEquity.map((p) => {
+          const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
+          const netValue = p.value - (monthlyExpenses * monthsElapsed);
+          return { time: p.time, value: netValue };
+        });
+
+        let netHighWaterMark = netEquityValues[0].value;
+        const netDrawdown = netEquityValues.map((p) => {
+          if (p.value > netHighWaterMark) {
+            netHighWaterMark = p.value;
+          }
+          const ddAbsolute = p.value - netHighWaterMark;
+          const ddPct = netHighWaterMark > 0 ? (ddAbsolute / netHighWaterMark) * 100 : 0;
+
+          let val = ddPct;
+          if (viewMode === "R") {
+            val = riskR > 0 ? ddAbsolute / riskR : 0;
+          } else if (viewMode === "$") {
+            val = ddAbsolute;
+          }
+          return { time: p.time as Time, value: val };
+        });
+
+        ddExpensesSeries.setData(netDrawdown);
+      }
+
       // Synchronize horizontal scrolling
       chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (range && ddChart) {
@@ -334,7 +374,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab]);
+  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses]);
 
   if (!globalEquity.length) {
     return <p className="text-sm text-[var(--muted)]">Sin datos de equity</p>;
@@ -488,6 +528,19 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                       </span>
                     </div>
                   )}
+                  {!!monthlyExpenses && monthlyExpenses > 0 && (
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
+                      <input
+                        type="checkbox"
+                        checked={showEquityExpenses}
+                        onChange={(e) => setShowEquityExpenses(e.target.checked)}
+                        className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-mono text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">
+                        Mostrar gastos
+                      </span>
+                    </label>
+                  )}
                 </div>
 
                 <div className="flex items-center" style={{ marginRight: 22 }}>
@@ -526,13 +579,31 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
             )}
             <div ref={containerRef} className="h-[370px] w-full" />
             <div className="border-t border-[var(--border)] pt-2 mt-auto">
+               <div className="flex items-center gap-4 mb-1.5 px-1">
+                 <span className="text-[10px] uppercase tracking-wide font-mono text-[#ffffff]">
+                   Drawdown
+                 </span>
+                 {!!monthlyExpenses && monthlyExpenses > 0 && (
+                   <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                     <input
+                       type="checkbox"
+                       checked={showDrawdownExpenses}
+                       onChange={(e) => setShowDrawdownExpenses(e.target.checked)}
+                       className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
+                     />
+                     <span className="text-[10px] font-mono text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">
+                       Mostrar gastos
+                     </span>
+                   </label>
+                 )}
+               </div>
                <div ref={ddContainerRef} className="h-[120px] w-full" />
             </div>
           </div>
         ) : (
           <div key="whatif-tab" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
-              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
                 <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '16px', marginBottom: '16px' }}>
                   <button 
                     onClick={() => toggleSection("temporal")}
