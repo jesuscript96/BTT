@@ -151,27 +151,6 @@ def run_backtest(
 
         mini_df = pd.DataFrame(arrays)
 
-        # --- Trim DataFrame to the selected market session window ---
-        # This ensures that the simulator's "last candle" (n-1) IS the session
-        # boundary, so EOD exits happen at the end of the selected session.
-        if market_sessions and "all" not in market_sessions:
-            session_mask = _get_market_sessions_mask(
-                mini_df["timestamp"], market_sessions, custom_start_time, custom_end_time
-            )
-            mini_df = mini_df[session_mask].reset_index(drop=True)
-            if len(mini_df) < 2:
-                del mini_df
-                continue
-            # Rebuild arrays from trimmed DataFrame
-            arrays = {
-                "open": mini_df["open"].values.astype(np.float64),
-                "high": mini_df["high"].values.astype(np.float64),
-                "low": mini_df["low"].values.astype(np.float64),
-                "close": mini_df["close"].values.astype(np.float64),
-                "volume": mini_df["volume"].values,
-                "timestamp": mini_df["timestamp"].values,
-            }
-
         # --- Signal computation (with optional cache for risk-only optimization) ---
         cache_key = (ticker, date)
 
@@ -221,6 +200,34 @@ def run_backtest(
                 }
 
             del signals
+
+        # --- Trim DataFrame and signals to the selected market session window ---
+        # This is done AFTER signal translation so indicators have full-day context.
+        # This ensures that the simulator's "last candle" (n-1) IS the session
+        # boundary, so EOD exits happen at the end of the selected session.
+        if market_sessions and "all" not in market_sessions:
+            session_mask = _get_market_sessions_mask(
+                mini_df["timestamp"], market_sessions, custom_start_time, custom_end_time
+            )
+            # Apply mask to mini_df and update arrays
+            mini_df = mini_df[session_mask].reset_index(drop=True)
+            if len(mini_df) < 2:
+                del mini_df
+                continue
+            # Rebuild arrays from trimmed DataFrame
+            arrays = {
+                "open": mini_df["open"].values.astype(np.float64),
+                "high": mini_df["high"].values.astype(np.float64),
+                "low": mini_df["low"].values.astype(np.float64),
+                "close": mini_df["close"].values.astype(np.float64),
+                "volume": mini_df["volume"].values,
+                "timestamp": mini_df["timestamp"].values,
+            }
+            
+            # Apply mask to signals
+            session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
+            entries_arr = entries_arr[session_mask_np]
+            exits_arr = exits_arr[session_mask_np]
 
         # --- TEMPORARY PATCH FOR MISPRINTS ---
         # 8:00 to 8:45 restriction to ignore misprints

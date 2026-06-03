@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { BacktestResult, DayCandles, TradeRecord, EquityPoint } from "@/lib/api_backtester";
 import PerformanceTab from "@/components/backtester/tabs/PerformanceTab";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
@@ -32,6 +32,7 @@ interface ResultsTabsProps {
   strategyId?: string;
   datasetId?: string;
   backtestParams?: Record<string, unknown>;
+  onSelectDay?: (idx: number) => void;
 }
 
 export default function ResultsTabs({
@@ -46,8 +47,40 @@ export default function ResultsTabs({
   strategyId = "",
   datasetId = "",
   backtestParams = {},
+  onSelectDay,
 }: ResultsTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("performance");
+
+  const handleSelectTrade = (ticker: string, date: string) => {
+    const dayIdx = result.day_results.findIndex(
+      (d) => d.ticker === ticker && d.date === date
+    );
+    if (dayIdx !== -1) {
+      if (onSelectDay) {
+        onSelectDay(dayIdx);
+      }
+      setActiveTab("analysis");
+    }
+  };
+
+  const [loadProgress, setLoadProgress] = useState(0);
+
+  useEffect(() => {
+    if (candlesLoading) {
+      setLoadProgress(0);
+      const interval = setInterval(() => {
+        setLoadProgress((prev) => {
+          if (prev < 30) return prev + Math.random() * 15 + 5;
+          if (prev < 70) return prev + Math.random() * 10 + 2;
+          if (prev < 90) return prev + Math.random() * 3 + 0.5;
+          return prev;
+        });
+      }, 80);
+      return () => clearInterval(interval);
+    } else {
+      setLoadProgress(100);
+    }
+  }, [candlesLoading]);
 
   return (
     <div className="transition-colors">
@@ -123,18 +156,58 @@ export default function ResultsTabs({
           <CalendarTab dayResults={result.day_results} trades={result.trades} isDarkMode={isDarkMode} />
         </div>
         <div style={{ display: activeTab === "trades" ? "block" : "none" }}>
-          <TradesTab trades={result.trades} />
+          <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade} />
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>
-          <div>
+          <div style={{ minHeight: 520, display: 'flex', flexDirection: 'column', position: 'relative' }}>
             {candlesLoading && (
-              <div className="flex items-center justify-center p-8">
-                <div className="text-center space-y-2">
-                  <svg className="animate-spin h-5 w-5 text-[var(--muted)] mx-auto" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <p className="text-[10px] text-[var(--muted)] font-mono">loading chart...</p>
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  flex: 1,
+                  minHeight: 520,
+                  gap: 16 
+                }}
+              >
+                <div style={{ width: 240 }}>
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center', 
+                    marginBottom: 6,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    color: 'var(--color-ec-text-secondary)'
+                  }}>
+                    <span>Cargando trade</span>
+                    <span style={{ fontFamily: 'var(--color-ec-mono)', color: 'var(--color-ec-copper)', fontWeight: 700 }}>
+                      {Math.round(loadProgress)}%
+                    </span>
+                  </div>
+                  <div style={{ 
+                    height: 4, 
+                    width: '100%', 
+                    backgroundColor: 'var(--color-ec-bg-elevated)', 
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 2,
+                    overflow: 'hidden'
+                  }}>
+                    <div 
+                      style={{ 
+                        height: '100%', 
+                        width: `${loadProgress}%`, 
+                        backgroundColor: 'var(--color-ec-copper)',
+                        borderRadius: 2,
+                        transition: 'width 80ms ease-out'
+                      }} 
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -148,9 +221,20 @@ export default function ResultsTabs({
               />
             )}
             {!candlesLoading && (!dayCandles || dayCandles.candles.length === 0) && (
-              <p className="text-[10px] text-[var(--muted)] text-center py-8 font-mono">
-                Selecciona un dia en el panel lateral para ver el analisis del trade.
-              </p>
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  flex: 1, 
+                  minHeight: 520 
+                }}
+              >
+                <p className="text-[10px] text-[var(--muted)] text-center font-mono">
+                  Selecciona un dia en el panel lateral para ver el analisis del trade.
+                </p>
+              </div>
             )}
           </div>
         </div>

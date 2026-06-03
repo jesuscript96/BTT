@@ -5,6 +5,7 @@ import type { TradeRecord } from "@/lib/api_backtester";
 
 interface TradesTabProps {
   trades: TradeRecord[];
+  onSelectTrade?: (ticker: string, date: string) => void;
 }
 
 type SortKey = keyof TradeRecord;
@@ -42,7 +43,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades }: TradesTabProps) {
+export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -156,7 +157,15 @@ export default function TradesTab({ trades }: TradesTabProps) {
                 className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
                 style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
               >
-                <td className="px-4 py-1.5 font-semibold" style={{ color: 'var(--color-ec-text-high)' }}>{t.ticker}</td>
+                <td className="px-4 py-1.5 font-semibold">
+                  <span
+                    onClick={() => onSelectTrade?.(t.ticker, t.date)}
+                    className="hover:text-[var(--color-ec-copper-bright)] hover:underline transition-colors cursor-pointer"
+                    style={{ color: 'var(--color-ec-text-high)' }}
+                  >
+                    {t.ticker}
+                  </span>
+                </td>
                 <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>{t.date}</td>
                 <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>
                   {t.entry_time.split(" ").pop()?.slice(0, 8)}

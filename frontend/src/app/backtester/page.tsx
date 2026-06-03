@@ -543,6 +543,7 @@ export default function Home() {
                 strategyId={strategyIdRef.current}
                 datasetId={datasetIdRef.current}
                 backtestParams={backtestParamsRef.current}
+                onSelectDay={setSelectedDay}
               />
             </>
           )}
