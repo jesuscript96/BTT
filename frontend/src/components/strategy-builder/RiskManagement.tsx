@@ -8,7 +8,7 @@ interface Props {
     onChange: (risk: RiskManagement) => void;
 }
 
-export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => {
+const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
     const updateRiskSetting = (key: 'hard_stop' | 'take_profit', field: keyof RiskSettings, value: any) => {
         onChange({
@@ -661,3 +661,6 @@ export const RiskManagementComponent: React.FC<Props> = ({ risk, onChange }) => 
         </div>
     );
 };
+
+export const RiskManagementComponent = React.memo(RiskManagementComponentInner);
+RiskManagementComponent.displayName = "RiskManagementComponent";
