@@ -8,7 +8,7 @@ interface Props {
     onChange: (logic: EntryLogic) => void;
 }
 
-export const EntryLogicBuilder = ({ logic, onChange }: Props) => {
+export const EntryLogicBuilder = React.memo(({ logic, onChange }: Props) => {
     return (
         <LogicBuilder
             title="Entry Logic"
@@ -19,4 +19,5 @@ export const EntryLogicBuilder = ({ logic, onChange }: Props) => {
             accentColor="blue"
         />
     );
-};
+});
+EntryLogicBuilder.displayName = "EntryLogicBuilder";
