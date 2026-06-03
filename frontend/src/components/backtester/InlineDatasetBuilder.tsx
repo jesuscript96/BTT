@@ -518,7 +518,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
                                 backgroundColor: "var(--color-ec-bg-elevated)",
                                 border: `0.5px solid ${validationErr ? "var(--color-ec-loss)" : "var(--color-ec-border)"}`,
                                 borderRadius: 5,
-                                padding: `6px 24px 6px ${param.unit === "$" ? "18px" : "8px"}`,
+                                padding: `6px ${param.unit !== "$" ? "22px" : "8px"} 6px ${param.unit === "$" ? "18px" : "8px"}`,
                                 fontFamily: "var(--color-ec-sans)",
                                 fontSize: 11,
                                 fontWeight: 500,

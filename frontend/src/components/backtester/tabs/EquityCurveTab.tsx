@@ -15,6 +15,7 @@ import {
 } from "lightweight-charts";
 import type { GlobalEquityPoint, DrawdownPoint, TradeRecord, AggregateMetrics, WhatIfResult } from "@/lib/api_backtester";
 import { runWhatIf } from "@/lib/api_backtester";
+import OOSDegradationTab from "./OOSDegradationTab";
 
 
 interface EquityCurveTabProps {
@@ -26,9 +27,26 @@ interface EquityCurveTabProps {
   riskR: number;
   monthlyExpenses?: number;
   isDarkMode?: boolean;
+  isPercent: number;
+  fullGlobalEquity: GlobalEquityPoint[];
+  fullGlobalDrawdown: DrawdownPoint[];
+  fullTrades: any[];
 }
 
-export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, metrics, initCash, riskR, monthlyExpenses, isDarkMode = false }: EquityCurveTabProps) {
+export default function EquityCurveTab({
+  globalEquity,
+  globalDrawdown,
+  trades,
+  metrics,
+  initCash,
+  riskR,
+  monthlyExpenses,
+  isDarkMode = false,
+  isPercent,
+  fullGlobalEquity,
+  fullGlobalDrawdown,
+  fullTrades,
+}: EquityCurveTabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -36,9 +54,12 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
 
   type ViewMode = "$" | "%" | "R";
   const [viewMode, setViewMode] = useState<ViewMode>("$");
-  const [activeMainTab, setActiveMainTab] = useState<"equity" | "whatif">("equity");
+  const [activeMainTab, setActiveMainTab] = useState<"equity" | "whatif" | "oos_degradation">("equity");
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<WhatIfResult | null>(null);
+
+  const [showEquityExpenses, setShowEquityExpenses] = useState(true);
+  const [showDrawdownExpenses, setShowDrawdownExpenses] = useState(false);
 
   // --- What If Simulation States ---
   const [excludeDays, setExcludeDays] = useState<number[]>([]); // 0=Mon, 4=Fri
@@ -204,7 +225,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
     );
 
     // --- Monthly Expenses Curve ---
-    if (monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
+    if (showEquityExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
       const expensesSeries = chart.addSeries(LineSeries, {
         color: "#3b82f6",
         lineWidth: 2,
@@ -289,6 +310,43 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
         })
       );
 
+      // --- Drawdown with Expenses Series ---
+      if (showDrawdownExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
+        const ddExpensesSeries = ddChart.addSeries(LineSeries, {
+          color: "#ef4444",
+          lineWidth: 2,
+          lineStyle: LineStyle.Dotted,
+        });
+
+        const startTs = globalEquity[0].time as number;
+        const sPerMonth = 30.436875 * 24 * 60 * 60; // Average seconds per month
+
+        const netEquityValues = globalEquity.map((p) => {
+          const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
+          const netValue = p.value - (monthlyExpenses * monthsElapsed);
+          return { time: p.time, value: netValue };
+        });
+
+        let netHighWaterMark = netEquityValues[0].value;
+        const netDrawdown = netEquityValues.map((p) => {
+          if (p.value > netHighWaterMark) {
+            netHighWaterMark = p.value;
+          }
+          const ddAbsolute = p.value - netHighWaterMark;
+          const ddPct = netHighWaterMark > 0 ? (ddAbsolute / netHighWaterMark) * 100 : 0;
+
+          let val = ddPct;
+          if (viewMode === "R") {
+            val = riskR > 0 ? ddAbsolute / riskR : 0;
+          } else if (viewMode === "$") {
+            val = ddAbsolute;
+          }
+          return { time: p.time as Time, value: val };
+        });
+
+        ddExpensesSeries.setData(netDrawdown);
+      }
+
       // Synchronize horizontal scrolling
       chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
         if (range && ddChart) {
@@ -334,7 +392,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab]);
+  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses]);
 
   if (!globalEquity.length) {
     return <p className="text-sm text-[var(--muted)]">Sin datos de equity</p>;
@@ -453,6 +511,37 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
           >
             What if...
           </button>
+          <span style={{ width: 1, height: 14, backgroundColor: 'var(--color-ec-border)', opacity: 0.7, margin: '0 6px', flexShrink: 0 }}></span>
+          <button
+            onClick={() => setActiveMainTab("oos_degradation")}
+            style={{
+              padding: '0 10px',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase' as const,
+              letterSpacing: '0.15em',
+              color: activeMainTab === "oos_degradation" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+              background: 'transparent',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              borderBottom: activeMainTab === "oos_degradation" ? '2px solid var(--color-ec-text-high)' : '2px solid transparent',
+              cursor: 'pointer',
+              transition: 'color 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (activeMainTab !== "oos_degradation") e.currentTarget.style.color = "var(--color-ec-text-secondary)";
+            }}
+            onMouseLeave={(e) => {
+              if (activeMainTab !== "oos_degradation") e.currentTarget.style.color = "var(--color-ec-text-muted)";
+            }}
+          >
+            OOS degradation
+          </button>
         </div>
       </div>
 
@@ -487,6 +576,19 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                         {profitWithExpensesDisplay}
                       </span>
                     </div>
+                  )}
+                  {!!monthlyExpenses && monthlyExpenses > 0 && (
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
+                      <input
+                        type="checkbox"
+                        checked={showEquityExpenses}
+                        onChange={(e) => setShowEquityExpenses(e.target.checked)}
+                        className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-mono text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">
+                        Mostrar gastos
+                      </span>
+                    </label>
                   )}
                 </div>
 
@@ -526,13 +628,31 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
             )}
             <div ref={containerRef} className="h-[370px] w-full" />
             <div className="border-t border-[var(--border)] pt-2 mt-auto">
+               <div className="flex items-center gap-4 mb-1.5 px-1">
+                 <span className="text-[10px] uppercase tracking-wide font-mono text-[#ffffff]">
+                   Drawdown
+                 </span>
+                 {!!monthlyExpenses && monthlyExpenses > 0 && (
+                   <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                     <input
+                       type="checkbox"
+                       checked={showDrawdownExpenses}
+                       onChange={(e) => setShowDrawdownExpenses(e.target.checked)}
+                       className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
+                     />
+                     <span className="text-[10px] font-mono text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">
+                       Mostrar gastos
+                     </span>
+                   </label>
+                 )}
+               </div>
                <div ref={ddContainerRef} className="h-[120px] w-full" />
             </div>
           </div>
-        ) : (
+        ) : activeMainTab === "whatif" ? (
           <div key="whatif-tab" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
-              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
                 <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '16px', marginBottom: '16px' }}>
                   <button 
                     onClick={() => toggleSection("temporal")}
@@ -865,9 +985,22 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                         isDarkMode={isDarkMode}
                       />
                     </div>
-                </div>
-             </div>
-         )}
+                 </div>
+              </div>
+          ) : (
+            <div key="oos-degradation-tab" style={{ height: "100%", overflow: "hidden" }}>
+              <OOSDegradationTab
+                fullGlobalEquity={fullGlobalEquity}
+                fullGlobalDrawdown={fullGlobalDrawdown}
+                fullTrades={fullTrades}
+                initCash={initCash}
+                riskR={riskR}
+                isPercent={isPercent}
+                monthlyExpenses={monthlyExpenses}
+                isDarkMode={isDarkMode}
+              />
+            </div>
+          )}
       </div>
     </div>
 

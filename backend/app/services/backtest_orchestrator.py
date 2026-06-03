@@ -110,9 +110,19 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
     logger.info(f"  strategy loaded ({round(time.time()-t0, 2)}s)")
 
     try:
+        strategy_def = strategy["definition"]
+        preconditions = strategy_def.get("postgap_preconditions", [])
+        apply_day = strategy_def.get("apply_day", "gap_day")
+
         # ── PHASE 1: qualifying data (from local cache — fast) ──
         t_fetch = time.time()
-        qualifying = fetch_qualifying_data(req.dataset_id, req.start_date, req.end_date)
+        qualifying = fetch_qualifying_data(
+            req.dataset_id, 
+            req.start_date, 
+            req.end_date, 
+            preconditions=preconditions, 
+            apply_day=apply_day
+        )
 
         if qualifying is None or qualifying.empty:
             logger.warning(f"  No qualifying data for dataset={req.dataset_id}")

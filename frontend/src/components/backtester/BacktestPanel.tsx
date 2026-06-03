@@ -22,6 +22,7 @@ export interface BacktestPanelParams {
   locates_cost: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
+  is_percent: number;
 }
 
 interface BacktestPanelProps {
@@ -88,6 +89,7 @@ export default function BacktestPanel({
   const [fixedRatioDelta, setFixedRatioDelta] = useState(500);
   const [sizeBySl, setSizeBySl] = useState(false);
   const [feeType, setFeeType] = useState<"PERCENT" | "FLAT">("PERCENT");
+  const [isPercent, setIsPercent] = useState(100);
   const [loadingData, setLoadingData] = useState(true);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
@@ -208,13 +210,14 @@ export default function BacktestPanel({
       locates_cost: useLocates ? locatesCost : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
+      is_percent: isPercent,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedDataset, initCash, riskR, riskType, fixedRatioDelta, sizeBySl,
     fees, feeType, slippage, startDate, endDate, marketSessions,
     customStartTime, customEndTime, useLocates, locatesCost,
-    useMonthlyExpenses, monthlyExpenses, lookAheadPrevention,
+    useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
   ]);
 
   const handleRun = () => {
@@ -815,7 +818,7 @@ export default function BacktestPanel({
         </div>
       </div>
 
-      {/* RANGO DE FECHAS */}
+      {/* RANGO DE FECHAS IS-OOS */}
       <div style={{
         display: 'flex',
         flexDirection: 'column',
@@ -834,77 +837,105 @@ export default function BacktestPanel({
         }}>
           Rango de fechas IS-OOS
         </h2>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 8,
-        }}>
-          <div>
-            <label style={{
-              display: 'block',
+
+        {/* IS % SLIDER */}
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 10,
+              fontWeight: 600,
+              color: 'var(--color-ec-text-secondary)',
+            }}>
+              IS: <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>{isPercent}%</span>
+            </span>
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 10,
+              fontWeight: 600,
+              color: isPercent >= 90 ? 'var(--color-ec-text-muted)' : 'var(--color-ec-profit)',
+            }}>
+              OOS: {100 - isPercent}%
+            </span>
+          </div>
+
+          {/* Visual bar */}
+          <div style={{
+            display: 'flex',
+            height: 12,
+            borderRadius: 6,
+            overflow: 'hidden',
+            backgroundColor: 'var(--color-ec-bg-elevated)',
+            border: '0.5px solid var(--color-ec-border)',
+            boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.4)',
+          }}>
+            <div style={{
+              width: `${isPercent}%`,
+              backgroundColor: 'var(--color-ec-copper)',
+              borderRadius: '6px 0 0 6px',
+              transition: 'width 150ms ease',
+            }} />
+            {isPercent < 100 && (
+              <div style={{
+                width: `${100 - isPercent}%`,
+                backgroundColor: 'color-mix(in srgb, var(--color-ec-profit) 70%, transparent)',
+                borderRadius: '0 6px 6px 0',
+                transition: 'width 150ms ease',
+              }} />
+            )}
+          </div>
+
+          {/* Range slider */}
+          <input
+            type="range"
+            min={50}
+            max={100}
+            step={5}
+            value={isPercent}
+            onChange={(e) => setIsPercent(Number(e.target.value))}
+            style={{
+              width: '100%',
+              accentColor: 'var(--color-ec-copper)',
+              cursor: 'pointer',
+              height: 10,
+              marginTop: 4,
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 8,
+              color: 'var(--color-ec-text-muted)',
+            }}>50%</span>
+            <span style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 8,
+              color: 'var(--color-ec-text-muted)',
+            }}>100%</span>
+          </div>
+
+          {/* Warnings */}
+          {isPercent > 80 && isPercent < 100 && (
+            <div style={{
               fontFamily: 'var(--color-ec-sans)',
               fontSize: 9,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.12em',
-              color: 'var(--color-ec-text-muted)',
-              marginBottom: 5,
+              color: 'var(--color-ec-copper)',
+              fontStyle: 'italic',
+              marginTop: 2,
             }}>
-              Desde
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              min={selectedDs?.min_date || "2020-01-01"}
-              max={endDate || selectedDs?.max_date || "2030-12-31"}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full border border-[var(--border)]"
-              style={{
-                backgroundColor: 'var(--color-ec-bg-elevated)',
-                borderRadius: 5,
-                padding: '6px 8px',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 11,
-                fontWeight: 400,
-                color: 'var(--color-ec-text-primary)',
-                outline: 'none',
-                width: '100%',
-              }}
-            />
-          </div>
-          <div>
-            <label style={{
-              display: 'block',
+              ⚠ OOS &lt; 20% — validación limitada
+            </div>
+          )}
+          {isPercent > 90 && isPercent < 100 && (
+            <div style={{
               fontFamily: 'var(--color-ec-sans)',
               fontSize: 9,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.12em',
-              color: 'var(--color-ec-text-muted)',
-              marginBottom: 5,
+              color: 'var(--color-ec-loss)',
+              fontStyle: 'italic',
             }}>
-              Hasta
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              min={startDate || selectedDs?.min_date || "2020-01-01"}
-              max={selectedDs?.max_date || "2030-12-31"}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full border border-[var(--border)]"
-              style={{
-                backgroundColor: 'var(--color-ec-bg-elevated)',
-                borderRadius: 5,
-                padding: '6px 8px',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 11,
-                fontWeight: 400,
-                color: 'var(--color-ec-text-primary)',
-                outline: 'none',
-                width: '100%',
-              }}
-            />
-          </div>
+              ⛔ OOS &lt; 10% — pestaña de degradación deshabilitada
+            </div>
+          )}
         </div>
       </div>
 

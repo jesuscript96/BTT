@@ -4,9 +4,10 @@ import type { TradeRecord } from "@/lib/api_backtester";
 
 interface TradeTableProps {
   trades: TradeRecord[];
+  onSelectTrade?: (ticker: string, date: string) => void;
 }
 
-export default function TradeTable({ trades }: TradeTableProps) {
+export default function TradeTable({ trades, onSelectTrade }: TradeTableProps) {
   if (trades.length === 0) {
     return (
       <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] p-4">
@@ -43,7 +44,14 @@ export default function TradeTable({ trades }: TradeTableProps) {
           <tbody className="divide-y divide-[var(--border)]">
             {trades.map((t, i) => (
               <tr key={i} className="hover:bg-[var(--card-muted-bg)] transition-colors">
-                <td className="px-3 py-2 font-medium">{t.ticker}</td>
+                <td className="px-3 py-2 font-medium">
+                  <span
+                    onClick={() => onSelectTrade?.(t.ticker, t.date)}
+                    className="hover:text-[var(--color-ec-copper-bright)] hover:underline transition-colors cursor-pointer"
+                  >
+                    {t.ticker}
+                  </span>
+                </td>
                 <td className="px-3 py-2 text-[var(--muted)]">{t.date}</td>
                 <td className="px-3 py-2">
                   <span

@@ -103,3 +103,73 @@ body {
   }
 }
 
+/* Custom Scrollbar Styling */
+* {
+  scrollbar-width: thin !important;
+  scrollbar-color: var(--color-ec-border) var(--color-ec-bg-sidebar) !important;
+}
+
+*::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--color-ec-bg-sidebar) !important;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ec-border) !important;
+  border-radius: 4px !important;
+  border: 2px solid var(--color-ec-bg-sidebar) !important;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ec-copper) !important;
+}
+
+/* Custom Scrollbar Class */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--color-ec-bg-sidebar) !important;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-ec-border) !important;
+  border-radius: 3px !important;
+  border: 1px solid var(--color-ec-bg-sidebar) !important;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ec-copper) !important;
+}
+
+/* Scrollbar None Utility */
+.scrollbar-none::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+/* Hide native spin buttons (up/down arrows) for input type="number" */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield; /* For Firefox */
+}
+
+
+

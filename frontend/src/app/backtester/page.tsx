@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import BacktestPanel, { type BacktestPanelParams } from "@/components/backtester/BacktestPanel";
 import InlineStrategyBuilder, { type Draft } from "@/components/backtester/InlineStrategyBuilder";
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
@@ -42,6 +42,8 @@ export default function Home() {
       setStrategyToSave({
         name: draftStrategy.name,
         bias: draftStrategy.bias,
+        apply_day: draftStrategy.apply_day,
+        postgap_preconditions: draftStrategy.postgap_preconditions,
         entry_logic: draftStrategy.entry_logic,
         exit_logic: draftStrategy.exit_logic,
         risk_management: draftStrategy.risk_management,
@@ -129,6 +131,8 @@ export default function Home() {
         strategy_definition: {
           name: draft.name,
           bias: draft.bias,
+          apply_day: draft.apply_day,
+          postgap_preconditions: draft.postgap_preconditions,
           entry_logic: draft.entry_logic,
           exit_logic: draft.exit_logic,
           risk_management: draft.risk_management,
@@ -311,6 +315,122 @@ export default function Home() {
       t.date === selectedDayResult.date
   );
 
+  // ── IS/OOS filtering ──
+  const currentIsPercent = (panelParamsRef.current?.is_percent as number) ?? 100;
+
+  const isFilteredResult = useMemo(() => {
+    if (!result || currentIsPercent >= 100) return result;
+
+    const eq = result.global_equity;
+    if (!eq || eq.length < 2) return result;
+
+    // Find the IS cutoff index based on percentage of equity points
+    const cutoffIdx = Math.max(1, Math.floor(eq.length * currentIsPercent / 100));
+    const cutoffTime = eq[cutoffIdx - 1].time;
+
+    // Filter trades to IS period only
+    const isTrades = result.trades.filter(t => {
+      const tradeEpoch = t.entry_time_epoch;
+      return tradeEpoch <= cutoffTime;
+    });
+
+    // Filter day_results to IS period only
+    const isDayResults = result.day_results.filter(d => {
+      const dateEpoch = new Date(d.date).getTime() / 1000;
+      return dateEpoch <= cutoffTime;
+    });
+
+    // Filter equity and drawdown to IS period
+    const isEquity = eq.slice(0, cutoffIdx);
+    const isDrawdown = result.global_drawdown.filter(p => p.time <= cutoffTime);
+
+    // Filter equity_curves (per-day) to IS period
+    const isEquityCurves = result.equity_curves.filter(e => {
+      const dateEpoch = new Date(e.date).getTime() / 1000;
+      return dateEpoch <= cutoffTime;
+    });
+
+    // Recompute aggregate metrics from IS trades
+    const totalTrades = isTrades.length;
+    const wins = isTrades.filter(t => t.pnl > 0);
+    const losses = isTrades.filter(t => t.pnl < 0);
+    const winRate = totalTrades > 0 ? (wins.length / totalTrades) * 100 : 0;
+    const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+    const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0);
+    const initCash = initCashRef.current;
+    const totalReturnPct = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
+
+    // Daily returns for Sharpe/Sortino
+    const dailyPnls = new Map<string, number>();
+    isTrades.forEach(t => {
+      dailyPnls.set(t.date, (dailyPnls.get(t.date) || 0) + t.pnl);
+    });
+    const dailyReturns = Array.from(dailyPnls.values()).map(p => p / initCash);
+    const meanRet = dailyReturns.length > 0 ? dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length : 0;
+    const stdRet = dailyReturns.length > 1
+      ? Math.sqrt(dailyReturns.reduce((s, r) => s + (r - meanRet) ** 2, 0) / (dailyReturns.length - 1))
+      : 0;
+    const downside = dailyReturns.filter(r => r < 0);
+    const downsideStd = downside.length > 1
+      ? Math.sqrt(downside.reduce((s, r) => s + r ** 2, 0) / (downside.length - 1))
+      : 0;
+    const sharpe = stdRet > 0 ? (meanRet / stdRet) * Math.sqrt(252) : 0;
+    const sortino = downsideStd > 0 ? (meanRet / downsideStd) * Math.sqrt(252) : 0;
+
+    // Max drawdown from IS equity
+    let peak = isEquity[0]?.value ?? initCash;
+    let maxDd = 0;
+    isEquity.forEach(p => {
+      if (p.value > peak) peak = p.value;
+      const dd = ((p.value - peak) / peak) * 100;
+      if (dd < maxDd) maxDd = dd;
+    });
+
+    const avgWin = wins.length > 0 ? grossProfit / wins.length : 0;
+    const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
+    const uniqueDays = new Set(isTrades.map(t => t.date)).size;
+
+    const isMetrics = {
+      ...result.aggregate_metrics,
+      total_days: uniqueDays,
+      total_trades: totalTrades,
+      win_rate_pct: winRate,
+      total_return_pct: totalReturnPct,
+      total_pnl: totalPnl,
+      avg_sharpe: sharpe,
+      sortino_ratio: sortino,
+      max_drawdown_pct: maxDd,
+      avg_profit_factor: profitFactor,
+      avg_win: avgWin,
+      avg_loss: avgLoss,
+      payoff_ratio: avgLoss > 0 ? avgWin / avgLoss : 0,
+      expectancy: totalTrades > 0 ? totalPnl / totalTrades : 0,
+      avg_r_per_day: uniqueDays > 0 && riskRRef.current > 0
+        ? totalPnl / uniqueDays / riskRRef.current
+        : 0,
+      calmar_ratio: maxDd !== 0 ? totalReturnPct / Math.abs(maxDd) : 0,
+      dd_return_ratio: totalReturnPct !== 0 ? Math.abs(maxDd) / totalReturnPct : 0,
+    };
+
+    // Filter global_equity_expenses if present
+    const isEquityExpenses = result.global_equity_expenses
+      ? result.global_equity_expenses.filter(p => p.time <= cutoffTime)
+      : undefined;
+
+    return {
+      ...result,
+      aggregate_metrics: isMetrics,
+      day_results: isDayResults,
+      trades: isTrades,
+      equity_curves: isEquityCurves,
+      global_equity: isEquity,
+      global_equity_expenses: isEquityExpenses,
+      global_drawdown: isDrawdown,
+    } as BacktestResult;
+  }, [result, currentIsPercent]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden', backgroundColor: 'var(--color-ec-bg-base)' }}>
 
@@ -455,19 +575,23 @@ export default function Home() {
               <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
                 <div style={{ width: '66.666667%', height: 580 }}>
                   <EquityCurveTab
-                    globalEquity={result.global_equity}
-                    globalDrawdown={result.global_drawdown}
-                    trades={result.trades}
-                    metrics={result.aggregate_metrics}
+                    globalEquity={isFilteredResult!.global_equity}
+                    globalDrawdown={isFilteredResult!.global_drawdown}
+                    trades={isFilteredResult!.trades}
+                    metrics={isFilteredResult!.aggregate_metrics}
                     initCash={initCashRef.current}
                     riskR={riskRRef.current}
                     monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
+                    isPercent={currentIsPercent}
+                    fullGlobalEquity={result.global_equity}
+                    fullGlobalDrawdown={result.global_drawdown}
+                    fullTrades={result.trades}
                     isDarkMode={isDarkMode}
                   />
                 </div>
                 <div style={{ width: '33.333333%', display: 'flex', flexDirection: 'column', height: 580, paddingBottom: 4, boxSizing: 'border-box' }}>
                   <div style={{ flexShrink: 0 }}>
-                    <MetricsCard metrics={result.aggregate_metrics} vertical />
+                    <MetricsCard metrics={isFilteredResult!.aggregate_metrics} vertical />
                     <div style={{ padding: '12px 4px 4px 4px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <button
                         onClick={handleSaveToBaulClick}
@@ -522,13 +646,13 @@ export default function Home() {
                     </div>
                   </div>
                   <div style={{ height: 250, width: '100%', marginTop: 'auto', marginBottom: 38, flexShrink: 0 }}>
-                    <MaeScatterChart trades={result.trades} isDarkMode={isDarkMode} />
+                    <MaeScatterChart trades={isFilteredResult!.trades} isDarkMode={isDarkMode} />
                   </div>
                 </div>
               </div>
 
               <ResultsTabs
-                result={result}
+                result={isFilteredResult!}
                 initCash={initCashRef.current}
                 riskR={riskRRef.current}
                 dayCandles={dayCandles}
@@ -539,6 +663,7 @@ export default function Home() {
                 strategyId={strategyIdRef.current}
                 datasetId={datasetIdRef.current}
                 backtestParams={backtestParamsRef.current}
+                onSelectDay={setSelectedDay}
               />
             </>
           )}

@@ -198,12 +198,22 @@ export interface RiskManagement {
     max_drawdown_daily?: number;
 }
 
+export interface PostGapPrecondition {
+    id: string;
+    day: 'gap_day' | 'gap_1_day';
+    metric: 'volume' | 'close_vs_open' | 'close_vs_high_low' | 'close_vs_pm_high' | 'close_vs_vwap' | 'close_vs_sma' | 'candle_range_pct';
+    operator: '>' | '<' | '> High' | '< Low';
+    value?: number;
+    sma_period?: number;
+}
+
 export interface Strategy {
     id?: string;
     name: string;
     description?: string;
     bias: 'long' | 'short';
     apply_day?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
+    postgap_preconditions?: PostGapPrecondition[];
     universe_filters?: UniverseFilters;
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;

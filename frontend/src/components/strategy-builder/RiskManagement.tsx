@@ -352,7 +352,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                         </div>
 
                         {risk.take_profit_mode === TakeProfitMode.FULL ? (
-                            <div className="flex gap-2 animate-in fade-in zoom-in-95 duration-200">
+                            <div className="flex gap-2 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <select
                                     value={risk.take_profit.type}
                                     onChange={(e) => updateRiskSetting('take_profit', 'type', e.target.value)}
@@ -393,7 +393,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 </div>
                             </div>
                         ) : (
-                            <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                            <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <div className="space-y-2">
                                     {risk.partial_take_profits.map((partial, idx) => (
                                         <div key={idx} className="group relative"
@@ -418,33 +418,48 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                                 )}
                                             </div>
                                             
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-1.5">
-                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase opacity-50">Distancia %</label>
-                                                    <div className="relative">
+                                            <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '16px', marginTop: 6 }}>
+                                                {/* Left Column: Distancia % */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase opacity-50" style={{ height: '14px', display: 'flex', alignItems: 'center' }}>
+                                                        Distancia %
+                                                    </label>
+                                                    <div className="relative" style={{ height: '28px' }}>
                                                         <input
                                                             type="number"
                                                             step="0.1"
                                                             value={partial.distance_pct}
                                                             onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
                                                             className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-[var(--color-ec-profit)]/30"
+                                                            style={{ height: '28px' }}
                                                         />
                                                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/30">%</span>
                                                     </div>
                                                 </div>
-                                                <div className="space-y-1.5">
-                                                    <div className="flex justify-between items-center">
+
+                                                {/* Right Column: Capital % */}
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '14px' }}>
                                                         <label className="text-[9px] font-bold text-muted-foreground uppercase opacity-50">Capital %</label>
                                                         <span className="text-[10px] font-black text-foreground">{partial.capital_pct}%</span>
                                                     </div>
-                                                    <input
-                                                        type="range"
-                                                        min="1"
-                                                        max="100"
-                                                        value={partial.capital_pct}
-                                                        onChange={(e) => updatePartial(idx, 'capital_pct', Number(e.target.value))}
-                                                        className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-[var(--color-ec-profit)]"
-                                                    />
+                                                    <div style={{ display: 'flex', alignItems: 'center', height: '28px', width: '100%' }}>
+                                                        <input
+                                                            type="range"
+                                                            min="1"
+                                                            max="100"
+                                                            value={partial.capital_pct}
+                                                            onChange={(e) => updatePartial(idx, 'capital_pct', Number(e.target.value))}
+                                                            className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer"
+                                                            style={{
+                                                                backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                                                                accentColor: 'var(--color-ec-profit)',
+                                                                outline: 'none',
+                                                                height: '4px',
+                                                                width: '100%',
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>

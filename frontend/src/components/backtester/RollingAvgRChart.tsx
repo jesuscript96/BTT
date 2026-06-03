@@ -43,13 +43,13 @@ export default function RollingAvgRChart({ trades, isDarkMode = false }: Rolling
             }
             dailyR.sort((a, b) => a.date.localeCompare(b.date));
 
-            // Lower requirement to show data even with few points
-            const minDaysReq = 1;
+            // Require full window size to be populated before plotting
+            const reqDays = Math.min(rollingWindow, dailyR.length);
             const result: { time: Time; value: number }[] = [];
             for (let i = 0; i < dailyR.length; i++) {
                 const start = Math.max(0, i - rollingWindow + 1);
                 const slice = dailyR.slice(start, i + 1);
-                if (slice.length < minDaysReq) continue;
+                if (slice.length < reqDays) continue;
                 const avg = slice.reduce((s, d) => s + d.avgR, 0) / slice.length;
                 result.push({ time: dailyR[i].date as unknown as Time, value: avg });
             }
@@ -58,12 +58,12 @@ export default function RollingAvgRChart({ trades, isDarkMode = false }: Rolling
             const sorted = [...trades].sort(
                 (a, b) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime()
             );
-            const minTradesReq = 1;
+            const reqTrades = Math.min(rollingWindow, sorted.length);
             const raw: { date: string; value: number }[] = [];
             for (let i = 0; i < sorted.length; i++) {
                 const start = Math.max(0, i - rollingWindow + 1);
                 const slice = sorted.slice(start, i + 1);
-                if (slice.length < minTradesReq) continue;
+                if (slice.length < reqTrades) continue;
 
                 const validR = slice.map(t => t.r_multiple).filter((r): r is number => r !== null);
                 const avgR = validR.length > 0 ? validR.reduce((s, r) => s + r, 0) / validR.length : 0;
