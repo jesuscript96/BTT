@@ -26,6 +26,40 @@ export class ApiError extends Error {
   }
 }
 
+// Format a FastAPI/pydantic error detail into a readable string.
+// Pydantic returns an array of {loc, msg, type}; FastAPI's HTTPException returns a string.
+function formatErrorDetail(detail: unknown, status: number, statusText: string): string {
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail)) {
+    const seen = new Set<string>();
+    const fieldErrors: string[] = [];
+    for (const e of detail) {
+      if (!e || typeof e !== "object") continue;
+      const item = e as { loc?: unknown[]; msg?: string };
+      const msg = item.msg || "invalid";
+      // Skip union-discriminator failures (Pydantic reports them for every untaken variant).
+      if (/^Input should be '[a-z_]+'$/.test(msg)) continue;
+      // Drop the union-variant tags from loc (e.g., "ConditionGroup" / "ComparisonCondition").
+      const loc = (item.loc || []).filter(
+        (p): p is string | number =>
+          (typeof p === "string" || typeof p === "number") &&
+          !(typeof p === "string" && /^[A-Z][a-zA-Z]+$/.test(p)),
+      );
+      // Drop the leading "body" segment if present.
+      const path =
+        loc[0] === "body" ? loc.slice(1).join(".") : loc.join(".");
+      const key = `${path}::${msg}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      fieldErrors.push(path ? `${path}: ${msg}` : msg);
+    }
+    if (fieldErrors.length > 0) {
+      return fieldErrors.slice(0, 5).join(" · ");
+    }
+  }
+  return `HTTP ${status}${statusText ? `: ${statusText}` : ""}`;
+}
+
 // ─── Core request helper ────────────────────────────────────
 async function apiRequest<T>(
   path: string,
@@ -81,10 +115,7 @@ async function apiRequest<T>(
       data && typeof data === "object" && "detail" in (data as Record<string, unknown>)
         ? (data as Record<string, unknown>).detail
         : data;
-    const msg =
-      typeof detail === "string"
-        ? detail
-        : `HTTP ${response.status}: ${response.statusText}`;
+    const msg = formatErrorDetail(detail, response.status, response.statusText);
     throw new ApiError(response.status, msg, detail);
   }
 
