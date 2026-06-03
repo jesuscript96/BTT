@@ -527,6 +527,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
                                 width: 85,
                                 textAlign: "right",
                                 opacity: included ? 0.6 : 1,
+                                colorScheme: "light",
                               }}
                             />
                             {param.unit !== "$" && (

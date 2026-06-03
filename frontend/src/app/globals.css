@@ -161,15 +161,20 @@ body {
 }
 
 /* Style input type number spin buttons to render dark grey/black arrows instead of white */
+input[type="number"] {
+  color-scheme: light !important;
+}
+
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
-  filter: brightness(0) opacity(0.7) !important;
+  opacity: 0.7;
   cursor: pointer;
+  transition: opacity 150ms ease;
 }
 
 input[type="number"]::-webkit-inner-spin-button:hover,
 input[type="number"]::-webkit-outer-spin-button:hover {
-  filter: brightness(0) opacity(1) !important;
+  opacity: 1;
 }
 
 
