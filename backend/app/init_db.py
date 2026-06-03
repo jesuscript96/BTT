@@ -231,12 +231,8 @@ def init_db():
     tables = cur.execute("SHOW TABLES").fetchall()
     print(f"Current tables in massive: {[t[0] for t in tables]}")
 
-    # Seed mock data into users.duckdb when tables are empty (local dev)
-    try:
-        from app.seed_mock_data import seed_mock_data
-        seed_mock_data()
-    except Exception as e:
-        print(f"[WARN] Could not seed mock data: {e}")
+    # Mock seeding disabled — was leaking into production.
+    # The seed_mock_data.py module is kept for local manual use via `python -m app.seed_mock_data`.
 
     # Migration: Recalculate pmh_gap_pct to use the correct Premarket High vs Prev Close formula
     try:

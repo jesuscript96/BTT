@@ -8,7 +8,7 @@ interface Props {
     onChange: (logic: ExitLogic) => void;
 }
 
-export const ExitLogicBuilder = ({ logic, onChange }: Props) => {
+export const ExitLogicBuilder = React.memo(({ logic, onChange }: Props) => {
     return (
         <LogicBuilder
             title="Exit Logic"
@@ -19,4 +19,5 @@ export const ExitLogicBuilder = ({ logic, onChange }: Props) => {
             accentColor="rose"
         />
     );
-};
+});
+ExitLogicBuilder.displayName = "ExitLogicBuilder";
