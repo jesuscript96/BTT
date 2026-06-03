@@ -15,6 +15,7 @@ import {
 } from "lightweight-charts";
 import type { GlobalEquityPoint, DrawdownPoint, TradeRecord, AggregateMetrics, WhatIfResult } from "@/lib/api_backtester";
 import { runWhatIf } from "@/lib/api_backtester";
+import OOSDegradationTab from "./OOSDegradationTab";
 
 
 interface EquityCurveTabProps {
@@ -26,9 +27,26 @@ interface EquityCurveTabProps {
   riskR: number;
   monthlyExpenses?: number;
   isDarkMode?: boolean;
+  isPercent: number;
+  fullGlobalEquity: GlobalEquityPoint[];
+  fullGlobalDrawdown: DrawdownPoint[];
+  fullTrades: any[];
 }
 
-export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, metrics, initCash, riskR, monthlyExpenses, isDarkMode = false }: EquityCurveTabProps) {
+export default function EquityCurveTab({
+  globalEquity,
+  globalDrawdown,
+  trades,
+  metrics,
+  initCash,
+  riskR,
+  monthlyExpenses,
+  isDarkMode = false,
+  isPercent,
+  fullGlobalEquity,
+  fullGlobalDrawdown,
+  fullTrades,
+}: EquityCurveTabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -36,7 +54,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
 
   type ViewMode = "$" | "%" | "R";
   const [viewMode, setViewMode] = useState<ViewMode>("$");
-  const [activeMainTab, setActiveMainTab] = useState<"equity" | "whatif">("equity");
+  const [activeMainTab, setActiveMainTab] = useState<"equity" | "whatif" | "oos_degradation">("equity");
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<WhatIfResult | null>(null);
 
@@ -493,6 +511,37 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
           >
             What if...
           </button>
+          <span style={{ width: 1, height: 14, backgroundColor: 'var(--color-ec-border)', opacity: 0.7, margin: '0 6px', flexShrink: 0 }}></span>
+          <button
+            onClick={() => setActiveMainTab("oos_degradation")}
+            style={{
+              padding: '0 10px',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase' as const,
+              letterSpacing: '0.15em',
+              color: activeMainTab === "oos_degradation" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+              background: 'transparent',
+              borderTop: 'none',
+              borderLeft: 'none',
+              borderRight: 'none',
+              borderBottom: activeMainTab === "oos_degradation" ? '2px solid var(--color-ec-text-high)' : '2px solid transparent',
+              cursor: 'pointer',
+              transition: 'color 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (activeMainTab !== "oos_degradation") e.currentTarget.style.color = "var(--color-ec-text-secondary)";
+            }}
+            onMouseLeave={(e) => {
+              if (activeMainTab !== "oos_degradation") e.currentTarget.style.color = "var(--color-ec-text-muted)";
+            }}
+          >
+            OOS degradation
+          </button>
         </div>
       </div>
 
@@ -600,7 +649,7 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                <div ref={ddContainerRef} className="h-[120px] w-full" />
             </div>
           </div>
-        ) : (
+        ) : activeMainTab === "whatif" ? (
           <div key="whatif-tab" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
@@ -936,9 +985,22 @@ export default function EquityCurveTab({ globalEquity, globalDrawdown, trades, m
                         isDarkMode={isDarkMode}
                       />
                     </div>
-                </div>
-             </div>
-         )}
+                 </div>
+              </div>
+          ) : (
+            <div key="oos-degradation-tab" style={{ height: "100%", overflow: "hidden" }}>
+              <OOSDegradationTab
+                fullGlobalEquity={fullGlobalEquity}
+                fullGlobalDrawdown={fullGlobalDrawdown}
+                fullTrades={fullTrades}
+                initCash={initCash}
+                riskR={riskR}
+                isPercent={isPercent}
+                monthlyExpenses={monthlyExpenses}
+                isDarkMode={isDarkMode}
+              />
+            </div>
+          )}
       </div>
     </div>
 
