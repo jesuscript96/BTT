@@ -533,7 +533,7 @@ export default function BacktestPanel({
           )}
           {selectedStrat && (() => {
             const cleanDesc = (selectedStrat.description || "")
-              .replace(/\[What-if:[\s\S]*?\]/g, "")
+              .replace(/\[What-if:[\s\S]*\]/g, "")
               .trim();
             const stratDef = selectedStrat.definition as any;
             const entryLogic = stratDef?.entry_logic;
@@ -553,14 +553,10 @@ export default function BacktestPanel({
 
             return (
               <div style={{
-                marginTop: 6,
-                padding: '8px 10px',
-                backgroundColor: 'var(--color-ec-bg-elevated)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 5,
+                marginTop: 8,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 6,
+                gap: 8,
               }}>
                 {cleanDesc && (
                   <span style={{
@@ -577,8 +573,6 @@ export default function BacktestPanel({
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
-                    borderTop: cleanDesc ? '0.5px solid rgba(255,255,255,0.08)' : 'none',
-                    paddingTop: cleanDesc ? 4 : 0,
                     fontFamily: 'var(--color-ec-sans)',
                     fontSize: 10,
                     color: 'var(--color-ec-text-secondary)',
@@ -606,38 +600,30 @@ export default function BacktestPanel({
                   <div style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 4,
-                    borderTop: '0.5px solid rgba(255,255,255,0.08)',
-                    paddingTop: 6,
+                    gap: 6,
                     fontFamily: 'var(--color-ec-sans)',
                     fontSize: 10.5,
                   }}>
                     {entryText && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         <span style={{ fontWeight: 700, color: 'var(--color-ec-profit)', fontSize: 9.5 }}>CONDICIONES ENTRADA:</span>
-                        <code style={{ 
+                        <span style={{ 
                           color: 'var(--color-ec-text-primary)', 
-                          backgroundColor: 'rgba(255,255,255,0.03)',
-                          padding: '2px 4px',
-                          borderRadius: 3,
-                          fontFamily: 'monospace', 
-                          fontSize: 10,
-                          wordBreak: 'break-all'
-                        }}>{entryText}</code>
+                          fontSize: 11,
+                          wordBreak: 'break-word',
+                          lineHeight: '1.3',
+                        }}>{entryText}</span>
                       </div>
                     )}
                     {exitText && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         <span style={{ fontWeight: 700, color: 'var(--color-ec-loss)', fontSize: 9.5 }}>CONDICIONES SALIDA:</span>
-                        <code style={{ 
+                        <span style={{ 
                           color: 'var(--color-ec-text-primary)', 
-                          backgroundColor: 'rgba(255,255,255,0.03)',
-                          padding: '2px 4px',
-                          borderRadius: 3,
-                          fontFamily: 'monospace', 
-                          fontSize: 10,
-                          wordBreak: 'break-all'
-                        }}>{exitText}</code>
+                          fontSize: 11,
+                          wordBreak: 'break-word',
+                          lineHeight: '1.3',
+                        }}>{exitText}</span>
                       </div>
                     )}
                   </div>
