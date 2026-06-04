@@ -70,6 +70,7 @@ def run_backtest(
 
     # Pre-compile strategy definition once — saves dict lookups per day inside the loop.
     compiled_strategy = compile_strategy_def(strategy_def) if strategy_def else None
+    apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
 
     empty_result = {
         "aggregate_metrics": _aggregate_metrics([], [], [], [], init_cash, risk_r),
@@ -147,6 +148,8 @@ def run_backtest(
         }
         # Invert lookup from (ticker, date) to match original format
         daily_stats = qual_lookup.get((ticker_raw, date_raw), {})
+        if daily_stats:
+            daily_stats = _shift_daily_stats(daily_stats, apply_day)
         del day_df
 
         mini_df = pd.DataFrame(arrays)
@@ -392,6 +395,42 @@ def run_backtest(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _shift_daily_stats(ds: dict, apply_day: str) -> dict:
+    if not ds or apply_day == "gap_day":
+        return ds
+
+    ds = ds.copy()
+    if apply_day == "gap_1_day":
+        # Yesterday stats for T+1 is the gap day T
+        ds["yesterday_high"] = ds.get("rth_high")
+        ds["yesterday_low"] = ds.get("rth_low")
+        ds["previous_close"] = ds.get("rth_close")
+        ds["yesterday_open"] = ds.get("rth_open")
+        ds["yesterday_volume"] = ds.get("rth_volume")
+
+        # Today stats for T+1 is lead_1
+        for key in ["rth_open", "rth_high", "rth_low", "rth_close", "rth_volume", "pm_high", "pm_low", "pm_volume"]:
+            lead_key = f"lead_{key}_1"
+            if lead_key in ds:
+                ds[key] = ds[lead_key]
+
+    elif apply_day == "gap_2_day":
+        # Yesterday stats for T+2 is T+1 (lead_1)
+        ds["yesterday_high"] = ds.get("lead_rth_high_1")
+        ds["yesterday_low"] = ds.get("lead_rth_low_1")
+        ds["previous_close"] = ds.get("lead_rth_close_1")
+        ds["yesterday_open"] = ds.get("lead_rth_open_1")
+        ds["yesterday_volume"] = ds.get("lead_rth_volume_1")
+
+        # Today stats for T+2 is lead_2
+        for key in ["rth_open", "rth_high", "rth_low", "rth_close", "rth_volume", "pm_high", "pm_low", "pm_volume"]:
+            lead_key = f"lead_{key}_2"
+            if lead_key in ds:
+                ds[key] = ds[lead_key]
+
+    return ds
+
 
 def _build_qualifying_lookup(qualifying_df: pd.DataFrame) -> dict:
     if qualifying_df.empty:

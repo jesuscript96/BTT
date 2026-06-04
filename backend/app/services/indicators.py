@@ -22,6 +22,15 @@ except ImportError:
     ta = None
 
 
+def _safe_float(val) -> float:
+    if val is None or pd.isna(val):
+        return np.nan
+    try:
+        return float(val)
+    except Exception:
+        return np.nan
+
+
 # ---------------------------------------------------------------------------
 # Numba-accelerated indicator implementations
 # ---------------------------------------------------------------------------
@@ -630,7 +639,7 @@ def _compute_raw(
         return volume.astype(float)
     if name in ("Day Open", "Current Open"):
         if "rth_open" in ds and not pd.isna(ds["rth_open"]):
-            return pd.Series(float(ds["rth_open"]), index=close.index)
+            return pd.Series(_safe_float(ds["rth_open"]), index=close.index)
         return pd.Series(float(open_.iloc[0]) if len(open_) > 0 else np.nan, index=close.index)
     if name == "Bar Open":
         return open_
@@ -647,11 +656,11 @@ def _compute_raw(
     if name == "Pre-Market Low":
         return pd.Series(ds.get("pm_low", np.nan), index=close.index)
     if name in ("RTH Open", "rth_open"):
-        return pd.Series(float(ds.get("rth_open", np.nan)), index=close.index)
+        return pd.Series(_safe_float(ds.get("rth_open", np.nan)), index=close.index)
     if name in ("RTH High", "rth_high"):
-        return pd.Series(float(ds.get("rth_high", np.nan)), index=close.index)
+        return pd.Series(_safe_float(ds.get("rth_high", np.nan)), index=close.index)
     if name in ("RTH Low", "rth_low"):
-        return pd.Series(float(ds.get("rth_low", np.nan)), index=close.index)
+        return pd.Series(_safe_float(ds.get("rth_low", np.nan)), index=close.index)
     if name == "High of Day":
         return high.cummax()
     if name == "Low of Day":
@@ -720,7 +729,7 @@ def _compute_raw(
         if len(pm_bars) > 0:
             pm_open_val = float(pm_bars.iloc[0])
         else:
-            pm_open_val = float(ds.get("rth_open", np.nan))
+            pm_open_val = _safe_float(ds.get("rth_open", np.nan))
         return pd.Series(pm_open_val, index=close.index)
 
     if name == "AM Open":
