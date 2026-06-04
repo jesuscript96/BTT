@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Dataset, Strategy, PrecacheStatus } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies, fetchPrecacheStatus } from "@/lib/api_backtester";
+import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -54,6 +55,75 @@ interface BacktestPanelProps {
   onNewDataset: () => void;
   datasetRefreshTrigger?: number;
   pendingDatasetSelect?: string;
+}
+
+function formatConditionGroup(group: any): string {
+  if (!group || !group.conditions || group.conditions.length === 0) return "";
+  
+  const parts = group.conditions.map((c: any) => {
+    if (!c) return "";
+    if (c.type === 'group') {
+      const subText = formatConditionGroup(c);
+      return subText ? `(${subText})` : "";
+    } else {
+      const tfStr = c.timeframe ? `[${c.timeframe}] ` : '';
+      if (c.type === 'indicator_comparison') {
+        const sourceName = c.source?.name || "";
+        const sourceStr = `${INDICATOR_LABELS[sourceName] || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
+        const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator || "";
+        let targetStr = '';
+        if (typeof c.target === 'number') {
+          targetStr = String(c.target);
+        } else if (c.target && typeof c.target === 'object') {
+          const targetName = c.target.name || "";
+          targetStr = `${INDICATOR_LABELS[targetName] || targetName}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+        }
+        return `${tfStr}${sourceStr} ${compStr} ${targetStr}`.trim();
+      } else if (c.type === 'price_level_distance') {
+        const sourceName = c.source?.name || "";
+        const sourceStr = `${INDICATOR_LABELS[sourceName] || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
+        const levelName = c.level?.name || "";
+        const levelStr = `${INDICATOR_LABELS[levelName] || levelName}${c.level?.offset ? `[t-${c.level.offset}]` : ''}`;
+        const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
+        return `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct || 0}%`.trim();
+      }
+      return "";
+    }
+  }).filter(Boolean);
+
+  if (parts.length === 0) return "";
+  return parts.join(` ${group.operator || 'AND'} `);
+}
+
+function formatPreconditions(preconditions: any[]): string {
+  if (!preconditions || preconditions.length === 0) return "";
+  return preconditions.map((cond: any) => {
+    const dayLabel = cond.day === 'gap_day' ? 'Gap Day' : cond.day === 'gap_1_day' ? 'Gap+1 Day' : 'Gap+2 Day';
+    let metricLabel = 'Close';
+    let valLabel = '';
+    
+    if (cond.metric === 'volume') {
+      metricLabel = 'Volume';
+      valLabel = `${cond.operator} ${(cond.value ?? 0).toLocaleString()}`;
+    } else if (cond.metric === 'close_vs_open') {
+      valLabel = `${cond.operator} Open`;
+    } else if (cond.metric === 'close_vs_high_low') {
+      valLabel = cond.operator === '> High' ? '> Prev High' : '< Prev Low';
+    } else if (cond.metric === 'close_vs_pm_high') {
+      valLabel = `${cond.operator} PM High`;
+    } else if (cond.metric === 'close_vs_vwap') {
+      valLabel = `${cond.operator} VWAP`;
+    } else if (cond.metric === 'close_vs_sma') {
+      valLabel = `${cond.operator} SMA ${cond.sma_period}`;
+    } else if (cond.metric === 'candle_range_pct') {
+      metricLabel = 'Candle Range %';
+      valLabel = `${cond.operator} ${cond.value}%`;
+    } else {
+      valLabel = `${cond.operator || ""} ${cond.value !== undefined ? cond.value : ""}`.trim();
+    }
+    
+    return `${dayLabel} (${metricLabel} ${valLabel})`;
+  }).join(", ");
 }
 
 export default function BacktestPanel({
@@ -461,17 +531,120 @@ export default function BacktestPanel({
               ))}
             </select>
           )}
-          {selectedStrat?.description && (
-            <span style={{
-              fontFamily: 'var(--color-ec-sans)',
-              fontSize: 10,
-              color: 'var(--color-ec-text-secondary)',
-              fontStyle: 'italic',
-              marginTop: 4,
-              lineHeight: '1.3',
-              display: 'block',
-            }}>{selectedStrat.description}</span>
-          )}
+          {selectedStrat && (() => {
+            const cleanDesc = (selectedStrat.description || "")
+              .replace(/\[What-if:[\s\S]*?\]/g, "")
+              .trim();
+            const stratDef = selectedStrat.definition as any;
+            const entryLogic = stratDef?.entry_logic;
+            const exitLogic = stratDef?.exit_logic;
+            const bias = stratDef?.bias;
+            const applyDay = stratDef?.apply_day;
+            const preconds = stratDef?.postgap_preconditions;
+
+            const entryText = entryLogic ? formatConditionGroup(entryLogic.root_condition) : "";
+            const exitText = exitLogic ? formatConditionGroup(exitLogic.root_condition) : "";
+            const precondsText = formatPreconditions(preconds);
+
+            const displayBias = bias ? bias.toUpperCase() : "";
+            const displayDay = applyDay ? (applyDay === 'gap_day' ? 'Gap Day' : applyDay === 'gap_1_day' ? 'Gap+1 Day' : 'Gap+2 Day') : "";
+
+            if (!cleanDesc && !entryText && !exitText && !precondsText && !displayBias) return null;
+
+            return (
+              <div style={{
+                marginTop: 6,
+                padding: '8px 10px',
+                backgroundColor: 'var(--color-ec-bg-elevated)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}>
+                {cleanDesc && (
+                  <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    color: 'var(--color-ec-text-primary)',
+                    lineHeight: '1.4',
+                    display: 'block',
+                  }}>{cleanDesc}</span>
+                )}
+
+                {(displayBias || displayDay || precondsText) && (
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    borderTop: cleanDesc ? '0.5px solid rgba(255,255,255,0.08)' : 'none',
+                    paddingTop: cleanDesc ? 4 : 0,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-secondary)',
+                  }}>
+                    {displayBias && (
+                      <div>
+                        <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>BIAS: </span>
+                        <span style={{ 
+                          color: displayBias === 'LONG' ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)',
+                          fontWeight: 700 
+                        }}>{displayBias}</span>
+                        {displayDay && ` | Aplicar en ${displayDay}`}
+                      </div>
+                    )}
+                    {precondsText && (
+                      <div>
+                        <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PRECONDICIONES: </span>
+                        <span>{precondsText}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {(entryText || exitText) && (
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    borderTop: '0.5px solid rgba(255,255,255,0.08)',
+                    paddingTop: 6,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10.5,
+                  }}>
+                    {entryText && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-ec-profit)', fontSize: 9.5 }}>CONDICIONES ENTRADA:</span>
+                        <code style={{ 
+                          color: 'var(--color-ec-text-primary)', 
+                          backgroundColor: 'rgba(255,255,255,0.03)',
+                          padding: '2px 4px',
+                          borderRadius: 3,
+                          fontFamily: 'monospace', 
+                          fontSize: 10,
+                          wordBreak: 'break-all'
+                        }}>{entryText}</code>
+                      </div>
+                    )}
+                    {exitText && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 2 }}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-ec-loss)', fontSize: 9.5 }}>CONDICIONES SALIDA:</span>
+                        <code style={{ 
+                          color: 'var(--color-ec-text-primary)', 
+                          backgroundColor: 'rgba(255,255,255,0.03)',
+                          padding: '2px 4px',
+                          borderRadius: 3,
+                          fontFamily: 'monospace', 
+                          fontSize: 10,
+                          wordBreak: 'break-all'
+                        }}>{exitText}</code>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           
           <button
             type="button"
