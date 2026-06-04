@@ -464,28 +464,32 @@ export default function TrunkPage() {
   const formatIndicator = (ind: any): string => {
     if (!ind) return "";
     const params: string[] = [];
-    if (ind.period !== undefined) params.push(`P:${ind.period}`);
-    if (ind.period2 !== undefined) params.push(`P2:${ind.period2}`);
-    if (ind.stdDev !== undefined) params.push(`SD:${ind.stdDev}`);
-    if (ind.days_lookback !== undefined) params.push(`Lookback:${ind.days_lookback}d`);
-    if (ind.orb_minutes !== undefined) params.push(`ORB:${ind.orb_minutes}m`);
-    if (ind.ap_session !== undefined) params.push(`${ind.ap_session.replace("ap.", "")}`);
-    if (ind.elapsed_minutes !== undefined) params.push(`Elapsed:${ind.elapsed_minutes}m`);
-    if (ind.band_line !== undefined) params.push(`${ind.band_line}`);
+    if (ind.period != null && ind.period !== "") params.push(`P:${ind.period}`);
+    if (ind.period2 != null && ind.period2 !== "") params.push(`P2:${ind.period2}`);
+    if (ind.stdDev != null && ind.stdDev !== "") params.push(`SD:${ind.stdDev}`);
+    if (ind.days_lookback != null && ind.days_lookback !== "") params.push(`Lookback:${ind.days_lookback}d`);
+    if (ind.orb_minutes != null && ind.orb_minutes !== "") params.push(`ORB:${ind.orb_minutes}m`);
+    if (ind.ap_session != null && typeof ind.ap_session === 'string' && ind.ap_session !== "") {
+      params.push(`${ind.ap_session.replace("ap.", "")}`);
+    }
+    if (ind.elapsed_minutes != null && ind.elapsed_minutes !== "") params.push(`Elapsed:${ind.elapsed_minutes}m`);
+    if (ind.band_line != null && ind.band_line !== "") params.push(`${ind.band_line}`);
     
     let offsetStr = "";
-    if (ind.offset && ind.offset > 0) {
+    if (ind.offset != null && ind.offset > 0) {
       offsetStr = `[t-${ind.offset}]`;
     }
     
     const paramsStr = params.length > 0 ? `(${params.join(",")})` : "";
-    return `${INDICATOR_LABELS[ind.name] || ind.name}${paramsStr}${offsetStr}`;
+    const nameStr = ind.name ? (INDICATOR_LABELS[ind.name] || ind.name) : "Variable";
+    return `${nameStr}${paramsStr}${offsetStr}`;
   }
 
   const formatCondition = (cond: any): string => {
+    if (!cond) return "";
     if (cond.type === 'indicator_comparison') {
       const sourceStr = formatIndicator(cond.source);
-      const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator;
+      const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator || "=";
       const targetStr = typeof cond.target === 'number' 
         ? cond.target.toString() 
         : formatIndicator(cond.target);
@@ -528,6 +532,7 @@ export default function TrunkPage() {
   }
 
   const formatPrecondition = (pre: any): string => {
+    if (!pre) return "";
     const dayLabel = pre.day === 'gap_day' ? 'Gap Day' : 'Gap+1 Day';
     let metricLabel = 'Cierre';
     let valLabel = '';
@@ -544,7 +549,7 @@ export default function TrunkPage() {
     } else if (pre.metric === 'close_vs_vwap') {
       valLabel = `${pre.operator} VWAP`;
     } else if (pre.metric === 'close_vs_sma') {
-      valLabel = `${pre.operator} SMA ${pre.sma_period}`;
+      valLabel = `${pre.operator} SMA ${pre.sma_period || 20}`;
     } else if (pre.metric === 'candle_range_pct') {
       metricLabel = 'Rango de Vela %';
       valLabel = `${pre.operator} ${pre.value}%`;
@@ -555,14 +560,14 @@ export default function TrunkPage() {
   const getUniverseTags = (filters?: any): string[] => {
     if (!filters) return [];
     const tags: string[] = [];
-    if (filters.min_market_cap !== undefined) tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
-    if (filters.max_market_cap !== undefined) tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
-    if (filters.min_price !== undefined) tags.push(`Min Price: $${filters.min_price}`);
-    if (filters.max_price !== undefined) tags.push(`Max Price: $${filters.max_price}`);
-    if (filters.min_volume !== undefined) tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
-    if (filters.max_shares_float !== undefined) tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
-    if (filters.require_shortable) tags.push("Require Shortable");
-    if (filters.exclude_dilution) tags.push("Exclude Dilution");
+    if (filters.min_market_cap != null && filters.min_market_cap !== "") tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.max_market_cap != null && filters.max_market_cap !== "") tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.min_price != null && filters.min_price !== "") tags.push(`Min Price: $${filters.min_price}`);
+    if (filters.max_price != null && filters.max_price !== "") tags.push(`Max Price: $${filters.max_price}`);
+    if (filters.min_volume != null && filters.min_volume !== "") tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
+    if (filters.max_shares_float != null && filters.max_shares_float !== "") tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
+    if (filters.require_shortable === true) tags.push("Require Shortable");
+    if (filters.exclude_dilution === true) tags.push("Exclude Dilution");
     if (filters.whitelist_sectors && filters.whitelist_sectors.length > 0) {
       tags.push(`Sectors: ${filters.whitelist_sectors.join(', ')}`);
     }
@@ -572,22 +577,27 @@ export default function TrunkPage() {
   const getRiskTags = (risk?: any): string[] => {
     if (!risk) return [];
     const tags: string[] = [];
-    if (risk.use_hard_stop) {
-      tags.push(`SL: ${risk.hard_stop.value}% (${risk.hard_stop.type})`);
+    if (risk.use_hard_stop && risk.hard_stop?.value != null && risk.hard_stop.value !== "") {
+      tags.push(`SL: ${risk.hard_stop.value}% (${risk.hard_stop.type || 'pct'})`);
     }
-    if (risk.use_take_profit) {
-      tags.push(`TP: ${risk.take_profit.value}% (${risk.take_profit.type})`);
+    if (risk.use_take_profit && risk.take_profit?.value != null && risk.take_profit.value !== "") {
+      tags.push(`TP: ${risk.take_profit.value}% (${risk.take_profit.type || 'pct'})`);
     }
-    if (risk.take_profit_mode) {
+    if (risk.take_profit_mode && (risk.use_take_profit || (risk.partial_take_profits && risk.partial_take_profits.length > 0))) {
       tags.push(`TP Mode: ${risk.take_profit_mode}`);
     }
     if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
       risk.partial_take_profits.forEach((pt: any, i: number) => {
-        tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct}%`);
+        if (pt && pt.capital_pct != null && pt.capital_pct !== "" && pt.distance_pct != null && pt.distance_pct !== "") {
+          tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct}%`);
+        }
       });
     }
-    if (risk.trailing_stop?.active) {
-      tags.push(`TS: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type})`);
+    if (risk.trailing_stop?.active && risk.trailing_stop?.buffer_pct != null && risk.trailing_stop.buffer_pct !== "") {
+      tags.push(`TS: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type || 'pct'})`);
+    }
+    if (risk.max_drawdown_daily != null && risk.max_drawdown_daily !== "") {
+      tags.push(`Max Daily DD: ${risk.max_drawdown_daily}%`);
     }
     return tags;
   }
@@ -1321,50 +1331,70 @@ export default function TrunkPage() {
                               </div>
 
                               {stats.backtestParams ? (
-                                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '6px 8px', alignItems: 'center' }}>
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Initial Cash:</span>
-                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                    ${stats.backtestParams.init_cash?.toLocaleString() || '—'}
-                                  </span>
-
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>1R Risk Amount:</span>
-                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                    ${stats.backtestParams.risk_r?.toLocaleString() || '—'}
-                                  </span>
-
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Fees / Commissions:</span>
-                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                    {stats.backtestParams.fees !== undefined && stats.backtestParams.fees !== null ? `${(stats.backtestParams.fees * 100).toFixed(4)}%` : '—'}
-                                  </span>
-
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Slippage:</span>
-                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                    {stats.backtestParams.slippage !== undefined && stats.backtestParams.slippage !== null ? `${(stats.backtestParams.slippage * 100).toFixed(3)}%` : '—'}
-                                  </span>
-
-                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Market Hours:</span>
-                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                    {stats.backtestParams.market_sessions?.map((session: string) => (
-                                      <span key={session} style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', border: '0.5px solid rgba(255,255,255,0.15)', textTransform: 'uppercase', color: 'var(--color-ec-text-secondary)', backgroundColor: 'rgba(255,255,255,0.03)' }}>
-                                        {session}
-                                      </span>
-                                    )) || <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>—</span>}
-                                  </div>
-
-                                  {stats.backtestParams.monthly_expenses !== undefined && stats.backtestParams.monthly_expenses !== null && stats.backtestParams.monthly_expenses > 0 && (
+                                <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '6px 8px', alignItems: 'center' }}>
+                                  {stats.backtestParams.init_cash != null && stats.backtestParams.init_cash !== "" && (
                                     <>
-                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Monthly Expenses:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Initial Cash:</span>
                                       <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                        ${stats.backtestParams.monthly_expenses.toLocaleString()}
+                                        ${Number(stats.backtestParams.init_cash).toLocaleString()}
                                       </span>
                                     </>
                                   )}
 
-                                  {stats.backtestParams.locates_cost !== undefined && stats.backtestParams.locates_cost !== null && stats.backtestParams.locates_cost > 0 && (
+                                  {stats.backtestParams.risk_r != null && stats.backtestParams.risk_r !== "" && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>1R Risk Amount:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${Number(stats.backtestParams.risk_r).toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.fees != null && stats.backtestParams.fees !== "" && Number(stats.backtestParams.fees) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Fees / Commissions:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        {(Number(stats.backtestParams.fees) * 100).toFixed(4)}%
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.slippage != null && stats.backtestParams.slippage !== "" && Number(stats.backtestParams.slippage) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Slippage:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        {(Number(stats.backtestParams.slippage) * 100).toFixed(3)}%
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.market_sessions && stats.backtestParams.market_sessions.length > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Market Hours:</span>
+                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                        {stats.backtestParams.market_sessions.map((session: string) => (
+                                          <span key={session} style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', border: '0.5px solid rgba(255,255,255,0.15)', textTransform: 'uppercase', color: 'var(--color-ec-text-secondary)', backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                                            {session}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.monthly_expenses != null && stats.backtestParams.monthly_expenses !== "" && Number(stats.backtestParams.monthly_expenses) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Monthly Expenses:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${Number(stats.backtestParams.monthly_expenses).toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.locates_cost != null && stats.backtestParams.locates_cost !== "" && Number(stats.backtestParams.locates_cost) > 0 && (
                                     <>
                                       <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Locates Cost:</span>
                                       <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                        ${stats.backtestParams.locates_cost.toLocaleString()}
+                                        ${Number(stats.backtestParams.locates_cost).toLocaleString()}
                                       </span>
                                     </>
                                   )}
