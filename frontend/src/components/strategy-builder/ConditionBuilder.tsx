@@ -734,7 +734,7 @@ export const ConditionRow = ({
                         cursor: 'pointer',
                     }}
                 >
-                    {Object.values(Timeframe).map(tf => (
+                    {Object.values(Timeframe).filter(tf => tf !== Timeframe.D1).map(tf => (
                         <option key={tf} value={tf}>{tf}</option>
                     ))}
                 </select>
@@ -1081,7 +1081,7 @@ export const GroupDisplay = ({
                                         onChange={(e) => setFormCondition({ ...formCondition, timeframe: e.target.value as Timeframe })}
                                         style={selectStyle}
                                     >
-                                        {Object.values(Timeframe).map(tf => (
+                                        {Object.values(Timeframe).filter(tf => tf !== Timeframe.D1).map(tf => (
                                             <option key={tf} value={tf}>{tf}</option>
                                         ))}
                                     </select>
