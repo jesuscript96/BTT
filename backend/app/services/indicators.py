@@ -31,6 +31,56 @@ def _safe_float(val) -> float:
         return np.nan
 
 
+# Global cache for "High of last X days" and "Low of last X days" lookup
+_ticker_daily_ohlc_cache = {}
+
+def prefetch_daily_ohlc(tickers: list[str]):
+    """
+    Prefetches all daily historical metrics for the given tickers from the database
+    and stores them in the process-global cache _ticker_daily_ohlc_cache.
+    This prevents individual slow GCS queries during the backtest loop.
+    """
+    global _ticker_daily_ohlc_cache
+    if not tickers:
+        return
+        
+    # Only fetch tickers that are not already cached
+    tickers_to_fetch = [t for t in tickers if t and t not in _ticker_daily_ohlc_cache]
+    if not tickers_to_fetch:
+        return
+        
+    from app.database import get_db_connection
+    con = get_db_connection()
+    try:
+        # Build IN clause safely
+        tickers_str = ", ".join(f"'{t}'" for t in tickers_to_fetch)
+        df_all = con.execute(f"""
+            SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low 
+            FROM daily_metrics 
+            WHERE ticker IN ({tickers_str})
+            ORDER BY ticker, "timestamp"
+        """).fetchdf()
+        
+        # Group by ticker and store in cache
+        df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
+        for ticker_symbol, group in df_all.groupby("ticker"):
+            group_indexed = group.set_index("date")
+            group_indexed = group_indexed[~group_indexed.index.duplicated(keep='first')]
+            _ticker_daily_ohlc_cache[ticker_symbol] = group_indexed
+            
+        # Ensure that any tickers that returned no data are cached as empty DataFrames
+        # to avoid repeated queries
+        for t in tickers_to_fetch:
+            if t not in _ticker_daily_ohlc_cache:
+                _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+    except Exception as e:
+        print(f"[ERROR] Failed to prefetch daily ohlc: {e}")
+        # On error, make sure we populate them as empty so we don't block
+        for t in tickers_to_fetch:
+            if t not in _ticker_daily_ohlc_cache:
+                _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+
+
 # ---------------------------------------------------------------------------
 # Numba-accelerated indicator implementations
 # ---------------------------------------------------------------------------
@@ -515,6 +565,14 @@ INDICATOR_NAME_MAP = {
     "Consecutive higher lows": "Consecutive Higher Lows",
     "Consecutive green candles": "Consecutive Green Candles",
     "Consecutive red candles": "Consecutive Red Candles",
+    
+    # Abbreviated label aliases
+    "Consec Higher Highs": "Consecutive Higher Highs",
+    "Consec Lower Lows": "Consecutive Lower Lows",
+    "Consec Lower Highs": "Consecutive Lower Highs",
+    "Consec Higher Lows": "Consecutive Higher Lows",
+    "Consec Green Candles": "Consecutive Green Candles",
+    "Consec Red Candles": "Consecutive Red Candles",
     "Candle Range %": "Candle Range %",
     "Range of time": "Range of time",
     "Opening range +": "Opening Range +",
@@ -644,13 +702,13 @@ def _compute_raw(
     if name == "Bar Open":
         return open_
     if name == "Yesterday Open":
-        return pd.Series(ds.get("yesterday_open", np.nan), index=close.index)
+        return pd.Series(_safe_float(ds.get("yesterday_open", ds.get("lag_rth_open_1", np.nan))), index=close.index)
     if name == "Yesterday Close" or name == "Previous Close":
-        return pd.Series(ds.get("previous_close", np.nan), index=close.index)
+        return pd.Series(_safe_float(ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))), index=close.index)
     if name == "Yesterday High":
-        return pd.Series(ds.get("yesterday_high", np.nan), index=close.index)
+        return pd.Series(_safe_float(ds.get("yesterday_high", ds.get("lag_rth_high_1", np.nan))), index=close.index)
     if name == "Yesterday Low":
-        return pd.Series(ds.get("yesterday_low", np.nan), index=close.index)
+        return pd.Series(_safe_float(ds.get("yesterday_low", ds.get("lag_rth_low_1", np.nan))), index=close.index)
     if name == "Pre-Market High":
         return pd.Series(ds.get("pm_high", np.nan), index=close.index)
     if name == "Pre-Market Low":
@@ -665,12 +723,57 @@ def _compute_raw(
         return high.cummax()
     if name == "Low of Day":
         return low.cummin()
-    if name in ("High of last X days", "Max of last X days"):
-        print("[WARN] 'High of last X days' not implemented — needs hot_daily_cache integration. Returning NaN.")
-        return pd.Series(np.nan, index=close.index)
-    if name in ("Low of last X days", "Min of last X days"):
-        print("[WARN] 'Low of last X days' not implemented — needs hot_daily_cache integration. Returning NaN.")
-        return pd.Series(np.nan, index=close.index)
+    if name in ("High of last X days", "Max of last X days", "Low of last X days", "Min of last X days"):
+        ticker = ds.get("ticker") if ds else None
+        if not ticker:
+            ticker = "AAPL"
+            
+        if ds and "date" in ds:
+            target_date_str = str(ds["date"])[:10]
+        elif len(df) > 0 and "timestamp" in df.columns:
+            target_date_str = str(df["timestamp"].iloc[0])[:10]
+        else:
+            target_date_str = None
+            
+        if not target_date_str:
+            return pd.Series(np.nan, index=close.index)
+            
+        lookback = days_lookback or period or 5
+        
+        global _ticker_daily_ohlc_cache
+        if ticker not in _ticker_daily_ohlc_cache:
+            from app.database import get_db_connection
+            con = get_db_connection()
+            try:
+                df_daily = con.execute(f"""
+                    SELECT CAST("timestamp" AS DATE) as date, rth_high, rth_low 
+                    FROM daily_metrics 
+                    WHERE ticker = '{ticker}' 
+                    ORDER BY "timestamp"
+                """).fetchdf()
+                df_daily["date"] = pd.to_datetime(df_daily["date"]).dt.strftime("%Y-%m-%d")
+                df_daily = df_daily.set_index("date")
+                df_daily = df_daily[~df_daily.index.duplicated(keep='first')]
+                _ticker_daily_ohlc_cache[ticker] = df_daily
+            except Exception as e:
+                print(f"[ERROR] Failed to load lookback metrics for {ticker}: {e}")
+                _ticker_daily_ohlc_cache[ticker] = pd.DataFrame(columns=["rth_high", "rth_low"])
+                
+        df_daily = _ticker_daily_ohlc_cache[ticker]
+        if df_daily.empty or target_date_str not in df_daily.index:
+            return pd.Series(np.nan, index=close.index)
+            
+        pos = df_daily.index.get_loc(target_date_str)
+        start_pos = max(0, pos - lookback)
+        if start_pos >= pos:
+            return pd.Series(np.nan, index=close.index)
+            
+        if name in ("High of last X days", "Max of last X days"):
+            val = df_daily["rth_high"].iloc[start_pos:pos].max()
+        else:
+            val = df_daily["rth_low"].iloc[start_pos:pos].min()
+            
+        return pd.Series(_safe_float(val), index=close.index)
 
     if name == "Previous max":
         timestamps = pd.to_datetime(df["timestamp"])
@@ -694,7 +797,7 @@ def _compute_raw(
                 else:
                     running_max = max(running_max, high.iloc[i])
                 result.iloc[i] = running_max
-        return result
+        return result.shift(1)
 
     if name == "Previous min":
         timestamps = pd.to_datetime(df["timestamp"])
@@ -718,7 +821,7 @@ def _compute_raw(
                 else:
                     running_min = min(running_min, low.iloc[i])
                 result.iloc[i] = running_min
-        return result
+        return result.shift(1)
 
     if name == "PM Open":
         timestamps = pd.to_datetime(df["timestamp"])
@@ -962,11 +1065,23 @@ def _compute_raw(
         hh[1:] = high.values[1:] > high.values[:-1]
         return pd.Series(_consecutive_count(hh), index=close.index)
 
+    if name == "Consecutive Lower Highs":
+        lh = np.empty(len(high), dtype=np.bool_)
+        lh[0] = False
+        lh[1:] = high.values[1:] < high.values[:-1]
+        return pd.Series(_consecutive_count(lh), index=close.index)
+
     if name == "Consecutive Lower Lows":
         ll = np.empty(len(low), dtype=np.bool_)
         ll[0] = False
         ll[1:] = low.values[1:] < low.values[:-1]
         return pd.Series(_consecutive_count(ll), index=close.index)
+
+    if name == "Consecutive Higher Lows":
+        hl = np.empty(len(low), dtype=np.bool_)
+        hl[0] = False
+        hl[1:] = low.values[1:] > low.values[:-1]
+        return pd.Series(_consecutive_count(hl), index=close.index)
 
     # --- Heikin-Ashi values (for direct reference, not calc_on_heikin) ---
     if name == "Heikin-Ashi" or name == "HA Close":

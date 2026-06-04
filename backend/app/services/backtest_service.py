@@ -65,6 +65,23 @@ def run_backtest(
 ) -> dict:
     t_total = time.time()
 
+    # Proactively prefetch daily historical metrics for the tickers involved in this backtest
+    # to speed up 'High/Low of last X days' indicators and avoid individual database queries inside the loop.
+    if qualifying_df is not None and not qualifying_df.empty:
+        try:
+            tickers = list(qualifying_df["ticker"].unique())
+            from app.services.indicators import prefetch_daily_ohlc
+            prefetch_daily_ohlc(tickers)
+        except Exception as e:
+            logger.warning(f"Failed to prefetch daily metrics from qualifying_df: {e}")
+    elif intraday_df is not None and not intraday_df.empty:
+        try:
+            tickers = list(intraday_df["ticker"].unique())
+            from app.services.indicators import prefetch_daily_ohlc
+            prefetch_daily_ohlc(tickers)
+        except Exception as e:
+            logger.warning(f"Failed to prefetch daily metrics from intraday_df: {e}")
+
     qual_lookup = _build_qualifying_lookup(qualifying_df)
     del qualifying_df
 

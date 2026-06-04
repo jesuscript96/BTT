@@ -768,47 +768,45 @@ class BacktestEngine:
             series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(ret_am)
             if len(series) == len(df):
                 series.index = df.index
-        elif name == IndicatorType.CONSECUTIVE_RED_CANDLES:
-            # Count consecutive red candles (close < open) ending at current bar
-            def f(g):
-                r = g['close'] < g['open']
-                c = r.astype(int)
-                out = c.copy()
-                for i in range(1, len(c)):
-                    if r.iloc[i]:
-                        out.iloc[i] = out.iloc[i - 1] + 1
-                    else:
-                        out.iloc[i] = 0
-                return out
-            series = df.groupby('ticker', group_keys=False).apply(f)
-            if len(series) == len(df):
-                series.index = df.index
-        elif name == IndicatorType.CONSECUTIVE_HIGHER_HIGHS:
-            def f_highs(g):
-                h = g['high']
-                out = pd.Series(0, index=g.index)
-                for i in range(1, len(h)):
-                    if h.iloc[i] > h.iloc[i - 1]:
-                        out.iloc[i] = out.iloc[i - 1] + 1
-                    else:
-                        out.iloc[i] = 0
-                return out
-            series = df.groupby('ticker', group_keys=False).apply(f_highs)
-            if len(series) == len(df):
-                series.index = df.index
-        elif name == IndicatorType.CONSECUTIVE_LOWER_LOWS:
-            def f_lows(g):
-                l = g['low']
-                out = pd.Series(0, index=g.index)
-                for i in range(1, len(l)):
-                    if l.iloc[i] < l.iloc[i - 1]:
-                        out.iloc[i] = out.iloc[i - 1] + 1
-                    else:
-                        out.iloc[i] = 0
-                return out
-            series = df.groupby('ticker', group_keys=False).apply(f_lows)
-            if len(series) == len(df):
-                series.index = df.index
+        elif name in (IndicatorType.CONSECUTIVE_RED_CANDLES, IndicatorType.CONSECUTIVE_GREEN_CANDLES,
+                      IndicatorType.CONSECUTIVE_LOWER_HIGHS, IndicatorType.CONSECUTIVE_HIGHER_LOWS,
+                      IndicatorType.CONSECUTIVE_HIGHER_HIGHS, IndicatorType.CONSECUTIVE_LOWER_LOWS):
+            def calc_consec_series(bool_series: pd.Series) -> pd.Series:
+                def f_consec(g):
+                    out = np.zeros(len(g))
+                    count = 0
+                    for i in range(len(g)):
+                        if g.iloc[i]:
+                            count += 1
+                        else:
+                            count = 0
+                        out[i] = count
+                    return pd.Series(out, index=g.index)
+                s = bool_series.groupby(df['ticker'], group_keys=False).apply(f_consec)
+                if len(s) == len(df):
+                    s.index = df.index
+                return s
+
+            if name == IndicatorType.CONSECUTIVE_RED_CANDLES:
+                series = calc_consec_series(source_df['close'] < source_df['open'])
+            elif name == IndicatorType.CONSECUTIVE_GREEN_CANDLES:
+                series = calc_consec_series(source_df['close'] > source_df['open'])
+            elif name == IndicatorType.CONSECUTIVE_LOWER_HIGHS:
+                h = source_df['high']
+                prev_h = source_df.groupby('ticker')['high'].shift(1)
+                series = calc_consec_series(h < prev_h)
+            elif name == IndicatorType.CONSECUTIVE_HIGHER_LOWS:
+                l = source_df['low']
+                prev_l = source_df.groupby('ticker')['low'].shift(1)
+                series = calc_consec_series(l > prev_l)
+            elif name == IndicatorType.CONSECUTIVE_HIGHER_HIGHS:
+                h = source_df['high']
+                prev_h = source_df.groupby('ticker')['high'].shift(1)
+                series = calc_consec_series(h > prev_h)
+            elif name == IndicatorType.CONSECUTIVE_LOWER_LOWS:
+                l = source_df['low']
+                prev_l = source_df.groupby('ticker')['low'].shift(1)
+                series = calc_consec_series(l < prev_l)
         elif name == IndicatorType.TIME_OF_DAY:
             # Minutes since midnight for comparison with (time_hour * 60 + time_minute)
             series = df['timestamp'].dt.hour * 60 + df['timestamp'].dt.minute

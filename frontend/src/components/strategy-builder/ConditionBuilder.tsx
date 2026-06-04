@@ -8,7 +8,7 @@ import {
     Timeframe
 } from '@/types/strategy';
 import { Plus, Trash2, GitBranch, Clock } from 'lucide-react';
-import { getAllowedTargets } from '@/lib/indicatorValidation';
+import { getAllowedTargets, isOnlyTarget } from '@/lib/indicatorValidation';
 
 // ----------------------------------------------------------------------
 // Constants & Helpers
@@ -51,6 +51,9 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.AM_OPEN,
         IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN,
         IndicatorType.ELAPSED_TIME_LAST_HIGH,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
     ],
     "Behaviour & Patterns": [
         IndicatorType.CONSEC_HIGHER_HIGHS, IndicatorType.CONSEC_LOWER_LOWS,
@@ -602,6 +605,7 @@ export const ConditionRow = ({
                             value={condition.source}
                             onChange={handleSourceChange}
                             hideOffset={isElapsed}
+                            exclude={Object.values(IndicatorType).filter(isOnlyTarget)}
                         />
 
                         {isElapsed ? (
@@ -645,7 +649,7 @@ export const ConditionRow = ({
                     <>
                         <SourceIndicatorInput
                             value={condition.source}
-                            exclude={[]}
+                            exclude={Object.values(IndicatorType).filter(isOnlyTarget)}
                             onChange={(val) => onChange({ ...condition, source: val })}
                         />
                         <div className="text-xs text-muted-foreground">is</div>
