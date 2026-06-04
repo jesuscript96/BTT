@@ -536,10 +536,21 @@ def fetch_qualifying_data(
                     df = df.dropna(subset=['lead_timestamp_1']).copy()
                     df['timestamp'] = df['lead_timestamp_1']
                     df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+                    # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*)
+                    df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
+                    df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
+                    df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
+                    df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
                 elif apply_day == 'gap_2_day':
                     df = df.dropna(subset=['lead_timestamp_2']).copy()
                     df['timestamp'] = df['lead_timestamp_2']
                     df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
+                    # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1)
+                    df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
+                    df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
+                    df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
+                    df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
+                # gap_day: keep lag_rth_*_1 fallback in indicators.py
 
             print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
             return df
@@ -613,10 +624,21 @@ def fetch_qualifying_data(
             df = df.dropna(subset=['lead_timestamp_1']).copy()
             df['timestamp'] = df['lead_timestamp_1']
             df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+            # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*)
+            df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
+            df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
+            df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
+            df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
         elif apply_day == 'gap_2_day':
             df = df.dropna(subset=['lead_timestamp_2']).copy()
             df['timestamp'] = df['lead_timestamp_2']
             df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
+            # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1)
+            df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
+            df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
+            df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
+            df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
+        # gap_day: keep lag_rth_*_1 fallback in indicators.py
 
     return df
 
