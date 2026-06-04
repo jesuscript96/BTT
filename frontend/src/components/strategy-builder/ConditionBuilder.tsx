@@ -31,7 +31,7 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.PREVIOUS_MIN:
             return { ap_session: "ap.RTH" };
         case IndicatorType.ELAPSED_TIME_LAST_HIGH:
-            return { elapsed_minutes: 20 };
+            return {};
         case IndicatorType.OPENING_RANGE_PLUS:
         case IndicatorType.OPENING_RANGE_MINUS:
         case IndicatorType.OPENING_RANGE_AM_PLUS:
@@ -389,32 +389,6 @@ export const IndicatorParams = ({
                                 </select>
                             </div>
                         );
-                    case IndicatorType.ELAPSED_TIME_LAST_HIGH:
-                        return (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-                                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                                    Mins:
-                                </span>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    value={value.elapsed_minutes || 20}
-                                    onChange={(e) => onChange({ ...value, elapsed_minutes: Number(e.target.value) })}
-                                    style={{
-                                        flex: 1,
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '5px 10px',
-                                        fontSize: 12,
-                                        fontWeight: 500,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                    }}
-                                />
-                            </div>
-                        );
                     default:
                         return null;
                 }
@@ -619,34 +593,53 @@ export const ConditionRow = ({
 
     const renderInputs = () => {
         switch (condition.type) {
-            case 'indicator_comparison':
+            case 'indicator_comparison': {
+                const isElapsed = condition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH;
                 return (
                     <>
                         {/* SOURCE: indicator + params */}
                         <SourceIndicatorInput
                             value={condition.source}
                             onChange={handleSourceChange}
+                            hideOffset={isElapsed}
                         />
 
-                        {/* COMPARATOR: symbols */}
-                        <select
-                            value={condition.comparator}
-                            onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
-                            className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-[var(--color-ec-copper)]"
-                        >
-                            {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
-                                <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
-                            ))}
-                        </select>
+                        {isElapsed ? (
+                            <div className="flex items-center gap-1">
+                                <span className="text-xs text-muted-foreground">≥</span>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={typeof condition.target === 'number' ? condition.target : 20}
+                                    onChange={(e) => handleTargetChange(Math.max(1, Number(e.target.value)))}
+                                    className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-mono outline-none"
+                                />
+                                <span className="text-xs text-muted-foreground font-semibold">mins</span>
+                            </div>
+                        ) : (
+                            <>
+                                {/* COMPARATOR: symbols */}
+                                <select
+                                    value={condition.comparator}
+                                    onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-[var(--color-ec-copper)]"
+                                >
+                                    {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
+                                        <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
+                                    ))}
+                                </select>
 
-                        {/* TARGET: indicator OR fixed value */}
-                        <TargetInput
-                            value={condition.target}
-                            onChange={handleTargetChange}
-                            allowedTargets={getAllowedTargets(condition.source.name as IndicatorType, 'indicator_comparison')}
-                        />
+                                {/* TARGET: indicator OR fixed value */}
+                                <TargetInput
+                                    value={condition.target}
+                                    onChange={handleTargetChange}
+                                    allowedTargets={getAllowedTargets(condition.source.name as IndicatorType, 'indicator_comparison')}
+                                />
+                            </>
+                        )}
                     </>
                 );
+            }
             case 'price_level_distance':
                 return (
                     <>
@@ -818,6 +811,10 @@ export const ConditionRow = ({
 export const formatConditionText = (c: AnyCondition): string => {
     const tfStr = c.timeframe ? `[${c.timeframe}]` : '';
     if (c.type === 'indicator_comparison') {
+        if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+            const mins = typeof c.target === 'number' ? c.target : 20;
+            return `${tfStr} Elapsed Time Last High ≥ ${mins} mins`;
+        }
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
@@ -860,9 +857,10 @@ export const GroupDisplay = ({
         source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
         comparator: Comparator.GT,
         target: { name: IndicatorType.VWAP, offset: 0 },
-        timeframe: parentTimeframe
     });
-
+    
+    const compCondition = formCondition.type === 'indicator_comparison' ? formCondition : null;
+    const distCondition = formCondition.type === 'price_level_distance' ? formCondition : null;
     const activeAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
     const handleSaveCondition = () => {
@@ -1129,7 +1127,15 @@ export const GroupDisplay = ({
                                     onChange={(nameStr) => {
                                         const name = nameStr as IndicatorType;
                                         const defaultParams = getDefaultParamsForIndicator(name);
-                                        if (formCondition.type === 'indicator_comparison') {
+                                        if (name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+                                            setFormCondition({
+                                                type: 'indicator_comparison',
+                                                source: { name, offset: 0 },
+                                                comparator: Comparator.GTE,
+                                                target: 20,
+                                                timeframe: formCondition.timeframe
+                                            });
+                                        } else if (formCondition.type === 'indicator_comparison') {
                                             const allowed = getAllowedTargets(name, 'indicator_comparison');
                                             const currentTargetKey = typeof formCondition.target === 'number' ? FIXED_VALUE_KEY : (formCondition.target as IndicatorConfig).name;
                                             const isTargetAllowed = currentTargetKey === FIXED_VALUE_KEY || allowed.includes(currentTargetKey as IndicatorType);
@@ -1155,92 +1161,132 @@ export const GroupDisplay = ({
                             </div>
 
                             {/* bars back */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                <span style={labelStyle}>Bars back</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={formCondition.source.offset || 0}
-                                    onChange={(e) => setFormCondition({
-                                        ...formCondition,
-                                        source: { ...formCondition.source, offset: Math.max(0, Number(e.target.value)) }
-                                    })}
-                                    style={inputStyle}
-                                />
-                            </div>
+                            {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <span style={labelStyle}>Bars back</span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={formCondition.source.offset || 0}
+                                        onChange={(e) => setFormCondition({
+                                            ...formCondition,
+                                            source: { ...formCondition.source, offset: Math.max(0, Number(e.target.value)) }
+                                        })}
+                                        style={inputStyle}
+                                    />
+                                </div>
+                            )}
 
                             {/* relación */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                <span style={labelStyle}>Relación</span>
-                                {formCondition.type === 'indicator_comparison' ? (
-                                    <select
-                                        value={formCondition.comparator}
-                                        onChange={(e) => setFormCondition({ ...formCondition, comparator: e.target.value as Comparator })}
-                                        style={selectStyle}
-                                    >
-                                        {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
-                                            <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
-                                        ))}
-                                    </select>
-                                ) : (
-                                    <select
-                                        value={formCondition.comparator}
-                                        onChange={(e) => setFormCondition({ ...formCondition, comparator: e.target.value as 'DISTANCE_GT' | 'DISTANCE_LT' })}
-                                        style={selectStyle}
-                                    >
-                                        <option value="DISTANCE_GT">&gt; que</option>
-                                        <option value="DISTANCE_LT">&lt; que</option>
-                                    </select>
-                                )}
-                            </div>
+                            {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <span style={labelStyle}>Relación</span>
+                                    {formCondition.type === 'indicator_comparison' ? (
+                                        <select
+                                            value={formCondition.comparator}
+                                            onChange={(e) => setFormCondition({ ...formCondition, comparator: e.target.value as Comparator })}
+                                            style={selectStyle}
+                                        >
+                                            {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
+                                                <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <select
+                                            value={formCondition.comparator}
+                                            onChange={(e) => setFormCondition({ ...formCondition, comparator: e.target.value as 'DISTANCE_GT' | 'DISTANCE_LT' })}
+                                            style={selectStyle}
+                                        >
+                                            <option value="DISTANCE_GT">&gt; que</option>
+                                            <option value="DISTANCE_LT">&lt; que</option>
+                                        </select>
+                                    )}
+                                </div>
+                            )}
 
                             {/* Variables de cruce */}
-                            {formCondition.type === 'indicator_comparison' ? (
+                            {formCondition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <span style={labelStyle}>Minutos transcurridos</span>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : 20}
+                                        onChange={(e) => {
+                                            if (compCondition) {
+                                                setFormCondition({
+                                                    ...compCondition,
+                                                    type: 'indicator_comparison',
+                                                    target: Math.max(1, Number(e.target.value))
+                                                });
+                                            }
+                                        }}
+                                        style={inputStyle}
+                                    />
+                                </div>
+                            ) : compCondition ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     <span style={labelStyle}>Variables de cruce</span>
                                     <TargetInput
-                                        value={formCondition.target}
-                                        onChange={(newTarget) => setFormCondition({ ...formCondition, target: newTarget })}
+                                        value={compCondition.target}
+                                        onChange={(newTarget) => setFormCondition({
+                                            ...compCondition,
+                                            type: 'indicator_comparison',
+                                            target: newTarget
+                                        })}
                                         allowedTargets={getAllowedTargets(formCondition.source.name as IndicatorType, 'indicator_comparison')}
                                         hideOffset={true}
                                     />
                                 </div>
-                            ) : (
+                            ) : distCondition ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                         <span style={labelStyle}>Distancia %</span>
                                         <input
                                             type="number"
                                             step="0.1"
-                                            value={formCondition.value_pct}
-                                            onChange={(e) => setFormCondition({ ...formCondition, value_pct: Number(e.target.value) })}
+                                            value={distCondition.value_pct}
+                                            onChange={(e) => setFormCondition({
+                                                ...distCondition,
+                                                type: 'price_level_distance',
+                                                value_pct: Number(e.target.value)
+                                            })}
                                             style={inputStyle}
                                         />
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                         <span style={labelStyle}>Variables de cruce (Nivel)</span>
                                         <IndicatorSelector
-                                            value={formCondition.level.name}
+                                            value={distCondition.level.name}
                                             onChange={(nameStr) => {
                                                 const name = nameStr as IndicatorType;
                                                 const defaultParams = getDefaultParamsForIndicator(name);
                                                 setFormCondition({
-                                                    ...formCondition,
-                                                    level: { name, offset: formCondition.level.offset, ...defaultParams }
+                                                    ...distCondition,
+                                                    type: 'price_level_distance',
+                                                    level: { name, offset: distCondition.level.offset, ...defaultParams }
                                                 });
                                             }}
                                         />
                                         <IndicatorParams
-                                            value={formCondition.level}
-                                            onChange={(newLevel) => setFormCondition({ ...formCondition, level: newLevel })}
+                                            value={distCondition.level}
+                                            onChange={(newLevel) => setFormCondition({
+                                                ...distCondition,
+                                                type: 'price_level_distance',
+                                                level: newLevel
+                                            })}
                                             hideOffset={true}
                                         />
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                         <span style={labelStyle}>Posición</span>
                                         <select
-                                            value={formCondition.position || 'any'}
-                                            onChange={(e) => setFormCondition({ ...formCondition, position: e.target.value as 'above' | 'below' | 'any' })}
+                                            value={distCondition.position || 'any'}
+                                            onChange={(e) => setFormCondition({
+                                                ...distCondition,
+                                                type: 'price_level_distance',
+                                                position: e.target.value as 'above' | 'below' | 'any'
+                                            })}
                                             style={selectStyle}
                                         >
                                             <option value="any">Cualquiera (Any)</option>
@@ -1249,7 +1295,7 @@ export const GroupDisplay = ({
                                         </select>
                                     </div>
                                 </div>
-                            )}
+                            ) : null}
 
                             {/* segundo barsback */}
                             {formCondition.type === 'indicator_comparison' && typeof formCondition.target !== 'number' && (
