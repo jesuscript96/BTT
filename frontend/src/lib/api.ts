@@ -218,6 +218,17 @@ export function saveBacktest(data: {
   });
 }
 
+export function toggleBacktestValidation(
+  backtestId: string,
+): Promise<{ status: string; is_validated: boolean }> {
+  return apiRequest<{ status: string; is_validated: boolean }>(
+    `/strategy-search/${encodeURIComponent(backtestId)}/toggle-validation`,
+    {
+      method: "POST",
+    },
+  );
+}
+
 
 // ─── Backtest ───────────────────────────────────────────────
 export function runBacktest(

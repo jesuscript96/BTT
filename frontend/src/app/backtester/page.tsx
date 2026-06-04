@@ -123,6 +123,7 @@ export default function Home() {
       end_date: p.end_date,
       market_sessions: p.market_sessions,
       monthly_expenses: p.monthly_expenses,
+      locates_cost: p.locates_cost,
     };
 
     try {
@@ -222,6 +223,7 @@ export default function Home() {
       end_date: params.end_date,
       market_sessions: params.market_sessions,
       monthly_expenses: params.monthly_expenses,
+      locates_cost: (params as any).locates_cost,
     };
 
     try {
@@ -753,7 +755,10 @@ export default function Home() {
                         try {
                           await saveBacktest({
                             strategy_ids: [newStrategyId],
-                            results_json: result as unknown as Record<string, unknown>,
+                            results_json: {
+                              ...result,
+                              backtest_params: backtestParamsRef.current
+                            } as unknown as Record<string, unknown>,
                           });
                         } catch (e) {
                           console.warn("No se pudieron guardar los resultados del backtest:", e);

@@ -22,7 +22,8 @@ import {
   getQueries, 
   getSavedBacktests, 
   deleteStrategy, 
-  deleteQuery 
+  deleteQuery,
+  toggleBacktestValidation
 } from '@/lib/api'
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from '@/components/strategy-builder/ConditionBuilder'
 
@@ -397,6 +398,64 @@ export default function TrunkPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deletingType, setDeletingType] = useState<'strategy' | 'dataset' | null>(null)
 
+  const [mockValidationStates, setMockValidationStates] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('mock_validation_states')
+      if (saved) {
+        try {
+          return JSON.parse(saved)
+        } catch (e) {}
+      }
+    }
+    return {
+      'mock_strategy_1': true,
+      'mock_strategy_2': true,
+      'mock_strategy_3': false,
+    }
+  })
+
+  const getMockKey = (strat: any): string | null => {
+    const key = strat.id || ''
+    const name = strat.name || ''
+    if (key === 'mock_strategy_1' || name === 'VWAP Reclaim Long') return 'mock_strategy_1'
+    if (key === 'mock_strategy_2' || name === 'Opening Range Breakdown Short') return 'mock_strategy_2'
+    if (key === 'mock_strategy_3' || name === 'EMA 9/20 Cross Long') return 'mock_strategy_3'
+    return null
+  }
+
+  const handleToggleValidation = async (e: React.MouseEvent, strat: any) => {
+    e.stopPropagation() // Prevent row selection
+    const stats = getStats(strat)
+    const mockKey = getMockKey(strat)
+    
+    if (mockKey) {
+      const current = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : MOCK_STRATEGY_STATS[mockKey].isValidated
+      const nextVal = !current
+      const nextStates = { ...mockValidationStates, [mockKey]: nextVal }
+      setMockValidationStates(nextStates)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('mock_validation_states', JSON.stringify(nextStates))
+      }
+    } else {
+      const realBt = backtests.find(bt => {
+        const ids = bt.strategy_ids || []
+        return ids.includes(strat.id)
+      })
+      if (!realBt) {
+        alert("No backtest result found for this strategy to validate.")
+        return
+      }
+      
+      try {
+        await toggleBacktestValidation(realBt.id)
+        await loadData()
+      } catch (err: any) {
+        console.error(err)
+        alert(`Error toggling validation status: ${err.message || err}`)
+      }
+    }
+  }
+
   const toggleRowExpand = (id: string) => {
     setExpandedRowId(prev => prev === id ? null : id)
   }
@@ -625,7 +684,7 @@ export default function TrunkPage() {
     }
   }
 
-  // Resolves stats for a strategy (only keeping the last 6 months)
+  // Resolves stats for a strategy
   const getStats = (strat: any) => {
     const realBt = backtests.find(bt => {
       const ids = bt.strategy_ids || []
@@ -636,24 +695,30 @@ export default function TrunkPage() {
       let curve: number[] = []
       let period = 'N/A'
       let avgRDay = 0
+      let bParams: any = null
+      let isValidated = realBt.is_validated !== undefined && realBt.is_validated !== null
+        ? realBt.is_validated
+        : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5)
+      
       try {
         const results = typeof realBt.results_json === 'string' 
           ? JSON.parse(realBt.results_json) 
           : realBt.results_json
-        const rawCurve = results?.equity_curve || []
+        const rawCurve = results?.global_equity || results?.equity_curve || []
+        bParams = results?.backtest_params || null
+        if (results?.is_validated !== undefined && results?.is_validated !== null) {
+          isValidated = results.is_validated
+        }
         
-        // Filter by date for the last 6 months if timestamps are present
-        if (rawCurve.length > 0 && rawCurve[0].timestamp) {
-          const sorted = [...rawCurve].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-          const latestTime = new Date(sorted[sorted.length - 1].timestamp).getTime()
-          const sixMonthsAgo = latestTime - (6 * 30.5 * 24 * 60 * 60 * 1000) // approx 6 months in ms
-          const filtered = sorted.filter(item => new Date(item.timestamp).getTime() >= sixMonthsAgo)
-          
-          // Use filtered or fallback to last 120 points
-          const finalCurve = filtered.length >= 5 ? filtered : sorted.slice(-120)
-          curve = finalCurve.map((c: any) => c.balance || 0)
-        } else {
-          curve = rawCurve.map((c: any) => c.balance || 0).slice(-120)
+        // Parse and sort by time, return the full curve (no slicing/limiting to 6 months)
+        if (rawCurve.length > 0) {
+          const mapped = rawCurve.map((c: any) => {
+            const timeMs = c.time ? c.time * 1000 : (c.timestamp ? new Date(c.timestamp).getTime() : 0);
+            const val = c.value !== undefined ? c.value : (c.balance !== undefined ? c.balance : 0);
+            return { timeMs, val };
+          });
+          const sorted = [...mapped].sort((a, b) => a.timeMs - b.timeMs);
+          curve = sorted.map(item => item.val);
         }
 
         // Period calculation
@@ -682,21 +747,42 @@ export default function TrunkPage() {
         avgRDay: avgRDay,
         equityCurve: curve,
         isReal: true,
-        isValidated: realBt.is_validated !== undefined ? realBt.is_validated : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5)
+        isValidated: isValidated,
+        backtestParams: bParams
       }
     }
 
     // Pre-seeded fallback
-    const key = strat.id || ''
-    const name = strat.name || ''
-    if (key === 'mock_strategy_1' || name === 'VWAP Reclaim Long') {
-      return { ...MOCK_STRATEGY_STATS['mock_strategy_1'], isReal: false }
-    }
-    if (key === 'mock_strategy_2' || name === 'Opening Range Breakdown Short') {
-      return { ...MOCK_STRATEGY_STATS['mock_strategy_2'], isReal: false }
-    }
-    if (key === 'mock_strategy_3' || name === 'EMA 9/20 Cross Long') {
-      return { ...MOCK_STRATEGY_STATS['mock_strategy_3'], isReal: false }
+    const mockKey = getMockKey(strat)
+    if (mockKey) {
+      const baseStats = MOCK_STRATEGY_STATS[mockKey]
+      const isVal = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : baseStats.isValidated
+      return { 
+        ...baseStats, 
+        isValidated: isVal,
+        isReal: false,
+        backtestParams: mockKey === 'mock_strategy_1' ? {
+          init_cash: 10000,
+          risk_r: 100,
+          fees: 0.0001,
+          slippage: 0.0005,
+          market_sessions: ['rth'],
+        } : mockKey === 'mock_strategy_2' ? {
+          init_cash: 10000,
+          risk_r: 100,
+          fees: 0.0001,
+          slippage: 0.0003,
+          market_sessions: ['rth'],
+          monthly_expenses: 150
+        } : {
+          init_cash: 10000,
+          risk_r: 100,
+          fees: 0.0001,
+          slippage: 0.0005,
+          market_sessions: ['pre', 'rth'],
+          monthly_expenses: 100
+        }
+      }
     }
 
     return {
@@ -709,7 +795,8 @@ export default function TrunkPage() {
       avgRDay: null,
       equityCurve: [],
       isReal: false,
-      isValidated: false
+      isValidated: false,
+      backtestParams: null
     }
   }
 
@@ -932,7 +1019,6 @@ export default function TrunkPage() {
               <tr style={{ borderBottom: '0.5px solid var(--color-ec-border)', backgroundColor: 'rgba(28, 30, 33, 0.3)' }}>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Name</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Bias</th>
-                <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Period OOS</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Trades</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Equity</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>W.Rate</th>
@@ -1019,9 +1105,6 @@ export default function TrunkPage() {
                           {strat.bias}
                         </span>
                       </td>
-                      <td style={{ padding: '6px 10px', fontSize: 9, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>
-                        {stats.period}
-                      </td>
                       <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
                         {stats.trades || '—'}
                       </td>
@@ -1044,20 +1127,32 @@ export default function TrunkPage() {
                         {stats.avgRDay !== null ? `${stats.avgRDay.toFixed(2)} R` : '—'}
                       </td>
                       <td style={{ padding: '6px 10px' }}>
-                        <span
+                        <button
+                          onClick={(e) => handleToggleValidation(e, strat)}
                           style={{
                             fontSize: 8,
                             fontWeight: 700,
-                            padding: '1px 5px',
+                            padding: '3px 8px',
                             borderRadius: 0,
                             textTransform: 'uppercase',
                             backgroundColor: stats.isValidated ? 'rgba(74, 157, 127, 0.12)' : 'rgba(201, 77, 63, 0.12)',
                             color: stats.isValidated ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)',
-                            border: stats.isValidated ? '0.5px solid rgba(74, 157, 127, 0.25)' : '0.5px solid rgba(201, 77, 63, 0.25)'
+                            border: stats.isValidated ? '0.5px solid rgba(74, 157, 127, 0.25)' : '0.5px solid rgba(201, 77, 63, 0.25)',
+                            cursor: 'pointer',
+                            transition: 'all 150ms ease'
                           }}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.backgroundColor = stats.isValidated ? 'rgba(74, 157, 127, 0.2)' : 'rgba(201, 77, 63, 0.2)';
+                            e.currentTarget.style.borderColor = stats.isValidated ? 'rgba(74, 157, 127, 0.4)' : 'rgba(201, 77, 63, 0.4)';
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.backgroundColor = stats.isValidated ? 'rgba(74, 157, 127, 0.12)' : 'rgba(201, 77, 63, 0.12)';
+                            e.currentTarget.style.borderColor = stats.isValidated ? 'rgba(74, 157, 127, 0.25)' : 'rgba(201, 77, 63, 0.25)';
+                          }}
+                          title="Click to toggle validation status"
                         >
                           {stats.isValidated ? 'YES' : 'NO'}
-                        </span>
+                        </button>
                       </td>
                       <td style={{ padding: '6px 10px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -1135,7 +1230,7 @@ export default function TrunkPage() {
                     {/* Collapsible tags row */}
                     {isExpanded && (
                       <tr style={{ backgroundColor: 'rgba(28, 30, 33, 0.25)' }}>
-                        <td colSpan={12} style={{ padding: '10px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
+                        <td colSpan={11} style={{ padding: '10px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {/* Preconditions */}
                             {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
