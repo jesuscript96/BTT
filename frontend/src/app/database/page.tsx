@@ -741,9 +741,9 @@ export default function TrunkPage() {
         }
 
         // Avg R / Day calculation
-        const totalR = realBt.total_return_r || 0
-        const uniqueDays = new Set(trades.map((t: any) => t.entry_time?.split('T')[0])).size
-        avgRDay = uniqueDays > 0 ? totalR / uniqueDays : 0
+        avgRDay = realBt.avg_r_multiple !== undefined && realBt.avg_r_multiple !== null
+          ? realBt.avg_r_multiple
+          : 0;
       } catch (e) {
         console.error(e)
       }
