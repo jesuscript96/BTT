@@ -1230,76 +1230,151 @@ export default function TrunkPage() {
                     {/* Collapsible tags row */}
                     {isExpanded && (
                       <tr style={{ backgroundColor: 'rgba(28, 30, 33, 0.25)' }}>
-                        <td colSpan={11} style={{ padding: '10px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {/* Preconditions */}
-                            {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
+                        <td colSpan={11} style={{ padding: '12px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px 24px' }}>
+                            {/* Column 1: Strategy Definition */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                <span style={{ width: 4, height: 10, backgroundColor: 'var(--color-ec-copper)' }} />
+                                <h4 style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--color-ec-text-high)', margin: 0 }}>
+                                  Strategy Definition
+                                </h4>
+                              </div>
+                              
+                              {/* Preconditions */}
+                              {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Timing/Preconds:</span>
+                                  {strat.apply_day && (
+                                    <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(59, 130, 246, 0.3)', backgroundColor: 'rgba(59, 130, 246, 0.06)', color: '#60a5fa' }}>
+                                      Apply: {strat.apply_day}
+                                    </span>
+                                  )}
+                                  {strat.postgap_preconditions?.map((pre: any, idx: number) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(216, 122, 61, 0.3)', backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)' }}>
+                                      {formatPrecondition(pre)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Universe filters */}
+                              {getUniverseTags(strat.universe_filters).length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Universe Filters:</span>
+                                  {getUniverseTags(strat.universe_filters).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(168, 85, 247, 0.3)', backgroundColor: 'rgba(168, 85, 247, 0.06)', color: '#a855f7' }}>
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Entry Logic */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Timing/Preconds:</span>
-                                {strat.apply_day && (
-                                  <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(59, 130, 246, 0.3)', backgroundColor: 'rgba(59, 130, 246, 0.06)', color: '#60a5fa' }}>
-                                    Apply: {strat.apply_day}
-                                  </span>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Entry Logic ({strat.entry_logic?.timeframe || 'N/A'}):</span>
+                                {getConditionTags(strat.entry_logic?.root_condition).length === 0 ? (
+                                  <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No entry conditions</span>
+                                ) : (
+                                  getConditionTags(strat.entry_logic?.root_condition).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(74, 157, 127, 0.3)', backgroundColor: 'rgba(74, 157, 127, 0.06)', color: 'var(--color-ec-profit)' }}>
+                                      {tag}
+                                    </span>
+                                  ))
                                 )}
-                                {strat.postgap_preconditions?.map((pre: any, idx: number) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(216, 122, 61, 0.3)', backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)' }}>
-                                    {formatPrecondition(pre)}
-                                  </span>
-                                ))}
                               </div>
-                            )}
 
-                            {/* Universe filters */}
-                            {getUniverseTags(strat.universe_filters).length > 0 && (
+                              {/* Exit Logic */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Universe Filters:</span>
-                                {getUniverseTags(strat.universe_filters).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(168, 85, 247, 0.3)', backgroundColor: 'rgba(168, 85, 247, 0.06)', color: '#a855f7' }}>
-                                    {tag}
-                                  </span>
-                                ))}
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Exit Logic ({strat.exit_logic?.timeframe || 'N/A'}):</span>
+                                {getConditionTags(strat.exit_logic?.root_condition).length === 0 ? (
+                                  <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No exit conditions</span>
+                                ) : (
+                                  getConditionTags(strat.exit_logic?.root_condition).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(245, 158, 11, 0.3)', backgroundColor: 'rgba(245, 158, 11, 0.06)', color: '#f59e0b' }}>
+                                      {tag}
+                                    </span>
+                                  ))
+                                )}
                               </div>
-                            )}
 
-                            {/* Entry Logic */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Entry Logic ({strat.entry_logic?.timeframe || 'N/A'}):</span>
-                              {getConditionTags(strat.entry_logic?.root_condition).length === 0 ? (
-                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No entry conditions</span>
-                              ) : (
-                                getConditionTags(strat.entry_logic?.root_condition).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(74, 157, 127, 0.3)', backgroundColor: 'rgba(74, 157, 127, 0.06)', color: 'var(--color-ec-profit)' }}>
-                                    {tag}
-                                  </span>
-                                ))
+                              {/* Risk Management */}
+                              {getRiskTags(strat.risk_management).length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Risk Settings:</span>
+                                  {getRiskTags(strat.risk_management).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.06)', color: '#ef4444' }}>
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
                               )}
                             </div>
 
-                            {/* Exit Logic */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Exit Logic ({strat.exit_logic?.timeframe || 'N/A'}):</span>
-                              {getConditionTags(strat.exit_logic?.root_condition).length === 0 ? (
-                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No exit conditions</span>
-                              ) : (
-                                getConditionTags(strat.exit_logic?.root_condition).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(245, 158, 11, 0.3)', backgroundColor: 'rgba(245, 158, 11, 0.06)', color: '#f59e0b' }}>
-                                    {tag}
+                            {/* Column 2: Backtester Configuration */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                <span style={{ width: 4, height: 10, backgroundColor: 'var(--color-ec-copper)' }} />
+                                <h4 style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--color-ec-text-high)', margin: 0 }}>
+                                  Backtester Configuration
+                                </h4>
+                              </div>
+
+                              {stats.backtestParams ? (
+                                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '6px 8px', alignItems: 'center' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Initial Cash:</span>
+                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                    ${stats.backtestParams.init_cash?.toLocaleString() || '—'}
                                   </span>
-                                ))
+
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>1R Risk Amount:</span>
+                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                    ${stats.backtestParams.risk_r?.toLocaleString() || '—'}
+                                  </span>
+
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Fees / Commissions:</span>
+                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                    {stats.backtestParams.fees !== undefined && stats.backtestParams.fees !== null ? `${(stats.backtestParams.fees * 100).toFixed(4)}%` : '—'}
+                                  </span>
+
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Slippage:</span>
+                                  <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                    {stats.backtestParams.slippage !== undefined && stats.backtestParams.slippage !== null ? `${(stats.backtestParams.slippage * 100).toFixed(3)}%` : '—'}
+                                  </span>
+
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Market Hours:</span>
+                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {stats.backtestParams.market_sessions?.map((session: string) => (
+                                      <span key={session} style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', border: '0.5px solid rgba(255,255,255,0.15)', textTransform: 'uppercase', color: 'var(--color-ec-text-secondary)', backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                                        {session}
+                                      </span>
+                                    )) || <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>—</span>}
+                                  </div>
+
+                                  {stats.backtestParams.monthly_expenses !== undefined && stats.backtestParams.monthly_expenses !== null && stats.backtestParams.monthly_expenses > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Monthly Expenses:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${stats.backtestParams.monthly_expenses.toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.locates_cost !== undefined && stats.backtestParams.locates_cost !== null && stats.backtestParams.locates_cost > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Locates Cost:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${stats.backtestParams.locates_cost.toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
+                                  No backtester configuration available for this strategy
+                                </span>
                               )}
                             </div>
-
-                            {/* Risk Management */}
-                            {getRiskTags(strat.risk_management).length > 0 && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Risk Settings:</span>
-                                {getRiskTags(strat.risk_management).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.06)', color: '#ef4444' }}>
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         </td>
                       </tr>
