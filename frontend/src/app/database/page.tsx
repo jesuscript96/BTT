@@ -578,10 +578,10 @@ export default function TrunkPage() {
     if (!risk) return [];
     const tags: string[] = [];
     if (risk.use_hard_stop && risk.hard_stop?.value != null && risk.hard_stop.value !== "") {
-      tags.push(`SL: ${risk.hard_stop.value}% (${risk.hard_stop.type || 'pct'})`);
+      tags.push(`SL: ${risk.hard_stop.value}%`);
     }
     if (risk.use_take_profit && risk.take_profit?.value != null && risk.take_profit.value !== "") {
-      tags.push(`TP: ${risk.take_profit.value}% (${risk.take_profit.type || 'pct'})`);
+      tags.push(`TP: ${risk.take_profit.value}%`);
     }
     if (risk.take_profit_mode && (risk.use_take_profit || (risk.partial_take_profits && risk.partial_take_profits.length > 0))) {
       tags.push(`TP Mode: ${risk.take_profit_mode}`);
@@ -594,7 +594,7 @@ export default function TrunkPage() {
       });
     }
     if (risk.trailing_stop?.active && risk.trailing_stop?.buffer_pct != null && risk.trailing_stop.buffer_pct !== "") {
-      tags.push(`TS: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type || 'pct'})`);
+      tags.push(`TS: ${risk.trailing_stop.buffer_pct}%`);
     }
     if (risk.max_drawdown_daily != null && risk.max_drawdown_daily !== "") {
       tags.push(`Max Daily DD: ${risk.max_drawdown_daily}%`);
@@ -1354,7 +1354,7 @@ export default function TrunkPage() {
                                     <>
                                       <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Fees / Commissions:</span>
                                       <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                        {(Number(stats.backtestParams.fees) * 100).toFixed(4)}%
+                                        {parseFloat((Number(stats.backtestParams.fees) * 100).toFixed(3))}%
                                       </span>
                                     </>
                                   )}
@@ -1363,7 +1363,7 @@ export default function TrunkPage() {
                                     <>
                                       <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Slippage:</span>
                                       <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
-                                        {(Number(stats.backtestParams.slippage) * 100).toFixed(3)}%
+                                        {parseFloat((Number(stats.backtestParams.slippage) * 100).toFixed(3))}%
                                       </span>
                                     </>
                                   )}

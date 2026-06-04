@@ -136,12 +136,10 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (!risk) return [];
         const tags: string[] = [];
         if (risk.use_hard_stop && risk.hard_stop && risk.hard_stop.value != null && (risk.hard_stop.value as any) !== "") {
-            tags.push(`Stop Loss: ${risk.hard_stop.value}% (${risk.hard_stop.type || 'Percentage'})`);
-        } else if (!risk.use_hard_stop) {
-            tags.push("No Hard Stop");
+            tags.push(`Stop Loss: ${risk.hard_stop.value}%`);
         }
         if (risk.use_take_profit && risk.take_profit && risk.take_profit.value != null && (risk.take_profit.value as any) !== "") {
-            tags.push(`Take Profit: ${risk.take_profit.value}% (${risk.take_profit.type || 'Percentage'})`);
+            tags.push(`Take Profit: ${risk.take_profit.value}%`);
         }
         if (risk.take_profit_mode && (risk.use_take_profit || (risk.partial_take_profits && risk.partial_take_profits.length > 0))) {
             tags.push(`TP Mode: ${risk.take_profit_mode}`);
@@ -154,7 +152,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
             });
         }
         if (risk.trailing_stop?.active && risk.trailing_stop.buffer_pct != null && (risk.trailing_stop.buffer_pct as any) !== "") {
-            tags.push(`Trailing: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type || 'Percentage'})`);
+            tags.push(`Trailing: ${risk.trailing_stop.buffer_pct}%`);
         }
         if (risk.accept_reentries === true) {
             tags.push("Accept Re-entries");
