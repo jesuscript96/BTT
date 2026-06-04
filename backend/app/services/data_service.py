@@ -495,6 +495,14 @@ def fetch_qualifying_data(
                 'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
                 'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
 
+                # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
+                'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',
+                'LEAD(pm_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_2',
+                'LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1',
+                'LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2',
+                'LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1',
+                'LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2',
+
                 # Timestamp LEADs for shifting
                 'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
                 'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
@@ -536,21 +544,43 @@ def fetch_qualifying_data(
                     df = df.dropna(subset=['lead_timestamp_1']).copy()
                     df['timestamp'] = df['lead_timestamp_1']
                     df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
-                    # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*)
+                    # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*).
+                    # Snapshot before we overwrite rth_* below.
                     df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
                     df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
                     df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
                     df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
+                    # Trading-day metrics: re-anchor to T+1 (lead_*_1)
+                    df['rth_open']   = df['lead_rth_open_1']   if 'lead_rth_open_1'   in df.columns else np.nan
+                    df['rth_high']   = df['lead_rth_high_1']   if 'lead_rth_high_1'   in df.columns else np.nan
+                    df['rth_low']    = df['lead_rth_low_1']    if 'lead_rth_low_1'    in df.columns else np.nan
+                    df['rth_close']  = df['lead_rth_close_1']  if 'lead_rth_close_1'  in df.columns else np.nan
+                    df['rth_volume'] = df['lead_rth_volume_1'] if 'lead_rth_volume_1' in df.columns else np.nan
+                    df['pm_high']    = df['lead_pm_high_1']    if 'lead_pm_high_1'    in df.columns else np.nan
+                    df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
+                    df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
+                    df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
                 elif apply_day == 'gap_2_day':
                     df = df.dropna(subset=['lead_timestamp_2']).copy()
                     df['timestamp'] = df['lead_timestamp_2']
                     df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
-                    # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1)
+                    # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1).
+                    # Snapshot before we overwrite rth_* below.
                     df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
                     df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
                     df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
                     df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
-                # gap_day: keep lag_rth_*_1 fallback in indicators.py
+                    # Trading-day metrics: re-anchor to T+2 (lead_*_2)
+                    df['rth_open']   = df['lead_rth_open_2']   if 'lead_rth_open_2'   in df.columns else np.nan
+                    df['rth_high']   = df['lead_rth_high_2']   if 'lead_rth_high_2'   in df.columns else np.nan
+                    df['rth_low']    = df['lead_rth_low_2']    if 'lead_rth_low_2'    in df.columns else np.nan
+                    df['rth_close']  = df['lead_rth_close_2']  if 'lead_rth_close_2'  in df.columns else np.nan
+                    df['rth_volume'] = df['lead_rth_volume_2'] if 'lead_rth_volume_2' in df.columns else np.nan
+                    df['pm_high']    = df['lead_pm_high_2']    if 'lead_pm_high_2'    in df.columns else np.nan
+                    df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
+                    df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
+                    df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+                # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
 
             print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
             return df
@@ -624,21 +654,43 @@ def fetch_qualifying_data(
             df = df.dropna(subset=['lead_timestamp_1']).copy()
             df['timestamp'] = df['lead_timestamp_1']
             df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
-            # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*)
+            # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*).
+            # Snapshot before we overwrite rth_* below.
             df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
             df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
             df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
             df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
+            # Trading-day metrics: re-anchor to T+1 (lead_*_1)
+            df['rth_open']   = df['lead_rth_open_1']   if 'lead_rth_open_1'   in df.columns else np.nan
+            df['rth_high']   = df['lead_rth_high_1']   if 'lead_rth_high_1'   in df.columns else np.nan
+            df['rth_low']    = df['lead_rth_low_1']    if 'lead_rth_low_1'    in df.columns else np.nan
+            df['rth_close']  = df['lead_rth_close_1']  if 'lead_rth_close_1'  in df.columns else np.nan
+            df['rth_volume'] = df['lead_rth_volume_1'] if 'lead_rth_volume_1' in df.columns else np.nan
+            df['pm_high']    = df['lead_pm_high_1']    if 'lead_pm_high_1'    in df.columns else np.nan
+            df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
+            df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
+            df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
         elif apply_day == 'gap_2_day':
             df = df.dropna(subset=['lead_timestamp_2']).copy()
             df['timestamp'] = df['lead_timestamp_2']
             df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
-            # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1)
+            # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1).
+            # Snapshot before we overwrite rth_* below.
             df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
             df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
             df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
             df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
-        # gap_day: keep lag_rth_*_1 fallback in indicators.py
+            # Trading-day metrics: re-anchor to T+2 (lead_*_2)
+            df['rth_open']   = df['lead_rth_open_2']   if 'lead_rth_open_2'   in df.columns else np.nan
+            df['rth_high']   = df['lead_rth_high_2']   if 'lead_rth_high_2'   in df.columns else np.nan
+            df['rth_low']    = df['lead_rth_low_2']    if 'lead_rth_low_2'    in df.columns else np.nan
+            df['rth_close']  = df['lead_rth_close_2']  if 'lead_rth_close_2'  in df.columns else np.nan
+            df['rth_volume'] = df['lead_rth_volume_2'] if 'lead_rth_volume_2' in df.columns else np.nan
+            df['pm_high']    = df['lead_pm_high_2']    if 'lead_pm_high_2'    in df.columns else np.nan
+            df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
+            df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
+            df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+        # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
 
     return df
 
