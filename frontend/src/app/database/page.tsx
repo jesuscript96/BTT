@@ -424,34 +424,65 @@ export default function TrunkPage() {
   }
 
   const handleToggleValidation = async (e: React.MouseEvent, strat: any) => {
-    e.stopPropagation() // Prevent row selection
-    const stats = getStats(strat)
-    const mockKey = getMockKey(strat)
+    e.stopPropagation();
+    e.preventDefault();
+    const stats = getStats(strat);
+    const mockKey = getMockKey(strat);
     
     if (mockKey) {
-      const current = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : MOCK_STRATEGY_STATS[mockKey].isValidated
-      const nextVal = !current
-      const nextStates = { ...mockValidationStates, [mockKey]: nextVal }
-      setMockValidationStates(nextStates)
+      const current = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : MOCK_STRATEGY_STATS[mockKey].isValidated;
+      const nextVal = !current;
+      const nextStates = { ...mockValidationStates, [mockKey]: nextVal };
+      setMockValidationStates(nextStates);
       if (typeof window !== 'undefined') {
-        localStorage.setItem('mock_validation_states', JSON.stringify(nextStates))
+        localStorage.setItem('mock_validation_states', JSON.stringify(nextStates));
       }
     } else {
       const realBt = backtests.find(bt => {
-        const ids = bt.strategy_ids || []
-        return ids.includes(strat.id)
-      })
+        const ids = bt.strategy_ids || [];
+        return ids.includes(strat.id);
+      });
       if (!realBt) {
-        alert("No backtest result found for this strategy to validate.")
-        return
+        alert("No backtest result found for this strategy to validate.");
+        return;
       }
       
+      const currentStatus = realBt.is_validated !== undefined && realBt.is_validated !== null
+        ? realBt.is_validated
+        : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5);
+      const nextStatus = !currentStatus;
+
       try {
-        await toggleBacktestValidation(realBt.id)
-        await loadData()
+        // Optimistically update local React state so UI updates instantly with no flicker
+        setBacktests(prev => prev.map(bt => {
+          if (bt.id === realBt.id) {
+            let nextResultsJson = bt.results_json;
+            if (typeof bt.results_json === 'string') {
+              try {
+                const parsed = JSON.parse(bt.results_json);
+                parsed.is_validated = nextStatus;
+                nextResultsJson = JSON.stringify(parsed);
+              } catch (e) {}
+            } else if (bt.results_json && typeof bt.results_json === 'object') {
+              nextResultsJson = { ...bt.results_json, is_validated: nextStatus };
+            }
+
+            return {
+              ...bt,
+              is_validated: nextStatus,
+              results_json: nextResultsJson
+            };
+          }
+          return bt;
+        }));
+
+        // Fire request in the background
+        await toggleBacktestValidation(realBt.id);
       } catch (err: any) {
-        console.error(err)
-        alert(`Error toggling validation status: ${err.message || err}`)
+        console.error(err);
+        alert(`Error toggling validation status: ${err.message || err}`);
+        // Revert to server data on failure
+        await loadData();
       }
     }
   }
@@ -1069,6 +1100,7 @@ export default function TrunkPage() {
                       <td style={{ padding: '6px 10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleRowExpand(strat.id);
@@ -1138,6 +1170,7 @@ export default function TrunkPage() {
                       </td>
                       <td style={{ padding: '6px 10px' }}>
                         <button
+                          type="button"
                           onClick={(e) => handleToggleValidation(e, strat)}
                           style={{
                             fontSize: 8,
