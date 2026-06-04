@@ -147,7 +147,7 @@ def run_backtest(
             "timestamp": day_df["timestamp"].values,
         }
         # Invert lookup from (ticker, date) to match original format
-        daily_stats = qual_lookup.get((ticker_raw, date_raw), {})
+        daily_stats = qual_lookup.get((str(ticker_raw), str(date_raw)[:10]), {})
         if daily_stats:
             daily_stats = _shift_daily_stats(daily_stats, apply_day)
         del day_df
