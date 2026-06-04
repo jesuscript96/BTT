@@ -183,6 +183,7 @@ def filter_strategies(filters: StrategySearchFilters):
         for row in rows:
             results_json = json.loads(row[2])
             strategy_names = results_json.get('strategy_names', [])
+            is_validated = results_json.get('is_validated', None)
             
             strategies.append({
                 "id": row[0],
@@ -196,7 +197,9 @@ def filter_strategies(filters: StrategySearchFilters):
                 "total_return_pct": row[8],
                 "max_drawdown_pct": row[9],
                 "sharpe_ratio": row[10],
-                "executed_at": row[11]
+                "executed_at": row[11],
+                "results_json": results_json,
+                "is_validated": is_validated
             })
         
         return {
@@ -238,6 +241,7 @@ def list_all_strategies(
         for row in rows:
             results_json = json.loads(row[2])
             strategy_names = results_json.get('strategy_names', [])
+            is_validated = results_json.get('is_validated', None)
             
             strategies.append({
                 "id": row[0],
@@ -251,7 +255,9 @@ def list_all_strategies(
                 "total_return_pct": row[8],
                 "max_drawdown_pct": row[9],
                 "sharpe_ratio": row[10],
-                "executed_at": row[11]
+                "executed_at": row[11],
+                "results_json": results_json,
+                "is_validated": is_validated
             })
         
         # Get total count
@@ -267,6 +273,58 @@ def list_all_strategies(
     except Exception as e:
         print(f"Error listing strategies: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{backtest_id}/toggle-validation")
+def toggle_validation(backtest_id: str):
+    """
+    Toggle the is_validated flag inside results_json for a backtest result.
+    """
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                "SELECT results_json FROM backtest_results WHERE id = ?",
+                (backtest_id,)
+            ).fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Backtest result not found")
+            
+            results_json = json.loads(row[0]) if row[0] else {}
+            current_status = results_json.get("is_validated", None)
+            
+            # If not set, let's toggle based on default logic (win_rate >= 50 and sharpe_ratio > 1.5)
+            if current_status is None:
+                # We can load the parent row details to match the client logic
+                parent_row = con.execute(
+                    "SELECT win_rate, sharpe_ratio FROM backtest_results WHERE id = ?",
+                    (backtest_id,)
+                ).fetchone()
+                win_rate = parent_row[0] if parent_row else 0
+                sharpe = parent_row[1] if parent_row else 0
+                current_status = (win_rate >= 50 and sharpe > 1.5)
+                
+            new_status = not current_status
+            results_json["is_validated"] = new_status
+            
+            con.execute(
+                "UPDATE backtest_results SET results_json = ? WHERE id = ?",
+                (json.dumps(results_json), backtest_id)
+            )
+        finally:
+            con.close()
+            
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+        print(f"[GCS] users.duckdb uploaded after toggling validation for {backtest_id}")
+    except Exception as e:
+        print(f"[WARN] GCS upload failed after toggle_validation: {e}")
+        
+    return {"status": "success", "is_validated": new_status}
+
 
 
 @router.delete("/{strategy_id}")

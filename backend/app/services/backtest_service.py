@@ -65,6 +65,23 @@ def run_backtest(
 ) -> dict:
     t_total = time.time()
 
+    # Proactively prefetch daily historical metrics for the tickers involved in this backtest
+    # to speed up 'High/Low of last X days' indicators and avoid individual database queries inside the loop.
+    if qualifying_df is not None and not qualifying_df.empty:
+        try:
+            tickers = list(qualifying_df["ticker"].unique())
+            from app.services.indicators import prefetch_daily_ohlc
+            prefetch_daily_ohlc(tickers)
+        except Exception as e:
+            logger.warning(f"Failed to prefetch daily metrics from qualifying_df: {e}")
+    elif intraday_df is not None and not intraday_df.empty:
+        try:
+            tickers = list(intraday_df["ticker"].unique())
+            from app.services.indicators import prefetch_daily_ohlc
+            prefetch_daily_ohlc(tickers)
+        except Exception as e:
+            logger.warning(f"Failed to prefetch daily metrics from intraday_df: {e}")
+
     qual_lookup = _build_qualifying_lookup(qualifying_df)
     del qualifying_df
 
@@ -146,7 +163,7 @@ def run_backtest(
             "timestamp": day_df["timestamp"].values,
         }
         # Invert lookup from (ticker, date) to match original format
-        daily_stats = qual_lookup.get((ticker_raw, date_raw), {})
+        daily_stats = qual_lookup.get((str(ticker_raw), str(date_raw)[:10]), {})
         del day_df
 
         mini_df = pd.DataFrame(arrays)
@@ -392,6 +409,7 @@ def run_backtest(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_qualifying_lookup(qualifying_df: pd.DataFrame) -> dict:
     if qualifying_df.empty:

@@ -56,28 +56,32 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
     const formatIndicator = (ind: IndicatorConfig): string => {
         if (!ind) return "";
         const params: string[] = [];
-        if (ind.period !== undefined) params.push(`P:${ind.period}`);
-        if (ind.period2 !== undefined) params.push(`P2:${ind.period2}`);
-        if (ind.stdDev !== undefined) params.push(`SD:${ind.stdDev}`);
-        if (ind.days_lookback !== undefined) params.push(`Lookback:${ind.days_lookback}d`);
-        if (ind.orb_minutes !== undefined) params.push(`ORB:${ind.orb_minutes}m`);
-        if (ind.ap_session !== undefined) params.push(`${ind.ap_session.replace("ap.", "")}`);
-        if (ind.elapsed_minutes !== undefined) params.push(`Elapsed:${ind.elapsed_minutes}m`);
-        if (ind.band_line !== undefined) params.push(`${ind.band_line}`);
+        if (ind.period != null && ind.period as any !== "") params.push(`P:${ind.period}`);
+        if (ind.period2 != null && ind.period2 as any !== "") params.push(`P2:${ind.period2}`);
+        if (ind.stdDev != null && ind.stdDev as any !== "") params.push(`SD:${ind.stdDev}`);
+        if (ind.days_lookback != null && ind.days_lookback as any !== "") params.push(`Lookback:${ind.days_lookback}d`);
+        if (ind.orb_minutes != null && ind.orb_minutes as any !== "") params.push(`ORB:${ind.orb_minutes}m`);
+        if (ind.ap_session != null && typeof ind.ap_session === 'string') {
+            params.push(`${ind.ap_session.replace("ap.", "")}`);
+        }
+        if (ind.elapsed_minutes != null && ind.elapsed_minutes as any !== "") params.push(`Elapsed:${ind.elapsed_minutes}m`);
+        if (ind.band_line != null && ind.band_line as any !== "") params.push(`${ind.band_line}`);
         
         let offsetStr = "";
-        if (ind.offset && ind.offset > 0) {
+        if (ind.offset != null && ind.offset > 0) {
             offsetStr = `[t-${ind.offset}]`;
         }
         
         const paramsStr = params.length > 0 ? `(${params.join(",")})` : "";
-        return `${INDICATOR_LABELS[ind.name] || ind.name}${paramsStr}${offsetStr}`;
+        const nameStr = ind.name ? (INDICATOR_LABELS[ind.name] || ind.name) : "Variable";
+        return `${nameStr}${paramsStr}${offsetStr}`;
     };
 
     const formatCondition = (cond: AnyCondition): string => {
+        if (!cond) return "";
         if (cond.type === 'indicator_comparison') {
             const sourceStr = formatIndicator(cond.source);
-            const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator;
+            const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator || "=";
             const targetStr = typeof cond.target === 'number' 
                 ? cond.target.toString() 
                 : formatIndicator(cond.target);
@@ -95,6 +99,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
     };
 
     const formatPrecondition = (pre: PostGapPrecondition): string => {
+        if (!pre) return "";
         const dayStr = pre.day === 'gap_day' ? 'Gap Day' : 'Gap+1 Day';
         const metricLabels: Record<string, string> = {
             volume: 'Volume',
@@ -106,21 +111,21 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
             candle_range_pct: 'Candle Range %'
         };
         const metricStr = metricLabels[pre.metric] || pre.metric;
-        const valueStr = pre.value !== undefined ? ` ${pre.value}` : '';
+        const valueStr = pre.value != null && pre.value as any !== "" ? ` ${pre.value}` : '';
         return `${dayStr}: ${metricStr} ${pre.operator}${valueStr}`;
     };
 
     const getUniverseTags = (filters?: UniverseFilters): string[] => {
         if (!filters) return [];
         const tags: string[] = [];
-        if (filters.min_market_cap !== undefined) tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
-        if (filters.max_market_cap !== undefined) tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
-        if (filters.min_price !== undefined) tags.push(`Min Price: $${filters.min_price}`);
-        if (filters.max_price !== undefined) tags.push(`Max Price: $${filters.max_price}`);
-        if (filters.min_volume !== undefined) tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
-        if (filters.max_shares_float !== undefined) tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
-        if (filters.require_shortable) tags.push("Require Shortable");
-        if (filters.exclude_dilution) tags.push("Exclude Dilution");
+        if (filters.min_market_cap != null && (filters.min_market_cap as any) !== "") tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
+        if (filters.max_market_cap != null && (filters.max_market_cap as any) !== "") tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
+        if (filters.min_price != null && (filters.min_price as any) !== "") tags.push(`Min Price: $${filters.min_price}`);
+        if (filters.max_price != null && (filters.max_price as any) !== "") tags.push(`Max Price: $${filters.max_price}`);
+        if (filters.min_volume != null && (filters.min_volume as any) !== "") tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
+        if (filters.max_shares_float != null && (filters.max_shares_float as any) !== "") tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
+        if (filters.require_shortable === true) tags.push("Require Shortable");
+        if (filters.exclude_dilution === true) tags.push("Exclude Dilution");
         if (filters.whitelist_sectors && filters.whitelist_sectors.length > 0) {
             tags.push(`Sectors: ${filters.whitelist_sectors.join(', ')}`);
         }
@@ -130,29 +135,29 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
     const getRiskTags = (risk?: RiskManagement): string[] => {
         if (!risk) return [];
         const tags: string[] = [];
-        if (risk.use_hard_stop) {
-            tags.push(`Stop Loss: ${risk.hard_stop.value}% (${risk.hard_stop.type})`);
-        } else {
-            tags.push("No Hard Stop");
+        if (risk.use_hard_stop && risk.hard_stop && risk.hard_stop.value != null && (risk.hard_stop.value as any) !== "") {
+            tags.push(`Stop Loss: ${risk.hard_stop.value}%`);
         }
-        if (risk.use_take_profit) {
-            tags.push(`Take Profit: ${risk.take_profit.value}% (${risk.take_profit.type})`);
+        if (risk.use_take_profit && risk.take_profit && risk.take_profit.value != null && (risk.take_profit.value as any) !== "") {
+            tags.push(`Take Profit: ${risk.take_profit.value}%`);
         }
-        if (risk.take_profit_mode) {
+        if (risk.take_profit_mode && (risk.use_take_profit || (risk.partial_take_profits && risk.partial_take_profits.length > 0))) {
             tags.push(`TP Mode: ${risk.take_profit_mode}`);
         }
         if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
             risk.partial_take_profits.forEach((pt, i) => {
-                tags.push(`Partial TP ${i+1}: ${pt.capital_pct}% cap @ ${pt.distance_pct}% dist`);
+                if (pt && pt.capital_pct != null && pt.distance_pct != null) {
+                    tags.push(`Partial TP ${i+1}: ${pt.capital_pct}% cap @ ${pt.distance_pct}% dist`);
+                }
             });
         }
-        if (risk.trailing_stop?.active) {
-            tags.push(`Trailing: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type})`);
+        if (risk.trailing_stop?.active && risk.trailing_stop.buffer_pct != null && (risk.trailing_stop.buffer_pct as any) !== "") {
+            tags.push(`Trailing: ${risk.trailing_stop.buffer_pct}%`);
         }
-        if (risk.accept_reentries) {
+        if (risk.accept_reentries === true) {
             tags.push("Accept Re-entries");
         }
-        if (risk.max_drawdown_daily !== undefined) {
+        if (risk.max_drawdown_daily != null && (risk.max_drawdown_daily as any) !== "") {
             tags.push(`Max Daily DD: ${risk.max_drawdown_daily}%`);
         }
         return tags;

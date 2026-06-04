@@ -22,7 +22,8 @@ import {
   getQueries, 
   getSavedBacktests, 
   deleteStrategy, 
-  deleteQuery 
+  deleteQuery,
+  toggleBacktestValidation
 } from '@/lib/api'
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from '@/components/strategy-builder/ConditionBuilder'
 
@@ -397,6 +398,95 @@ export default function TrunkPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deletingType, setDeletingType] = useState<'strategy' | 'dataset' | null>(null)
 
+  const [mockValidationStates, setMockValidationStates] = useState<Record<string, boolean>>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('mock_validation_states')
+      if (saved) {
+        try {
+          return JSON.parse(saved)
+        } catch (e) {}
+      }
+    }
+    return {
+      'mock_strategy_1': true,
+      'mock_strategy_2': true,
+      'mock_strategy_3': false,
+    }
+  })
+
+  const getMockKey = (strat: any): string | null => {
+    const key = strat.id || ''
+    const name = strat.name || ''
+    if (key === 'mock_strategy_1' || name === 'VWAP Reclaim Long') return 'mock_strategy_1'
+    if (key === 'mock_strategy_2' || name === 'Opening Range Breakdown Short') return 'mock_strategy_2'
+    if (key === 'mock_strategy_3' || name === 'EMA 9/20 Cross Long') return 'mock_strategy_3'
+    return null
+  }
+
+  const handleToggleValidation = async (e: React.MouseEvent, strat: any) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const stats = getStats(strat);
+    const mockKey = getMockKey(strat);
+    
+    if (mockKey) {
+      const current = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : MOCK_STRATEGY_STATS[mockKey].isValidated;
+      const nextVal = !current;
+      const nextStates = { ...mockValidationStates, [mockKey]: nextVal };
+      setMockValidationStates(nextStates);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('mock_validation_states', JSON.stringify(nextStates));
+      }
+    } else {
+      const realBt = backtests.find(bt => {
+        const ids = bt.strategy_ids || [];
+        return ids.includes(strat.id);
+      });
+      if (!realBt) {
+        alert("No backtest result found for this strategy to validate.");
+        return;
+      }
+      
+      const currentStatus = realBt.is_validated !== undefined && realBt.is_validated !== null
+        ? realBt.is_validated
+        : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5);
+      const nextStatus = !currentStatus;
+
+      try {
+        // Optimistically update local React state so UI updates instantly with no flicker
+        setBacktests(prev => prev.map(bt => {
+          if (bt.id === realBt.id) {
+            let nextResultsJson = bt.results_json;
+            if (typeof bt.results_json === 'string') {
+              try {
+                const parsed = JSON.parse(bt.results_json);
+                parsed.is_validated = nextStatus;
+                nextResultsJson = JSON.stringify(parsed);
+              } catch (e) {}
+            } else if (bt.results_json && typeof bt.results_json === 'object') {
+              nextResultsJson = { ...bt.results_json, is_validated: nextStatus };
+            }
+
+            return {
+              ...bt,
+              is_validated: nextStatus,
+              results_json: nextResultsJson
+            };
+          }
+          return bt;
+        }));
+
+        // Fire request in the background
+        await toggleBacktestValidation(realBt.id);
+      } catch (err: any) {
+        console.error(err);
+        alert(`Error toggling validation status: ${err.message || err}`);
+        // Revert to server data on failure
+        await loadData();
+      }
+    }
+  }
+
   const toggleRowExpand = (id: string) => {
     setExpandedRowId(prev => prev === id ? null : id)
   }
@@ -405,28 +495,32 @@ export default function TrunkPage() {
   const formatIndicator = (ind: any): string => {
     if (!ind) return "";
     const params: string[] = [];
-    if (ind.period !== undefined) params.push(`P:${ind.period}`);
-    if (ind.period2 !== undefined) params.push(`P2:${ind.period2}`);
-    if (ind.stdDev !== undefined) params.push(`SD:${ind.stdDev}`);
-    if (ind.days_lookback !== undefined) params.push(`Lookback:${ind.days_lookback}d`);
-    if (ind.orb_minutes !== undefined) params.push(`ORB:${ind.orb_minutes}m`);
-    if (ind.ap_session !== undefined) params.push(`${ind.ap_session.replace("ap.", "")}`);
-    if (ind.elapsed_minutes !== undefined) params.push(`Elapsed:${ind.elapsed_minutes}m`);
-    if (ind.band_line !== undefined) params.push(`${ind.band_line}`);
+    if (ind.period != null && ind.period !== "") params.push(`P:${ind.period}`);
+    if (ind.period2 != null && ind.period2 !== "") params.push(`P2:${ind.period2}`);
+    if (ind.stdDev != null && ind.stdDev !== "") params.push(`SD:${ind.stdDev}`);
+    if (ind.days_lookback != null && ind.days_lookback !== "") params.push(`Lookback:${ind.days_lookback}d`);
+    if (ind.orb_minutes != null && ind.orb_minutes !== "") params.push(`ORB:${ind.orb_minutes}m`);
+    if (ind.ap_session != null && typeof ind.ap_session === 'string' && ind.ap_session !== "") {
+      params.push(`${ind.ap_session.replace("ap.", "")}`);
+    }
+    if (ind.elapsed_minutes != null && ind.elapsed_minutes !== "") params.push(`Elapsed:${ind.elapsed_minutes}m`);
+    if (ind.band_line != null && ind.band_line !== "") params.push(`${ind.band_line}`);
     
     let offsetStr = "";
-    if (ind.offset && ind.offset > 0) {
+    if (ind.offset != null && ind.offset > 0) {
       offsetStr = `[t-${ind.offset}]`;
     }
     
     const paramsStr = params.length > 0 ? `(${params.join(",")})` : "";
-    return `${INDICATOR_LABELS[ind.name] || ind.name}${paramsStr}${offsetStr}`;
+    const nameStr = ind.name ? (INDICATOR_LABELS[ind.name] || ind.name) : "Variable";
+    return `${nameStr}${paramsStr}${offsetStr}`;
   }
 
   const formatCondition = (cond: any): string => {
+    if (!cond) return "";
     if (cond.type === 'indicator_comparison') {
       const sourceStr = formatIndicator(cond.source);
-      const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator;
+      const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator || "=";
       const targetStr = typeof cond.target === 'number' 
         ? cond.target.toString() 
         : formatIndicator(cond.target);
@@ -469,6 +563,7 @@ export default function TrunkPage() {
   }
 
   const formatPrecondition = (pre: any): string => {
+    if (!pre) return "";
     const dayLabel = pre.day === 'gap_day' ? 'Gap Day' : 'Gap+1 Day';
     let metricLabel = 'Cierre';
     let valLabel = '';
@@ -485,7 +580,7 @@ export default function TrunkPage() {
     } else if (pre.metric === 'close_vs_vwap') {
       valLabel = `${pre.operator} VWAP`;
     } else if (pre.metric === 'close_vs_sma') {
-      valLabel = `${pre.operator} SMA ${pre.sma_period}`;
+      valLabel = `${pre.operator} SMA ${pre.sma_period || 20}`;
     } else if (pre.metric === 'candle_range_pct') {
       metricLabel = 'Rango de Vela %';
       valLabel = `${pre.operator} ${pre.value}%`;
@@ -496,14 +591,14 @@ export default function TrunkPage() {
   const getUniverseTags = (filters?: any): string[] => {
     if (!filters) return [];
     const tags: string[] = [];
-    if (filters.min_market_cap !== undefined) tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
-    if (filters.max_market_cap !== undefined) tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
-    if (filters.min_price !== undefined) tags.push(`Min Price: $${filters.min_price}`);
-    if (filters.max_price !== undefined) tags.push(`Max Price: $${filters.max_price}`);
-    if (filters.min_volume !== undefined) tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
-    if (filters.max_shares_float !== undefined) tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
-    if (filters.require_shortable) tags.push("Require Shortable");
-    if (filters.exclude_dilution) tags.push("Exclude Dilution");
+    if (filters.min_market_cap != null && filters.min_market_cap !== "") tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.max_market_cap != null && filters.max_market_cap !== "") tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.min_price != null && filters.min_price !== "") tags.push(`Min Price: $${filters.min_price}`);
+    if (filters.max_price != null && filters.max_price !== "") tags.push(`Max Price: $${filters.max_price}`);
+    if (filters.min_volume != null && filters.min_volume !== "") tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
+    if (filters.max_shares_float != null && filters.max_shares_float !== "") tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
+    if (filters.require_shortable === true) tags.push("Require Shortable");
+    if (filters.exclude_dilution === true) tags.push("Exclude Dilution");
     if (filters.whitelist_sectors && filters.whitelist_sectors.length > 0) {
       tags.push(`Sectors: ${filters.whitelist_sectors.join(', ')}`);
     }
@@ -513,22 +608,27 @@ export default function TrunkPage() {
   const getRiskTags = (risk?: any): string[] => {
     if (!risk) return [];
     const tags: string[] = [];
-    if (risk.use_hard_stop) {
-      tags.push(`SL: ${risk.hard_stop.value}% (${risk.hard_stop.type})`);
+    if (risk.use_hard_stop && risk.hard_stop?.value != null && risk.hard_stop.value !== "") {
+      tags.push(`SL: ${risk.hard_stop.value}%`);
     }
-    if (risk.use_take_profit) {
-      tags.push(`TP: ${risk.take_profit.value}% (${risk.take_profit.type})`);
+    if (risk.use_take_profit && risk.take_profit?.value != null && risk.take_profit.value !== "") {
+      tags.push(`TP: ${risk.take_profit.value}%`);
     }
-    if (risk.take_profit_mode) {
+    if (risk.take_profit_mode && (risk.use_take_profit || (risk.partial_take_profits && risk.partial_take_profits.length > 0))) {
       tags.push(`TP Mode: ${risk.take_profit_mode}`);
     }
     if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
       risk.partial_take_profits.forEach((pt: any, i: number) => {
-        tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct}%`);
+        if (pt && pt.capital_pct != null && pt.capital_pct !== "" && pt.distance_pct != null && pt.distance_pct !== "") {
+          tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct}%`);
+        }
       });
     }
-    if (risk.trailing_stop?.active) {
-      tags.push(`TS: ${risk.trailing_stop.buffer_pct}% (${risk.trailing_stop.type})`);
+    if (risk.trailing_stop?.active && risk.trailing_stop?.buffer_pct != null && risk.trailing_stop.buffer_pct !== "") {
+      tags.push(`TS: ${risk.trailing_stop.buffer_pct}%`);
+    }
+    if (risk.max_drawdown_daily != null && risk.max_drawdown_daily !== "") {
+      tags.push(`Max Daily DD: ${risk.max_drawdown_daily}%`);
     }
     return tags;
   }
@@ -625,7 +725,7 @@ export default function TrunkPage() {
     }
   }
 
-  // Resolves stats for a strategy (only keeping the last 6 months)
+  // Resolves stats for a strategy
   const getStats = (strat: any) => {
     const realBt = backtests.find(bt => {
       const ids = bt.strategy_ids || []
@@ -636,24 +736,30 @@ export default function TrunkPage() {
       let curve: number[] = []
       let period = 'N/A'
       let avgRDay = 0
+      let bParams: any = null
+      let isValidated = realBt.is_validated !== undefined && realBt.is_validated !== null
+        ? realBt.is_validated
+        : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5)
+      
       try {
         const results = typeof realBt.results_json === 'string' 
           ? JSON.parse(realBt.results_json) 
           : realBt.results_json
-        const rawCurve = results?.equity_curve || []
+        const rawCurve = results?.global_equity || results?.equity_curve || []
+        bParams = results?.backtest_params || null
+        if (results?.is_validated !== undefined && results?.is_validated !== null) {
+          isValidated = results.is_validated
+        }
         
-        // Filter by date for the last 6 months if timestamps are present
-        if (rawCurve.length > 0 && rawCurve[0].timestamp) {
-          const sorted = [...rawCurve].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-          const latestTime = new Date(sorted[sorted.length - 1].timestamp).getTime()
-          const sixMonthsAgo = latestTime - (6 * 30.5 * 24 * 60 * 60 * 1000) // approx 6 months in ms
-          const filtered = sorted.filter(item => new Date(item.timestamp).getTime() >= sixMonthsAgo)
-          
-          // Use filtered or fallback to last 120 points
-          const finalCurve = filtered.length >= 5 ? filtered : sorted.slice(-120)
-          curve = finalCurve.map((c: any) => c.balance || 0)
-        } else {
-          curve = rawCurve.map((c: any) => c.balance || 0).slice(-120)
+        // Parse and sort by time, return the full curve (no slicing/limiting to 6 months)
+        if (rawCurve.length > 0) {
+          const mapped = rawCurve.map((c: any) => {
+            const timeMs = c.time ? c.time * 1000 : (c.timestamp ? new Date(c.timestamp).getTime() : 0);
+            const val = c.value !== undefined ? c.value : (c.balance !== undefined ? c.balance : 0);
+            return { timeMs, val };
+          });
+          const sorted = [...mapped].sort((a, b) => a.timeMs - b.timeMs);
+          curve = sorted.map(item => item.val);
         }
 
         // Period calculation
@@ -666,9 +772,9 @@ export default function TrunkPage() {
         }
 
         // Avg R / Day calculation
-        const totalR = realBt.total_return_r || 0
-        const uniqueDays = new Set(trades.map((t: any) => t.entry_time?.split('T')[0])).size
-        avgRDay = uniqueDays > 0 ? totalR / uniqueDays : 0
+        avgRDay = realBt.avg_r_multiple !== undefined && realBt.avg_r_multiple !== null
+          ? realBt.avg_r_multiple
+          : 0;
       } catch (e) {
         console.error(e)
       }
@@ -682,21 +788,42 @@ export default function TrunkPage() {
         avgRDay: avgRDay,
         equityCurve: curve,
         isReal: true,
-        isValidated: realBt.is_validated !== undefined ? realBt.is_validated : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5)
+        isValidated: isValidated,
+        backtestParams: bParams
       }
     }
 
     // Pre-seeded fallback
-    const key = strat.id || ''
-    const name = strat.name || ''
-    if (key === 'mock_strategy_1' || name === 'VWAP Reclaim Long') {
-      return { ...MOCK_STRATEGY_STATS['mock_strategy_1'], isReal: false }
-    }
-    if (key === 'mock_strategy_2' || name === 'Opening Range Breakdown Short') {
-      return { ...MOCK_STRATEGY_STATS['mock_strategy_2'], isReal: false }
-    }
-    if (key === 'mock_strategy_3' || name === 'EMA 9/20 Cross Long') {
-      return { ...MOCK_STRATEGY_STATS['mock_strategy_3'], isReal: false }
+    const mockKey = getMockKey(strat)
+    if (mockKey) {
+      const baseStats = MOCK_STRATEGY_STATS[mockKey]
+      const isVal = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : baseStats.isValidated
+      return { 
+        ...baseStats, 
+        isValidated: isVal,
+        isReal: false,
+        backtestParams: mockKey === 'mock_strategy_1' ? {
+          init_cash: 10000,
+          risk_r: 100,
+          fees: 0.0001,
+          slippage: 0.0005,
+          market_sessions: ['rth'],
+        } : mockKey === 'mock_strategy_2' ? {
+          init_cash: 10000,
+          risk_r: 100,
+          fees: 0.0001,
+          slippage: 0.0003,
+          market_sessions: ['rth'],
+          monthly_expenses: 150
+        } : {
+          init_cash: 10000,
+          risk_r: 100,
+          fees: 0.0001,
+          slippage: 0.0005,
+          market_sessions: ['pre', 'rth'],
+          monthly_expenses: 100
+        }
+      }
     }
 
     return {
@@ -709,7 +836,8 @@ export default function TrunkPage() {
       avgRDay: null,
       equityCurve: [],
       isReal: false,
-      isValidated: false
+      isValidated: false,
+      backtestParams: null
     }
   }
 
@@ -932,7 +1060,6 @@ export default function TrunkPage() {
               <tr style={{ borderBottom: '0.5px solid var(--color-ec-border)', backgroundColor: 'rgba(28, 30, 33, 0.3)' }}>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Name</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Bias</th>
-                <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Period OOS</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Trades</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Equity</th>
                 <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>W.Rate</th>
@@ -973,6 +1100,7 @@ export default function TrunkPage() {
                       <td style={{ padding: '6px 10px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleRowExpand(strat.id);
@@ -1019,9 +1147,6 @@ export default function TrunkPage() {
                           {strat.bias}
                         </span>
                       </td>
-                      <td style={{ padding: '6px 10px', fontSize: 9, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>
-                        {stats.period}
-                      </td>
                       <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
                         {stats.trades || '—'}
                       </td>
@@ -1044,20 +1169,33 @@ export default function TrunkPage() {
                         {stats.avgRDay !== null ? `${stats.avgRDay.toFixed(2)} R` : '—'}
                       </td>
                       <td style={{ padding: '6px 10px' }}>
-                        <span
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleValidation(e, strat)}
                           style={{
                             fontSize: 8,
                             fontWeight: 700,
-                            padding: '1px 5px',
+                            padding: '3px 8px',
                             borderRadius: 0,
                             textTransform: 'uppercase',
                             backgroundColor: stats.isValidated ? 'rgba(74, 157, 127, 0.12)' : 'rgba(201, 77, 63, 0.12)',
                             color: stats.isValidated ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)',
-                            border: stats.isValidated ? '0.5px solid rgba(74, 157, 127, 0.25)' : '0.5px solid rgba(201, 77, 63, 0.25)'
+                            border: stats.isValidated ? '0.5px solid rgba(74, 157, 127, 0.25)' : '0.5px solid rgba(201, 77, 63, 0.25)',
+                            cursor: 'pointer',
+                            transition: 'all 150ms ease'
                           }}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.backgroundColor = stats.isValidated ? 'rgba(74, 157, 127, 0.2)' : 'rgba(201, 77, 63, 0.2)';
+                            e.currentTarget.style.borderColor = stats.isValidated ? 'rgba(74, 157, 127, 0.4)' : 'rgba(201, 77, 63, 0.4)';
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.backgroundColor = stats.isValidated ? 'rgba(74, 157, 127, 0.12)' : 'rgba(201, 77, 63, 0.12)';
+                            e.currentTarget.style.borderColor = stats.isValidated ? 'rgba(74, 157, 127, 0.25)' : 'rgba(201, 77, 63, 0.25)';
+                          }}
+                          title="Click to toggle validation status"
                         >
                           {stats.isValidated ? 'YES' : 'NO'}
-                        </span>
+                        </button>
                       </td>
                       <td style={{ padding: '6px 10px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -1135,76 +1273,171 @@ export default function TrunkPage() {
                     {/* Collapsible tags row */}
                     {isExpanded && (
                       <tr style={{ backgroundColor: 'rgba(28, 30, 33, 0.25)' }}>
-                        <td colSpan={12} style={{ padding: '10px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {/* Preconditions */}
-                            {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
+                        <td colSpan={11} style={{ padding: '12px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px 24px' }}>
+                            {/* Column 1: Strategy Definition */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                <span style={{ width: 4, height: 10, backgroundColor: 'var(--color-ec-copper)' }} />
+                                <h4 style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--color-ec-text-high)', margin: 0 }}>
+                                  Strategy Definition
+                                </h4>
+                              </div>
+                              
+                              {/* Preconditions */}
+                              {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Timing/Preconds:</span>
+                                  {strat.apply_day && (
+                                    <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(59, 130, 246, 0.3)', backgroundColor: 'rgba(59, 130, 246, 0.06)', color: '#60a5fa' }}>
+                                      Apply: {strat.apply_day}
+                                    </span>
+                                  )}
+                                  {strat.postgap_preconditions?.map((pre: any, idx: number) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(216, 122, 61, 0.3)', backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)' }}>
+                                      {formatPrecondition(pre)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Universe filters */}
+                              {getUniverseTags(strat.universe_filters).length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Universe Filters:</span>
+                                  {getUniverseTags(strat.universe_filters).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(168, 85, 247, 0.3)', backgroundColor: 'rgba(168, 85, 247, 0.06)', color: '#a855f7' }}>
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Entry Logic */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Timing/Preconds:</span>
-                                {strat.apply_day && (
-                                  <span style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(59, 130, 246, 0.3)', backgroundColor: 'rgba(59, 130, 246, 0.06)', color: '#60a5fa' }}>
-                                    Apply: {strat.apply_day}
-                                  </span>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Entry Logic ({strat.entry_logic?.timeframe || 'N/A'}):</span>
+                                {getConditionTags(strat.entry_logic?.root_condition).length === 0 ? (
+                                  <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No entry conditions</span>
+                                ) : (
+                                  getConditionTags(strat.entry_logic?.root_condition).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(74, 157, 127, 0.3)', backgroundColor: 'rgba(74, 157, 127, 0.06)', color: 'var(--color-ec-profit)' }}>
+                                      {tag}
+                                    </span>
+                                  ))
                                 )}
-                                {strat.postgap_preconditions?.map((pre: any, idx: number) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(216, 122, 61, 0.3)', backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)' }}>
-                                    {formatPrecondition(pre)}
-                                  </span>
-                                ))}
                               </div>
-                            )}
 
-                            {/* Universe filters */}
-                            {getUniverseTags(strat.universe_filters).length > 0 && (
+                              {/* Exit Logic */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Universe Filters:</span>
-                                {getUniverseTags(strat.universe_filters).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(168, 85, 247, 0.3)', backgroundColor: 'rgba(168, 85, 247, 0.06)', color: '#a855f7' }}>
-                                    {tag}
-                                  </span>
-                                ))}
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Exit Logic ({strat.exit_logic?.timeframe || 'N/A'}):</span>
+                                {getConditionTags(strat.exit_logic?.root_condition).length === 0 ? (
+                                  <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No exit conditions</span>
+                                ) : (
+                                  getConditionTags(strat.exit_logic?.root_condition).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(245, 158, 11, 0.3)', backgroundColor: 'rgba(245, 158, 11, 0.06)', color: '#f59e0b' }}>
+                                      {tag}
+                                    </span>
+                                  ))
+                                )}
                               </div>
-                            )}
 
-                            {/* Entry Logic */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Entry Logic ({strat.entry_logic?.timeframe || 'N/A'}):</span>
-                              {getConditionTags(strat.entry_logic?.root_condition).length === 0 ? (
-                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No entry conditions</span>
-                              ) : (
-                                getConditionTags(strat.entry_logic?.root_condition).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(74, 157, 127, 0.3)', backgroundColor: 'rgba(74, 157, 127, 0.06)', color: 'var(--color-ec-profit)' }}>
-                                    {tag}
-                                  </span>
-                                ))
+                              {/* Risk Management */}
+                              {getRiskTags(strat.risk_management).length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Risk Settings:</span>
+                                  {getRiskTags(strat.risk_management).map((tag, idx) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.06)', color: '#ef4444' }}>
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
                               )}
                             </div>
 
-                            {/* Exit Logic */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Exit Logic ({strat.exit_logic?.timeframe || 'N/A'}):</span>
-                              {getConditionTags(strat.exit_logic?.root_condition).length === 0 ? (
-                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No exit conditions</span>
+                            {/* Column 2: Backtester Configuration */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                <span style={{ width: 4, height: 10, backgroundColor: 'var(--color-ec-copper)' }} />
+                                <h4 style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--color-ec-text-high)', margin: 0 }}>
+                                  Backtester Configuration
+                                </h4>
+                              </div>
+
+                              {stats.backtestParams ? (
+                                <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '6px 8px', alignItems: 'center' }}>
+                                  {stats.backtestParams.init_cash != null && stats.backtestParams.init_cash !== "" && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Initial Cash:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${Number(stats.backtestParams.init_cash).toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.risk_r != null && stats.backtestParams.risk_r !== "" && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>1R Risk Amount:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${Number(stats.backtestParams.risk_r).toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.fees != null && stats.backtestParams.fees !== "" && Number(stats.backtestParams.fees) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Fees / Commissions:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        {parseFloat((Number(stats.backtestParams.fees) * 100).toFixed(3))}%
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.slippage != null && stats.backtestParams.slippage !== "" && Number(stats.backtestParams.slippage) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Slippage:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        {parseFloat((Number(stats.backtestParams.slippage) * 100).toFixed(3))}%
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.market_sessions && stats.backtestParams.market_sessions.length > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Market Hours:</span>
+                                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                        {stats.backtestParams.market_sessions.map((session: string) => (
+                                          <span key={session} style={{ fontSize: 8, fontWeight: 700, padding: '1px 5px', border: '0.5px solid rgba(255,255,255,0.15)', textTransform: 'uppercase', color: 'var(--color-ec-text-secondary)', backgroundColor: 'rgba(255,255,255,0.03)' }}>
+                                            {session}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.monthly_expenses != null && stats.backtestParams.monthly_expenses !== "" && Number(stats.backtestParams.monthly_expenses) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Monthly Expenses:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${Number(stats.backtestParams.monthly_expenses).toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+
+                                  {stats.backtestParams.locates_cost != null && stats.backtestParams.locates_cost !== "" && Number(stats.backtestParams.locates_cost) > 0 && (
+                                    <>
+                                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Locates Cost:</span>
+                                      <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                                        ${Number(stats.backtestParams.locates_cost).toLocaleString()}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               ) : (
-                                getConditionTags(strat.exit_logic?.root_condition).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(245, 158, 11, 0.3)', backgroundColor: 'rgba(245, 158, 11, 0.06)', color: '#f59e0b' }}>
-                                    {tag}
-                                  </span>
-                                ))
+                                <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
+                                  No backtester configuration available for this strategy
+                                </span>
                               )}
                             </div>
-
-                            {/* Risk Management */}
-                            {getRiskTags(strat.risk_management).length > 0 && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Risk Settings:</span>
-                                {getRiskTags(strat.risk_management).map((tag, idx) => (
-                                  <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(239, 68, 68, 0.3)', backgroundColor: 'rgba(239, 68, 68, 0.06)', color: '#ef4444' }}>
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         </td>
                       </tr>

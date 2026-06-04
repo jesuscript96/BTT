@@ -57,17 +57,29 @@ def simulate(
 
     # Pre-calculate Kelly multiplier if needed
     kelly_f = 0.0
-    if risk_type == "KELLY" and prev_stats:
-        win_rate = prev_stats.get("win_rate", 0.5)
-        avg_win = prev_stats.get("avg_win", 0.0)
-        avg_loss = abs(prev_stats.get("avg_loss", 1.0))
-        if avg_loss > 0:
-            b = avg_win / avg_loss
-            if b > 0:
-                # Kelly Formula: f = (p * (b + 1) - 1) / b
-                # We use risk_r as the "Kelly Fraction" (e.g. 0.5 for half-kelly)
-                optimal_f = (win_rate * (b + 1) - 1) / b
-                kelly_f = max(0, optimal_f * risk_r)
+    if risk_type == "KELLY":
+        if prev_stats:
+            win_count = prev_stats.get("win_count", 0)
+            loss_count = prev_stats.get("loss_count", 0)
+            total_trades = win_count + loss_count
+        else:
+            total_trades = 0
+
+        if total_trades < 5:
+            # Bootstrap phase: Use a default seed Kelly fraction of 2%
+            # scaled by the Kelly multiplier (risk_r, e.g. 1.0 for full Kelly, 0.5 for half Kelly)
+            kelly_f = 0.02 * risk_r
+        else:
+            win_rate = prev_stats.get("win_rate", 0.5)
+            avg_win = prev_stats.get("avg_win", 0.0)
+            avg_loss = abs(prev_stats.get("avg_loss", 1.0))
+            if avg_loss > 0:
+                b = avg_win / avg_loss
+                if b > 0:
+                    # Kelly Formula: f = (p * (b + 1) - 1) / b
+                    # We use risk_r as the "Kelly Fraction" (e.g. 0.5 for half-kelly)
+                    optimal_f = (win_rate * (b + 1) - 1) / b
+                    kelly_f = max(0, optimal_f * risk_r)
 
     # Risk amount tracking for reporting
     risk_amount = risk_r

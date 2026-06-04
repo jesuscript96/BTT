@@ -80,8 +80,26 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     ],
 
     // Solo aparecen como targets, no como source con cruces
-    [IndicatorType.PREVIOUS_MAX]: [],
-    [IndicatorType.PREVIOUS_MIN]: [],
+    [IndicatorType.PREVIOUS_MAX]: [
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
+        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.VWAP,
+    ],
+    [IndicatorType.PREVIOUS_MIN]: [
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
+        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.VWAP,
+    ],
     [IndicatorType.YESTERDAY_OPEN]: [],
     [IndicatorType.YESTERDAY_CLOSE]: [],
     [IndicatorType.YESTERDAY_HIGH]: [],
@@ -143,7 +161,8 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
     [IndicatorType.PREVIOUS_MAX]: [
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
-        IndicatorType.PM_OPEN, IndicatorType.PREVIOUS_MIN,
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
     
@@ -153,7 +172,8 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
     [IndicatorType.PREVIOUS_MIN]: [
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
-        IndicatorType.PM_OPEN, IndicatorType.PREVIOUS_MIN,
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
     
