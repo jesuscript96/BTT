@@ -864,7 +864,7 @@ const GapStatsSection = ({
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
-                    Gap Day Statistics
+                    Runner Stats (PMH ≥ 20%)
                 </span>
                 <div style={{
                     height: '140px',
@@ -897,7 +897,7 @@ const GapStatsSection = ({
                 paddingBottom: 4 
             }}>
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
-                    Gap Stats {currentStats && currentStats.gap_days_count > 0 ? `(${currentStats.gap_days_count} gaps)` : ''}
+                    Runner Stats (PMH ≥ 20%) {currentStats && currentStats.gap_days_count > 0 ? `(${currentStats.gap_days_count} runners)` : ''}
                 </span>
                 
                 {/* Day offset sub-tabs */}
