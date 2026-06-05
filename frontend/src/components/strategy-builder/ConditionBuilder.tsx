@@ -833,7 +833,12 @@ export const ConditionRow = ({
                     <>
                         <SourceIndicatorInput
                             value={condition.source}
-                            exclude={Object.values(IndicatorType).filter(isOnlyTarget)}
+                            exclude={[
+                                ...Object.values(IndicatorType).filter(isOnlyTarget),
+                                IndicatorType.TRIANGLE_ASCENDING,
+                                IndicatorType.TRIANGLE_DESCENDING,
+                                IndicatorType.TRIANGLE_SYMMETRIC
+                            ]}
                             onChange={(val) => onChange({ ...condition, source: val })}
                         />
                         <div className="text-xs text-muted-foreground">is</div>
@@ -857,7 +862,11 @@ export const ConditionRow = ({
                         <div className="text-xs text-muted-foreground">from</div>
                         <SourceIndicatorInput
                             value={condition.level}
-                            exclude={[]}
+                            exclude={[
+                                IndicatorType.TRIANGLE_ASCENDING,
+                                IndicatorType.TRIANGLE_DESCENDING,
+                                IndicatorType.TRIANGLE_SYMMETRIC
+                            ]}
                             allowedTargets={getAllowedTargets(
                                 condition.source?.name as IndicatorType,
                                 'price_level_distance'
@@ -1312,6 +1321,12 @@ export const GroupDisplay = ({
                                 <span style={labelStyle}>Variable de entrada</span>
                                 <IndicatorSelector
                                     value={formCondition.source.name}
+                                    exclude={formCondition.type === 'price_level_distance' ? [
+                                        IndicatorType.TRIANGLE_ASCENDING,
+                                        IndicatorType.TRIANGLE_DESCENDING,
+                                        IndicatorType.TRIANGLE_SYMMETRIC,
+                                        ...Object.values(IndicatorType).filter(isOnlyTarget)
+                                    ] : Object.values(IndicatorType).filter(isOnlyTarget)}
                                     onChange={(nameStr) => {
                                         const name = nameStr as IndicatorType;
                                         const defaultParams = getDefaultParamsForIndicator(name);
@@ -1505,6 +1520,12 @@ export const GroupDisplay = ({
                                         <span style={labelStyle}>Variables de cruce (Nivel)</span>
                                         <IndicatorSelector
                                             value={distCondition.level.name}
+                                            exclude={[
+                                                IndicatorType.TRIANGLE_ASCENDING,
+                                                IndicatorType.TRIANGLE_DESCENDING,
+                                                IndicatorType.TRIANGLE_SYMMETRIC
+                                            ]}
+                                            allowedTargets={getAllowedTargets(distCondition.source.name as IndicatorType, 'price_level_distance')}
                                             onChange={(nameStr) => {
                                                 const name = nameStr as IndicatorType;
                                                 const defaultParams = getDefaultParamsForIndicator(name);
