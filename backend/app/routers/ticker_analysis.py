@@ -143,7 +143,7 @@ def get_gap_stats_all_days(ticker: str) -> dict:
         from app.services.cache_service import get_hot_daily_cache
         cache_df = get_hot_daily_cache()
         if cache_df is not None and not cache_df.empty:
-            ticker_cache = cache_df[(cache_df['ticker'] == ticker) & (cache_df['gap_pct'] >= 20.0)]
+            ticker_cache = cache_df[(cache_df['ticker'] == ticker) & (cache_df['pmh_gap_pct'] >= 20.0)]
             if ticker_cache.empty:
                 # No gap days found in hot cache, so we can return empty stats immediately
                 empty_stats = {
@@ -237,8 +237,8 @@ def get_gap_stats_all_days(ticker: str) -> dict:
         else:
             df['gap_pct'] = 0.0
 
-    # Locate gap day indices (gap_pct >= 20.0)
-    gap_indices = df[df['gap_pct'] >= 20.0].index.tolist()
+    # Locate Runner day indices (pmh_gap_pct >= 20.0)
+    gap_indices = df[df['pmh_gap_pct'] >= 20.0].index.tolist() if 'pmh_gap_pct' in df.columns else []
 
     def compute_stats_for_offset(offset):
         target_indices = [idx + offset for idx in gap_indices if idx + offset < len(df)]

@@ -76,9 +76,9 @@ def translate_strategy(
     )
 
     if entry_tf != "1m":
-        entries = entries.reindex(df.index, method="ffill").fillna(False)
+        entries = _align_signals_to_1m(entries, df, entry_tf)
     if exit_tf != "1m":
-        exits = exits.reindex(df.index, method="ffill").fillna(False)
+        exits = _align_signals_to_1m(exits, df, exit_tf)
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
     sl_stop, sl_trail, tp_stop, trail_pct, partial_tps = _parse_risk_management(risk, df, daily_stats, risk_cache)
@@ -114,6 +114,59 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     }).dropna(subset=["open"])
 
     return resampled.reset_index(drop=True)
+
+
+def _align_signals_to_1m(
+    signals_tf: pd.Series,
+    df_1m: pd.DataFrame,
+    timeframe: str,
+) -> pd.Series:
+    """
+    Alinea señales de un timeframe mayor a barras 1m.
+    Usa la señal del bucket ANTERIOR para evitar look-ahead.
+    Una señal generada en el bucket [T, T+N) se aplica
+    a partir de la primera barra 1m de [T+N, T+2N).
+    """
+    if timeframe == "1m":
+        return signals_tf
+
+    ts_1m = pd.to_datetime(df_1m["timestamp"])
+
+    # Mapear cada barra 1m a su bucket resampleado
+    tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h"}
+    freq = tf_map.get(timeframe, "1min")
+
+    # Construir el df resampleado con DatetimeIndex
+    df_with_ts = df_1m.set_index(ts_1m)
+    bucket_starts = df_with_ts.resample(freq).first().index
+
+    # signals_tf tiene RangeIndex 0..N_buckets-1
+    # bucket_starts tiene los timestamps de inicio de cada bucket
+    n_buckets = len(signals_tf)
+
+    result = pd.Series(False, index=range(len(df_1m)))
+
+    for i in range(n_buckets):
+        # La señal del bucket i se aplica DESPUÉS de que cierre,
+        # es decir, a partir del bucket i+1
+        apply_from_bucket = i + 1
+        if apply_from_bucket >= n_buckets:
+            break
+
+        if not signals_tf.iloc[i]:
+            continue
+
+        # Encontrar barras 1m que pertenecen al bucket apply_from_bucket
+        bucket_start = bucket_starts[apply_from_bucket]
+        if apply_from_bucket + 1 < len(bucket_starts):
+            bucket_end = bucket_starts[apply_from_bucket + 1]
+            mask = (ts_1m >= bucket_start) & (ts_1m < bucket_end)
+        else:
+            mask = ts_1m >= bucket_start
+
+        result[mask] = True
+
+    return result
 
 
 def _evaluate_condition_group(

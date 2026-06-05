@@ -903,7 +903,7 @@ def _compute_raw(
     if name in ("High of last X days", "Max of last X days", "Low of last X days", "Min of last X days"):
         ticker = ds.get("ticker") if ds else None
         if not ticker:
-            ticker = "AAPL"
+            return pd.Series(np.nan, index=close.index)
             
         if ds and "date" in ds:
             target_date_str = str(ds["date"])[:10]
