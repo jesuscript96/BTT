@@ -813,6 +813,30 @@ class BacktestEngine:
             if getattr(config, 'time_hour', None) is not None or getattr(config, 'time_minute', None) is not None:
                 # If target is fixed, we still return the series; comparison is done in _evaluate_comparison
                 pass
+        elif name == IndicatorType.RANGE_OF_TIME:
+            # Calculate elapsed minutes per ticker per date
+            def calc_range_of_time(g):
+                if g.empty:
+                    return pd.Series(0.0, index=g.index)
+                g_sorted = g.sort_values('timestamp')
+                timestamps = pd.to_datetime(g_sorted['timestamp'])
+                dates = timestamps.dt.normalize()
+                rth_start = dates + pd.to_timedelta("9h 30m")
+                am_start = dates + pd.to_timedelta("16h")
+                first_candle = timestamps.iloc[0]
+                
+                is_rth = (timestamps >= rth_start) & (timestamps < am_start)
+                is_am = timestamps >= am_start
+                
+                start_times = pd.Series(first_candle, index=g_sorted.index)
+                start_times = start_times.mask(is_rth, rth_start)
+                start_times = start_times.mask(is_am, am_start)
+                
+                elapsed = (timestamps - start_times).dt.total_seconds() / 60.0
+                return elapsed.clip(lower=0.0)
+            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(calc_range_of_time)
+            if len(series) == len(df):
+                series.index = df.index
         elif name == IndicatorType.CUSTOM:
             # For custom, multiplier or period might be used as the value
             series = pd.Series(float(config.multiplier if config.multiplier is not None else (config.period or 0)), index=df.index)

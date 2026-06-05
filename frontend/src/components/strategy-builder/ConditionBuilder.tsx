@@ -14,6 +14,11 @@ import { getAllowedTargets, isOnlyTarget } from '@/lib/indicatorValidation';
 // Constants & Helpers
 // ----------------------------------------------------------------------
 
+const isTriangle = (name: string) =>
+    name === IndicatorType.TRIANGLE_ASCENDING ||
+    name === IndicatorType.TRIANGLE_DESCENDING ||
+    name === IndicatorType.TRIANGLE_SYMMETRIC;
+
 const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
     switch (name) {
         case IndicatorType.SMA:
@@ -37,6 +42,10 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.OPENING_RANGE_AM_PLUS:
         case IndicatorType.OPENING_RANGE_AM_MINUS:
             return { orb_minutes: 30 };
+        case IndicatorType.TRIANGLE_ASCENDING:
+        case IndicatorType.TRIANGLE_DESCENDING:
+        case IndicatorType.TRIANGLE_SYMMETRIC:
+            return { pivot_window: 5, tri_lookback: 35, slope_tolerance: 1.5, min_r_squared: 0.65, min_pivots: 2 };
         default:
             return {};
     }
@@ -62,6 +71,8 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.CANDLE_RANGE_PCT, IndicatorType.RANGE_OF_TIME,
         IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
         IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
+        IndicatorType.TRIANGLE_ASCENDING, IndicatorType.TRIANGLE_DESCENDING,
+        IndicatorType.TRIANGLE_SYMMETRIC,
     ],
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
@@ -118,6 +129,9 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.OPENING_RANGE_MINUS]: "Opening Range -",
     [IndicatorType.OPENING_RANGE_AM_PLUS]: "Opening Range AM +",
     [IndicatorType.OPENING_RANGE_AM_MINUS]: "Opening Range AM -",
+    [IndicatorType.TRIANGLE_ASCENDING]: "▲ Triangle Ascending",
+    [IndicatorType.TRIANGLE_DESCENDING]: "▼ Triangle Descending",
+    [IndicatorType.TRIANGLE_SYMMETRIC]: "◇ Triangle Symmetric",
     // Indicators
     [IndicatorType.SMA]: "SMA",
     [IndicatorType.EMA]: "EMA",
@@ -336,6 +350,7 @@ export const IndicatorParams = ({
                                 />
                             </div>
                         );
+
                     case IndicatorType.HIGH_X_DAYS:
                     case IndicatorType.LOW_X_DAYS:
                         return (
@@ -393,6 +408,134 @@ export const IndicatorParams = ({
                             </div>
                         );
                     default:
+                        // Triangle Patterns
+                        if (
+                            value.name === IndicatorType.TRIANGLE_ASCENDING ||
+                            value.name === IndicatorType.TRIANGLE_DESCENDING ||
+                            value.name === IndicatorType.TRIANGLE_SYMMETRIC
+                        ) {
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+                                    <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Pivot Win.</span>
+                                            <input
+                                                type="number"
+                                                min={2}
+                                                max={20}
+                                                value={value.pivot_window ?? 5}
+                                                onChange={(e) => onChange({ ...value, pivot_window: Math.max(2, Number(e.target.value)) })}
+                                                style={{
+                                                    width: '100%',
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 5,
+                                                    padding: '5px 8px',
+                                                    fontSize: 12,
+                                                    fontWeight: 500,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                }}
+                                                title="Pivot Window: candles to left and right required to confirm a Swing High/Low"
+                                            />
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Min Pivots</span>
+                                            <input
+                                                type="number"
+                                                min={2}
+                                                max={50}
+                                                value={value.min_pivots ?? 2}
+                                                onChange={(e) => onChange({ ...value, min_pivots: Math.max(2, Number(e.target.value)) })}
+                                                style={{
+                                                    width: '100%',
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 5,
+                                                    padding: '5px 8px',
+                                                    fontSize: 12,
+                                                    fontWeight: 500,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                }}
+                                                title="Min Pivots: minimum swing highs and lows required to fit trend lines (min 2)"
+                                            />
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Lookback</span>
+                                            <input
+                                                type="number"
+                                                min={10}
+                                                max={200}
+                                                value={value.tri_lookback ?? 35}
+                                                onChange={(e) => onChange({ ...value, tri_lookback: Math.max(10, Number(e.target.value)) })}
+                                                style={{
+                                                    width: '100%',
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 5,
+                                                    padding: '5px 8px',
+                                                    fontSize: 12,
+                                                    fontWeight: 500,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                }}
+                                                title="Lookback: how many bars back to search for pivots"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 6, width: '100%', alignItems: 'flex-end' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Slope Tol. (%)</span>
+                                            <input
+                                                type="number"
+                                                min={0.01}
+                                                max={10.0}
+                                                step={0.1}
+                                                value={value.slope_tolerance ?? 1.5}
+                                                onChange={(e) => onChange({ ...value, slope_tolerance: Math.max(0.01, Number(e.target.value)) })}
+                                                style={{
+                                                    width: '100%',
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 5,
+                                                    padding: '5px 8px',
+                                                    fontSize: 12,
+                                                    fontWeight: 500,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                }}
+                                                title="Slope Tolerance (%): max total price change over the lookback window to consider a trend line 'flat'"
+                                            />
+                                        </div>
+                                        <div style={{ flex: 1.2 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                                                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)' }}>Min R²</span>
+                                                <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)', fontFamily: 'var(--color-ec-sans)' }}>{(value.min_r_squared ?? 0.65).toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={1}
+                                                step={0.01}
+                                                value={value.min_r_squared ?? 0.65}
+                                                onChange={(e) => onChange({ ...value, min_r_squared: Number(e.target.value) })}
+                                                style={{
+                                                    width: '100%',
+                                                    accentColor: 'var(--color-ec-copper)',
+                                                    cursor: 'pointer',
+                                                }}
+                                                title="Minimum R-squared quality for trend lines (0 = no requirement, 1 = perfect fit)"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        }
                         return null;
                 }
             })()}
@@ -578,11 +721,27 @@ export const ConditionRow = ({
             const currentTargetKey = typeof condition.target === 'number' ? FIXED_VALUE_KEY : (condition.target as IndicatorConfig).name;
             const isTargetAllowed = currentTargetKey === FIXED_VALUE_KEY || allowed.includes(currentTargetKey as IndicatorType);
             
-            onChange({
-                ...condition,
-                source: newSource,
-                target: isTargetAllowed ? condition.target : getInitialTargetForSource(newSource.name as IndicatorType)
-            });
+            if (isTriangle(newSource.name)) {
+                onChange({
+                    ...condition,
+                    source: newSource,
+                    comparator: Comparator.GT,
+                    target: 0
+                });
+            } else if (newSource.name?.toLowerCase() === 'range of time') {
+                onChange({
+                    ...condition,
+                    source: newSource,
+                    comparator: Comparator.LT,
+                    target: 30
+                });
+            } else {
+                onChange({
+                    ...condition,
+                    source: newSource,
+                    target: isTargetAllowed ? condition.target : getInitialTargetForSource(newSource.name as IndicatorType)
+                });
+            }
         } else {
             onChange({ ...condition, source: newSource });
         }
@@ -598,13 +757,14 @@ export const ConditionRow = ({
         switch (condition.type) {
             case 'indicator_comparison': {
                 const isElapsed = condition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH;
+                const isRangeOfTime = condition.source.name?.toLowerCase() === 'range of time';
                 return (
                     <>
                         {/* SOURCE: indicator + params */}
                         <SourceIndicatorInput
                             value={condition.source}
                             onChange={handleSourceChange}
-                            hideOffset={isElapsed}
+                            hideOffset={isElapsed || isRangeOfTime || isTriangle(condition.source.name)}
                             exclude={Object.values(IndicatorType).filter(isOnlyTarget)}
                         />
 
@@ -620,7 +780,32 @@ export const ConditionRow = ({
                                 />
                                 <span className="text-xs text-muted-foreground font-semibold">mins</span>
                             </div>
-                        ) : (
+                        ) : isRangeOfTime ? (
+                            <div className="flex items-center gap-1.5">
+                                {/* COMPARATOR: only <, >, <=, >= */}
+                                <select
+                                    value={condition.comparator}
+                                    onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
+                                    className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-[var(--color-ec-copper)]"
+                                >
+                                    <option value={Comparator.LT}>&lt;</option>
+                                    <option value={Comparator.GT}>&gt;</option>
+                                    <option value={Comparator.LTE}>&le;</option>
+                                    <option value={Comparator.GTE}>&ge;</option>
+                                </select>
+
+                                {/* TARGET VALUE (Minutes) */}
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={typeof condition.target === 'number' ? condition.target : 30}
+                                    onChange={(e) => handleTargetChange(Math.max(0, Number(e.target.value)))}
+                                    placeholder="Minutos"
+                                    className="w-20 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-mono outline-none"
+                                />
+                                <span className="text-xs text-muted-foreground font-semibold">mins</span>
+                            </div>
+                        ) : isTriangle(condition.source.name) ? null : (
                             <>
                                 {/* COMPARATOR: symbols */}
                                 <select
@@ -1139,6 +1324,14 @@ export const GroupDisplay = ({
                                                 target: 20,
                                                 timeframe: formCondition.timeframe
                                             });
+                                        } else if (name?.toLowerCase() === 'range of time') {
+                                            setFormCondition({
+                                                type: 'indicator_comparison',
+                                                source: { name, offset: 0 },
+                                                comparator: Comparator.LT,
+                                                target: 30,
+                                                timeframe: formCondition.timeframe
+                                            });
                                         } else if (formCondition.type === 'indicator_comparison') {
                                             const allowed = getAllowedTargets(name, 'indicator_comparison');
                                             const currentTargetKey = typeof formCondition.target === 'number' ? FIXED_VALUE_KEY : (formCondition.target as IndicatorConfig).name;
@@ -1165,7 +1358,7 @@ export const GroupDisplay = ({
                             </div>
 
                             {/* bars back */}
-                            {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
+                            {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name?.toLowerCase() !== 'range of time' && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     <span style={labelStyle}>Bars back</span>
                                     <input
@@ -1182,13 +1375,38 @@ export const GroupDisplay = ({
                             )}
 
                             {/* relación */}
-                            {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
+                            {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     <span style={labelStyle}>Relación</span>
-                                    {formCondition.type === 'indicator_comparison' ? (
+                                    {formCondition.source.name?.toLowerCase() === 'range of time' ? (
                                         <select
-                                            value={formCondition.comparator}
-                                            onChange={(e) => setFormCondition({ ...formCondition, comparator: e.target.value as Comparator })}
+                                            value={compCondition ? compCondition.comparator : Comparator.LT}
+                                            onChange={(e) => {
+                                                if (compCondition) {
+                                                    setFormCondition({
+                                                        ...compCondition,
+                                                        comparator: e.target.value as Comparator
+                                                    });
+                                                }
+                                            }}
+                                            style={selectStyle}
+                                        >
+                                            <option value={Comparator.LT}>&lt;</option>
+                                            <option value={Comparator.GT}>&gt;</option>
+                                            <option value={Comparator.LTE}>&le;</option>
+                                            <option value={Comparator.GTE}>&ge;</option>
+                                        </select>
+                                    ) : formCondition.type === 'indicator_comparison' ? (
+                                        <select
+                                            value={compCondition ? compCondition.comparator : Comparator.GT}
+                                            onChange={(e) => {
+                                                if (compCondition) {
+                                                    setFormCondition({
+                                                        ...compCondition,
+                                                        comparator: e.target.value as Comparator
+                                                    });
+                                                }
+                                            }}
                                             style={selectStyle}
                                         >
                                             {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
@@ -1197,8 +1415,15 @@ export const GroupDisplay = ({
                                         </select>
                                     ) : (
                                         <select
-                                            value={formCondition.comparator}
-                                            onChange={(e) => setFormCondition({ ...formCondition, comparator: e.target.value as 'DISTANCE_GT' | 'DISTANCE_LT' })}
+                                            value={formCondition.type === 'price_level_distance' ? formCondition.comparator : 'DISTANCE_GT'}
+                                            onChange={(e) => {
+                                                if (formCondition.type === 'price_level_distance') {
+                                                    setFormCondition({
+                                                        ...formCondition,
+                                                        comparator: e.target.value as 'DISTANCE_GT' | 'DISTANCE_LT'
+                                                    });
+                                                }
+                                            }}
                                             style={selectStyle}
                                         >
                                             <option value="DISTANCE_GT">&gt; que</option>
@@ -1228,7 +1453,26 @@ export const GroupDisplay = ({
                                         style={inputStyle}
                                     />
                                 </div>
-                            ) : compCondition ? (
+                            ) : formCondition.source.name?.toLowerCase() === 'range of time' ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <span style={labelStyle}>Minutos del rango</span>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : 30}
+                                        onChange={(e) => {
+                                            if (compCondition) {
+                                                setFormCondition({
+                                                    ...compCondition,
+                                                    type: 'indicator_comparison',
+                                                    target: Math.max(0, Number(e.target.value))
+                                                });
+                                            }
+                                        }}
+                                        style={inputStyle}
+                                    />
+                                </div>
+                            ) : compCondition && !isTriangle(formCondition.source.name) ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     <span style={labelStyle}>Variables de cruce</span>
                                     <TargetInput

@@ -704,6 +704,7 @@ def _aggregate_metrics(
         "avg_win": 0, "avg_loss": 0, "max_consecutive_wins": 0,
         "max_consecutive_losses": 0, "expectancy": 0, "payoff_ratio": 0,
         "avg_r_per_day": 0,
+        "avg_r_ui": 0.0,
     }
     if not day_results and not trades:
         return empty
@@ -827,6 +828,19 @@ def _aggregate_metrics(
     else:
         r_squared = 0.0
 
+    # Ulcer Index (UI) - quadratic mean of drawdown percentages
+    if global_dd:
+        drawdowns = np.array([d["value"] for d in global_dd])
+        ulcer_index = float(np.sqrt(np.mean(drawdowns ** 2))) if len(drawdowns) > 0 else 0.0
+    else:
+        ulcer_index = 0.0
+
+    # Annualized Return of the system (using calendar days)
+    annualized_return_pct = avg_return_per_day_pct * 365.0
+
+    # Avg R/UI (here calculated as Annualized Return / UI)
+    avg_r_ui = (annualized_return_pct / ulcer_index) if ulcer_index > 0 else 0.0
+
     # MAE (Maximum Adverse Excursion) — worst case across all trades. Note that MAE is a positive %
     maes = np.array([t.get("mae", 0) for t in trades]) if trades else np.array([])
     max_mae = float(maes.max()) if len(maes) else 0
@@ -876,6 +890,7 @@ def _aggregate_metrics(
         "total_expenses": round(total_expenses, 2),
         "total_pnl_net": round(total_pnl_net, 2),
         "avg_r_per_day": round(total_pnl_trades / total_days / risk_r, 4) if total_days > 0 and risk_r > 0 else 0,
+        "avg_r_ui": round(avg_r_ui, 4),
     }
 
 

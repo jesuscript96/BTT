@@ -285,6 +285,12 @@ def _compute_from_config(
         ap_session=cfg.get("ap_session"),
         daily_stats=daily_stats,
         cache=cache,
+        range_minutes=cfg.get("range_minutes"),
+        pivot_window=cfg.get("pivot_window"),
+        tri_lookback=cfg.get("tri_lookback"),
+        slope_tolerance=cfg.get("slope_tolerance"),
+        min_r_squared=cfg.get("min_r_squared"),
+        min_pivots=cfg.get("min_pivots"),
     )
 
 

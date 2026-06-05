@@ -147,6 +147,7 @@ export interface AggregateMetrics {
   expectancy: number;
   payoff_ratio: number;
   avg_r_per_day: number;
+  avg_r_ui: number;
 }
 
 export interface GlobalEquityPoint {
