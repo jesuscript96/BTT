@@ -78,7 +78,6 @@ const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
         IndicatorType.DONCHIAN, IndicatorType.BOLLINGER_BANDS,
         IndicatorType.ACCUMULATED_VOLUME,
-        IndicatorType.YESTERDAY_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
     ],
 };
