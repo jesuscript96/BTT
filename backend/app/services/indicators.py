@@ -825,6 +825,9 @@ def compute_indicator(
     if offset and offset != 0:
         result = result.shift(offset)
 
+    if name != "Parabolic SAR" and multiplier is not None:
+        result = result * multiplier
+
     if cache is not None:
         cache[cache_key] = result
 
@@ -887,15 +890,41 @@ def _compute_raw(
     if name == "Yesterday Low":
         return pd.Series(_safe_float(ds.get("yesterday_low", ds.get("lag_rth_low_1", np.nan))), index=close.index)
     if name == "Pre-Market High":
-        return pd.Series(ds.get("pm_high", np.nan), index=close.index)
+        val = ds.get("pm_high") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
+            val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name == "Pre-Market Low":
-        return pd.Series(ds.get("pm_low", np.nan), index=close.index)
+        val = ds.get("pm_low") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
+            val = df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name in ("RTH Open", "rth_open"):
-        return pd.Series(_safe_float(ds.get("rth_open", np.nan)), index=close.index)
+        val = ds.get("rth_open") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
+            rth_open_rows = df.loc[rth_mask]
+            val = rth_open_rows["open"].iloc[0] if not rth_open_rows.empty else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name in ("RTH High", "rth_high"):
-        return pd.Series(_safe_float(ds.get("rth_high", np.nan)), index=close.index)
+        val = ds.get("rth_high") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
+            val = df.loc[rth_mask, "high"].max() if rth_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name in ("RTH Low", "rth_low"):
-        return pd.Series(_safe_float(ds.get("rth_low", np.nan)), index=close.index)
+        val = ds.get("rth_low") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
+            val = df.loc[rth_mask, "low"].min() if rth_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name == "High of Day":
         return high.cummax()
     if name == "Low of Day":

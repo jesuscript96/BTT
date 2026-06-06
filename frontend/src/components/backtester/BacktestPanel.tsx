@@ -170,13 +170,29 @@ export default function BacktestPanel({
     setLoadingData(true);
     setLoadError(false);
     let failed = false;
+
+    // Check if there is prefill in sessionStorage
+    let prefill: { strategy_id?: string; dataset_id?: string } | null = null;
+    try {
+      const stored = sessionStorage.getItem('backtester_prefill');
+      if (stored) {
+        prefill = JSON.parse(stored);
+        sessionStorage.removeItem('backtester_prefill'); // Clear it so it doesn't stick around
+      }
+    } catch (e) {
+      console.error("Error reading backtester_prefill:", e);
+    }
+
     try {
       const d = await fetchDatasets();
       setDatasets(d);
       if (d.length > 0) {
-        setSelectedDataset(d[0].id);
-        if (d[0].min_date) setStartDate(d[0].min_date);
-        if (d[0].max_date) setEndDate(d[0].max_date);
+        const hasPrefillDataset = prefill?.dataset_id && d.some(ds => ds.id === prefill.dataset_id);
+        const selectedId = hasPrefillDataset ? prefill.dataset_id! : d[0].id;
+        setSelectedDataset(selectedId);
+        const selectedDs = d.find(ds => ds.id === selectedId);
+        if (selectedDs?.min_date) setStartDate(selectedDs.min_date);
+        if (selectedDs?.max_date) setEndDate(selectedDs.max_date);
       }
     } catch (e) {
       console.error("Error loading datasets:", e);
@@ -185,7 +201,10 @@ export default function BacktestPanel({
     try {
       const s = await fetchStrategies();
       setStrategies(s);
-      if (s.length > 0) setSelectedStrategy(s[0].id);
+      if (s.length > 0) {
+        const hasPrefillStrategy = prefill?.strategy_id && s.some(st => st.id === prefill.strategy_id);
+        setSelectedStrategy(hasPrefillStrategy ? prefill.strategy_id! : s[0].id);
+      }
     } catch (e) {
       console.error("Error loading strategies:", e);
       failed = true;

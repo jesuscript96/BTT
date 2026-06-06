@@ -75,6 +75,27 @@ def generate_mock_candles(ticker: str, date: str) -> dict:
     return {"ticker": ticker, "date": date, "candles": candles}
 
 
+def sanitize_floats(obj):
+    import math
+    if isinstance(obj, dict):
+        return {k: sanitize_floats(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_floats(x) for x in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    elif hasattr(obj, 'dtype') and ('float' in str(obj.dtype) or 'int' in str(obj.dtype)):
+        try:
+            val = float(obj)
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return val
+        except Exception:
+            return None
+    return obj
+
+
 def run_backtest_orchestrator(req: BacktestRequest) -> dict:
     t0 = time.time()
     logger.info(f"BACKTEST START dataset={req.dataset_id} strategy={req.strategy_id or 'inline'}")
@@ -227,4 +248,4 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         logger.error(f"  backtest FAILED after {round(time.time()-t0, 2)}s: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error en backtest: {str(e)}")
 
-    return results
+    return sanitize_floats(results)
