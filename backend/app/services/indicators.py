@@ -1170,8 +1170,8 @@ def _compute_raw(
 
     if name == "Donchian Channels":
         period = period or 20
-        upper = high.rolling(period).max()
-        lower = low.rolling(period).min()
+        upper = high.rolling(period).max().shift(1)
+        lower = low.rolling(period).min().shift(1)
         mid = (upper + lower) / 2
         if band_line == "Lower":
             return lower

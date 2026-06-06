@@ -78,11 +78,8 @@ def _startup_recovery_precache() -> None:
                 date_to = str(pairs_df["date"].max())
 
             print(f"[RECOVERY] -> Re-precaching {dataset_id} ({ds_name}): {len(pairs_df)} pairs, {date_from}..{date_to}")
-            _threading.Thread(
-                target=_precache_dataset_intraday,
-                args=(pairs_df, date_from, date_to, dataset_id),
-                daemon=True,
-            ).start()
+            # Run sequentially inside this background recovery thread to avoid database locks and CPU/disk I/O contention
+            _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id)
     except Exception as e:
         print(f"[RECOVERY] startup recovery failed: {e}")
 
@@ -144,12 +141,9 @@ async def lifespan(app: FastAPI):
                 print(f"[CACHE] intraday disk cache dir not found: {cache_dir}")
             print("[INFO] Hot daily cache loaded at startup")
 
-            # Background recovery: re-trigger precache for recently created
-            # datasets so a backend restart doesn't leave them cold. The
-            # _precache_dataset_intraday call is idempotent — cached months
-            # turn into instant disk-cache hits, only missing ones download.
-            import threading as _threading
-            _threading.Thread(target=_startup_recovery_precache, daemon=True).start()
+            # Background recovery disabled to prevent CPU/disk I/O contention on startup.
+            # import threading as _threading
+            # _threading.Thread(target=_startup_recovery_precache, daemon=True).start()
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:

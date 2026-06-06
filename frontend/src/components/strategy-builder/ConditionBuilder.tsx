@@ -260,14 +260,15 @@ export const IndicatorParams = ({
                     case IndicatorType.BOLLINGER_BANDS:
                     case IndicatorType.DONCHIAN:
                         return (
-                            <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
                                 <input
                                     type="number"
                                     value={value.period || ''}
                                     onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
                                     placeholder="Period"
                                     style={{
-                                        flex: 1,
+                                        flex: '1 1 70px',
+                                        minWidth: '70px',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 5,
@@ -287,7 +288,8 @@ export const IndicatorParams = ({
                                         onChange={(e) => onChange({ ...value, stdDev: Number(e.target.value) })}
                                         placeholder="Std Dev"
                                         style={{
-                                            flex: 1,
+                                            flex: '1 1 70px',
+                                            minWidth: '70px',
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
@@ -305,7 +307,8 @@ export const IndicatorParams = ({
                                     value={value.band_line || 'Upper'}
                                     onChange={(e) => onChange({ ...value, band_line: e.target.value as "Upper" | "Lower" | "Basis" })}
                                     style={{
-                                        flex: 1.2,
+                                        flex: '1 1 90px',
+                                        minWidth: '90px',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 5,
@@ -418,8 +421,8 @@ export const IndicatorParams = ({
                         ) {
                             return (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-                                    <div style={{ display: 'flex', gap: 6, width: '100%' }}>
-                                        <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
+                                        <div style={{ flex: '1 1 60px', minWidth: '60px' }}>
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Pivot Win.</span>
                                             <input
                                                 type="number"
@@ -442,7 +445,7 @@ export const IndicatorParams = ({
                                                 title="Pivot Window: candles to left and right required to confirm a Swing High/Low"
                                             />
                                         </div>
-                                        <div style={{ flex: 1 }}>
+                                        <div style={{ flex: '1 1 60px', minWidth: '60px' }}>
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Min Pivots</span>
                                             <input
                                                 type="number"
@@ -465,7 +468,7 @@ export const IndicatorParams = ({
                                                 title="Min Pivots: minimum swing highs and lows required to fit trend lines (min 2)"
                                             />
                                         </div>
-                                        <div style={{ flex: 1 }}>
+                                        <div style={{ flex: '1 1 60px', minWidth: '60px' }}>
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Lookback</span>
                                             <input
                                                 type="number"
@@ -489,8 +492,8 @@ export const IndicatorParams = ({
                                             />
                                         </div>
                                     </div>
-                                    <div style={{ display: 'flex', gap: 6, width: '100%', alignItems: 'flex-end' }}>
-                                        <div style={{ flex: 1 }}>
+                                    <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                                        <div style={{ flex: '1 1 90px', minWidth: '90px' }}>
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Slope Tol. (%)</span>
                                             <input
                                                 type="number"
@@ -514,7 +517,7 @@ export const IndicatorParams = ({
                                                 title="Slope Tolerance (%): max total price change over the lookback window to consider a trend line 'flat'"
                                             />
                                         </div>
-                                        <div style={{ flex: 1.2 }}>
+                                        <div style={{ flex: '1 2 110px', minWidth: '110px' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
                                                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)' }}>Min R²</span>
                                                 <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-primary)', fontFamily: 'var(--color-ec-sans)' }}>{(value.min_r_squared ?? 0.65).toFixed(2)}</span>
@@ -597,7 +600,7 @@ export const SourceIndicatorInput = ({
     hideOffset?: boolean;
 }) => {
     return (
-        <div className="flex gap-1.5 items-center bg-muted/5 border border-border/20 rounded px-1.5 py-1">
+        <div className="flex flex-col gap-1.5 items-stretch bg-muted/5 border border-border/20 rounded p-1.5 w-full md:w-auto min-w-[200px]">
             <IndicatorSelector
                 value={value.name}
                 exclude={exclude}
