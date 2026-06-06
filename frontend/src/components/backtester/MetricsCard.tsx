@@ -20,7 +20,7 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
     { label: "Sharpe", value: (metrics.avg_sharpe ?? 0).toFixed(3) },
     { label: "Sortino", value: (metrics.sortino_ratio ?? 0).toFixed(3) },
     { label: "Calmar", value: (metrics.calmar_ratio ?? 0).toFixed(3) },
-    { label: "Avg R / U.index", value: (metrics.avg_r_ui ?? 0).toFixed(2) },
+    { label: "Avg Y/U.index", value: (metrics.avg_r_ui ?? 0).toFixed(2) },
     { label: "DD/Ret", value: (metrics.dd_return_ratio ?? 0).toFixed(3) },
     { label: "Max DD", value: `${(metrics.max_drawdown_pct ?? 0).toFixed(2)}%` },
     { label: "Max W Streak", value: String(metrics.max_consecutive_wins ?? 0) },
