@@ -131,42 +131,38 @@ def _align_signals_to_1m(
         return signals_tf
 
     ts_1m = pd.to_datetime(df_1m["timestamp"])
+    df_with_ts = df_1m.set_index(ts_1m)
 
-    # Mapear cada barra 1m a su bucket resampleado
-    tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h"}
+    tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1D"}
     freq = tf_map.get(timeframe, "1min")
 
-    # Construir el df resampleado con DatetimeIndex
-    df_with_ts = df_1m.set_index(ts_1m)
-    bucket_starts = df_with_ts.resample(freq).first().index
+    # Obtener los índices de los 1m bins agrupados por resample
+    resampler = df_with_ts.resample(freq)
+    bucket_indices = resampler.indices
 
-    # signals_tf tiene RangeIndex 0..N_buckets-1
-    # bucket_starts tiene los timestamps de inicio de cada bucket
-    n_buckets = len(signals_tf)
+    # Filtrar solo los buckets no vacíos para corresponder exactamente con signals_tf
+    non_empty_buckets = {k: v for k, v in bucket_indices.items() if len(v) > 0}
+    sorted_keys = sorted(non_empty_buckets.keys())
 
-    result = pd.Series(False, index=range(len(df_1m)))
+    # Inicializar el resultado con False (alineado con df_1m.index)
+    result = pd.Series(False, index=df_1m.index)
+
+    n_buckets = min(len(signals_tf), len(sorted_keys))
+    delta = pd.to_timedelta(freq)
 
     for i in range(n_buckets):
-        # La señal del bucket i se aplica DESPUÉS de que cierre,
-        # es decir, a partir del bucket i+1
-        apply_from_bucket = i + 1
-        if apply_from_bucket >= n_buckets:
-            break
-
         if not signals_tf.iloc[i]:
             continue
 
-        # Encontrar barras 1m que pertenecen al bucket apply_from_bucket
-        bucket_start = bucket_starts[apply_from_bucket]
-        if apply_from_bucket + 1 < len(bucket_starts):
-            bucket_end = bucket_starts[apply_from_bucket + 1]
-            mask = (ts_1m >= bucket_start) & (ts_1m < bucket_end)
-        else:
-            mask = ts_1m >= bucket_start
-
-        result[mask] = True
+        # La señal del bucket i (inicia en T) se aplica en el bucket i+1 (inicia en T + delta)
+        T = sorted_keys[i]
+        T_next = T + delta
+        next_indices = bucket_indices.get(T_next, [])
+        if len(next_indices) > 0:
+            result.iloc[next_indices] = True
 
     return result
+
 
 
 def _evaluate_condition_group(
