@@ -39,7 +39,7 @@ class IndicatorType(str, Enum):
     # Volume
     OBV = "OBV"
     VOLUME = "Volume"
-    RVOL = "RVOL"
+    RVOL = "RVOL by bar"
     AVOLUME = "Accumulated Volume"
     SMA_VOLUME = "SMA Volume"
 
@@ -177,6 +177,8 @@ class IndicatorConfig(BaseModel):
                 "donchian channels": "Donchian",
                 "pmh": "PM High",
                 "pml": "PM Low",
+                "rvol": "RVOL by bar",
+                "rvol by bar": "RVOL by bar",
             }
             val_lower = v.lower()
             if val_lower in LEGACY_ALIASES:

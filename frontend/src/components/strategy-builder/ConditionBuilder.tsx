@@ -25,6 +25,8 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
         case IndicatorType.EMA:
         case IndicatorType.ATR:
             return { period: 14 };
+        case IndicatorType.RVOL:
+            return { period: 20 };
         case IndicatorType.BOLLINGER_BANDS:
             return { period: 20, stdDev: 2, band_line: "Upper" };
         case IndicatorType.DONCHIAN:
@@ -139,7 +141,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
     [IndicatorType.ACCUMULATED_VOLUME]: "Accum. Volume",
     [IndicatorType.YESTERDAY_VOLUME]: "Yesterday Volume",
-    [IndicatorType.RVOL]: "RVOL",
+    [IndicatorType.RVOL]: "RVOL by bar",
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.ATR]: "ATR",
 };
@@ -233,6 +235,7 @@ export const IndicatorParams = ({
                     case IndicatorType.SMA:
                     case IndicatorType.EMA:
                     case IndicatorType.ATR:
+                    case IndicatorType.RVOL:
                         return (
                             <input
                                 type="number"

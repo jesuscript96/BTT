@@ -1203,7 +1203,7 @@ def _compute_raw(
     if name == "Accumulated Volume":
         return volume.cumsum().astype(float)
 
-    if name == "RVOL":
+    if name == "RVOL by bar" or name == "RVOL":
         # Relative Volume: current cumulative volume / average cumulative volume at same time
         # Simple approximation: volume / SMA(volume, period)
         p = period or 20

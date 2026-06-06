@@ -1002,7 +1002,7 @@ export default function EquityCurveTab({
                         { label: "Sharpe", base: (metrics?.avg_sharpe ?? 0).toFixed(3), sim: getSimValue("avg_sharpe", v => v.toFixed(3)) },
                         { label: "Sortino", base: (metrics?.sortino_ratio ?? 0).toFixed(3), sim: getSimValue("sortino_ratio", v => v.toFixed(3)) },
                         { label: "Calmar", base: (metrics?.calmar_ratio ?? 0).toFixed(3), sim: getSimValue("calmar_ratio", v => v.toFixed(3)) },
-                        { label: "Avg Y/U.index", base: (metrics?.avg_r_ui ?? 0).toFixed(2), sim: getSimValue("avg_r_ui", v => v.toFixed(2)) },
+                        { label: "Avg R / U.index", base: (metrics?.avg_r_ui ?? 0).toFixed(2), sim: getSimValue("avg_r_ui", v => v.toFixed(2)) },
                         { label: "DD/Return", base: (metrics?.dd_return_ratio ?? 0).toFixed(3), sim: getSimValue("dd_return_ratio", v => v.toFixed(3)) },
                         { label: "Max DD", base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(2)}%`, sim: getSimValue("max_drawdown_pct", v => `${v.toFixed(2)}%`), danger: true },
                         { label: "Max Consec. Wins", base: metrics?.max_consecutive_wins ?? 0, sim: getSimValue("max_consecutive_wins") },
