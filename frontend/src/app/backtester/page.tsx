@@ -10,6 +10,7 @@ import ResultsTabs from "@/components/backtester/ResultsTabs";
 import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
 import { createStrategy, createQuery, getStrategy, saveBacktest } from "@/lib/api";
+import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
   runBacktest,
   runBacktestWithDefinition,
@@ -726,6 +727,14 @@ export default function Home() {
                     disabled={!saveName.trim()}
                     onClick={async () => {
                       if (!saveName.trim() || !strategyToSave) return;
+                      const logicErrors = validateStrategyLogic(
+                        strategyToSave.entry_logic,
+                        strategyToSave.exit_logic,
+                      );
+                      if (logicErrors.length > 0) {
+                        alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
+                        return;
+                      }
                       let description = strategyToSave.description || "";
                       if (includeWhatIfInSave) {
                         const stored = localStorage.getItem("current_whatif_params");

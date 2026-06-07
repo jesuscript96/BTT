@@ -4,6 +4,7 @@ import { useState, useEffect, Fragment } from "react";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
+import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
   initialEntryLogic,
   initialExitLogic,
@@ -130,6 +131,11 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   });
 
   const handleTest = () => {
+    const logicErrors = validateStrategyLogic(entryLogic, exitLogic);
+    if (logicErrors.length > 0) {
+      alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
+      return;
+    }
     const draft = buildDraft();
     try {
       const updated = [draft, ...drafts].slice(0, 200);
