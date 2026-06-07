@@ -125,9 +125,12 @@ def process_day_metrics(ticker: str, df_1m: pd.DataFrame,
     hod_time = str(df_1m.loc[hod_idx, "timestamp"])[:16]
     lod_time = str(df_1m.loc[lod_idx, "timestamp"])[:16]
 
-    # Return percentages at intervals
+    # Return percentages at intervals (temporal mask, robust to gaps)
     def ret_at_min(n):
-        target = rth_df[rth_df.index <= rth_df.index[0] + n]
+        rth_start = ts[rth_mask].iloc[0] if rth_mask.any() else None
+        if rth_start is None: return 0.0
+        limit_time = rth_start + pd.Timedelta(minutes=n)
+        target = rth_df[ts[rth_mask] <= limit_time]
         if target.empty: return 0.0
         return ((float(target["close"].iloc[-1]) - rth_open) / rth_open * 100) if rth_open > 0 else 0.0
 
@@ -226,7 +229,7 @@ def get_last_gcs_date() -> date:
         SELECT MAX(CAST(timestamp AS DATE))
         FROM read_parquet('gs://{GCS_BUCKET}/cold_storage/daily_metrics/*/*/*.parquet',
                           hive_partitioning=true)
-        WHERE month < 3 OR year < 2026
+        WHERE ticker IS NOT NULL
     """).fetchone()
     con.close()
     return result[0] if result and result[0] else date(2026, 2, 25)
@@ -291,6 +294,7 @@ def main():
             t = item.get("T", "")
             o = item.get("o", 0)
             c = item.get("c", 0)
+            h = item.get("h", 0)
 
             if not t or o <= 0:
                 continue
@@ -302,8 +306,9 @@ def main():
                 continue
 
             gap = abs((o - pc) / pc * 100)
+            pm_runner_est = ((h - pc) / pc * 100) if pc > 0 else 0
 
-            if gap >= GAP_PCT_MIN:
+            if gap >= GAP_PCT_MIN or pm_runner_est >= PM_RUNNER_MIN:
                 candidates.append((t, date_str, pc))
 
         logger.info(f"  Candidates (gap >= {GAP_PCT_MIN}%): {len(candidates)}")
