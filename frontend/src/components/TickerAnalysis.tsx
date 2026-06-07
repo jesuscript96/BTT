@@ -5,13 +5,15 @@ import {
     Activity, Users, ArrowUpRight, ArrowDownRight, ExternalLink, ChevronDown, ChevronUp, Search
 } from 'lucide-react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
-import { 
-    getTickerAnalysis, 
-    getTickerSecFilings, 
-    getTickerChart, 
-    getTickerBalanceSheet, 
+import {
+    getTickerAnalysis,
+    getTickerSecFilings,
+    getTickerChart,
+    getTickerBalanceSheet,
     getTickerGapStats,
-    getTickerFinvizNews
+    getTickerFinvizNews,
+    getTickerLogo,
+    type TickerLogoData
 } from '@/lib/api';
 
 interface TickerAnalysisProps {
@@ -1529,6 +1531,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [showFullDesc, setShowFullDesc] = useState(false);
     const [logoFailed, setLogoFailed] = useState(false);
     const [logoUrlIndex, setLogoUrlIndex] = useState(0);
+    const [logoData, setLogoData] = useState<TickerLogoData | null>(null);
 
     // Adjust state when props/state change during render (standard React pattern)
     const [prevInitialTicker, setPrevInitialTicker] = useState(initialTicker);
@@ -1542,20 +1545,29 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         setPrevSelectedTicker(selectedTicker);
         setLogoFailed(false);
         setLogoUrlIndex(0);
+        setLogoData(null);
     }
 
-    // Generate candidate logo URLs to try sequentially
+    // Fetch logo data (Massive branding with Google favicon fallback)
+    useEffect(() => {
+        if (!selectedTicker) {
+            setLogoData(null);
+            return;
+        }
+        let cancelled = false;
+        getTickerLogo(selectedTicker)
+            .then(d => { if (!cancelled) setLogoData(d); })
+            .catch(() => { if (!cancelled) setLogoData(null); });
+        return () => { cancelled = true; };
+    }, [selectedTicker]);
+
+    // Cascade: Massive proxied data URL → Google favicon → first-letter avatar
     const logoCandidates = React.useMemo(() => {
         const candidates: string[] = [];
-        if (data?.profile?.logo_url) {
-            candidates.push(data.profile.logo_url);
-        }
-        if (selectedTicker) {
-            candidates.push(`https://financialmodelingprep.com/image-stock/${selectedTicker.toUpperCase()}.png`);
-            candidates.push(`https://images.financialmodelingprep.com/symbol/${selectedTicker.toUpperCase()}.png`);
-        }
-        return Array.from(new Set(candidates.filter(Boolean)));
-    }, [data?.profile?.logo_url, selectedTicker]);
+        if (logoData?.logo_data_url) candidates.push(logoData.logo_data_url);
+        if (logoData?.google_favicon_url) candidates.push(logoData.google_favicon_url);
+        return candidates;
+    }, [logoData]);
 
     const currentLogoUrl = logoCandidates[logoUrlIndex];
 
