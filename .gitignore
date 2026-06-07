@@ -65,3 +65,7 @@ Thumbs.db
 backend/*.json
 backend/gcs-key*.json
 .env*
+
+# Catchup pipeline state
+backend/scripts/catchup_checkpoint.json
+backend/scripts/catchup_run.log
