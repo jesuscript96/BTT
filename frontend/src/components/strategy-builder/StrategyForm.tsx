@@ -22,6 +22,7 @@ import { ExitLogicBuilder } from './ExitLogic';
 import { RiskManagementComponent } from './RiskManagement';
 import { Save, Loader2, Code, FlaskConical, Database, X } from 'lucide-react';
 import { getQueries, createStrategy } from '@/lib/api';
+import { validateStrategyLogic } from '@/lib/strategyValidation';
 
 interface SavedQuery {
     id: string;
@@ -150,6 +151,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             return;
         }
 
+        const logicErrors = validateStrategyLogic(entryLogic, exitLogic);
+        if (logicErrors.length > 0) {
+            alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
+            return;
+        }
+
         setIsSubmitting(true);
         try {
             const strategyData = constructStrategyPayload();
@@ -172,6 +179,11 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     };
 
     const handleTestInBacktester = async () => {
+        const logicErrors = validateStrategyLogic(entryLogic, exitLogic);
+        if (logicErrors.length > 0) {
+            alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
+            return;
+        }
         setIsTesting(true);
         try {
             // Save strategy as draft first
