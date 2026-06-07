@@ -437,7 +437,7 @@ def main():
 
     # 5. Regenerar hot cache
     logger.info("\n=== Regenerating hot cache ===")
-    os.system("python scripts/generate_hot_cache_parquet.py")
+    os.system(f'"{sys.executable}" scripts/generate_hot_cache_parquet.py')
 
     logger.info("\n=== Done ===")
 
