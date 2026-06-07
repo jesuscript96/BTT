@@ -122,6 +122,19 @@ async function apiRequest<T>(
   return data as T;
 }
 
+// ─── Ticker Logo ────────────────────────────────────────────
+export interface TickerLogoData {
+  ticker: string;
+  logo_data_url: string | null;
+  google_favicon_url: string;
+  domain: string;
+  source: "massive" | "google" | "none";
+}
+
+export function getTickerLogo(ticker: string): Promise<TickerLogoData> {
+  return apiRequest<TickerLogoData>(`/ticker-analysis/${encodeURIComponent(ticker)}/logo`);
+}
+
 // ─── Strategies ─────────────────────────────────────────────
 export function getStrategies(): Promise<Strategy[]> {
   return apiRequest<Strategy[]>(`/strategies/?t=${Date.now()}`);

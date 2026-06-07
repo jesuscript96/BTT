@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import Optional
 import os
+import time
 import yfinance as yf
 import feedparser
 import pandas as pd
@@ -902,4 +903,110 @@ def get_finviz_news(ticker: str):
     except Exception as e:
         print(f"[WARN] Massive news failed for {ticker}: {e}")
         return {"news": [], "ticker": ticker}
+
+
+_logo_cache: dict = {}
+LOGO_CACHE_TTL = 86400  # 24h
+
+
+@router.get("/{ticker}/logo")
+def get_ticker_logo(ticker: str):
+    """
+    Proxy logo from Massive API (branded SVG/PNG) with Google favicon
+    fallback. 24h cache. Massive logo is base64-embedded so the API key
+    is never exposed to the browser.
+    """
+    ticker = ticker.upper()
+    cached = _logo_cache.get(ticker)
+    if cached and time.time() - cached["ts"] < LOGO_CACHE_TTL:
+        return cached["data"]
+
+    import requests
+    import base64
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        api_key = os.getenv("MASSIVE_API_KEY", "")
+        base_url = os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")
+
+        url = f"{base_url}/v3/reference/tickers/{ticker}"
+        resp = requests.get(
+            url,
+            params={"apiKey": api_key},
+            timeout=5,
+            verify=False,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("results", {}) or {}
+
+        branding = data.get("branding", {}) or {}
+        homepage = data.get("homepage_url", "") or ""
+        domain = (
+            homepage.replace("https://", "").replace("http://", "").split("/")[0]
+            if homepage else ""
+        )
+
+        logo_url = branding.get("logo_url", "")
+        icon_url = branding.get("icon_url", "")
+
+        proxied_logo = None
+        proxied_icon = None
+
+        if logo_url:
+            try:
+                logo_resp = requests.get(
+                    logo_url,
+                    params={"apiKey": api_key},
+                    timeout=5,
+                    verify=False,
+                )
+                if logo_resp.ok:
+                    ct = logo_resp.headers.get("content-type", "image/png")
+                    b64 = base64.b64encode(logo_resp.content).decode()
+                    proxied_logo = f"data:{ct};base64,{b64}"
+            except Exception as e:
+                print(f"[WARN] Massive logo proxy failed for {ticker}: {e}")
+
+        if icon_url and not proxied_logo:
+            try:
+                icon_resp = requests.get(
+                    icon_url,
+                    params={"apiKey": api_key},
+                    timeout=5,
+                    verify=False,
+                )
+                if icon_resp.ok:
+                    ct = icon_resp.headers.get("content-type", "image/png")
+                    b64 = base64.b64encode(icon_resp.content).decode()
+                    proxied_icon = f"data:{ct};base64,{b64}"
+            except Exception as e:
+                print(f"[WARN] Massive icon proxy failed for {ticker}: {e}")
+
+        google_favicon = (
+            f"https://www.google.com/s2/favicons?domain={domain}&sz=64"
+            if domain else ""
+        )
+
+        data_url = proxied_logo or proxied_icon
+        result = {
+            "ticker": ticker,
+            "logo_data_url": data_url,
+            "google_favicon_url": google_favicon,
+            "domain": domain,
+            "source": "massive" if data_url else ("google" if google_favicon else "none"),
+        }
+
+        _logo_cache[ticker] = {"data": result, "ts": time.time()}
+        return result
+
+    except Exception as e:
+        print(f"[WARN] Logo fetch failed for {ticker}: {e}")
+        return {
+            "ticker": ticker,
+            "logo_data_url": None,
+            "google_favicon_url": "",
+            "domain": "",
+            "source": "none",
+        }
 
