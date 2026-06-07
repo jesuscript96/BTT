@@ -493,8 +493,6 @@ export default function OOSDegradationTab({
   const metricRows = [
     { label: "Win Rate", key: "winRate", unit: "%", decimals: 1 },
     { label: "Profit Factor", key: "profitFactor", unit: "", decimals: 2 },
-    { label: "Sharpe Ratio", key: "sharpe", unit: "", decimals: 2 },
-    { label: "Sortino Ratio", key: "sortino", unit: "", decimals: 2 },
   ] as const;
 
   return (
@@ -672,7 +670,7 @@ export default function OOSDegradationTab({
                   <th style={{ textAlign: "left", paddingBottom: 3, fontWeight: 500, fontSize: "8px" }}>METRIC</th>
                   <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px" }}>IS</th>
                   <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px" }}>OOS</th>
-                  <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px", paddingLeft: 6 }}>RATIO</th>
+                  <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px", paddingLeft: 6 }}>DEG. RATIO</th>
                 </tr>
               </thead>
               <tbody>
@@ -694,7 +692,7 @@ export default function OOSDegradationTab({
                   if (ratio !== null && isFinite(ratio)) {
                     if (ratio > 1) {
                       ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "Overfit";
+                      ratioLabel = "Possible Overfit";
                     } else if (ratio >= 0.7) {
                       ratioColor = "var(--color-ec-profit)";
                       ratioLabel = "Optimal";

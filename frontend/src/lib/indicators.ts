@@ -429,17 +429,55 @@ export function calculateOpeningRange(data: CandleData[], minutes: number): Band
     const sorted = sortAndDedup(data);
     if (sorted.length === 0) return [];
 
-    // Find the high/low of the first `minutes` candles (assuming 1-min bars)
-    const rangeCandles = sorted.slice(0, minutes);
-    if (rangeCandles.length === 0) return [];
-    let hi = -Infinity, lo = Infinity;
-    for (const c of rangeCandles) {
-        if (c.high > hi) hi = c.high;
-        if (c.low < lo) lo = c.low;
+    // Group candles by date
+    const dailyCandles = new Map<string, CandleData[]>();
+    for (const c of sorted) {
+        const d = new Date((c.time as number) * 1000);
+        const dateStr = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+        if (!dailyCandles.has(dateStr)) dailyCandles.set(dateStr, []);
+        dailyCandles.get(dateStr)!.push(c);
     }
-    const mid = (hi + lo) / 2;
-    // Extend the range across all candles
-    return sorted.map(c => ({ time: c.time as Time, upper: hi, lower: lo, middle: mid }));
+
+    const result: BandDataPoint[] = [];
+
+    for (const c of sorted) {
+        const d = new Date((c.time as number) * 1000);
+        const dateStr = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+        const group = dailyCandles.get(dateStr) || [];
+        
+        // Find ORB high and low for this day
+        // RTH session starts at 9:30 AM (570 minutes)
+        const sessionStart = 570;
+        const orbEnd = sessionStart + minutes;
+        
+        const orbCandles = group.filter(x => {
+            const xd = new Date((x.time as number) * 1000);
+            const xm = xd.getUTCHours() * 60 + xd.getUTCMinutes();
+            return xm >= sessionStart && xm < orbEnd;
+        });
+
+        if (orbCandles.length === 0) {
+            result.push({ time: c.time as Time, upper: NaN, lower: NaN, middle: NaN });
+            continue;
+        }
+
+        let hi = -Infinity, lo = Infinity;
+        for (const oc of orbCandles) {
+            if (oc.high > hi) hi = oc.high;
+            if (oc.low < lo) lo = oc.low;
+        }
+        const mid = (hi + lo) / 2;
+
+        // The indicator is only plotted after the ORB window has completed
+        const cm = d.getUTCHours() * 60 + d.getUTCMinutes();
+        if (cm >= orbEnd && cm < 960) { // 960 is 16:00 (RTH end)
+            result.push({ time: c.time as Time, upper: hi, lower: lo, middle: mid });
+        } else {
+            result.push({ time: c.time as Time, upper: NaN, lower: NaN, middle: NaN });
+        }
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------

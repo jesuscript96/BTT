@@ -275,10 +275,10 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
   },
   {
     id: "RVOL",
-    label: "RVOL",
+    label: "RVOL by bar",
     category: "Volume",
     displayMode: "panel",
-    params: [{ name: "period", label: "Period", default: 14, min: 1, max: 200 }],
+    params: [{ name: "period", label: "Period", default: 20, min: 1, max: 200 }],
     multi: false,
   },
   {

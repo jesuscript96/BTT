@@ -626,7 +626,54 @@ export default function EquityCurveTab({
                 </div>
               </div>
             )}
-            <div ref={containerRef} className="h-[370px] w-full" />
+            <div style={{ position: "relative", width: "100%", height: 370 }}>
+              <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+              {/* Compact Terminal HUD Table for R-squared (R2) in the bottom-left corner (above TradingView logo / time scale) */}
+              {metrics && metrics.r_squared !== undefined && (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 58,
+                    left: 12,
+                    backgroundColor: "transparent",
+                    backdropFilter: "none",
+                    border: "none",
+                    borderRadius: 0,
+                    padding: "0",
+                    pointerEvents: "none",
+                    zIndex: 15,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: "9px",
+                    color: "var(--color-ec-text-primary)",
+                    boxShadow: "none",
+                    lineHeight: 1.3,
+                    minWidth: 120,
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: "8px", color: "var(--color-ec-text-muted)", letterSpacing: "0.06em", marginBottom: 5, textTransform: "uppercase" }}>
+                    SYSTEM STABILITY
+                  </div>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.15)", color: "#ffffff" }}>
+                        <th style={{ textAlign: "left", paddingBottom: 3, fontWeight: 500, fontSize: "8px" }}>METRIC</th>
+                        <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px", paddingLeft: 12 }}>VALUE</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
+                        <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff" }}>
+                          R²
+                        </td>
+                        <td style={{ textAlign: "right", padding: "4px 0", color: "#ffffff", fontWeight: 700, paddingLeft: 12 }}>
+                          {(metrics.r_squared ?? 0).toFixed(4)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
             <div className="border-t border-[var(--border)] pt-2 mt-auto">
                <div className="flex items-center gap-4 mb-1.5 px-1">
                  <span className="text-[10px] uppercase tracking-wide font-mono text-[#ffffff]">
@@ -955,7 +1002,7 @@ export default function EquityCurveTab({
                         { label: "Sharpe", base: (metrics?.avg_sharpe ?? 0).toFixed(3), sim: getSimValue("avg_sharpe", v => v.toFixed(3)) },
                         { label: "Sortino", base: (metrics?.sortino_ratio ?? 0).toFixed(3), sim: getSimValue("sortino_ratio", v => v.toFixed(3)) },
                         { label: "Calmar", base: (metrics?.calmar_ratio ?? 0).toFixed(3), sim: getSimValue("calmar_ratio", v => v.toFixed(3)) },
-                        { label: "R²", base: (metrics?.r_squared ?? 0).toFixed(4), sim: getSimValue("r_squared", v => v.toFixed(4)) },
+                        { label: "Avg Y/U.index", base: (metrics?.avg_r_ui ?? 0).toFixed(2), sim: getSimValue("avg_r_ui", v => v.toFixed(2)) },
                         { label: "DD/Return", base: (metrics?.dd_return_ratio ?? 0).toFixed(3), sim: getSimValue("dd_return_ratio", v => v.toFixed(3)) },
                         { label: "Max DD", base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(2)}%`, sim: getSimValue("max_drawdown_pct", v => `${v.toFixed(2)}%`), danger: true },
                         { label: "Max Consec. Wins", base: metrics?.max_consecutive_wins ?? 0, sim: getSimValue("max_consecutive_wins") },

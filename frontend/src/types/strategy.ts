@@ -30,12 +30,15 @@ export enum IndicatorType {
     CONSEC_GREEN_CANDLES = "Consecutive green candles",
     CONSEC_RED_CANDLES = "Consecutive red candles",
     CANDLE_RANGE_PCT = "Candle Range %",
-    RANGE_OF_TIME = "Range of time",
+    RANGE_OF_TIME = "Range of Time",
     OPENING_RANGE_PLUS = "Opening range +",
     OPENING_RANGE_MINUS = "Opening range -",
     OPENING_RANGE_AM_PLUS = "Opening range AM +",
     OPENING_RANGE_AM_MINUS = "Opening range AM -",
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High",
+    TRIANGLE_ASCENDING = "Triangle Ascending",
+    TRIANGLE_DESCENDING = "Triangle Descending",
+    TRIANGLE_SYMMETRIC = "Triangle Symmetric",
 
     // Indicators
     SMA = "SMA",
@@ -45,7 +48,7 @@ export enum IndicatorType {
     BOLLINGER_BANDS = "Bollinger Bands",
     ACCUMULATED_VOLUME = "Accumulated Volume",
     YESTERDAY_VOLUME = "Yesterday Volume",
-    RVOL = "RVOL",
+    RVOL = "RVOL by bar",
     VOLUME = "Volume",
     ATR = "ATR",
 }
@@ -131,6 +134,13 @@ export interface IndicatorConfig {
     ichimoku_line?: "Tenkan" | "Kijun" | "Senkou A" | "Senkou B" | "Chikou";
     min_af?: number;               // Parabolic SAR min acceleration factor
     max_af?: number;               // Parabolic SAR max acceleration factor
+
+    // Triangle pattern parameters
+    pivot_window?: number;         // Candles for swing high/low confirmation
+    tri_lookback?: number;         // Bars to search for pivots
+    slope_tolerance?: number;      // Max slope considered "flat"
+    min_r_squared?: number;        // Min R² for trend line quality
+    min_pivots?: number;           // Min swing highs/lows required to fit lines
 }
 
 export interface ComparisonCondition {

@@ -580,24 +580,32 @@ def get_ticker_chart(ticker: str):
         perf = {}
         daily_history = []
         if not hist.empty:
+            hist = hist.dropna(subset=["Close"])
+            
+        if not hist.empty:
             current = hist["Close"].iloc[-1]
             def get_ret(days):
                 if len(hist) > days:
                     prev = hist["Close"].iloc[-days-1]
+                    if pd.isna(prev) or prev == 0 or pd.isna(current):
+                        return None
                     return ((current - prev) / prev) * 100
                 return None
             
-            perf["1w"] = get_ret(5)
-            perf["1m"] = get_ret(21)
-            perf["3m"] = get_ret(63)
-            perf["6m"] = get_ret(126)
-            perf["1y"] = get_ret(252)
+            perf["1w"] = safe_float(get_ret(5))
+            perf["1m"] = safe_float(get_ret(21))
+            perf["3m"] = safe_float(get_ret(63))
+            perf["6m"] = safe_float(get_ret(126))
+            perf["1y"] = safe_float(get_ret(252))
             
             # YTD
             ytd_start = hist[hist.index.year == datetime.now().year]
             if not ytd_start.empty:
                 start_price = ytd_start["Close"].iloc[0]
-                perf["ytd"] = ((current - start_price) / start_price) * 100
+                if pd.isna(start_price) or start_price == 0 or pd.isna(current):
+                    perf["ytd"] = None
+                else:
+                    perf["ytd"] = safe_float(((current - start_price) / start_price) * 100)
             else:
                  perf["ytd"] = None
 
