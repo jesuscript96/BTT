@@ -206,9 +206,12 @@ def write_parquet_to_gcs(df: pd.DataFrame, year: int, month: int):
     df["year"] = year
     df["month"] = month
 
-    path = f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/year={year}/month={month}/catchup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.parquet"
+    path = f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/year={year}/month={month}/catchup_{year}_{month:02d}.parquet"
 
     con.register("df_to_write", df)
+    # DuckDB httpfs treats gs:// COPY as an object PUT, which overwrites
+    # existing objects without a pre-check, so re-runs replace the previous
+    # catchup_{year}_{MM}.parquet instead of accumulating duplicates.
     con.execute(f"COPY df_to_write TO '{path}' (FORMAT PARQUET)")
     con.close()
     logger.info(f"  Written {len(df)} rows to {path}")
