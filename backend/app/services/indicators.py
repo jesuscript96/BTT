@@ -242,6 +242,165 @@ def _consecutive_count_core(signal):
             count = 0.0
         result[i] = count
     return result
+@njit(cache=True)
+def _fit_ols_numba(x, y):
+    n = len(x)
+    if n < 2:
+        return 0.0, 0.0, 0.0
+    
+    x_mean = 0.0
+    y_mean = 0.0
+    for i in range(n):
+        x_mean += x[i]
+        y_mean += y[i]
+    x_mean /= n
+    y_mean /= n
+    
+    num = 0.0
+    den = 0.0
+    for i in range(n):
+        dx = x[i] - x_mean
+        dy = y[i] - y_mean
+        num += dx * dy
+        den += dx * dx
+        
+    if den == 0.0:
+        return 0.0, y_mean, 1.0
+        
+    slope = num / den
+    intercept = y_mean - slope * x_mean
+    
+    ss_tot = 0.0
+    ss_res = 0.0
+    for i in range(n):
+        y_pred = slope * x[i] + intercept
+        ss_tot += (y[i] - y_mean) ** 2
+        ss_res += (y[i] - y_pred) ** 2
+        
+    if ss_tot == 0.0:
+        r2 = 1.0
+    else:
+        r2 = 1.0 - (ss_res / ss_tot)
+        
+    return slope, intercept, r2
+
+
+@njit(cache=True)
+def _detect_triangles_numba(
+    high,
+    low,
+    close,
+    pivot_window,
+    lookback,
+    slope_tolerance,
+    min_r_squared,
+    min_pivots,
+    pattern_type_code,
+):
+    n = len(close)
+    out = np.zeros(n, dtype=np.float64)
+    
+    is_sh = np.zeros(n, dtype=np.bool_)
+    is_sl = np.zeros(n, dtype=np.bool_)
+    
+    for i in range(pivot_window, n - pivot_window):
+        val_h = high[i]
+        is_high = True
+        for j in range(i - pivot_window, i):
+            if high[j] >= val_h:
+                is_high = False
+                break
+        if is_high:
+            for j in range(i + 1, i + pivot_window + 1):
+                if high[j] > val_h:
+                    is_high = False
+                    break
+        is_sh[i] = is_high
+        
+        val_l = low[i]
+        is_low = True
+        for j in range(i - pivot_window, i):
+            if low[j] <= val_l:
+                is_low = False
+                break
+        if is_low:
+            for j in range(i + 1, i + pivot_window + 1):
+                if low[j] < val_l:
+                    is_low = False
+                    break
+        is_sl[i] = is_low
+
+    for t in range(0, n):
+        close_t = close[t]
+        if close_t <= 0.0 or np.isnan(close_t):
+            continue
+            
+        start_idx = t - lookback
+        end_idx = t - pivot_window
+        
+        if end_idx < start_idx:
+            continue
+            
+        sh_indices = np.empty(lookback, dtype=np.float64)
+        sh_prices = np.empty(lookback, dtype=np.float64)
+        sh_count = 0
+        for i in range(start_idx, end_idx + 1):
+            if is_sh[i]:
+                sh_indices[sh_count] = float(i)
+                sh_prices[sh_count] = high[i] / close_t
+                sh_count += 1
+                
+        sl_indices = np.empty(lookback, dtype=np.float64)
+        sl_prices = np.empty(lookback, dtype=np.float64)
+        sl_count = 0
+        for i in range(start_idx, end_idx + 1):
+            if is_sl[i]:
+                sl_indices[sl_count] = float(i)
+                sl_prices[sl_count] = low[i] / close_t
+                sl_count += 1
+                
+        if sh_count < min_pivots or sl_count < min_pivots:
+            continue
+            
+        # Ensure the pattern has just been confirmed on the current bar t
+        last_high_confirm = sh_indices[sh_count - 1] + pivot_window
+        last_low_confirm = sl_indices[sl_count - 1] + pivot_window
+        if last_high_confirm != t and last_low_confirm != t:
+            continue
+            
+        slope_R, intercept_R, r2_R = _fit_ols_numba(sh_indices[:sh_count], sh_prices[:sh_count])
+        slope_S, intercept_S, r2_S = _fit_ols_numba(sl_indices[:sl_count], sl_prices[:sl_count])
+        
+        if r2_R < min_r_squared or r2_S < min_r_squared:
+            continue
+            
+        y_R_t = slope_R * t + intercept_R
+        y_S_t = slope_S * t + intercept_S
+        if y_R_t <= y_S_t:
+            continue
+            
+        # Convert slopes to percentage total change over the lookback window
+        slope_R_pct = slope_R * lookback * 100.0
+        slope_S_pct = slope_S * lookback * 100.0
+        
+        is_pattern = False
+        if pattern_type_code == 1:
+            # Ascending: flat resistance, rising support
+            if abs(slope_R_pct) <= slope_tolerance and slope_S_pct > slope_tolerance:
+                is_pattern = True
+        elif pattern_type_code == 2:
+            # Descending: falling resistance, flat support
+            if slope_R_pct < -slope_tolerance and abs(slope_S_pct) <= slope_tolerance:
+                is_pattern = True
+        elif pattern_type_code == 3:
+            # Symmetric: falling resistance, rising support
+            if slope_R_pct < -slope_tolerance and slope_S_pct > slope_tolerance:
+                is_pattern = True
+                
+        if is_pattern:
+            out[t] = 1.0
+            
+    return out
 
 
 def _consecutive_count(signal: np.ndarray) -> np.ndarray:
@@ -580,6 +739,9 @@ INDICATOR_NAME_MAP = {
     "Opening range AM +": "Opening Range AM +",
     "Opening range AM -": "Opening Range AM -",
     "Elapsed time from last High": "Elapsed Time from Last High",
+    "Triangle Ascending": "Triangle Ascending",
+    "Triangle Descending": "Triangle Descending",
+    "Triangle Symmetric": "Triangle Symmetric",
 
     # Indicators
     "Donchian": "Donchian Channels",
@@ -618,10 +780,18 @@ def compute_indicator(
     ap_session: str | None = None,
     daily_stats: dict | None = None,
     cache: dict | None = None,
+    range_minutes: int | None = None,
+    pivot_window: int | None = None,
+    tri_lookback: int | None = None,
+    slope_tolerance: float | None = None,
+    min_r_squared: float | None = None,
+    min_pivots: int | None = None,
 ) -> pd.Series:
     name = normalize_indicator_name(name)
     cache_key = (name, period, period2, period3, std_dev, multiplier, offset,
-                 days_lookback, calc_on_heikin, time_hour, time_minute, time_condition, ap_session)
+                 days_lookback, calc_on_heikin, time_hour, time_minute, time_condition,
+                 band_line, orb_minutes, ap_session, range_minutes,
+                 pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -648,11 +818,15 @@ def compute_indicator(
         name, close, high, low, open_, volume,
         period, period2, period3, std_dev, multiplier,
         days_lookback, time_hour, time_minute, time_condition,
-        band_line, orb_minutes, ap_session, daily_stats, df,
+        band_line, orb_minutes, ap_session, daily_stats, df, range_minutes,
+        pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots
     )
 
     if offset and offset != 0:
         result = result.shift(offset)
+
+    if name != "Parabolic SAR" and multiplier is not None:
+        result = result * multiplier
 
     if cache is not None:
         cache[cache_key] = result
@@ -681,6 +855,12 @@ def _compute_raw(
     ap_session: str | None,
     daily_stats: dict | None,
     df: pd.DataFrame,
+    range_minutes: int | None = None,
+    pivot_window: int | None = None,
+    tri_lookback: int | None = None,
+    slope_tolerance: float | None = None,
+    min_r_squared: float | None = None,
+    min_pivots: int | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -710,15 +890,41 @@ def _compute_raw(
     if name == "Yesterday Low":
         return pd.Series(_safe_float(ds.get("yesterday_low", ds.get("lag_rth_low_1", np.nan))), index=close.index)
     if name == "Pre-Market High":
-        return pd.Series(ds.get("pm_high", np.nan), index=close.index)
+        val = ds.get("pm_high") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
+            val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name == "Pre-Market Low":
-        return pd.Series(ds.get("pm_low", np.nan), index=close.index)
+        val = ds.get("pm_low") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
+            val = df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name in ("RTH Open", "rth_open"):
-        return pd.Series(_safe_float(ds.get("rth_open", np.nan)), index=close.index)
+        val = ds.get("rth_open") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
+            rth_open_rows = df.loc[rth_mask]
+            val = rth_open_rows["open"].iloc[0] if not rth_open_rows.empty else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name in ("RTH High", "rth_high"):
-        return pd.Series(_safe_float(ds.get("rth_high", np.nan)), index=close.index)
+        val = ds.get("rth_high") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
+            val = df.loc[rth_mask, "high"].max() if rth_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name in ("RTH Low", "rth_low"):
-        return pd.Series(_safe_float(ds.get("rth_low", np.nan)), index=close.index)
+        val = ds.get("rth_low") if ds else None
+        if val is None or pd.isna(val):
+            timestamps = pd.to_datetime(df["timestamp"])
+            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
+            val = df.loc[rth_mask, "low"].min() if rth_mask.any() else np.nan
+        return pd.Series(_safe_float(val), index=close.index)
     if name == "High of Day":
         return high.cummax()
     if name == "Low of Day":
@@ -993,8 +1199,8 @@ def _compute_raw(
 
     if name == "Donchian Channels":
         period = period or 20
-        upper = high.rolling(period).max()
-        lower = low.rolling(period).min()
+        upper = high.rolling(period).max().shift(1)
+        lower = low.rolling(period).min().shift(1)
         mid = (upper + lower) / 2
         if band_line == "Lower":
             return lower
@@ -1026,7 +1232,7 @@ def _compute_raw(
     if name == "Accumulated Volume":
         return volume.cumsum().astype(float)
 
-    if name == "RVOL":
+    if name == "RVOL by bar" or name == "RVOL":
         # Relative Volume: current cumulative volume / average cumulative volume at same time
         # Simple approximation: volume / SMA(volume, period)
         p = period or 20
@@ -1124,6 +1330,26 @@ def _compute_raw(
                 return (minutes >= target_min).astype(float)
         return minutes
 
+    if name == "Range of time" or name == "Range of Time":
+        timestamps = pd.to_datetime(df["timestamp"])
+        if len(timestamps) > 0:
+            dates = timestamps.dt.normalize()
+            rth_start = dates + pd.to_timedelta("9h 30m")
+            am_start = dates + pd.to_timedelta("16h")
+            first_candle_of_day = pd.to_datetime(df.groupby(dates)["timestamp"].transform("first"))
+            
+            is_rth = (timestamps >= rth_start) & (timestamps < am_start)
+            is_am = timestamps >= am_start
+            
+            start_times = pd.Series(first_candle_of_day, index=df.index)
+            start_times = start_times.mask(is_rth, rth_start)
+            start_times = start_times.mask(is_am, am_start)
+            
+            elapsed = (timestamps - start_times).dt.total_seconds() / 60.0
+            return elapsed.clip(lower=0.0)
+        else:
+            return pd.Series(0.0, index=close.index)
+
     if name == "Max N Bars":
         return pd.Series(np.arange(len(close), dtype=float), index=close.index)
 
@@ -1147,33 +1373,48 @@ def _compute_raw(
                 "Opening Range -", "Opening Range Minus",
                 "Opening Range AM +", "Opening Range AM Plus",
                 "Opening Range AM -", "Opening Range AM Minus"):
-        n = int(orb_minutes) if orb_minutes else 30
+        n_mins = int(orb_minutes) if orb_minutes else 30
         timestamps = pd.to_datetime(df["timestamp"])
-        if "AM" in name:
-            # After-hours session starts at 16:00 ET
-            session_mask = timestamps.dt.hour >= 16
-        else:
-            # RTH session starts at 9:30 ET
-            session_mask = (timestamps.dt.hour > 9) | (
-                (timestamps.dt.hour == 9) & (timestamps.dt.minute >= 30)
-            )
-        if name.endswith("-") or name.endswith("Minus"):
-            session_low = low[session_mask]
-            if len(session_low) >= n:
-                val = float(session_low.iloc[:n].min())
-            elif len(session_low) > 0:
-                val = float(session_low.min())
+        
+        result = pd.Series(np.nan, index=close.index)
+        is_am = "AM" in name
+        is_minus = name.endswith("-") or name.endswith("Minus")
+        
+        dates = timestamps.dt.normalize()
+        minutes_of_day = timestamps.dt.hour * 60 + timestamps.dt.minute
+        
+        for date, group_indices in df.groupby(dates).groups.items():
+            group_minutes = minutes_of_day.loc[group_indices]
+            
+            if is_am:
+                session_start = 960
+                session_end = 1440
             else:
-                val = float("nan")
-        else:
-            session_high = high[session_mask]
-            if len(session_high) >= n:
-                val = float(session_high.iloc[:n].max())
-            elif len(session_high) > 0:
-                val = float(session_high.max())
+                session_start = 570
+                session_end = 960
+                
+            session_mask = (group_minutes >= session_start) & (group_minutes < session_end)
+            if not session_mask.any():
+                continue
+                
+            orb_mask = session_mask & (group_minutes < session_start + n_mins)
+            if not orb_mask.any():
+                continue
+                
+            orb_indices = group_minutes[orb_mask].index
+            
+            if is_minus:
+                range_val = low.loc[orb_indices].min()
             else:
-                val = float("nan")
-        return pd.Series(val, index=close.index)
+                range_val = high.loc[orb_indices].max()
+                
+            trading_mask = session_mask & (group_minutes >= session_start + n_mins)
+            trading_indices = group_minutes[trading_mask].index
+            
+            result.loc[trading_indices] = float(range_val)
+            
+        return result
+
 
     if name == "Yesterday Volume":
         yesterday_volume = ds.get("eod_volume", np.nan)
@@ -1193,6 +1434,32 @@ def _compute_raw(
                 last_high_idx = i
             elapsed.iloc[i] = i - last_high_idx
         return elapsed
+
+    if name in ("Triangle Ascending", "Triangle Descending", "Triangle Symmetric"):
+        pw = pivot_window or 5
+        lb = tri_lookback or 35
+        st = slope_tolerance or 1.5
+        mr = min_r_squared or 0.65
+        mp = min_pivots or 2
+        
+        pattern_code = 1
+        if name == "Triangle Descending":
+            pattern_code = 2
+        elif name == "Triangle Symmetric":
+            pattern_code = 3
+            
+        vals = _detect_triangles_numba(
+            high.values.astype(np.float64),
+            low.values.astype(np.float64),
+            close.values.astype(np.float64),
+            pw,
+            lb,
+            st,
+            mr,
+            mp,
+            pattern_code
+        )
+        return pd.Series(vals, index=close.index)
 
     return pd.Series(np.nan, index=close.index)
 

@@ -13,6 +13,9 @@ import threading
 import time
 
 import duckdb
+from dotenv import load_dotenv
+
+load_dotenv()
 
 MOTHERDUCK_TOKEN = os.getenv("MOTHERDUCK_TOKEN", "")
 MOTHERDUCK_DB = os.getenv("MOTHERDUCK_DB", "my_db")

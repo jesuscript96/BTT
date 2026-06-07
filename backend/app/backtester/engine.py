@@ -658,9 +658,50 @@ class BacktestEngine:
         elif name == IndicatorType.RVOL:
             series = df['rvol'] if 'rvol' in df.columns else pd.Series(1.0, index=df.index)
         elif name == IndicatorType.PMH:
-            series = df['pm_high'] if 'pm_high' in df.columns else df['high']
+            if 'pm_high' in df.columns:
+                series = df['pm_high']
+            else:
+                timestamps = pd.to_datetime(df["timestamp"])
+                pm_mask = pd.Series((timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30), index=df.index)
+                series = df.groupby(['ticker', df['timestamp'].dt.date])['high'].transform(
+                    lambda x: x.where(pm_mask).max()
+                )
         elif name == IndicatorType.PML:
-             series = df['pm_low'] if 'pm_low' in df.columns else df['low']
+            if 'pm_low' in df.columns:
+                series = df['pm_low']
+            else:
+                timestamps = pd.to_datetime(df["timestamp"])
+                pm_mask = pd.Series((timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30), index=df.index)
+                series = df.groupby(['ticker', df['timestamp'].dt.date])['low'].transform(
+                    lambda x: x.where(pm_mask).min()
+                )
+        elif name == IndicatorType.RTH_HIGH:
+            if 'rth_high' in df.columns:
+                series = df['rth_high']
+            else:
+                timestamps = pd.to_datetime(df["timestamp"])
+                rth_mask = pd.Series((timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60), index=df.index)
+                series = df.groupby(['ticker', df['timestamp'].dt.date])['high'].transform(
+                    lambda x: x.where(rth_mask).max()
+                )
+        elif name == IndicatorType.RTH_LOW:
+            if 'rth_low' in df.columns:
+                series = df['rth_low']
+            else:
+                timestamps = pd.to_datetime(df["timestamp"])
+                rth_mask = pd.Series((timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60), index=df.index)
+                series = df.groupby(['ticker', df['timestamp'].dt.date])['low'].transform(
+                    lambda x: x.where(rth_mask).min()
+                )
+        elif name == IndicatorType.RTH_OPEN:
+            if 'rth_open' in df.columns:
+                series = df['rth_open']
+            else:
+                timestamps = pd.to_datetime(df["timestamp"])
+                rth_mask = pd.Series((timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60), index=df.index)
+                series = df.groupby(['ticker', df['timestamp'].dt.date])['open'].transform(
+                    lambda x: x.where(rth_mask).dropna().iloc[0] if not x.where(rth_mask).dropna().empty else np.nan
+                )
         elif name == IndicatorType.RSI:
             def calc_rsi(s, p):
                 delta = s.diff()
@@ -813,6 +854,30 @@ class BacktestEngine:
             if getattr(config, 'time_hour', None) is not None or getattr(config, 'time_minute', None) is not None:
                 # If target is fixed, we still return the series; comparison is done in _evaluate_comparison
                 pass
+        elif name == IndicatorType.RANGE_OF_TIME:
+            # Calculate elapsed minutes per ticker per date
+            def calc_range_of_time(g):
+                if g.empty:
+                    return pd.Series(0.0, index=g.index)
+                g_sorted = g.sort_values('timestamp')
+                timestamps = pd.to_datetime(g_sorted['timestamp'])
+                dates = timestamps.dt.normalize()
+                rth_start = dates + pd.to_timedelta("9h 30m")
+                am_start = dates + pd.to_timedelta("16h")
+                first_candle = timestamps.iloc[0]
+                
+                is_rth = (timestamps >= rth_start) & (timestamps < am_start)
+                is_am = timestamps >= am_start
+                
+                start_times = pd.Series(first_candle, index=g_sorted.index)
+                start_times = start_times.mask(is_rth, rth_start)
+                start_times = start_times.mask(is_am, am_start)
+                
+                elapsed = (timestamps - start_times).dt.total_seconds() / 60.0
+                return elapsed.clip(lower=0.0)
+            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(calc_range_of_time)
+            if len(series) == len(df):
+                series.index = df.index
         elif name == IndicatorType.CUSTOM:
             # For custom, multiplier or period might be used as the value
             series = pd.Series(float(config.multiplier if config.multiplier is not None else (config.period or 0)), index=df.index)
@@ -820,6 +885,9 @@ class BacktestEngine:
         if getattr(config, 'offset', 0) and config.offset > 0:
             series = series.groupby(df['ticker']).shift(config.offset)
             series.index = df.index
+
+        if name != IndicatorType.CUSTOM and getattr(config, 'multiplier', None) is not None:
+            series = series * config.multiplier
 
         return series
 
