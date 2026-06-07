@@ -188,7 +188,7 @@ export default function BacktestPanel({
       setDatasets(d);
       if (d.length > 0) {
         const hasPrefillDataset = prefill?.dataset_id && d.some(ds => ds.id === prefill.dataset_id);
-        const selectedId = hasPrefillDataset ? prefill.dataset_id! : d[0].id;
+        const selectedId = hasPrefillDataset ? prefill!.dataset_id! : d[0].id;
         setSelectedDataset(selectedId);
         const selectedDs = d.find(ds => ds.id === selectedId);
         if (selectedDs?.min_date) setStartDate(selectedDs.min_date);
@@ -203,7 +203,7 @@ export default function BacktestPanel({
       setStrategies(s);
       if (s.length > 0) {
         const hasPrefillStrategy = prefill?.strategy_id && s.some(st => st.id === prefill.strategy_id);
-        setSelectedStrategy(hasPrefillStrategy ? prefill.strategy_id! : s[0].id);
+        setSelectedStrategy(hasPrefillStrategy ? prefill!.strategy_id! : s[0].id);
       }
     } catch (e) {
       console.error("Error loading strategies:", e);
