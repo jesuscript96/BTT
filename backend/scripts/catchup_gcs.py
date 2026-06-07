@@ -318,6 +318,36 @@ def get_trading_days(start: date, end: date) -> list[str]:
         current += timedelta(days=1)
     return days
 
+
+def _seed_prev_closes(seed_date: date) -> dict[str, float]:
+    """Lee los closes de seed_date desde GCS para arrancar prev_closes."""
+    logger.info(f"Seeding prev_closes from GCS for {seed_date}...")
+    try:
+        con = duckdb.connect()
+        con.execute(f"""
+            INSTALL httpfs; LOAD httpfs;
+            SET s3_endpoint='storage.googleapis.com';
+            SET s3_access_key_id='{GCS_HMAC_KEY}';
+            SET s3_secret_access_key='{GCS_HMAC_SECRET}';
+            SET s3_url_style='path';
+        """)
+        r = con.execute(f"""
+            SELECT ticker, close
+            FROM read_parquet(
+                'gs://{GCS_BUCKET}/cold_storage/daily_metrics/*/*/*.parquet',
+                hive_partitioning=true
+            )
+            WHERE CAST(timestamp AS DATE) = DATE '{seed_date.isoformat()}'
+              AND close > 0
+        """).fetchdf()
+        con.close()
+        result = dict(zip(r['ticker'], r['close']))
+        logger.info(f"Seeded {len(result)} tickers from {seed_date}")
+        return result
+    except Exception as e:
+        logger.warning(f"Could not seed prev_closes: {e}")
+        return {}
+
 def process_single_ticker(args):
     """Procesa un ticker para un día dado."""
     ticker, date_str, prev_close = args
@@ -354,8 +384,8 @@ def main():
     logger.info(f"Today: {today}")
     logger.info(f"Trading days to process: {len(trading_days)}")
 
-    # 2. Mantener prev_closes en memoria
-    prev_closes: dict[str, float] = {}
+    # 2. Mantener prev_closes en memoria, sembrados desde GCS
+    prev_closes = _seed_prev_closes(last_date)
 
     # 3. Buffer por mes — se vacía a GCS al detectar cambio de mes
     monthly_buffer: dict[tuple, list] = {}
