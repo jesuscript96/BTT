@@ -816,6 +816,19 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                             }}
                                         >
                                             {labels[day]}
+                                            {day !== 'gap_day' && (
+                                                <span style={{
+                                                    marginLeft: 4,
+                                                    fontSize: 7,
+                                                    fontWeight: 700,
+                                                    padding: '1px 4px',
+                                                    borderRadius: 3,
+                                                    backgroundColor: 'rgba(216, 122, 61, 0.18)',
+                                                    color: 'var(--color-ec-copper-bright)',
+                                                    letterSpacing: '0.5px',
+                                                    verticalAlign: 'middle',
+                                                }}>BETA</span>
+                                            )}
                                         </span>
                                     </React.Fragment>
                                 );
