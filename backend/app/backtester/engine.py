@@ -914,6 +914,8 @@ class BacktestEngine:
         val = condition.value_pct
         comp = condition.comparator
         pos = getattr(condition, 'position', 'any')
+        if pos is None or pos == "":
+            pos = 'any'
 
         # Distance logic: (Source - Level) / Level * 100
         diff_pct = ((s1 - s2) / s2) * 100
@@ -922,9 +924,9 @@ class BacktestEngine:
         # Position filter
         pos_mask = pd.Series(True, index=df.index)
         if pos == 'above':
-            pos_mask = diff_pct > 0
+            pos_mask = diff_pct >= 0
         elif pos == 'below':
-            pos_mask = diff_pct < 0
+            pos_mask = diff_pct <= 0
 
         if comp == 'DISTANCE_GT':
             return (abs_diff_pct > val) & pos_mask

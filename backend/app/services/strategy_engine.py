@@ -264,7 +264,9 @@ def _eval_price_level_distance(
     level_cfg = cond.get("level", {})
     comparator = cond.get("comparator", "DISTANCE_LESS_THAN")
     value_pct = cond.get("value_pct", 1.0)
-    position = cond.get("position", "any")
+    position = cond.get("position")
+    if position is None or position == "":
+        position = "any"
 
     # Parse source/level as IndicatorConfig objects (or string fallback)
     if isinstance(source_cfg, str):
@@ -279,9 +281,9 @@ def _eval_price_level_distance(
 
     # Apply position filter
     if position == "above":
-        position_mask = source_series > level_series
+        position_mask = source_series >= level_series
     elif position == "below":
-        position_mask = source_series < level_series
+        position_mask = source_series <= level_series
     else:  # "any"
         position_mask = pd.Series(True, index=df.index)
 
