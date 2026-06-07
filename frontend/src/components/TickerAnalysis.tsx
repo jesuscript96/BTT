@@ -86,6 +86,37 @@ interface FinvizNewsItem {
     title: string;
     link: string;
     source: string;
+    sentiment?: string | null;
+    description?: string;
+    image_url?: string;
+}
+
+function SentimentBadge({ sentiment }: { sentiment?: string | null }) {
+    if (!sentiment) return null;
+    const s = sentiment.toLowerCase();
+    const map: Record<string, { bg: string; fg: string; label: string }> = {
+        positive: { bg: 'rgba(34,197,94,0.18)', fg: '#22c55e', label: 'BULLISH' },
+        bullish:  { bg: 'rgba(34,197,94,0.18)', fg: '#22c55e', label: 'BULLISH' },
+        negative: { bg: 'rgba(239,68,68,0.18)', fg: '#ef4444', label: 'BEARISH' },
+        bearish:  { bg: 'rgba(239,68,68,0.18)', fg: '#ef4444', label: 'BEARISH' },
+        neutral:  { bg: 'rgba(148,163,184,0.18)', fg: '#94a3b8', label: 'NEUTRAL' },
+    };
+    const cfg = map[s];
+    if (!cfg) return null;
+    return (
+        <span style={{
+            fontSize: 8,
+            fontWeight: 700,
+            padding: '1px 5px',
+            borderRadius: 3,
+            backgroundColor: cfg.bg,
+            color: cfg.fg,
+            letterSpacing: '0.5px',
+            flexShrink: 0,
+        }}>
+            {cfg.label}
+        </span>
+    );
 }
 
 interface FloatSourceData {
@@ -748,6 +779,7 @@ const DailyStockChart = ({
                                                                                     [{news.source}]
                                                                                 </span>
                                                                             )}
+                                                                            <SentimentBadge sentiment={news.sentiment} />
                                                                             <a
                                                                                 href={news.link}
                                                                                 target="_blank"
@@ -1577,7 +1609,9 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 }
 
                 if (newsRes.status === 'fulfilled' && newsRes.value) {
-                    setFinvizNews(newsRes.value as FinvizNewsItem[]);
+                    const payload = newsRes.value as FinvizNewsItem[] | { news?: FinvizNewsItem[] };
+                    const items = Array.isArray(payload) ? payload : (payload.news ?? []);
+                    setFinvizNews(items);
                 } else {
                     setFinvizNews([]);
                 }
@@ -1936,6 +1970,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                     [{latestNews.source}]
                                 </span>
                             )}
+                            <SentimentBadge sentiment={latestNews.sentiment} />
                             <a
                                 href={latestNews.link}
                                 target="_blank"
