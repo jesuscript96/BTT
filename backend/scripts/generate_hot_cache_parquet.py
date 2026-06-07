@@ -81,9 +81,31 @@ print(f"Guardado local: {local_path}")
 
 # Subir a GCS
 from google.cloud import storage
-key_file = os.getenv("GCS_KEY_FILE", "gcs-key.json")
+import tempfile
+
+gcs_key_content = os.getenv("GCS_KEY_CONTENT", "")
+gcs_key_b64 = os.getenv("GCS_KEY_B64", "")
+gcs_key_file = os.getenv("GCS_KEY_FILE", "")
 bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
-client = storage.Client.from_service_account_json(key_file)
+
+if gcs_key_content:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        f.write(gcs_key_content)
+        tmp_key_path = f.name
+    client = storage.Client.from_service_account_json(tmp_key_path)
+    os.unlink(tmp_key_path)
+elif gcs_key_b64:
+    import base64
+    key_data = base64.b64decode(gcs_key_b64).decode()
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        f.write(key_data)
+        tmp_key_path = f.name
+    client = storage.Client.from_service_account_json(tmp_key_path)
+    os.unlink(tmp_key_path)
+elif gcs_key_file and os.path.exists(gcs_key_file):
+    client = storage.Client.from_service_account_json(gcs_key_file)
+else:
+    client = storage.Client()
 bucket = client.bucket(bucket_name)
 blob = bucket.blob("cold_storage/hot_cache/daily_metrics_gaps.parquet")
 blob.upload_from_filename(local_path)
