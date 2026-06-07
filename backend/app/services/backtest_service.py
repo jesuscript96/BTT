@@ -134,8 +134,9 @@ def run_backtest(
 
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
-        if progress_callback is not None and scanned % 10 == 0:
+        if progress_callback is not None:
             progress_callback(scanned, n_groups)
+
         day_df = day_df.sort_values("timestamp").reset_index(drop=True)
         if len(day_df) < 5:
             continue

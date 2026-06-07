@@ -15,6 +15,42 @@ def get_user_db_connection():
 def get_user_db_lock():
     return _user_db_lock
 
+def _init_connection_views(con, provider):
+    try:
+        if provider == "gcs":
+            try: con.execute("ATTACH ':memory:' AS massive;")
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    print(f"[WARN] Warning attaching massive: {e}")
+            
+            con.execute("""
+                CREATE OR REPLACE VIEW massive.daily_metrics AS 
+                SELECT * EXCLUDE (pmh_gap_pct), 
+                       gap_pct AS gap_at_open_pct,
+                       ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct 
+                FROM read_parquet('gs://strategybuilderbbdd/cold_storage/daily_metrics/*/*/*.parquet', hive_partitioning=true)
+            """)
+            con.execute("CREATE OR REPLACE VIEW massive.intraday_1m AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/intraday_1m/*/*/*.parquet', hive_partitioning=true)")
+            con.execute("CREATE OR REPLACE VIEW massive.tickers AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/tickers/*.parquet')")
+            con.execute("CREATE OR REPLACE VIEW massive.splits AS SELECT * FROM read_parquet('gs://strategybuilderbbdd/cold_storage/splits/*.parquet')")
+            
+            con.execute("CREATE OR REPLACE VIEW daily_metrics AS SELECT * FROM massive.daily_metrics")
+            con.execute("CREATE OR REPLACE VIEW intraday_1m AS SELECT * FROM massive.intraday_1m")
+            con.execute("CREATE OR REPLACE VIEW tickers AS SELECT * FROM massive.tickers")
+            con.execute("CREATE OR REPLACE VIEW splits AS SELECT * FROM massive.splits")
+        elif provider == "local":
+            try: con.execute("ATTACH ':memory:' AS massive;")
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    print(f"[WARN] Warning attaching massive: {e}")
+            
+            con.execute("CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM main.tickers")
+            con.execute("CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM main.splits")
+            con.execute("CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM main.daily_metrics")
+            con.execute("CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM main.intraday_1m")
+    except Exception as e:
+        print(f"[WARN] Failed to setup massive views on connection: {e}")
+
 def _establish_connection():
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
     try:
@@ -33,10 +69,12 @@ def _establish_connection():
                 print("[INFO] GCS HMAC Secret configured for DuckDB reads.")
             else:
                 print("[WARN] GCS HMAC credentials not found.")
+            _init_connection_views(con, "gcs")
             return con
         elif provider == "local":
             con = duckdb.connect('local_data.duckdb')
             con.execute("SET enable_progress_bar = false;")
+            _init_connection_views(con, "local")
             return con
         else:
             token = os.getenv("MOTHERDUCK_TOKEN", "").strip()

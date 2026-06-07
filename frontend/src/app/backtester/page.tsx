@@ -69,6 +69,7 @@ export default function Home() {
   const datasetIdRef = useRef("");
   const strategyIdRef = useRef("");
   const backtestParamsRef = useRef<Record<string, unknown>>({});
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const panelParamsRef = useRef<BacktestPanelParams | null>(null);
   const handlePanelParamsChange = useCallback((params: BacktestPanelParams) => {
     panelParamsRef.current = params;
@@ -97,7 +98,8 @@ export default function Home() {
 
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
-    const pollTimer = setInterval(async () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
       try {
         const { fetchBacktestProgress } = await import("@/lib/api_backtester");
         const prog = await fetchBacktestProgress(p.dataset_id);
@@ -172,10 +174,15 @@ export default function Home() {
           msg = errMsg;
         }
       }
-      setError(msg);
+      if (msg !== "Backtest cancelado") {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
-      clearInterval(pollTimer);
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       setBacktestProgress(null);
     }
   };
@@ -196,7 +203,8 @@ export default function Home() {
   }) => {
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
-    const pollTimer = setInterval(async () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
       try {
         const { fetchBacktestProgress } = await import("@/lib/api_backtester");
         const prog = await fetchBacktestProgress(params.dataset_id);
@@ -245,10 +253,15 @@ export default function Home() {
           msg = errMsg;
         }
       }
-      setError(msg);
+      if (msg !== "Backtest cancelado") {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
-      clearInterval(pollTimer);
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       setBacktestProgress(null);
     }
   };
@@ -568,6 +581,50 @@ export default function Home() {
                     </p>
                   )}
                 </div>
+                <button
+                  onClick={async () => {
+                    const dsId = datasetIdRef.current;
+                    if (!dsId) return;
+                    setLoading(false);
+                    setBacktestProgress(null);
+                    setError("Backtest cancelado por el usuario.");
+                    if (pollTimerRef.current) {
+                      clearInterval(pollTimerRef.current);
+                      pollTimerRef.current = null;
+                    }
+                    try {
+                      const { cancelBacktest } = await import("@/lib/api_backtester");
+                      await cancelBacktest(dsId);
+                    } catch (e) {
+                      console.warn("Error requesting backtest cancel:", e);
+                    }
+                  }}
+                  style={{
+                    marginTop: 16,
+                    padding: '8px 16px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px',
+                    color: 'var(--color-ec-text-muted)',
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+                    e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                    e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                  }}
+                >
+                  Cancelar carga
+                </button>
               </div>
             </div>
           )}

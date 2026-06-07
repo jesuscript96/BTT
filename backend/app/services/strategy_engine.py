@@ -420,28 +420,29 @@ def _parse_risk_management(
             trail_pct = trailing["buffer_pct"] / 100.0
 
     # --- Take Profit ---
-    tp_mode = risk.get("take_profit_mode", "Full")
+    if risk.get("use_take_profit") is not False:
+        tp_mode = risk.get("take_profit_mode", "Full")
 
-    if tp_mode == "Partial" and risk.get("partial_take_profits"):
-        # Partial Take-Profits: array of {distance_pct, capital_pct}
-        raw_pts = risk["partial_take_profits"]
-        partial_tps = []
-        for pt in raw_pts:
-            dist = pt.get("distance_pct", 0)
-            cap = pt.get("capital_pct", 0)
-            if dist > 0 and cap > 0:
-                partial_tps.append({
-                    "distance_pct": dist / 100.0,  # Convert to fraction
-                    "capital_pct": cap / 100.0,
-                })
-        # Sort by distance ascending so nearest TP triggers first
-        partial_tps.sort(key=lambda x: x["distance_pct"])
-        if not partial_tps:
-            partial_tps = None
-        # tp_stop stays None — partial mode doesn't use a single TP
-    elif risk.get("use_take_profit") and risk.get("take_profit"):
-        tp = risk["take_profit"]
-        if tp.get("type") == "Percentage":
-            tp_stop = tp.get("value", 0) / 100.0
+        if tp_mode == "Partial" and risk.get("partial_take_profits"):
+            # Partial Take-Profits: array of {distance_pct, capital_pct}
+            raw_pts = risk["partial_take_profits"]
+            partial_tps = []
+            for pt in raw_pts:
+                dist = pt.get("distance_pct", 0)
+                cap = pt.get("capital_pct", 0)
+                if dist > 0 and cap > 0:
+                    partial_tps.append({
+                        "distance_pct": dist / 100.0,  # Convert to fraction
+                        "capital_pct": cap / 100.0,
+                    })
+            # Sort by distance ascending so nearest TP triggers first
+            partial_tps.sort(key=lambda x: x["distance_pct"])
+            if not partial_tps:
+                partial_tps = None
+            # tp_stop stays None — partial mode doesn't use a single TP
+        elif risk.get("take_profit"):
+            tp = risk["take_profit"]
+            if tp.get("type") == "Percentage":
+                tp_stop = tp.get("value", 0) / 100.0
 
     return sl_stop, sl_trail, tp_stop, trail_pct, partial_tps

@@ -23,15 +23,20 @@ console.log("[API] Base URL configured as:", apiBaseUrl());
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error(
-      `[API ERROR DIAGNOSTIC]\n` +
-      `URL: ${error.config?.baseURL || ""}${error.config?.url || ""}\n` +
-      `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
-      `Status: ${error.response?.status || "N/A"}\n` +
-      `Message: ${error.message || "N/A"}\n` +
-      `Response Data:`,
-      error.response?.data || "No data"
-    );
+    const isCancelled = error.response?.status === 400 && 
+                        (error.response?.data?.detail === "Backtest cancelado" || 
+                         error.response?.data?.message === "Backtest cancelado");
+    if (!isCancelled) {
+      console.error(
+        `[API ERROR DIAGNOSTIC]\n` +
+        `URL: ${error.config?.baseURL || ""}${error.config?.url || ""}\n` +
+        `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
+        `Status: ${error.response?.status || "N/A"}\n` +
+        `Message: ${error.message || "N/A"}\n` +
+        `Response Data:`,
+        error.response?.data || "No data"
+      );
+    }
     return Promise.reject(error);
   }
 );
@@ -394,4 +399,10 @@ export async function runWhatIf(params: {
   const { data } = await api.post("/what-if", params);
   return data;
 }
+
+export async function cancelBacktest(datasetId: string): Promise<{ status: string }> {
+  const { data } = await api.post(`/backtest/cancel/${encodeURIComponent(datasetId)}`);
+  return data;
+}
+
 

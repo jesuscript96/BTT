@@ -131,6 +131,10 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   });
 
   const handleTest = () => {
+    if (isRiskInvalid) {
+      alert("La suma del capital de los parciales de Take Profit debe ser exactamente 100%.");
+      return;
+    }
     const logicErrors = validateStrategyLogic(entryLogic, exitLogic);
     if (logicErrors.length > 0) {
       alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
@@ -161,6 +165,10 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
     setDrafts(updated);
   };
+
+  const isPartialTPMode = riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === "Partial";
+  const totalPartialCapital = (riskManagement.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
+  const isRiskInvalid = isPartialTPMode && Math.abs(totalPartialCapital - 100) > 0.01;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -816,6 +824,7 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
       >
         <button
           onClick={handleTest}
+          disabled={isRiskInvalid}
           style={{
             width: "100%",
             padding: "8px 0",
@@ -824,11 +833,13 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
             fontWeight: 700,
             letterSpacing: 1.2,
             textTransform: "uppercase",
-            cursor: "pointer",
+            cursor: isRiskInvalid ? "not-allowed" : "pointer",
             border: "none",
             backgroundColor: "var(--color-ec-copper)",
             color: "var(--color-ec-copper-text)",
             fontFamily: "var(--color-ec-sans)",
+            opacity: isRiskInvalid ? 0.35 : 1,
+            transition: "all 150ms ease",
           }}
         >
           ▶ Probar

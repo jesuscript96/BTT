@@ -311,6 +311,10 @@ export default function BacktestPanel({
 
   const handleRun = () => {
     if (!selectedDataset || !selectedStrategy) return;
+    if (isSelectedStratRiskInvalid) {
+      alert("La suma del capital de los parciales de Take Profit debe ser exactamente 100%.");
+      return;
+    }
     if (precacheStatus?.status === "running") {
       alert(`Espera a que se cargue el dataset (progreso: ${precacheStatus.percent}%)`);
       return;
@@ -347,6 +351,12 @@ export default function BacktestPanel({
 
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
+
+  const stratDef = selectedStrat?.definition as any;
+  const riskMgmt = stratDef?.risk_management;
+  const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
+  const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
+  const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
 
   return (
     <div style={{
@@ -645,6 +655,23 @@ export default function BacktestPanel({
                         }}>{exitText}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {isSelectedStratRiskInvalid && (
+                  <div style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                    border: '0.5px solid var(--color-ec-loss)',
+                    borderRadius: 4,
+                    padding: '6px 10px',
+                    color: 'var(--color-ec-loss)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: '1.4',
+                    marginTop: 6,
+                  }}>
+                    ⚠️ Los parciales de Take Profit suman {selectedStratPartialCapital}%. Debe ser exactamente 100%. Edita la estrategia para corregirlo.
                   </div>
                 )}
               </div>
@@ -1241,7 +1268,7 @@ export default function BacktestPanel({
 
       <button
         onClick={handleRun}
-        disabled={loading || !selectedDataset || !selectedStrategy}
+        disabled={loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid}
         onMouseEnter={() => setHoveredBtn("run")}
         onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
         onMouseDown={() => setActiveBtn("run")}
@@ -1257,12 +1284,12 @@ export default function BacktestPanel({
             fontWeight: 700,
             letterSpacing: '1.2px',
             textTransform: 'uppercase',
-            cursor: loading || !selectedDataset || !selectedStrategy ? 'not-allowed' : 'pointer',
+            cursor: loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid ? 'not-allowed' : 'pointer',
             width: '100%',
             marginTop: 8,
-            opacity: loading || !selectedDataset || !selectedStrategy ? 0.5 : 1,
-            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
-            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(1.015)' : 'scale(1)',
+            opacity: loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid ? 0.35 : 1,
+            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? 'scale(1.015)' : 'scale(1)',
             transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
       >

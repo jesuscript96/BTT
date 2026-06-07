@@ -486,6 +486,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         gap: 6,
+                                        margin: '20px 0 16px 0',
                                     }}
                                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-profit)'; e.currentTarget.style.color = 'var(--color-ec-profit)'; }}
                                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-border)'; e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}

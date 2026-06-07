@@ -25,6 +25,18 @@ def get_backtest_progress(dataset_id: str):
     return backtest_progress[dataset_id]
 
 
+@router.post("/backtest/cancel/{dataset_id}")
+def cancel_backtest(dataset_id: str):
+    backtest_progress[dataset_id] = {
+        "status": "cancelled",
+        "percent": 0.0,
+        "current": 0,
+        "total": 0
+    }
+    return {"status": "success", "message": "Backtest cancellation requested"}
+
+
+
 class MonteCarloRequest(BaseModel):
     pnls: list[float]
     init_cash: float = 10000.0
@@ -40,6 +52,10 @@ class WhatIfRequest(BaseModel):
 
 @router.post("/backtest")
 def run_backtest_endpoint(req: BacktestRequest):
+    # Clear cancelled state if this is a fresh run
+    if req.dataset_id in backtest_progress and backtest_progress[req.dataset_id].get("status") == "cancelled":
+        backtest_progress.pop(req.dataset_id, None)
+
     # Check if dataset precache is running (state lives in users.duckdb so it
     # survives backend restarts and is shared across workers).
     from app.routers.query import get_precache_state

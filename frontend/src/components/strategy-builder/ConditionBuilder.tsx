@@ -1328,9 +1328,12 @@ export const GroupDisplay = ({
                                 <IndicatorSelector
                                     value={formCondition.source.name}
                                     exclude={formCondition.type === 'price_level_distance' ? [
-                                        IndicatorType.TRIANGLE_ASCENDING,
-                                        IndicatorType.TRIANGLE_DESCENDING,
-                                        IndicatorType.TRIANGLE_SYMMETRIC,
+                                        IndicatorType.ELAPSED_TIME_LAST_HIGH,
+                                        ...INDICATOR_CATEGORIES["Behaviour & Patterns"],
+                                        IndicatorType.VOLUME,
+                                        IndicatorType.RVOL,
+                                        IndicatorType.ACCUMULATED_VOLUME,
+                                        IndicatorType.ATR,
                                         ...Object.values(IndicatorType).filter(isOnlyTarget)
                                     ] : Object.values(IndicatorType).filter(isOnlyTarget)}
                                     onChange={(nameStr) => {

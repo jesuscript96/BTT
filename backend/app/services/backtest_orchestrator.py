@@ -189,6 +189,15 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
 
         # Initialize progress tracking
         from app.routers.backtest import backtest_progress
+        if backtest_progress.get(req.dataset_id, {}).get("status") == "cancelled":
+            backtest_progress[req.dataset_id] = {
+                "status": "cancelled",
+                "current": 0,
+                "total": 0,
+                "percent": 0.0
+            }
+            raise HTTPException(status_code=400, detail="Backtest cancelado")
+
         backtest_progress[req.dataset_id] = {
             "status": "running",
             "current": 0,
@@ -197,13 +206,19 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         }
 
         def update_prog(current, total):
-            pct = min(100.0, round((current / total) * 100.0, 1)) if total > 0 else 100.0
-            backtest_progress[req.dataset_id] = {
-                "status": "running",
-                "current": current,
-                "total": total,
-                "percent": pct
-            }
+            from app.routers.backtest import backtest_progress
+            state = backtest_progress.get(req.dataset_id)
+            if state and state.get("status") == "cancelled":
+                raise RuntimeError("BACKTEST_CANCELLED")
+            
+            if current % 10 == 0 or current == total:
+                pct = min(100.0, round((current / total) * 100.0, 1)) if total > 0 else 100.0
+                backtest_progress[req.dataset_id] = {
+                    "status": "running",
+                    "current": current,
+                    "total": total,
+                    "percent": pct
+                }
 
         results = run_backtest(
             qualifying_df=qualifying,
@@ -245,6 +260,16 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
     except HTTPException:
         raise
     except Exception as e:
+        if isinstance(e, RuntimeError) and str(e) == "BACKTEST_CANCELLED":
+            from app.routers.backtest import backtest_progress
+            backtest_progress[req.dataset_id] = {
+                "status": "cancelled",
+                "current": 0,
+                "total": 0,
+                "percent": 0.0
+            }
+            logger.info(f"BACKTEST CANCELLED dataset={req.dataset_id}")
+            raise HTTPException(status_code=400, detail="Backtest cancelado")
         logger.error(f"  backtest FAILED after {round(time.time()-t0, 2)}s: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error en backtest: {str(e)}")
 

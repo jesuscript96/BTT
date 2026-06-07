@@ -270,19 +270,24 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
       const candleTimeSet = new Set(candleTimes);
 
       const markers: SeriesMarker<Time>[] = [];
+      const entryTimeSet = new Set<string>();
       for (const t of trades) {
         const entrySnap = timeframe === "1m" ? t.entry_time_epoch : snapToCandle(t.entry_time_epoch, candleTimes);
         const exitSnap = timeframe === "1m" ? t.exit_time_epoch : snapToCandle(t.exit_time_epoch, candleTimes);
 
         if (entrySnap && candleTimeSet.has(entrySnap)) {
-          const isLong = t.direction.toLowerCase().includes("long");
-          markers.push({
-            time: entrySnap as unknown as Time,
-            position: isLong ? "belowBar" : "aboveBar",
-            color: isLong ? "#10b981" : "#ef4444",
-            shape: isLong ? "arrowUp" : "arrowDown",
-            text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
-          });
+          const entryKey = `${entrySnap}`;
+          if (!entryTimeSet.has(entryKey)) {
+            entryTimeSet.add(entryKey);
+            const isLong = t.direction.toLowerCase().includes("long");
+            markers.push({
+              time: entrySnap as unknown as Time,
+              position: isLong ? "belowBar" : "aboveBar",
+              color: isLong ? "#10b981" : "#ef4444",
+              shape: isLong ? "arrowUp" : "arrowDown",
+              text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
+            });
+          }
         }
         if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed") {
           markers.push({
