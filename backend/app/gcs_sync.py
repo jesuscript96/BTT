@@ -5,6 +5,42 @@ from google.oauth2 import service_account
 from typing import Optional
 
 
+_client_cache = None
+
+
+def _get_cached_client():
+    global _client_cache
+    if _client_cache is not None:
+        return _client_cache
+
+    import os, tempfile, base64
+    from google.cloud import storage
+
+    gcs_key_content = os.getenv("GCS_KEY_CONTENT", "")
+    gcs_key_b64 = os.getenv("GCS_KEY_B64", "")
+    gcs_key_file = os.getenv("GCS_KEY_FILE", "")
+
+    if gcs_key_content:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write(gcs_key_content)
+            tmp_path = f.name
+        _client_cache = storage.Client.from_service_account_json(tmp_path)
+        os.unlink(tmp_path)
+    elif gcs_key_b64:
+        key_data = base64.b64decode(gcs_key_b64).decode()
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write(key_data)
+            tmp_path = f.name
+        _client_cache = storage.Client.from_service_account_json(tmp_path)
+        os.unlink(tmp_path)
+    elif gcs_key_file and os.path.exists(gcs_key_file):
+        _client_cache = storage.Client.from_service_account_json(gcs_key_file)
+    else:
+        _client_cache = storage.Client()
+
+    return _client_cache
+
+
 def _get_key_file() -> str | None:
     """Return a valid path to the GCS service account key file.
 
@@ -114,16 +150,12 @@ def upload_user_db() -> bool:
         print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False
 
-    key_file = _get_key_file()
-    if not key_file:
-        return False
-
     bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
     object_name = "users.duckdb"
 
     for attempt in range(3):
         try:
-            client = storage.Client.from_service_account_json(key_file)
+            client = _get_cached_client()
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(object_name)
             blob.upload_from_filename(local_file, timeout=5)
