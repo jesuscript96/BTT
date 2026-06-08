@@ -107,8 +107,8 @@ export default function IndicatorDropdown({
               : "border-[var(--color-ec-border)] bg-[var(--color-ec-bg-surface)] text-[var(--color-ec-text-secondary)] hover:bg-[var(--color-ec-bg-elevated)] hover:text-[var(--color-ec-text-primary)] hover:border-gray-500"
             }`}
           style={{
-            paddingLeft: '32px',
-            paddingRight: '32px',
+            paddingLeft: '14px',
+            paddingRight: '14px',
             height: '34px',
           }}
         >
