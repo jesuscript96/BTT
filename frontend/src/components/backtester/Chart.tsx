@@ -422,37 +422,37 @@ export default function Chart({
 
         switch (ai.indicatorId) {
           case "SMA": {
-            const d = calculateSMA(dayCandlesList, ai.params.period ?? 20);
+            const d = calculateSMA(deduped, ai.params.period ?? 20);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
             break;
           }
           case "EMA": {
-            const d = calculateEMA(dayCandlesList, ai.params.period ?? 20);
+            const d = calculateEMA(deduped, ai.params.period ?? 20);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
             break;
           }
           case "WMA": {
-            const d = calculateWMA(dayCandlesList, ai.params.period ?? 20);
+            const d = calculateWMA(deduped, ai.params.period ?? 20);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
             break;
           }
           case "VWAP": {
-            const d = calculateVWAP(dayCandlesList);
+            const d = calculateVWAP(deduped);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color: "#d4a017", lineWidth: 2 }); s.setData(d); }
             break;
           }
           case "LINEAR_REGRESSION": {
-            const d = calculateLinearRegression(dayCandlesList, ai.params.period ?? 14);
+            const d = calculateLinearRegression(deduped, ai.params.period ?? 14);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
             break;
           }
           case "ZIGZAG": {
-            const d = calculateZigZag(dayCandlesList, ai.params.reversal ?? 5);
+            const d = calculateZigZag(deduped, ai.params.reversal ?? 5);
             if (d.length > 1) { const s = chart.addSeries(LineSeries, { color: "#e11d48", lineWidth: 2 }); s.setData(d); }
             break;
           }
           case "ICHIMOKU": {
-            const d = calculateIchimoku(dayCandlesList, ai.params.tenkan ?? 9, ai.params.kijun ?? 26, ai.params.senkou_b ?? 52);
+            const d = calculateIchimoku(deduped, ai.params.tenkan ?? 9, ai.params.kijun ?? 26, ai.params.senkou_b ?? 52);
             if (d.length > 0) {
               const cloudSeries = chart.addSeries(CandlestickSeries, {
                 upColor: "rgba(16, 185, 129, 0.15)",
@@ -485,7 +485,7 @@ export default function Chart({
             break;
           }
           case "PARABOLIC_SAR": {
-            const d = calculateParabolicSAR(dayCandlesList, ai.params.minAF ?? 0.02, ai.params.maxAF ?? 0.2);
+            const d = calculateParabolicSAR(deduped, ai.params.minAF ?? 0.02, ai.params.maxAF ?? 0.2);
             if (d.length > 0) {
               const s = chart.addSeries(LineSeries, {
                 color: "transparent", lineWidth: 1,
@@ -497,7 +497,7 @@ export default function Chart({
             break;
           }
           case "DONCHIAN": {
-            const d = calculateDonchian(dayCandlesList, ai.params.period ?? 20);
+            const d = calculateDonchian(deduped, ai.params.period ?? 20);
             if (d.length > 0) {
               const sU = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1 });
               sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
@@ -509,7 +509,7 @@ export default function Chart({
             break;
           }
           case "BOLLINGER": {
-            const d = calculateBollingerBands(dayCandlesList, ai.params.period ?? 20, ai.params.stdDev ?? 2);
+            const d = calculateBollingerBands(deduped, ai.params.period ?? 20, ai.params.stdDev ?? 2);
             if (d.length > 0) {
               const sU = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1 });
               sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
@@ -521,7 +521,7 @@ export default function Chart({
             break;
           }
           case "OPENING_RANGE": {
-            const d = calculateOpeningRange(dayCandlesList, ai.params.minutes ?? 5);
+            const d = calculateOpeningRange(deduped, ai.params.minutes ?? 5);
             if (d.length > 0) {
               const sU = chart.addSeries(LineSeries, { color: "#d946ef", lineWidth: 1 });
               sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
@@ -598,7 +598,7 @@ export default function Chart({
 
             switch (inst.indicatorId) {
               case "RSI": {
-                const d = calculateRSI(dayCandlesList, inst.params.period ?? 14);
+                const d = calculateRSI(deduped, inst.params.period ?? 14);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -610,7 +610,7 @@ export default function Chart({
                 break;
               }
               case "STOCHASTIC": {
-                const d = calculateStochastic(dayCandlesList, inst.params.kPeriod ?? 14, inst.params.dPeriod ?? 3, inst.params.dSlow ?? 3);
+                const d = calculateStochastic(deduped, inst.params.kPeriod ?? 14, inst.params.dPeriod ?? 3, inst.params.dSlow ?? 3);
                 if (d.length > 0) {
                   const sK = subChart.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 2 });
                   sK.setData(d.map(p => ({ time: p.time, value: p.k })));
@@ -624,7 +624,7 @@ export default function Chart({
                 break;
               }
               case "MOMENTUM": {
-                const d = calculateMomentum(dayCandlesList, inst.params.period ?? 10);
+                const d = calculateMomentum(deduped, inst.params.period ?? 10);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -633,7 +633,7 @@ export default function Chart({
                 break;
               }
               case "CCI": {
-                const d = calculateCCI(dayCandlesList, inst.params.period ?? 20);
+                const d = calculateCCI(deduped, inst.params.period ?? 20);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -643,7 +643,7 @@ export default function Chart({
                 break;
               }
               case "ROC": {
-                const d = calculateROC(dayCandlesList, inst.params.period ?? 12);
+                const d = calculateROC(deduped, inst.params.period ?? 12);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -652,7 +652,7 @@ export default function Chart({
                 break;
               }
               case "MACD": {
-                const d = calculateMACD(dayCandlesList, inst.params.fast ?? 12, inst.params.slow ?? 26, inst.params.signal ?? 9);
+                const d = calculateMACD(deduped, inst.params.fast ?? 12, inst.params.slow ?? 26, inst.params.signal ?? 9);
                 if (d.length > 0) {
                   const sM = subChart.addSeries(LineSeries, { color: "#2563eb", lineWidth: 2 });
                   sM.setData(d.map(p => ({ time: p.time, value: p.macd })));
@@ -667,7 +667,7 @@ export default function Chart({
                 break;
               }
               case "DMI": {
-                const d = calculateDMI(dayCandlesList, inst.params.diPeriod ?? 14, inst.params.adxPeriod ?? 14);
+                const d = calculateDMI(deduped, inst.params.diPeriod ?? 14, inst.params.adxPeriod ?? 14);
                 if (d.length > 0) {
                   const sP = subChart.addSeries(LineSeries, { color: "#16a34a", lineWidth: 2 });
                   sP.setData(d.map(p => ({ time: p.time, value: p.plusDI })));
@@ -679,7 +679,7 @@ export default function Chart({
                 break;
               }
               case "WILLIAMS_R": {
-                const d = calculateWilliamsR(dayCandlesList, inst.params.period ?? 14);
+                const d = calculateWilliamsR(deduped, inst.params.period ?? 14);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -689,7 +689,7 @@ export default function Chart({
                 break;
               }
               case "ADX": {
-                const d = calculateADX(dayCandlesList, inst.params.period ?? 14);
+                const d = calculateADX(deduped, inst.params.period ?? 14);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -698,7 +698,7 @@ export default function Chart({
                 break;
               }
               case "ATR": {
-                const d = calculateATR(dayCandlesList, inst.params.period ?? 14);
+                const d = calculateATR(deduped, inst.params.period ?? 14);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
                   s.setData(d);
@@ -706,7 +706,7 @@ export default function Chart({
                 break;
               }
               case "OBV": {
-                const d = calculateOBV(dayCandlesList);
+                const d = calculateOBV(deduped);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 2 });
                   s.setData(d);
@@ -714,7 +714,7 @@ export default function Chart({
                 break;
               }
               case "VOL_AD": {
-                const d = calculateAccDist(dayCandlesList);
+                const d = calculateAccDist(deduped);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: "#84cc16", lineWidth: 2 });
                   s.setData(d);
@@ -722,7 +722,7 @@ export default function Chart({
                 break;
               }
               case "VOLUME": {
-                const d = calculateVolume(dayCandlesList);
+                const d = calculateVolume(deduped);
                 if (d.length > 0) {
                   const s = subChart.addSeries(HistogramSeries, { priceFormat: { type: "volume" } });
                   s.setData(d);
@@ -730,7 +730,7 @@ export default function Chart({
                 break;
               }
               case "RVOL": {
-                const d = calculateRVOL(dayCandlesList, inst.params.period ?? 14);
+                const d = calculateRVOL(deduped, inst.params.period ?? 14);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2 });
                   s.setData(d);
@@ -739,7 +739,7 @@ export default function Chart({
                 break;
               }
               case "ACCUMULATED_VOLUME": {
-                const d = calculateAccumulatedVolume(dayCandlesList);
+                const d = calculateAccumulatedVolume(deduped);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: "#10b981", lineWidth: 2 });
                   s.setData(d);
@@ -747,7 +747,7 @@ export default function Chart({
                 break;
               }
               case "HEIKIN_ASHI": {
-                const d = calculateHeikinAshi(dayCandlesList);
+                const d = calculateHeikinAshi(deduped);
                 if (d.length > 0) {
                   const s = subChart.addSeries(CandlestickSeries, {
                     upColor: "#10b981", downColor: "#ef4444",
