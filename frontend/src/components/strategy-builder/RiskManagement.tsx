@@ -401,16 +401,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     {risk.partial_take_profits.map((partial, idx) => (
                                         <div key={idx} className="group relative"
                                             style={{
-                                                backgroundColor: 'var(--color-ec-bg-elevated)',
-                                                border: '0.5px solid var(--color-ec-border)',
-                                                borderRadius: 5,
-                                                padding: '8px 12px',
+                                                backgroundColor: 'transparent',
+                                                borderBottom: '0.5px dotted var(--color-ec-border)',
+                                                padding: '8px 0',
                                                 display: 'flex',
                                                 alignItems: 'center',
                                                 gap: 12,
                                             }}
-                                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-profit)')}
-                                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-border)')}
                                         >
                                             {/* Partial Tag */}
                                             <span style={{
@@ -609,32 +606,10 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                 {/* Body */}
                 {risk.trailing_stop.active && (
-                    <div className="flex gap-4 items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tipo:</span>
-                            <select
-                                value={risk.trailing_stop.type}
-                                onChange={(e) => setTrailingField('type', e.target.value)}
-                                style={{
-                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                    border: '0.5px solid var(--color-ec-border)',
-                                    borderRadius: 5,
-                                    padding: '7px 10px',
-                                    fontSize: 12,
-                                    fontWeight: 500,
-                                    color: 'var(--color-ec-text-primary)',
-                                    fontFamily: 'var(--color-ec-sans)',
-                                    outline: 'none',
-                                    cursor: 'pointer',
-                                    height: '36px',
-                                }}
-                            >
-                                <option value="Percentage">Percentage</option>
-                            </select>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia:</span>
-                            <div className="relative" style={{ width: '100px' }}>
+                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
+                            <div className="relative" style={{ width: '120px' }}>
                                 <input
                                     type="number"
                                     step="0.1"
@@ -644,7 +619,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 5,
-                                        padding: '7px 20px 7px 10px',
+                                        padding: '7px 24px 7px 10px',
                                         fontSize: 13,
                                         fontWeight: 600,
                                         color: 'var(--color-ec-text-primary)',
