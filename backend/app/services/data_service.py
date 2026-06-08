@@ -719,6 +719,8 @@ def fetch_dataset_data(
     dataset_id: str,
     req_start_date: str | None = None,
     req_end_date: str | None = None,
+    preconditions: list = None,
+    apply_day: str = 'gap_day',
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Legacy monolithic fetch. Used by optimization_service.
@@ -727,7 +729,13 @@ def fetch_dataset_data(
     """
     t0 = time.time()
 
-    qualifying = fetch_qualifying_data(dataset_id, req_start_date, req_end_date)
+    qualifying = fetch_qualifying_data(
+        dataset_id,
+        req_start_date,
+        req_end_date,
+        preconditions=preconditions,
+        apply_day=apply_day
+    )
     if qualifying.empty:
         return qualifying, pd.DataFrame()
 

@@ -347,14 +347,16 @@ export interface OptimizationResult {
 }
 
 export async function fetchOptimizationParams(
-  strategy_id: string
+  strategy_id: string,
+  strategy_definition?: Record<string, unknown>
 ): Promise<{ parameters: OptimizationParam[]; strategy_name: string }> {
-  const { data } = await api.post("/optimization/parameters", { strategy_id });
+  const { data } = await api.post("/optimization/parameters", { strategy_id, strategy_definition });
   return data;
 }
 
 export async function runOptimizationSurface(params: {
   strategy_id: string;
+  strategy_definition?: Record<string, unknown>;
   dataset_id: string;
   metric: string;
   param_configs: OptimizationParamConfig[];

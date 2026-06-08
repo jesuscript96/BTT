@@ -27,6 +27,7 @@ interface ResultsTabsProps {
   dayCandles: DayCandles | null;
   multiDayCandles?: MultiDayCandles | null;
   activeStrategy?: Strategy | null;
+  strategyDefinition?: Record<string, unknown>;
   candlesLoading: boolean;
   currentTrades: TradeRecord[];
   currentEquity: EquityPoint[];
@@ -44,6 +45,7 @@ export default function ResultsTabs({
   dayCandles,
   multiDayCandles = null,
   activeStrategy = null,
+  strategyDefinition,
   candlesLoading,
   currentTrades,
   currentEquity,
@@ -250,6 +252,7 @@ export default function ResultsTabs({
         <div style={{ display: activeTab === "optimization" ? "block" : "none" }}>
           <OptimizationSurfaceTab
             strategyId={strategyId}
+            strategyDefinition={strategyDefinition}
             datasetId={datasetId}
             isDarkMode={isDarkMode}
             backtestParams={backtestParams}

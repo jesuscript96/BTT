@@ -800,6 +800,7 @@ export default function Home() {
                 dayCandles={dayCandles}
                 multiDayCandles={multiDayCandles}
                 activeStrategy={activeStrategy}
+                strategyDefinition={activeStrategy?.definition}
                 candlesLoading={candlesLoading}
                 currentTrades={currentTrades || []}
                 currentEquity={currentEquity?.equity || []}

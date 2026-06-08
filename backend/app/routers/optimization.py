@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api", tags=["optimization"])
 
 class ParametersRequest(BaseModel):
     strategy_id: str | None = None
+    strategy_definition: dict | None = None
 
 
 class ParamConfig(BaseModel):
@@ -36,6 +37,7 @@ class ParamConfig(BaseModel):
 
 class SurfaceRequest(BaseModel):
     strategy_id: str
+    strategy_definition: dict | None = None
     dataset_id: str
     metric: str = "sharpe"
     param_configs: list[ParamConfig]
@@ -62,6 +64,14 @@ def get_optimization_parameters(req: ParametersRequest):
     logger.info(f"Extracting parameters for strategy {req.strategy_id}")
     # Mock and draft strategies have no optimizable parameters
     if req.strategy_id in ("mock_strat_1", "draft") or req.strategy_id is None:
+        if req.strategy_id == "draft" and req.strategy_definition:
+            try:
+                params = extract_parameters(req.strategy_definition)
+                logger.info(f"Found {len(params)} parameters for draft strategy")
+                return {"parameters": params, "strategy_name": "Draft Strategy"}
+            except Exception as e:
+                logger.error(f"Error extracting parameters for draft: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
         return {"parameters": [], "strategy_name": "Draft Strategy"}
     strategy = get_strategy(req.strategy_id)
     if not strategy:
@@ -110,6 +120,7 @@ def _run_optimization_in_background(req_data: dict, task_id: str):
             metric=req_data["metric"],
             backtest_params=req_data["backtest_params"],
             task_id=task_id,
+            strategy_definition=req_data.get("strategy_definition"),
         )
         OPTIMIZATION_RESULTS[task_id] = result
         OPTIMIZATION_PROGRESS[task_id] = 100.0
@@ -123,15 +134,14 @@ def _run_optimization_in_background(req_data: dict, task_id: str):
 @router.post("/optimization/surface")
 def run_surface(req: SurfaceRequest):
     # Check if dataset precache is running
-    from app.routers.query import precache_status
-    if req.dataset_id in precache_status:
-        status_info = precache_status[req.dataset_id]
-        if status_info.get("status") == "running":
-            percent = status_info.get("percent", 0.0)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Espera a que se cargue el dataset (progreso: {percent}%)"
-            )
+    from app.routers.query import get_precache_state
+    status_info = get_precache_state(req.dataset_id)
+    if status_info and status_info.get("status") == "running":
+        percent = status_info.get("percent", 0.0)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Espera a que se cargue el dataset (progreso: {percent}%)"
+        )
     task_id = req.task_id or f"opt_{id(req)}"
 
     # Initialize progress tracking
@@ -139,6 +149,7 @@ def run_surface(req: SurfaceRequest):
 
     req_data = {
         "strategy_id": req.strategy_id,
+        "strategy_definition": req.strategy_definition,
         "dataset_id": req.dataset_id,
         "param_configs": [pc.model_dump() for pc in req.param_configs],
         "metric": req.metric,
