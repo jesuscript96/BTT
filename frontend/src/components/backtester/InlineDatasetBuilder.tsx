@@ -17,6 +17,7 @@ interface ParameterConfig {
 
 const SECTION_PARAMS: ParameterConfig[] = [
   { key: "rth_close", label: "Min Open price", unit: "$", placeholder: "0.00" },
+  { key: "pm_open", label: "Min Open PM price", unit: "$", placeholder: "0.00" },
   { key: "pmh_gap_pct_min", label: "PM High Gap min", unit: "%", placeholder: "10.0", min: 10 },
   { key: "pmh_gap_pct_max", label: "PM High Gap max", unit: "%", placeholder: "0.0" },
   { key: "pm_volume", label: "Min Premarket total volume", unit: "M", placeholder: "0.0" },
@@ -28,6 +29,7 @@ const SECTION_PARAMS: ParameterConfig[] = [
 
 const PARAM_DESCRIPTIONS: Record<string, string> = {
   rth_close: "Precio mínimo de la acción en la apertura de mercado",
+  pm_open: "Precio de apertura del Premarket",
   pmh_gap_pct_min: "Precio mínimo de la sesión de premarket",
   pmh_gap_pct_max: "Precio máximo de la sesión de premarket",
   pm_volume: "Volumen mínimo acumulado durante el premarket",
@@ -166,6 +168,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
       // Map to exact DuckDB/Parquet columns
       if (c.section === "gap_day") {
         if (c.paramKey === "rth_close") fieldName = "Close Price";
+        else if (c.paramKey === "pm_open") fieldName = "Min Open PM price";
         else if (c.paramKey === "pmh_gap_pct_min") fieldName = "PMH Gap %";
         else if (c.paramKey === "pmh_gap_pct_max") {
           fieldName = "PMH Gap %";
@@ -190,6 +193,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
         // GAP+1 or GAP+2
         const lagSuffix = c.section === "gap_plus_1_day" ? "_1" : "_2";
         if (c.paramKey === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
+        else if (c.paramKey === "pm_open") fieldName = `lead_open${lagSuffix}`;
         else if (c.paramKey === "pmh_gap_pct_min") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
         else if (c.paramKey === "pmh_gap_pct_max") {
           fieldName = `lead_pmh_gap_pct${lagSuffix}`;
@@ -433,8 +437,16 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
                               if (!containerRef.current) return;
                               const containerRect = containerRef.current.getBoundingClientRect();
                               const rect = e.currentTarget.getBoundingClientRect();
-                              
-                              const text = PARAM_DESCRIPTIONS[param.key];
+                              let text = PARAM_DESCRIPTIONS[param.key];
+                              if (param.key === "pm_open") {
+                                if (sectionId === "gap_day") {
+                                  text = "mínimo precio en el que comienza el Premarket del día del gap";
+                                } else if (sectionId === "gap_plus_1_day") {
+                                  text = "mínimo precio en el que comienza el Premarket del día del Gap +1";
+                                } else if (sectionId === "gap_plus_2_day") {
+                                  text = "mínimo precio en el que comienza el Premarket del día del Gap +2";
+                                }
+                              }
                               // Estimar el ancho del tooltip basado en el largo del texto (entre 100px y 220px)
                               const estimatedWidth = Math.min(Math.max(text.length * 6.5 + 24, 100), 220);
                               const halfWidth = estimatedWidth / 2;

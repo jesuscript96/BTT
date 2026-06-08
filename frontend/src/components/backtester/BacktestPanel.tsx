@@ -55,6 +55,7 @@ interface BacktestPanelProps {
   onNewDataset: () => void;
   datasetRefreshTrigger?: number;
   pendingDatasetSelect?: string;
+  onClearPendingDataset?: () => void;
 }
 
 function formatConditionGroup(group: any): string {
@@ -132,6 +133,7 @@ export default function BacktestPanel({
   onNewDataset,
   datasetRefreshTrigger,
   pendingDatasetSelect,
+  onClearPendingDataset,
   onRun,
   onParamsChange,
   loading,
@@ -155,7 +157,7 @@ export default function BacktestPanel({
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
-  const [riskType, setRiskType] = useState<"FIXED" | "PERCENT" | "KELLY" | "FIXED_RATIO">("FIXED");
+  const [riskType, setRiskType] = useState<"FIXED" | "PERCENT" | "FIXED_RATIO">("FIXED");
   const [fixedRatioDelta, setFixedRatioDelta] = useState(500);
   const [sizeBySl, setSizeBySl] = useState(false);
   const [feeType, setFeeType] = useState<"PERCENT" | "FLAT">("PERCENT");
@@ -165,6 +167,7 @@ export default function BacktestPanel({
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [precacheStatus, setPrecacheStatus] = useState<PrecacheStatus | null>(null);
+  const [visualPercent, setVisualPercent] = useState<number>(0);
 
   const loadData = async () => {
     setLoadingData(true);
@@ -238,21 +241,29 @@ export default function BacktestPanel({
     fetchDatasets()
       .then((d) => {
         setDatasets(d);
-        if (pendingDatasetSelect) {
-          setSelectedDataset(pendingDatasetSelect);
-        }
       })
       .catch((e) => console.error("Error refreshing datasets:", e));
-  }, [datasetRefreshTrigger, pendingDatasetSelect]);
+  }, [datasetRefreshTrigger]);
+
+  useEffect(() => {
+    if (pendingDatasetSelect && datasets.some((d) => d.id === pendingDatasetSelect)) {
+      setSelectedDataset(pendingDatasetSelect);
+      onClearPendingDataset?.();
+    }
+  }, [datasets, pendingDatasetSelect, onClearPendingDataset]);
 
   useEffect(() => {
     if (!selectedDataset) {
       setPrecacheStatus(null);
+      setVisualPercent(0);
       return;
     }
 
     let isMounted = true;
     let timer: NodeJS.Timeout | null = null;
+    let progressTimer: NodeJS.Timeout | null = null;
+
+    setVisualPercent(0);
 
     const checkStatus = async () => {
       try {
@@ -263,6 +274,11 @@ export default function BacktestPanel({
 
         if (statusData.status === "running") {
           timer = setTimeout(checkStatus, 1500);
+          if (statusData.percent > 0) {
+            setVisualPercent((prev) => Math.max(prev, statusData.percent));
+          }
+        } else if (statusData.status === "completed") {
+          setVisualPercent(100);
         }
       } catch (err) {
         console.error("Error fetching precache status:", err);
@@ -272,11 +288,26 @@ export default function BacktestPanel({
       }
     };
 
+    const updateProgress = () => {
+      setVisualPercent((prev) => {
+        if (prev >= 95) return prev;
+        let increment = 1.5;
+        if (prev >= 80) increment = 0.2;
+        else if (prev >= 50) increment = 0.5;
+        return Math.min(95, prev + increment);
+      });
+      if (isMounted) {
+        progressTimer = setTimeout(updateProgress, 1000);
+      }
+    };
+
     checkStatus();
+    updateProgress();
 
     return () => {
       isMounted = false;
       if (timer) clearTimeout(timer);
+      if (progressTimer) clearTimeout(progressTimer);
     };
   }, [selectedDataset]);
 
@@ -492,8 +523,8 @@ export default function BacktestPanel({
                 letterSpacing: '0.08em',
                 color: 'var(--color-ec-copper)',
               }}>
-                <span>Cargando dataset...</span>
-                <span>{precacheStatus.percent}%</span>
+                <span>Descargando Data...</span>
+                <span>{Math.round(visualPercent)}%</span>
               </div>
               <div style={{
                 height: 4,
@@ -503,19 +534,27 @@ export default function BacktestPanel({
               }}>
                 <div style={{
                   height: '100%',
-                  width: `${precacheStatus.percent}%`,
+                  width: `${visualPercent}%`,
                   backgroundColor: 'var(--color-ec-copper)',
                   borderRadius: 2,
-                  transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  transition: 'width 1000ms linear',
                 }} />
               </div>
               <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
                 fontFamily: 'var(--color-ec-sans)',
-                fontSize: 9,
+                fontSize: 8,
                 color: 'var(--color-ec-text-muted)',
-                textAlign: 'right',
+                marginTop: 2,
+                gap: 8,
               }}>
-                {precacheStatus.current} / {precacheStatus.total} pares
+                <span style={{ textAlign: 'left', flex: 1, lineHeight: '1.2' }}>
+                  La carga puede tardar unos minutos.
+                </span>
+                <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  {Math.min(precacheStatus.total, Math.round(precacheStatus.total * (visualPercent / 100)))} / {precacheStatus.total} pares
+                </span>
               </div>
             </div>
           )}
@@ -614,6 +653,14 @@ export default function BacktestPanel({
                           fontWeight: 700 
                         }}>{displayBias}</span>
                         {displayDay && ` | Aplicar en ${displayDay}`}
+                      </div>
+                    )}
+                    {entryLogic?.entry_time_windows && entryLogic.entry_time_windows.length > 0 && (
+                      <div>
+                        <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>HORAS ENTRADA (ET): </span>
+                        <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
+                          {entryLogic.entry_time_windows.map((w: any) => `${w.from_time}-${w.to_time}`).join(", ")}
+                        </span>
                       </div>
                     )}
                     {precondsText && (
@@ -766,7 +813,7 @@ export default function BacktestPanel({
               </label>
               <select
                 value={riskType}
-                onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT" | "KELLY")}
+                onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT")}
                 style={{
                   backgroundColor: 'transparent',
                   border: 'none',
@@ -778,9 +825,8 @@ export default function BacktestPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="FIXED">Fijo ($)</option>
-                <option value="PERCENT">% Eq</option>
-                <option value="KELLY">Kelly</option>
+                <option value="FIXED" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>Fijo ($)</option>
+                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>% Eq</option>
               </select>
             </div>
             <div className="flex gap-2">
@@ -843,8 +889,8 @@ export default function BacktestPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="PERCENT">%</option>
-                <option value="FLAT">$</option>
+                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
+                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
               </select>
             </div>
             <input

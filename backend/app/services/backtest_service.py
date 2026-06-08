@@ -117,17 +117,6 @@ def run_backtest(
     scanned = 0
     t1 = time.time()
 
-    # Tracking running stats for KELLY
-    running_stats = {
-        "win_count": 0,
-        "loss_count": 0,
-        "total_win_pnl": 0.0,
-        "total_loss_pnl": 0.0,
-        "win_rate": 0.5, # Default starting point
-        "avg_win": 0.0,
-        "avg_loss": 0.0
-    }
-
     global_realized_pnl = 0.0
     current_date = None
     daily_pnl = 0.0
@@ -276,7 +265,6 @@ def run_backtest(
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,
-                prev_stats=running_stats,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,
@@ -304,22 +292,9 @@ def run_backtest(
             del sim_result
             continue
 
-        # Update running stats for Kelly Criterion
+        # Track today's PnL to roll over into tomorrow's compounding base
         for t in raw_trades:
-            pnl = t["pnl"]
-            daily_pnl += pnl  # Track today's PnL to roll over into tomorrow's compounding base
-            if pnl > 0:
-                running_stats["win_count"] += 1
-                running_stats["total_win_pnl"] += pnl
-            else:
-                running_stats["loss_count"] += 1
-                running_stats["total_loss_pnl"] += abs(pnl)
-        
-        total_finished = running_stats["win_count"] + running_stats["loss_count"]
-        if total_finished > 0:
-            running_stats["win_rate"] = running_stats["win_count"] / total_finished
-            running_stats["avg_win"] = running_stats["total_win_pnl"] / running_stats["win_count"] if running_stats["win_count"] > 0 else 0.0
-            running_stats["avg_loss"] = running_stats["total_loss_pnl"] / running_stats["loss_count"] if running_stats["loss_count"] > 0 else 0.0
+            daily_pnl += t["pnl"]
 
         # Avoid pd.to_datetime parsing if array is already datetime kind natively
         ts_arr = arrays["timestamp"]
@@ -335,10 +310,6 @@ def run_backtest(
             risk_unit_dollar = risk_r
         elif risk_type == "PERCENT":
             risk_unit_dollar = compounding_cash * (risk_r / 100.0)
-        elif risk_type == "KELLY":
-            # In Kelly, 1R is the risk amount calculated by the formula
-            # For reporting purposes, we use the risk amount used in the actual simulation
-            risk_unit_dollar = sim_result.get("last_risk_amount", risk_r) 
         else:
             risk_unit_dollar = risk_r
 

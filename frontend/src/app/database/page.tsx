@@ -1327,6 +1327,18 @@ export default function TrunkPage() {
                                 )}
                               </div>
 
+                              {/* Entry Time Windows */}
+                              {strat.entry_logic?.entry_time_windows && strat.entry_logic.entry_time_windows.length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Horas Entrada:</span>
+                                  {strat.entry_logic.entry_time_windows.map((w: any, idx: number) => (
+                                    <span key={idx} style={{ fontSize: 9, fontWeight: 600, padding: '2px 6px', border: '0.5px solid rgba(216, 122, 61, 0.3)', backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)' }}>
+                                      {w.from_time} - {w.to_time} ET
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
                               {/* Exit Logic */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', width: 90 }}>Exit Logic ({strat.exit_logic?.timeframe || 'N/A'}):</span>

@@ -878,6 +878,29 @@ export default function Chart({
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <span style={{ fontWeight: 700, fontSize: '18px', color: 'var(--color-ec-text-high)' }}>{ticker}</span>
           <span style={{ fontSize: '13px', color: 'var(--color-ec-text-primary)' }}>{date}</span>
+          {(() => {
+            const entryLogic = (activeStrategy?.definition as any)?.entry_logic;
+            const windows = entryLogic?.entry_time_windows;
+            if (windows && windows.length > 0) {
+              return (
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  backgroundColor: 'rgba(216, 122, 61, 0.12)',
+                  color: 'var(--color-ec-copper)',
+                  padding: '2px 8px',
+                  borderRadius: 4,
+                  border: '0.5px solid rgba(216, 122, 61, 0.3)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}>
+                  ⏱️ Horas Entrada: {windows.map((w: any) => `${w.from_time}-${w.to_time}`).join(", ")}
+                </span>
+              );
+            }
+            return null;
+          })()}
           <div 
             style={{ 
               display: 'flex', 

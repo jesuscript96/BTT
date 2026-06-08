@@ -6,9 +6,10 @@ import { LogicBuilder } from './ConditionBuilder';
 interface Props {
     logic: EntryLogic;
     onChange: (logic: EntryLogic) => void;
+    children?: React.ReactNode;
 }
 
-export const EntryLogicBuilder = React.memo(({ logic, onChange }: Props) => {
+export const EntryLogicBuilder = React.memo(({ logic, onChange, children }: Props) => {
     return (
         <LogicBuilder
             title="Entry Logic"
@@ -17,7 +18,9 @@ export const EntryLogicBuilder = React.memo(({ logic, onChange }: Props) => {
             rootCondition={logic.root_condition}
             onConditionChange={(g) => onChange({ ...logic, root_condition: g })}
             accentColor="blue"
-        />
+        >
+            {children}
+        </LogicBuilder>
     );
 });
 EntryLogicBuilder.displayName = "EntryLogicBuilder";

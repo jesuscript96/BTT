@@ -259,9 +259,14 @@ class ConditionGroup(BaseModel):
     operator: Literal["AND", "OR"] = "AND"
     conditions: List[Union['ConditionGroup', AnyCondition]]
 
+class EntryTimeWindow(BaseModel):
+    from_time: str
+    to_time: str
+
 class EntryLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
+    entry_time_windows: Optional[List[EntryTimeWindow]] = None
 
 class ExitLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1

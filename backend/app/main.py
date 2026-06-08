@@ -141,9 +141,9 @@ async def lifespan(app: FastAPI):
                 print(f"[CACHE] intraday disk cache dir not found: {cache_dir}")
             print("[INFO] Hot daily cache loaded at startup")
 
-            # Background recovery disabled to prevent CPU/disk I/O contention on startup.
-            # import threading as _threading
-            # _threading.Thread(target=_startup_recovery_precache, daemon=True).start()
+            # Background recovery enables resuming recently started dataset precaching.
+            import threading as _threading
+            _threading.Thread(target=_startup_recovery_precache, daemon=True).start()
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:
@@ -199,7 +199,9 @@ from app.routers import data, strategies, backtest, query, market, strategy_sear
 from app.routers import optimization
 import logging
 
-# ... (logging setup if needed)
+# Configure logging to show INFO level for backtester namespace
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("backtester").setLevel(logging.INFO)
 
 app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(strategies.router, prefix="/api/strategies", tags=["Strategies"])

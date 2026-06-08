@@ -22,7 +22,6 @@ def simulate(
     risk_type: str = "FIXED",
     fixed_ratio_delta: float = 500.0,
     size_by_sl: bool = False,
-    prev_stats: dict | None = None,
     fees: float = 0.0,
     fee_type: str = "PERCENT",  # "PERCENT" or "FLAT"
     slippage: float = 0.0,
@@ -54,32 +53,6 @@ def simulate(
     trail_activated = False
     original_size = 0.0  # Track original position size for partial TPs
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
-
-    # Pre-calculate Kelly multiplier if needed
-    kelly_f = 0.0
-    if risk_type == "KELLY":
-        if prev_stats:
-            win_count = prev_stats.get("win_count", 0)
-            loss_count = prev_stats.get("loss_count", 0)
-            total_trades = win_count + loss_count
-        else:
-            total_trades = 0
-
-        if total_trades < 5:
-            # Bootstrap phase: Use a default seed Kelly fraction of 2%
-            # scaled by the Kelly multiplier (risk_r, e.g. 100 for full Kelly, 50 for half Kelly)
-            kelly_f = 0.02 * (risk_r / 100.0)
-        else:
-            win_rate = prev_stats.get("win_rate", 0.5)
-            avg_win = prev_stats.get("avg_win", 0.0)
-            avg_loss = abs(prev_stats.get("avg_loss", 1.0))
-            if avg_loss > 0:
-                b = avg_win / avg_loss
-                if b > 0:
-                    # Kelly Formula: f = (p * (b + 1) - 1) / b
-                    # We use risk_r as the "Kelly Fraction" (e.g. 50 for half-kelly)
-                    optimal_f = (win_rate * (b + 1) - 1) / b
-                    kelly_f = max(0, optimal_f * (risk_r / 100.0))
 
     # Risk amount tracking for reporting
     risk_amount = risk_r
@@ -415,11 +388,6 @@ def simulate(
                 # Calculate Risk Amount ($)
                 if risk_type == "PERCENT":
                     risk_amount = available_cash * (risk_r / 100.0)
-                elif risk_type == "KELLY":
-                    if kelly_f > 0:
-                        risk_amount = available_cash * kelly_f
-                    else:
-                        risk_amount = 0.0 # Don't take trade if kelly negative or no edge
                 elif risk_type == "FIXED_RATIO":
                     # Ryan Jones Fixed Ratio formula
                     # N = 0.5 + 0.5 * sqrt(1 + (8 * Profit / Delta))
@@ -503,7 +471,7 @@ def simulate(
 
     # Finalize result
     results = {"equity": equity, "trades": trades}
-    if risk_type in ["PERCENT", "KELLY"]:
+    if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:
         results["last_risk_amount"] = risk_r

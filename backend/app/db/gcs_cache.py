@@ -347,6 +347,7 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
         'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
         'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
         'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
+        'LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_1',
 
         # LEAD 2
         'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
@@ -355,6 +356,7 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
         'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
         'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
         'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
+        'LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_2',
 
         # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
         'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',

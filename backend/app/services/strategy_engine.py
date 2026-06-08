@@ -29,6 +29,7 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "entry_root": entry_logic.get("root_condition", {}),
         "exit_root": exit_logic.get("root_condition", {}),
         "accept_reentries": risk.get("accept_reentries", False),
+        "entry_time_windows": entry_logic.get("entry_time_windows", []),
     }
 
 
@@ -68,6 +69,32 @@ def translate_strategy(
     entries = _evaluate_condition_group(
         compiled["entry_root"], df, entry_tf, daily_stats, entry_cache
     )
+    
+    # Filter entries strictly to configured time windows
+    time_windows = compiled.get("entry_time_windows", [])
+    if time_windows:
+        ts = pd.to_datetime(df["timestamp"])
+        minutes_since_midnight = ts.dt.hour * 60 + ts.dt.minute
+        time_mask = pd.Series(False, index=df.index)
+        for window in time_windows:
+            from_time = window.get("from_time", "")
+            to_time = window.get("to_time", "")
+            if not from_time or not to_time:
+                continue
+            try:
+                from_h, from_m = map(int, from_time.split(":"))
+                to_h, to_m = map(int, to_time.split(":"))
+                start_mins = from_h * 60 + from_m
+                end_mins = to_h * 60 + to_m
+                
+                # Check if the time falls in this range
+                window_mask = (minutes_since_midnight >= start_mins) & (minutes_since_midnight <= end_mins)
+                time_mask = time_mask | window_mask
+            except Exception as e:
+                logger.error(f"Error parsing entry time window {window}: {e}")
+                continue
+        entries = entries & time_mask
+
     exits = _evaluate_condition_group(
         compiled["exit_root"], df, exit_tf, daily_stats, exit_cache
     )

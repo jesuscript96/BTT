@@ -21,6 +21,7 @@ import type {
   PostGapPrecondition,
 } from "@/types/strategy";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
+import { Clock } from "lucide-react";
 
 const STORAGE_KEY = "btt_draft_strategies";
 
@@ -72,9 +73,18 @@ function getGroupSummaryText(group: ConditionGroup): string {
 interface Props {
   onTest: (draft: Draft) => void;
   onBack: () => void;
+  marketSessions?: string[];
+  customStartTime?: string;
+  customEndTime?: string;
 }
 
-export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
+export default function InlineStrategyBuilder({
+  onTest,
+  onBack,
+  marketSessions = ["rth"],
+  customStartTime = "09:30",
+  customEndTime = "16:00",
+}: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
@@ -90,6 +100,52 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
   const [tempTarget, setTempTarget] = useState<'apertura' | 'high_low_previo' | 'pm_high' | 'vwap' | 'sma'>('apertura');
   const [tempValue, setTempValue] = useState<number>(1000000);
   const [tempSmaPeriod, setTempSmaPeriod] = useState<number>(20);
+  const [tempFromTime, setTempFromTime] = useState("09:30");
+  const [tempToTime, setTempToTime] = useState("16:00");
+
+  const getSessionOverlapWarning = (fromTime: string, toTime: string) => {
+    if (!marketSessions || marketSessions.length === 0 || marketSessions.includes("all")) {
+      return null;
+    }
+
+    const parseTimeToMins = (t: string) => {
+      const [h, m] = t.split(":").map(Number);
+      return h * 60 + m;
+    };
+
+    const windowStart = parseTimeToMins(fromTime);
+    const windowEnd = parseTimeToMins(toTime);
+
+    const intervals: { label: string; start: number; end: number }[] = [];
+    marketSessions.forEach(s => {
+      if (s === "pre") {
+        intervals.push({ label: "Pre-Market", start: 240, end: 570 });
+      } else if (s === "rth") {
+        intervals.push({ label: "Regular Hours", start: 570, end: 960 });
+      } else if (s === "post") {
+        intervals.push({ label: "After-Market", start: 960, end: 1200 });
+      } else if (s === "custom" && customStartTime && customEndTime) {
+        intervals.push({
+          label: `Custom (${customStartTime}-${customEndTime})`,
+          start: parseTimeToMins(customStartTime),
+          end: parseTimeToMins(customEndTime)
+        });
+      }
+    });
+
+    if (intervals.length === 0) return null;
+
+    const hasOverlap = intervals.some(interval => {
+      return windowStart < interval.end && windowEnd > interval.start;
+    });
+
+    if (!hasOverlap) {
+      const sessionsStr = intervals.map(i => i.label).join(", ");
+      return `Fuera de sesión activa (${sessionsStr})`;
+    }
+
+    return null;
+  };
 
   useEffect(() => {
     if (applyDay === 'gap_day') {
@@ -116,6 +172,8 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
     setEntryLogic(initialEntryLogic);
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
+    setTempFromTime("09:30");
+    setTempToTime("16:00");
   };
 
   const buildDraft = (): Draft => ({
@@ -140,6 +198,18 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
       alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
       return;
     }
+
+    // Validate if any configured entry time window is completely outside the active sessions
+    if (entryLogic.entry_time_windows && entryLogic.entry_time_windows.length > 0) {
+      const hasInvalidWindow = entryLogic.entry_time_windows.some(window => {
+        return getSessionOverlapWarning(window.from_time, window.to_time) !== null;
+      });
+      if (hasInvalidWindow) {
+        alert("Las ventanas horarias de entrada están fuera del rango de la sesión de mercado fijada, por favor, cambie las ventanas o la sesión de mercado de la estrategia");
+        return;
+      }
+    }
+
     const draft = buildDraft();
     try {
       const updated = [draft, ...drafts].slice(0, 200);
@@ -779,7 +849,198 @@ export default function InlineStrategyBuilder({ onTest, onBack }: Props) {
             </div>
         </div>
 
-        <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
+        <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic}>
+          {/* Sub-panel de Ventanas de Horario de Entrada */}
+          <div style={{
+            marginTop: -11, // Offsets the 16px flex gap of the parent to achieve exactly a 5px margin
+            paddingTop: 12,
+            borderTop: '0.5px dotted var(--color-ec-border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Clock size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  color: 'var(--color-ec-text-secondary)'
+                }}>
+                  Ventanas Horarias de Entrada
+                </span>
+              </div>
+              <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
+                Nueva York (ET)
+              </span>
+            </div>
+
+            {/* Inputs de rango */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'flex-end',
+              flexWrap: 'wrap',
+              gap: 8,
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Desde</span>
+                <input
+                  type="time"
+                  value={tempFromTime}
+                  onChange={(e) => setTempFromTime(e.target.value)}
+                  style={{
+                    background: 'var(--color-ec-bg-surface)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    color: 'var(--color-ec-text-primary)',
+                    fontSize: 10,
+                    padding: '0 6px',
+                    height: 24,
+                    boxSizing: 'border-box',
+                    borderRadius: 4,
+                    outline: 'none',
+                    fontFamily: 'var(--color-ec-sans)',
+                    cursor: 'pointer',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ fontSize: 8, fontWeight: 600, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Hasta</span>
+                <input
+                  type="time"
+                  value={tempToTime}
+                  onChange={(e) => setTempToTime(e.target.value)}
+                  style={{
+                    background: 'var(--color-ec-bg-surface)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    color: 'var(--color-ec-text-primary)',
+                    fontSize: 10,
+                    padding: '0 6px',
+                    height: 24,
+                    boxSizing: 'border-box',
+                    borderRadius: 4,
+                    outline: 'none',
+                    fontFamily: 'var(--color-ec-sans)',
+                    cursor: 'pointer',
+                  }}
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (tempFromTime && tempToTime) {
+                    const windows = entryLogic.entry_time_windows || [];
+                    if (!windows.some(w => w.from_time === tempFromTime && w.to_time === tempToTime)) {
+                      setEntryLogic({
+                        ...entryLogic,
+                        entry_time_windows: [...windows, { from_time: tempFromTime, to_time: tempToTime }]
+                      });
+                    }
+                  }
+                }}
+                style={{
+                  backgroundColor: 'var(--color-ec-copper)',
+                  color: 'var(--color-ec-copper-text)',
+                  border: 'none',
+                  padding: '0 10px',
+                  borderRadius: 4,
+                  fontSize: 9,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  height: 24,
+                  boxSizing: 'border-box',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                + Añadir
+              </button>
+            </div>
+
+            {/* Warning de validación de overlap para las horas ingresadas en el formulario */}
+            {getSessionOverlapWarning(tempFromTime, tempToTime) && (
+              <div style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                color: 'var(--color-ec-loss)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                backgroundColor: 'rgba(235, 94, 85, 0.08)',
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: '0.5px solid rgba(235, 94, 85, 0.2)'
+              }}>
+                <span>⚠️</span>
+                <span>El rango {tempFromTime} - {tempToTime} queda fuera de las sesiones del backtest.</span>
+              </div>
+            )}
+
+            {/* Listado de ventanas */}
+            {entryLogic.entry_time_windows && entryLogic.entry_time_windows.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {entryLogic.entry_time_windows.map((window, idx) => {
+                  const overlapWarning = getSessionOverlapWarning(window.from_time, window.to_time);
+                  return (
+                    <div
+                      key={idx}
+                      title={overlapWarning || undefined}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        backgroundColor: overlapWarning ? 'rgba(235, 94, 85, 0.08)' : 'rgba(216, 122, 61, 0.08)',
+                        border: `0.5px solid ${overlapWarning ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)'}`,
+                        borderRadius: 4,
+                        padding: '3px 6px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9,
+                        fontWeight: 600,
+                        color: overlapWarning ? 'var(--color-ec-loss)' : 'var(--color-ec-text-secondary)',
+                      }}
+                    >
+                      <span>{window.from_time} - {window.to_time}</span>
+                      {overlapWarning && <span style={{ cursor: 'help' }}>⚠️</span>}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const windows = entryLogic.entry_time_windows || [];
+                          setEntryLogic({
+                            ...entryLogic,
+                            entry_time_windows: windows.filter((_, i) => i !== idx)
+                          });
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--color-ec-text-muted)',
+                          cursor: 'pointer',
+                          fontSize: 10,
+                          lineHeight: 1,
+                          padding: '0 1px',
+                          marginLeft: 2,
+                          display: 'flex',
+                          alignItems: 'center',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </EntryLogicBuilder>
+
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
       </div>

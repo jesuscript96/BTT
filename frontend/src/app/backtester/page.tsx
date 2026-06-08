@@ -74,8 +74,15 @@ export default function Home() {
   const backtestParamsRef = useRef<Record<string, unknown>>({});
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const panelParamsRef = useRef<BacktestPanelParams | null>(null);
+  const [activeSessions, setActiveSessions] = useState<string[]>(["rth"]);
+  const [activeCustomStartTime, setActiveCustomStartTime] = useState("09:30");
+  const [activeCustomEndTime, setActiveCustomEndTime] = useState("16:00");
+
   const handlePanelParamsChange = useCallback((params: BacktestPanelParams) => {
     panelParamsRef.current = params;
+    setActiveSessions(params.market_sessions || ["rth"]);
+    setActiveCustomStartTime(params.custom_start_time || "09:30");
+    setActiveCustomEndTime(params.custom_end_time || "16:00");
   }, []);
 
   const [dayCandles, setDayCandles] = useState<DayCandles | null>(null);
@@ -569,6 +576,7 @@ export default function Home() {
               refreshTrigger={strategiesRefresh}
               datasetRefreshTrigger={datasetRefresh}
               pendingDatasetSelect={pendingDatasetSelect}
+              onClearPendingDataset={() => setPendingDatasetSelect(undefined)}
               loading={loading}
               isDarkMode={isDarkMode}
             />
@@ -972,6 +980,9 @@ export default function Home() {
               setMode('config');
               await handleRunWithDraft(draft);
             }}
+            marketSessions={activeSessions}
+            customStartTime={activeCustomStartTime}
+            customEndTime={activeCustomEndTime}
           />
         </div>
 

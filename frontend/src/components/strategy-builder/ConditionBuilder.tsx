@@ -1897,7 +1897,8 @@ export const LogicBuilder = ({
     onTimeframeChange,
     rootCondition,
     onConditionChange,
-    accentColor = 'blue'
+    accentColor = 'blue',
+    children
 }: {
     title: string;
     timeframe: Timeframe;
@@ -1905,6 +1906,7 @@ export const LogicBuilder = ({
     rootCondition: ConditionGroup;
     onConditionChange: (g: ConditionGroup) => void;
     accentColor?: 'blue' | 'rose' | 'amber';
+    children?: React.ReactNode;
 }) => {
     const headerAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
@@ -1960,6 +1962,8 @@ export const LogicBuilder = ({
                 accentColor={accentColor}
                 parentTimeframe={timeframe}
             />
+
+            {children}
         </div>
     );
 };
