@@ -76,8 +76,8 @@ function getSeriesColor(indicatorId: string, instanceIndex: number): string {
 // ---------------------------------------------------------------------------
 // Candle aggregation (frontend-only, no backend changes)
 // ---------------------------------------------------------------------------
-type Timeframe = "1m" | "5m" | "15m" | "1h";
-const TIMEFRAME_MINUTES: Record<Timeframe, number> = { "1m": 1, "5m": 5, "15m": 15, "1h": 60 };
+type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h";
+const TIMEFRAME_MINUTES: Record<Timeframe, number> = { "1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60 };
 
 function aggregateCandles(candles: CandleData[], tf: Timeframe): CandleData[] {
   if (tf === "1m" || candles.length === 0) return candles;
@@ -888,7 +888,7 @@ export default function Chart({
               padding: '2px 3px' 
             }}
           >
-            {(["1m", "5m", "15m", "1h"] as Timeframe[]).map(tf => (
+            {(["1m", "5m", "15m", "30m", "1h"] as Timeframe[]).map(tf => (
               <button
                 key={tf}
                 onClick={() => setTimeframe(tf)}
