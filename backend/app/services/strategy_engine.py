@@ -62,23 +62,15 @@ def translate_strategy(
     entry_tf = compiled["entry_tf"]
     exit_tf = compiled["exit_tf"]
 
-    entry_df = _resample_if_needed(df, entry_tf)
-    exit_df = _resample_if_needed(df, exit_tf)
-
     entry_cache: dict = {}
     exit_cache: dict = entry_cache if entry_tf == exit_tf else {}
 
     entries = _evaluate_condition_group(
-        compiled["entry_root"], entry_df, daily_stats, entry_cache
+        compiled["entry_root"], df, entry_tf, daily_stats, entry_cache
     )
     exits = _evaluate_condition_group(
-        compiled["exit_root"], exit_df, daily_stats, exit_cache
+        compiled["exit_root"], df, exit_tf, daily_stats, exit_cache
     )
-
-    if entry_tf != "1m":
-        entries = _align_signals_to_1m(entries, df, entry_tf)
-    if exit_tf != "1m":
-        exits = _align_signals_to_1m(exits, df, exit_tf)
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
     sl_stop, sl_trail, tp_stop, trail_pct, partial_tps = _parse_risk_management(risk, df, daily_stats, risk_cache)
@@ -104,14 +96,21 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     freq = tf_map.get(timeframe, "1min")
 
     ts = pd.to_datetime(df["timestamp"])
-    resampled = df.set_index(ts).resample(freq).agg({
+    
+    # Define aggregation rules to avoid losing other columns like 'rvol'
+    agg_dict = {
         "open": "first",
         "high": "max",
         "low": "min",
         "close": "last",
         "volume": "sum",
         "timestamp": "first",
-    }).dropna(subset=["open"])
+    }
+    for col in df.columns:
+        if col not in agg_dict:
+            agg_dict[col] = "first"
+
+    resampled = df.set_index(ts).resample(freq).agg(agg_dict).dropna(subset=["open"])
 
     return resampled.reset_index(drop=True)
 
@@ -167,31 +166,32 @@ def _align_signals_to_1m(
 
 def _evaluate_condition_group(
     group: dict,
-    df: pd.DataFrame,
+    df_1m: pd.DataFrame,
+    parent_tf: str,
     daily_stats: dict | None,
     cache: dict | None = None,
 ) -> pd.Series:
     """Recursively evaluate a ConditionGroup with AND/OR logic."""
     if not group:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df_1m.index)
 
     operator = group.get("operator", "AND")
     conditions = group.get("conditions", [])
 
     if not conditions:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df_1m.index)
 
     results = []
     for cond in conditions:
         cond_type = cond.get("type", "")
         if cond_type == "group" or ("conditions" in cond and "operator" in cond):
-            result = _evaluate_condition_group(cond, df, daily_stats, cache)
+            result = _evaluate_condition_group(cond, df_1m, parent_tf, daily_stats, cache)
         else:
-            result = _evaluate_single_condition(cond, df, daily_stats, cache)
+            result = _evaluate_single_condition(cond, df_1m, parent_tf, daily_stats, cache)
         results.append(result)
 
     if not results:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df_1m.index)
 
     combined = results[0]
     for r in results[1:]:
@@ -205,20 +205,36 @@ def _evaluate_condition_group(
 
 def _evaluate_single_condition(
     cond: dict,
-    df: pd.DataFrame,
+    df_1m: pd.DataFrame,
+    parent_tf: str,
     daily_stats: dict | None,
     cache: dict | None = None,
 ) -> pd.Series:
     cond_type = cond.get("type", "")
+    tf = cond.get("timeframe") or parent_tf or "1m"
+
+    # Evaluate the condition on its own resampled dataframe
+    cond_df = _resample_if_needed(df_1m, tf)
+
+    # Use a timeframe-specific cache to avoid key collisions of indicators across timeframes
+    tf_cache = cache.setdefault(tf, {}) if cache is not None else None
 
     if cond_type == "indicator_comparison":
-        return _eval_indicator_comparison(cond, df, daily_stats, cache)
+        res_tf = _eval_indicator_comparison(cond, cond_df, daily_stats, tf_cache)
     elif cond_type == "price_level_distance":
-        return _eval_price_level_distance(cond, df, daily_stats, cache)
+        res_tf = _eval_price_level_distance(cond, cond_df, daily_stats, tf_cache)
     elif cond_type == "candle_pattern":
-        return _eval_candle_pattern(cond, df)
+        res_tf = _eval_candle_pattern(cond, cond_df)
     else:
-        return pd.Series(False, index=df.index)
+        res_tf = pd.Series(False, index=cond_df.index)
+
+    # Align the result series back to 1m
+    if tf != "1m":
+        res_1m = _align_signals_to_1m(res_tf, df_1m, tf)
+    else:
+        res_1m = res_tf
+
+    return res_1m
 
 
 def _eval_indicator_comparison(
