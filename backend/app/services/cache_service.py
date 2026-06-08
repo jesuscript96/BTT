@@ -186,6 +186,56 @@ def load_hot_daily_cache() -> None:
         except Exception as e:
             print(f"[HOT CACHE] Regeneration failed: {e}")
 
+    # Precomputar LEAD columns para Gap+1/Gap+2
+    if _hot_daily_cache is not None and not _hot_daily_cache.empty:
+        logger.info("[HOT CACHE] Computing LEAD columns for Gap+1/Gap+2...")
+        _hot_daily_cache = _hot_daily_cache.sort_values(
+            ['ticker', 'timestamp']
+        ).reset_index(drop=True)
+
+        grp = _hot_daily_cache.groupby('ticker', sort=False, observed=True)
+
+        lead_cols = [
+            'rth_open', 'rth_close', 'rth_high', 'rth_low', 'rth_volume',
+            'pm_high', 'pm_low', 'gap_pct', 'pm_volume', 'timestamp',
+            'prev_close'
+        ]
+
+        for col in lead_cols:
+            if col in _hot_daily_cache.columns:
+                _hot_daily_cache[f'lead_{col}_1'] = grp[col].shift(-1)
+                _hot_daily_cache[f'lead_{col}_2'] = grp[col].shift(-2)
+
+        # Sanity check: lead_timestamp_1 debe ser el día siguiente real.
+        # Si la fila T+1 del ticker no está en el hot cache (gap > ventana ±2),
+        # el shift devolvería el siguiente row presente (potencialmente días/meses
+        # después) — eso es look-ahead inválido. Marcar esos casos como NaN.
+        if 'lead_timestamp_1' in _hot_daily_cache.columns:
+            ts = pd.to_datetime(_hot_daily_cache['timestamp'])
+            lead_ts1 = pd.to_datetime(_hot_daily_cache['lead_timestamp_1'])
+            days_diff = (lead_ts1 - ts).dt.days
+
+            invalid_mask = days_diff > 7
+            for col in lead_cols:
+                lead_col_1 = f'lead_{col}_1'
+                if lead_col_1 in _hot_daily_cache.columns:
+                    _hot_daily_cache.loc[invalid_mask, lead_col_1] = None
+
+        if 'lead_timestamp_2' in _hot_daily_cache.columns:
+            ts = pd.to_datetime(_hot_daily_cache['timestamp'])
+            lead_ts2 = pd.to_datetime(_hot_daily_cache['lead_timestamp_2'])
+            days_diff_2 = (lead_ts2 - ts).dt.days
+
+            invalid_mask_2 = days_diff_2 > 14
+            for col in lead_cols:
+                lead_col_2 = f'lead_{col}_2'
+                if lead_col_2 in _hot_daily_cache.columns:
+                    _hot_daily_cache.loc[invalid_mask_2, lead_col_2] = None
+
+        logger.info(
+            f"[HOT CACHE] LEAD columns computed. Shape: {_hot_daily_cache.shape}"
+        )
+
 def get_hot_daily_df() -> pd.DataFrame | None:
     if _hot_daily_cache is None:
         load_hot_daily_cache()

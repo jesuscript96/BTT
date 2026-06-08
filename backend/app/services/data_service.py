@@ -437,7 +437,7 @@ def fetch_qualifying_data(
         return pd.DataFrame()
 
     has_custom_rules = len(filters.get("rules", [])) > 0
-    use_hot_cache = (apply_day == 'gap_day') and (not preconditions)
+    use_hot_cache = (apply_day in ('gap_day', 'gap_1_day', 'gap_2_day')) and (not preconditions)
 
     if provider == "local" and (has_custom_rules or not use_hot_cache):
         from app.database import get_db_connection
@@ -616,6 +616,43 @@ def fetch_qualifying_data(
                     result = result[result['timestamp'] >= pd.Timestamp(start_date)]
                 if end_date:
                     result = result[result['timestamp'] <= pd.Timestamp(end_date)]
+
+                # Reanclar al día de trading correcto según apply_day
+                if apply_day == 'gap_1_day':
+                    result = result.dropna(subset=['lead_timestamp_1']).copy()
+                    result['yesterday_open'] = result.get('rth_open', np.nan)
+                    result['yesterday_high'] = result.get('rth_high', np.nan)
+                    result['yesterday_low'] = result.get('rth_low', np.nan)
+                    result['yesterday_close'] = result.get('rth_close', np.nan)
+                    result['timestamp'] = pd.to_datetime(result['lead_timestamp_1'])
+                    result['date'] = result['timestamp'].dt.strftime('%Y-%m-%d')
+                    result['rth_open'] = result['lead_rth_open_1']
+                    result['rth_high'] = result['lead_rth_high_1']
+                    result['rth_low'] = result['lead_rth_low_1']
+                    result['rth_close'] = result['lead_rth_close_1']
+                    result['rth_volume'] = result['lead_rth_volume_1']
+                    result['pm_high'] = result['lead_pm_high_1']
+                    result['pm_low'] = result['lead_pm_low_1']
+                    result['gap_pct'] = result['lead_gap_pct_1']
+                    result['pm_volume'] = result['lead_pm_volume_1']
+
+                elif apply_day == 'gap_2_day':
+                    result = result.dropna(subset=['lead_timestamp_2']).copy()
+                    result['yesterday_open'] = result.get('lead_rth_open_1', np.nan)
+                    result['yesterday_high'] = result.get('lead_rth_high_1', np.nan)
+                    result['yesterday_low'] = result.get('lead_rth_low_1', np.nan)
+                    result['yesterday_close'] = result.get('lead_rth_close_1', np.nan)
+                    result['timestamp'] = pd.to_datetime(result['lead_timestamp_2'])
+                    result['date'] = result['timestamp'].dt.strftime('%Y-%m-%d')
+                    result['rth_open'] = result['lead_rth_open_2']
+                    result['rth_high'] = result['lead_rth_high_2']
+                    result['rth_low'] = result['lead_rth_low_2']
+                    result['rth_close'] = result['lead_rth_close_2']
+                    result['rth_volume'] = result['lead_rth_volume_2']
+                    result['pm_high'] = result['lead_pm_high_2']
+                    result['pm_low'] = result['lead_pm_low_2']
+                    result['gap_pct'] = result['lead_gap_pct_2']
+                    result['pm_volume'] = result['lead_pm_volume_2']
 
                 if 'date' not in result.columns:
                     result = result.copy()
