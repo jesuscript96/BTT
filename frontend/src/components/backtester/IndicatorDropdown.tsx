@@ -98,7 +98,7 @@ export default function IndicatorDropdown({
   return (
     <div className="flex flex-wrap items-center gap-2.5 text-[12px]">
       {/* Add Indicator Button */}
-      <div ref={dropdownRef} className="relative">
+      <div ref={dropdownRef} className="relative" style={{ marginLeft: '12px', marginRight: '8px' }}>
         <button
           onClick={() => setIsOpen(!isOpen)}
           className={`px-3.5 py-1 border rounded text-[12px] font-semibold transition-all flex items-center justify-center h-[30px]
