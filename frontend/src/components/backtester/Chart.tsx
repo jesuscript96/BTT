@@ -318,36 +318,91 @@ export default function Chart({
         const candleTimes = deduped.map(c => c.time as number);
         const candleTimeSet = new Set(candleTimes);
 
-        const markers: SeriesMarker<Time>[] = [];
-        const entryTimeSet = new Set<string>();
+        interface RawMarker {
+          time: number;
+          position: "aboveBar" | "belowBar";
+          color: string;
+          shape: "circle" | "square" | "arrowUp" | "arrowDown";
+          text: string;
+          isEntry: boolean;
+        }
+
+        const rawMarkers: RawMarker[] = [];
         for (const t of dayTrades) {
-          const entrySnap = timeframe === "1m" ? t.entry_time_epoch : snapToCandle(t.entry_time_epoch, candleTimes);
-          const exitSnap = timeframe === "1m" ? t.exit_time_epoch : snapToCandle(t.exit_time_epoch, candleTimes);
+          const entrySnap = snapToCandle(t.entry_time_epoch, candleTimes);
+          const exitSnap = snapToCandle(t.exit_time_epoch, candleTimes);
 
           if (entrySnap && candleTimeSet.has(entrySnap)) {
-            const entryKey = `${entrySnap}`;
-            if (!entryTimeSet.has(entryKey)) {
-              entryTimeSet.add(entryKey);
-              const isLong = t.direction.toLowerCase().includes("long");
-              markers.push({
-                time: entrySnap as unknown as Time,
-                position: isLong ? "belowBar" : "aboveBar",
-                color: isLong ? "#10b981" : "#ef4444",
-                shape: isLong ? "arrowUp" : "arrowDown",
-                text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
-              });
-            }
+            const isLong = t.direction.toLowerCase().includes("long");
+            rawMarkers.push({
+              time: entrySnap,
+              position: isLong ? "belowBar" : "aboveBar",
+              color: isLong ? "#10b981" : "#ef4444",
+              shape: isLong ? "arrowUp" : "arrowDown",
+              text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
+              isEntry: true,
+            });
           }
           if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed") {
-            markers.push({
-              time: exitSnap as unknown as Time,
+            rawMarkers.push({
+              time: exitSnap,
               position: "aboveBar",
               color: t.pnl >= 0 ? "#10b981" : "#ef4444",
               shape: "circle",
               text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
+              isEntry: false,
             });
           }
         }
+
+        // Group markers by time
+        const grouped = new Map<number, RawMarker[]>();
+        for (const m of rawMarkers) {
+          if (!grouped.has(m.time)) {
+            grouped.set(m.time, []);
+          }
+          grouped.get(m.time)!.push(m);
+        }
+
+        const markers: SeriesMarker<Time>[] = [];
+        for (const [time, group] of grouped) {
+          if (group.length === 1) {
+            const m = group[0];
+            markers.push({
+              time: m.time as unknown as Time,
+              position: m.position,
+              color: m.color,
+              shape: m.shape,
+              text: m.text,
+            });
+          } else {
+            // Sort: entries before exits
+            group.sort((a, b) => (a.isEntry ? 0 : 1) - (b.isEntry ? 0 : 1));
+
+            const combinedText = group.map(m => m.text).join(" | ");
+
+            const firstColor = group[0].color;
+            const allSameColor = group.every(m => m.color === firstColor);
+            const mergedColor = allSameColor ? firstColor : "var(--color-ec-copper)";
+
+            const firstShape = group[0].shape;
+            const allSameShape = group.every(m => m.shape === firstShape);
+            const mergedShape = allSameShape ? firstShape : "square";
+
+            // If there's an entry, use its position. Otherwise, default to aboveBar
+            const entryMarker = group.find(m => m.isEntry);
+            const mergedPosition = entryMarker ? entryMarker.position : "aboveBar";
+
+            markers.push({
+              time: time as unknown as Time,
+              position: mergedPosition,
+              color: mergedColor,
+              shape: mergedShape,
+              text: combinedText,
+            });
+          }
+        }
+
         markers.sort((a, b) => (a.time as number) - (b.time as number));
         createSeriesMarkers(candleSeries, markers);
       }
