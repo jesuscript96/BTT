@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { BacktestResult, DayCandles, TradeRecord, EquityPoint } from "@/lib/api_backtester";
+import type { BacktestResult, DayCandles, MultiDayCandles, Strategy, TradeRecord, EquityPoint } from "@/lib/api_backtester";
 import PerformanceTab from "@/components/backtester/tabs/PerformanceTab";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import TradesTab from "@/components/backtester/tabs/TradesTab";
@@ -25,6 +25,9 @@ interface ResultsTabsProps {
   initCash: number;
   riskR: number;
   dayCandles: DayCandles | null;
+  multiDayCandles?: MultiDayCandles | null;
+  activeStrategy?: Strategy | null;
+  strategyDefinition?: Record<string, unknown>;
   candlesLoading: boolean;
   currentTrades: TradeRecord[];
   currentEquity: EquityPoint[];
@@ -40,6 +43,9 @@ export default function ResultsTabs({
   initCash,
   riskR,
   dayCandles,
+  multiDayCandles = null,
+  activeStrategy = null,
+  strategyDefinition,
   candlesLoading,
   currentTrades,
   currentEquity,
@@ -214,6 +220,8 @@ export default function ResultsTabs({
             {!candlesLoading && dayCandles && dayCandles.candles.length > 0 && (
               <Chart
                 candles={dayCandles.candles}
+                multiDayCandles={multiDayCandles}
+                activeStrategy={activeStrategy}
                 trades={currentTrades}
                 equity={currentEquity}
                 ticker={dayCandles.ticker}
@@ -244,6 +252,7 @@ export default function ResultsTabs({
         <div style={{ display: activeTab === "optimization" ? "block" : "none" }}>
           <OptimizationSurfaceTab
             strategyId={strategyId}
+            strategyDefinition={strategyDefinition}
             datasetId={datasetId}
             isDarkMode={isDarkMode}
             backtestParams={backtestParams}

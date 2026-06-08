@@ -23,15 +23,20 @@ console.log("[API] Base URL configured as:", apiBaseUrl());
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error(
-      `[API ERROR DIAGNOSTIC]\n` +
-      `URL: ${error.config?.baseURL || ""}${error.config?.url || ""}\n` +
-      `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
-      `Status: ${error.response?.status || "N/A"}\n` +
-      `Message: ${error.message || "N/A"}\n` +
-      `Response Data:`,
-      error.response?.data || "No data"
-    );
+    const isCancelled = error.response?.status === 400 && 
+                        (error.response?.data?.detail === "Backtest cancelado" || 
+                         error.response?.data?.message === "Backtest cancelado");
+    if (!isCancelled) {
+      console.error(
+        `[API ERROR DIAGNOSTIC]\n` +
+        `URL: ${error.config?.baseURL || ""}${error.config?.url || ""}\n` +
+        `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
+        `Status: ${error.response?.status || "N/A"}\n` +
+        `Message: ${error.message || "N/A"}\n` +
+        `Response Data:`,
+        error.response?.data || "No data"
+      );
+    }
     return Promise.reject(error);
   }
 );
@@ -266,6 +271,26 @@ export async function fetchDayCandles(
   return data;
 }
 
+export interface MultiDayCandles {
+  gap_day?: { date: string; candles: CandleData[] };
+  gap_1_day?: { date: string; candles: CandleData[] };
+  gap_2_day?: { date: string; candles: CandleData[] };
+  [key: string]: { date: string; candles: CandleData[] } | undefined;
+}
+
+export async function fetchMultiDayCandles(
+  dataset_id: string,
+  ticker: string,
+  date: string,
+  apply_day: string
+): Promise<MultiDayCandles> {
+  const { data } = await api.get("/candles/multi", {
+    params: { dataset_id, ticker, date, apply_day },
+  });
+  return data;
+}
+
+
 // --- Optimization Surface ---
 
 export interface OptimizationParam {
@@ -322,14 +347,16 @@ export interface OptimizationResult {
 }
 
 export async function fetchOptimizationParams(
-  strategy_id: string
+  strategy_id: string,
+  strategy_definition?: Record<string, unknown>
 ): Promise<{ parameters: OptimizationParam[]; strategy_name: string }> {
-  const { data } = await api.post("/optimization/parameters", { strategy_id });
+  const { data } = await api.post("/optimization/parameters", { strategy_id, strategy_definition });
   return data;
 }
 
 export async function runOptimizationSurface(params: {
   strategy_id: string;
+  strategy_definition?: Record<string, unknown>;
   dataset_id: string;
   metric: string;
   param_configs: OptimizationParamConfig[];
@@ -394,4 +421,10 @@ export async function runWhatIf(params: {
   const { data } = await api.post("/what-if", params);
   return data;
 }
+
+export async function cancelBacktest(datasetId: string): Promise<{ status: string }> {
+  const { data } = await api.post(`/backtest/cancel/${encodeURIComponent(datasetId)}`);
+  return data;
+}
+
 

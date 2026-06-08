@@ -34,6 +34,7 @@ METRICS = {
     "calmar": "calmar_ratio",
     "sortino": "sortino_ratio",
     "dd_return": "dd_return_ratio",
+    "avg_r_ui": "avg_r_ui",
 }
 
 
@@ -102,45 +103,82 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
     rm = strategy_def.get("risk_management", {})
     
     # Hard Stop
-    hs = rm.get("hard_stop")
-    if hs:
-        val = hs.get("value")
-        if val is not None:
-            _add("risk.hard_stop.value",
-                 f"Stop Loss ({hs.get('type', 'Pct')})",
-                 val, "Risk", "risk_management.hard_stop.value",
-                 min_val=0.1, max_val=max(float(val) * 4, 20) if val else 20, step=0.5)
+    if rm.get("use_hard_stop") is not False:
+        hs = rm.get("hard_stop")
+        if hs:
+            val = hs.get("value")
+            if val is not None:
+                _add("risk.hard_stop.value",
+                     f"Stop Loss ({hs.get('type', 'Pct')})",
+                     val, "Risk", "risk_management.hard_stop.value",
+                     min_val=0.1, max_val=max(float(val) * 4, 20) if val else 20, step=0.5)
 
-    # Take Profit
-    tp = rm.get("take_profit")
-    if tp:
-        val = tp.get("value")
-        if val is not None:
-            _add("risk.take_profit.value",
-                 f"Take Profit ({tp.get('type', 'Pct')})",
-                 val, "Risk", "risk_management.take_profit.value",
-                 min_val=0.5, max_val=max(float(val) * 4, 30) if val else 30, step=0.5)
+    # Take Profit & Partials
+    if rm.get("use_take_profit") is not False:
+        tp_mode = rm.get("take_profit_mode", "Full")
+        
+        if tp_mode == "Full":
+            tp = rm.get("take_profit")
+            if tp:
+                val = tp.get("value")
+                if val is not None:
+                    _add("risk.take_profit.value",
+                         f"Take Profit ({tp.get('type', 'Pct')})",
+                         val, "Risk", "risk_management.take_profit.value",
+                         min_val=0.5, max_val=max(float(val) * 4, 30) if val else 30, step=0.5)
+        elif tp_mode == "Partial":
+            for i, ptp in enumerate(rm.get("partial_take_profits", [])):
+                _add(f"risk.partial_tp.{i}.distance_pct",
+                     f"Parcial {i+1} Distancia %",
+                     ptp.get("distance_pct"), "Risk",
+                     f"risk_management.partial_take_profits.{i}.distance_pct",
+                     min_val=0.5, step=0.5)
+                _add(f"risk.partial_tp.{i}.capital_pct",
+                     f"Parcial {i+1} Capital %",
+                     ptp.get("capital_pct"), "Risk",
+                     f"risk_management.partial_take_profits.{i}.capital_pct",
+                     min_val=5, max_val=100, step=5)
 
     # Trailing Stop
     trailing = rm.get("trailing_stop", {})
-    val = trailing.get("buffer_pct")
-    if val is not None:
-        _add("risk.trailing.buffer_pct",
-             "Trailing Buffer %",
-             val, "Risk", "risk_management.trailing_stop.buffer_pct",
-             min_val=0.1, max_val=5.0, step=0.1)
+    if trailing.get("active") is True:
+        val = trailing.get("buffer_pct")
+        if val is not None:
+            _add("risk.trailing.buffer_pct",
+                 "Trailing Buffer %",
+                 val, "Risk", "risk_management.trailing_stop.buffer_pct",
+                 min_val=0.1, max_val=5.0, step=0.1)
 
-    for i, ptp in enumerate(rm.get("partial_take_profits", [])):
-        _add(f"risk.partial_tp.{i}.distance_pct",
-             f"Parcial {i+1} Distancia %",
-             ptp.get("distance_pct"), "Risk",
-             f"risk_management.partial_take_profits.{i}.distance_pct",
-             min_val=0.5, step=0.5)
-        _add(f"risk.partial_tp.{i}.capital_pct",
-             f"Parcial {i+1} Capital %",
-             ptp.get("capital_pct"), "Risk",
-             f"risk_management.partial_take_profits.{i}.capital_pct",
-             min_val=5, max_val=100, step=5)
+    # --- Preconditions ---
+    for i, precond in enumerate(strategy_def.get("postgap_preconditions", [])):
+        metric = precond.get("metric")
+        day_label = "T" if precond.get("day") == "gap_day" else "T+1"
+        
+        # If it has a value (e.g. volume, candle_range_pct)
+        val = precond.get("value")
+        if val is not None:
+            if metric == "volume":
+                _add(f"precond.{i}.value",
+                     f"Precond {day_label} Volume",
+                     val, "Precondition", f"postgap_preconditions.{i}.value",
+                     min_val=max(10000.0, float(val) * 0.25), max_val=float(val) * 4.0, step=50000.0)
+            elif metric == "candle_range_pct":
+                _add(f"precond.{i}.value",
+                     f"Precond {day_label} Rango Vela %",
+                     val, "Precondition", f"postgap_preconditions.{i}.value",
+                     min_val=0.1, max_val=max(float(val) * 3.0, 10.0), step=0.25)
+            else:
+                _add(f"precond.{i}.value",
+                     f"Precond {day_label} {metric} Valor",
+                     val, "Precondition", f"postgap_preconditions.{i}.value")
+
+        # If it has a sma_period
+        sma_p = precond.get("sma_period")
+        if sma_p is not None:
+            _add(f"precond.{i}.sma_period",
+                 f"Precond {day_label} SMA Periodo",
+                 sma_p, "Precondition", f"postgap_preconditions.{i}.sma_period",
+                 min_val=5.0, max_val=200.0, step=5.0, is_int_param=True)
 
     return params
 
@@ -254,6 +292,7 @@ def run_optimization_grid(
     metric: str,
     backtest_params: dict,
     task_id: str | None = None,
+    strategy_definition: dict | None = None,
 ) -> dict:
     """
     Run a grid of backtests varying selected parameters.
@@ -271,11 +310,14 @@ def run_optimization_grid(
     """
     t0 = time.time()
 
-    strategy = get_strategy(strategy_id)
-    if not strategy:
-        raise ValueError("Strategy not found")
+    if strategy_id == "draft" and strategy_definition:
+        base_def = strategy_definition
+    else:
+        strategy = get_strategy(strategy_id)
+        if not strategy:
+            raise ValueError("Strategy not found")
+        base_def = strategy["definition"]
 
-    base_def = strategy["definition"]
     metric_key = METRICS.get(metric, metric)
 
     # Build value arrays
@@ -289,12 +331,31 @@ def run_optimization_grid(
             values = np.linspace(v_min, v_max, steps).tolist()
         axes.append(values)
 
-    # Fetch dataset once
-    qualifying_df, intraday_df = fetch_dataset_data(dataset_id)
+    base_preconditions = base_def.get("postgap_preconditions", [])
+    apply_day = base_def.get("apply_day", "gap_day")
 
-    # Apply date filters
+    opt_preconds = any(pc.get("path", "").startswith("postgap_preconditions") for pc in param_configs)
+    fetch_preconditions = [] if opt_preconds else base_preconditions
+
     start_date = backtest_params.get("start_date")
     end_date = backtest_params.get("end_date")
+
+    if task_id:
+        OPTIMIZATION_PROGRESS[task_id] = 1.0
+
+    # Fetch dataset once (fast, with DB-level date/preconditions filters)
+    qualifying_df, intraday_df = fetch_dataset_data(
+        dataset_id,
+        req_start_date=start_date,
+        req_end_date=end_date,
+        preconditions=fetch_preconditions,
+        apply_day=apply_day,
+    )
+
+    if task_id:
+        OPTIMIZATION_PROGRESS[task_id] = 5.0
+
+    # Apply date filters (fallback in case database didn't apply them)
     if start_date:
         intraday_df = intraday_df[intraday_df["date"].astype(str) >= start_date]
         qualifying_df = qualifying_df[qualifying_df["date"].astype(str) >= start_date]
@@ -302,20 +363,15 @@ def run_optimization_grid(
         intraday_df = intraday_df[intraday_df["date"].astype(str) <= end_date]
         qualifying_df = qualifying_df[qualifying_df["date"].astype(str) <= end_date]
 
-    if intraday_df.empty:
-        raise ValueError("No data for selected period")
+    if qualifying_df.empty or intraday_df.empty:
+        raise ValueError("No data for selected period/preconditions")
 
     # --- OPTIMIZATION: Pre-group data once ---
-    # Instead of passing the full DataFrame to each backtest (which re-groups it
-    # every time), we group once here and pass pre-computed groups as an iterator.
     precomputed_groups = list(intraday_df.groupby(["date", "ticker"]))
     n_groups = len(precomputed_groups)
     logger.info(f"[OPT] Pre-grouped {n_groups} day/ticker groups")
 
     # --- OPTIMIZATION: Detect risk-only parameters ---
-    # When ALL optimized parameters are in risk_management (SL, TP, trailing),
-    # the entry/exit signals are identical across grid points. We cache them
-    # on the first iteration and reuse for all subsequent ones (~50-60% speedup).
     is_risk_only = all(
         pc["path"].startswith("risk_management.")
         for pc in param_configs
@@ -337,9 +393,6 @@ def run_optimization_grid(
 
     logger.info(f"[OPT] Starting grid sweep: {len(grid_points)} points, shape={shape}")
 
-    if task_id:
-        OPTIMIZATION_PROGRESS[task_id] = 0.0
-
     for idx, point in enumerate(grid_points):
         # Clone strategy definition and set parameter values
         modified_def = copy.deepcopy(base_def)
@@ -347,9 +400,23 @@ def run_optimization_grid(
             path = param_configs[dim]["path"]
             _set_nested_value(modified_def, path, val)
 
+        # If optimizing preconditions, we must re-evaluate them for this point
+        if opt_preconds:
+            point_preconditions = modified_def.get("postgap_preconditions", [])
+            from app.services.data_service import _evaluate_postgap_preconditions
+            point_qualifying_df = _evaluate_postgap_preconditions(qualifying_df, point_preconditions)
+            
+            valid_keys = set(zip(point_qualifying_df["date"].astype(str), point_qualifying_df["ticker"]))
+            point_groups = [g for g in precomputed_groups if (str(g[0][0])[:10], g[0][1]) in valid_keys]
+            n_groups_point = len(point_groups)
+        else:
+            point_qualifying_df = qualifying_df
+            point_groups = precomputed_groups
+            n_groups_point = n_groups
+
         try:
             bt_result = run_backtest(
-                qualifying_df=qualifying_df,
+                qualifying_df=point_qualifying_df,
                 strategy_def=modified_def,
                 init_cash=backtest_params.get("init_cash", 10000),
                 risk_r=backtest_params.get("risk_r", 100),
@@ -363,8 +430,8 @@ def run_optimization_grid(
                 custom_end_time=backtest_params.get("custom_end_time"),
                 locates_cost=backtest_params.get("locates_cost", 0),
                 look_ahead_prevention=backtest_params.get("look_ahead_prevention", False),
-                day_group_iter=iter(precomputed_groups),
-                n_groups_hint=n_groups,
+                day_group_iter=iter(point_groups),
+                n_groups_hint=n_groups_point,
                 _signal_cache=signal_cache,
             )
             agg = bt_result.get("aggregate_metrics", {})
@@ -379,6 +446,7 @@ def run_optimization_grid(
                 "expectancy": agg.get("expectancy", 0),
                 "total_trades": agg.get("total_trades", 0),
                 "dd_return": agg.get("dd_return_ratio", 0),
+                "avg_r_ui": agg.get("avg_r_ui", 0),
             }
         except Exception as e:
             logger.warning(f"[OPT] Point {idx}/{len(grid_points)} failed: {e}")

@@ -140,55 +140,29 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.ATR]: [IndicatorType.ATR],
 };
 
-// ─── INDICADOR DE DISTANCIA — TARGETS POR SOURCE ─────
+const DISTANCE_ALLOWED_TARGETS = [
+    ...ALL_PRICE_VARIABLES,
+    ...ALL_INDICATORS,
+];
 
 export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
-    [IndicatorType.BAR_CLOSE]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.BAR_OPEN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.HIGH_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.LOW_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.PM_HIGH]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
-    [IndicatorType.PM_LOW]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
-    [IndicatorType.RTH_OPEN]: [...RTH_YESTERDAY_INDICATORS],
-    [IndicatorType.RTH_HIGH]: [...RTH_YESTERDAY_INDICATORS],
-    [IndicatorType.RTH_LOW]: [...RTH_YESTERDAY_INDICATORS],
-    [IndicatorType.AM_OPEN]: [
-        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
-        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
-        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
-        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    
-        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
-        ...ALL_INDICATORS,
-    ],
-    [IndicatorType.PREVIOUS_MAX]: [
-        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
-        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
-        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
-        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
-        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
-        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    
-        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
-        IndicatorType.VWAP,
-    ],
-    [IndicatorType.PREVIOUS_MIN]: [
-        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
-        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
-        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
-        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
-        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
-        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-    
-        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
-        IndicatorType.VWAP,
-    ],
-    [IndicatorType.SMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.EMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.VWAP]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.DONCHIAN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.BOLLINGER_BANDS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.ATR]: [IndicatorType.ATR],
+    [IndicatorType.BAR_CLOSE]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.BAR_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.HIGH_BAR]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.LOW_BAR]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.PM_HIGH]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.PM_LOW]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.RTH_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.RTH_HIGH]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.RTH_LOW]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.AM_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.PREVIOUS_MAX]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.PREVIOUS_MIN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.SMA]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.EMA]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.VWAP]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.DONCHIAN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.BOLLINGER_BANDS]: [...DISTANCE_ALLOWED_TARGETS],
 };
 
 // ─── HELPERS ─────────────────────────────────────────

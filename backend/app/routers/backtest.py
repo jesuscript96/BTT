@@ -25,6 +25,18 @@ def get_backtest_progress(dataset_id: str):
     return backtest_progress[dataset_id]
 
 
+@router.post("/backtest/cancel/{dataset_id}")
+def cancel_backtest(dataset_id: str):
+    backtest_progress[dataset_id] = {
+        "status": "cancelled",
+        "percent": 0.0,
+        "current": 0,
+        "total": 0
+    }
+    return {"status": "success", "message": "Backtest cancellation requested"}
+
+
+
 class MonteCarloRequest(BaseModel):
     pnls: list[float]
     init_cash: float = 10000.0
@@ -40,6 +52,10 @@ class WhatIfRequest(BaseModel):
 
 @router.post("/backtest")
 def run_backtest_endpoint(req: BacktestRequest):
+    # Clear cancelled state if this is a fresh run
+    if req.dataset_id in backtest_progress and backtest_progress[req.dataset_id].get("status") == "cancelled":
+        backtest_progress.pop(req.dataset_id, None)
+
     # Check if dataset precache is running (state lives in users.duckdb so it
     # survives backend restarts and is shared across workers).
     from app.routers.query import get_precache_state
@@ -62,6 +78,57 @@ def get_candles(dataset_id: str, ticker: str, date: str):
     if not candles:
         raise HTTPException(status_code=404, detail="No candle data found")
     return {"ticker": ticker, "date": date, "candles": candles}
+
+
+@router.get("/candles/multi")
+def get_multi_candles(dataset_id: str, ticker: str, date: str, apply_day: str = "gap_day"):
+    count = 1
+    if apply_day == "gap_1_day":
+        count = 2
+    elif apply_day == "gap_2_day":
+        count = 3
+
+    if dataset_id == "mock_dataset_1":
+        from datetime import datetime, timedelta
+        try:
+            base_dt = datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            base_dt = datetime.now()
+        
+        dates = []
+        for i in range(count - 1, -1, -1):
+            d_str = (base_dt - timedelta(days=i)).strftime("%Y-%m-%d")
+            dates.append(d_str)
+    else:
+        from app.services.data_service import fetch_preceding_trading_dates
+        dates = fetch_preceding_trading_dates(ticker, date, count)
+        if not dates:
+            dates = [date]
+
+    result = {}
+    day_labels = []
+    if len(dates) == 1:
+        day_labels = ["gap_day"]
+    elif len(dates) == 2:
+        day_labels = ["gap_day", "gap_1_day"]
+    elif len(dates) == 3:
+        day_labels = ["gap_day", "gap_1_day", "gap_2_day"]
+    else:
+        day_labels = [f"day_{i}" for i in range(len(dates))]
+
+    for idx, d in enumerate(dates):
+        label = day_labels[idx] if idx < len(day_labels) else f"day_{idx}"
+        # If it's mock, use generate_mock_candles
+        if dataset_id == "mock_dataset_1":
+            candles = generate_mock_candles(ticker, d)
+        else:
+            candles = fetch_day_candles(dataset_id, ticker, d)
+        result[label] = {
+            "date": d,
+            "candles": candles
+        }
+    return result
+
 
 
 @router.post("/montecarlo")

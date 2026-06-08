@@ -15,9 +15,12 @@ import {
   runBacktest,
   runBacktestWithDefinition,
   fetchDayCandles,
+  fetchMultiDayCandles,
   type BacktestResult,
   type DayCandles,
+  type MultiDayCandles,
 } from "@/lib/api_backtester";
+
 
 export default function Home() {
   const [mode, setMode] = useState<"config" | "builder" | "dataset">("config");
@@ -69,13 +72,24 @@ export default function Home() {
   const datasetIdRef = useRef("");
   const strategyIdRef = useRef("");
   const backtestParamsRef = useRef<Record<string, unknown>>({});
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const panelParamsRef = useRef<BacktestPanelParams | null>(null);
+  const [activeSessions, setActiveSessions] = useState<string[]>(["rth"]);
+  const [activeCustomStartTime, setActiveCustomStartTime] = useState("09:30");
+  const [activeCustomEndTime, setActiveCustomEndTime] = useState("16:00");
+
   const handlePanelParamsChange = useCallback((params: BacktestPanelParams) => {
     panelParamsRef.current = params;
+    setActiveSessions(params.market_sessions || ["rth"]);
+    setActiveCustomStartTime(params.custom_start_time || "09:30");
+    setActiveCustomEndTime(params.custom_end_time || "16:00");
   }, []);
 
   const [dayCandles, setDayCandles] = useState<DayCandles | null>(null);
+  const [activeStrategy, setActiveStrategy] = useState<any | null>(null);
+  const [multiDayCandles, setMultiDayCandles] = useState<MultiDayCandles | null>(null);
   const [candlesLoading, setCandlesLoading] = useState(false);
+
 
   const handleRunWithDraft = async (draft: Draft) => {
     const p = panelParamsRef.current;
@@ -97,7 +111,8 @@ export default function Home() {
 
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
-    const pollTimer = setInterval(async () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
       try {
         const { fetchBacktestProgress } = await import("@/lib/api_backtester");
         const prog = await fetchBacktestProgress(p.dataset_id);
@@ -111,6 +126,9 @@ export default function Home() {
     setResult(null);
     setSelectedDay(0);
     setDayCandles(null);
+    setMultiDayCandles(null);
+    setActiveStrategy(null);
+
     initCashRef.current = p.init_cash;
     riskRRef.current = p.risk_r;
     datasetIdRef.current = p.dataset_id;
@@ -157,6 +175,28 @@ export default function Home() {
         look_ahead_prevention: p.look_ahead_prevention,
       });
       setResult(data);
+      if (data.trades && data.trades.length > 0) {
+        const firstTrade = data.trades[0];
+        const dayIdx = data.day_results.findIndex(
+          (d) => d.ticker === firstTrade.ticker && d.date === firstTrade.date
+        );
+        if (dayIdx !== -1) {
+          setSelectedDay(dayIdx);
+        }
+      }
+      setActiveStrategy({
+        id: "draft",
+        name: draft.name,
+        description: "",
+        definition: {
+          apply_day: draft.apply_day,
+          bias: draft.bias,
+          postgap_preconditions: draft.postgap_preconditions,
+          entry_logic: draft.entry_logic,
+          exit_logic: draft.exit_logic,
+          risk_management: draft.risk_management,
+        }
+      });
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
@@ -172,10 +212,15 @@ export default function Home() {
           msg = errMsg;
         }
       }
-      setError(msg);
+      if (msg !== "Backtest cancelado") {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
-      clearInterval(pollTimer);
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       setBacktestProgress(null);
     }
   };
@@ -196,7 +241,8 @@ export default function Home() {
   }) => {
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
-    const pollTimer = setInterval(async () => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    pollTimerRef.current = setInterval(async () => {
       try {
         const { fetchBacktestProgress } = await import("@/lib/api_backtester");
         const prog = await fetchBacktestProgress(params.dataset_id);
@@ -210,6 +256,8 @@ export default function Home() {
     setResult(null);
     setSelectedDay(0);
     setDayCandles(null);
+    setMultiDayCandles(null);
+    setActiveStrategy(null);
     setDraftStrategy(null);
     initCashRef.current = params.init_cash;
     riskRRef.current = params.risk_r;
@@ -230,6 +278,21 @@ export default function Home() {
     try {
       const data = await runBacktest(params);
       setResult(data);
+      if (data.trades && data.trades.length > 0) {
+        const firstTrade = data.trades[0];
+        const dayIdx = data.day_results.findIndex(
+          (d) => d.ticker === firstTrade.ticker && d.date === firstTrade.date
+        );
+        if (dayIdx !== -1) {
+          setSelectedDay(dayIdx);
+        }
+      }
+      try {
+        const strategyData = await getStrategy(params.strategy_id);
+        setActiveStrategy(strategyData);
+      } catch (strategyErr) {
+        console.warn("Could not fetch strategy definition:", strategyErr);
+      }
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
@@ -245,10 +308,15 @@ export default function Home() {
           msg = errMsg;
         }
       }
-      setError(msg);
+      if (msg !== "Backtest cancelado") {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
-      clearInterval(pollTimer);
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
       setBacktestProgress(null);
     }
   };
@@ -261,21 +329,47 @@ export default function Home() {
 
       setCandlesLoading(true);
       setDayCandles(null);
+      setMultiDayCandles(null);
       try {
-        const data = await fetchDayCandles(
+        let applyDay = "gap_day";
+        if (activeStrategy?.definition?.apply_day) {
+          applyDay = activeStrategy.definition.apply_day as string;
+        }
+
+        const data = await fetchMultiDayCandles(
           datasetIdRef.current,
           day.ticker,
-          day.date
+          day.date,
+          applyDay
         );
-        setDayCandles(data);
-      } catch {
+        setMultiDayCandles(data);
+
+        // Populate fallback dayCandles for backward compatibility
+        let mainCandlesObj = data.gap_day;
+        if (applyDay === "gap_1_day" && data.gap_1_day) {
+          mainCandlesObj = data.gap_1_day;
+        } else if (applyDay === "gap_2_day" && data.gap_2_day) {
+          mainCandlesObj = data.gap_2_day;
+        }
+
+        if (mainCandlesObj) {
+          setDayCandles({
+            ticker: day.ticker,
+            date: mainCandlesObj.date,
+            candles: mainCandlesObj.candles,
+          });
+        }
+      } catch (err) {
+        console.error("Error loading candles:", err);
         setDayCandles(null);
+        setMultiDayCandles(null);
       } finally {
         setCandlesLoading(false);
       }
     },
-    [result]
+    [result, activeStrategy]
   );
+
 
   useEffect(() => {
     if (result && result.day_results.length > 0) {
@@ -482,6 +576,7 @@ export default function Home() {
               refreshTrigger={strategiesRefresh}
               datasetRefreshTrigger={datasetRefresh}
               pendingDatasetSelect={pendingDatasetSelect}
+              onClearPendingDataset={() => setPendingDatasetSelect(undefined)}
               loading={loading}
               isDarkMode={isDarkMode}
             />
@@ -568,6 +663,50 @@ export default function Home() {
                     </p>
                   )}
                 </div>
+                <button
+                  onClick={async () => {
+                    const dsId = datasetIdRef.current;
+                    if (!dsId) return;
+                    setLoading(false);
+                    setBacktestProgress(null);
+                    setError("Backtest cancelado por el usuario.");
+                    if (pollTimerRef.current) {
+                      clearInterval(pollTimerRef.current);
+                      pollTimerRef.current = null;
+                    }
+                    try {
+                      const { cancelBacktest } = await import("@/lib/api_backtester");
+                      await cancelBacktest(dsId);
+                    } catch (e) {
+                      console.warn("Error requesting backtest cancel:", e);
+                    }
+                  }}
+                  style={{
+                    marginTop: 16,
+                    padding: '8px 16px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: '1px',
+                    color: 'var(--color-ec-text-muted)',
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+                    e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                    e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                  }}
+                >
+                  Cancelar carga
+                </button>
               </div>
             </div>
           )}
@@ -659,6 +798,9 @@ export default function Home() {
                 initCash={initCashRef.current}
                 riskR={riskRRef.current}
                 dayCandles={dayCandles}
+                multiDayCandles={multiDayCandles}
+                activeStrategy={activeStrategy}
+                strategyDefinition={activeStrategy?.definition}
                 candlesLoading={candlesLoading}
                 currentTrades={currentTrades || []}
                 currentEquity={currentEquity?.equity || []}
@@ -839,6 +981,9 @@ export default function Home() {
               setMode('config');
               await handleRunWithDraft(draft);
             }}
+            marketSessions={activeSessions}
+            customStartTime={activeCustomStartTime}
+            customEndTime={activeCustomEndTime}
           />
         </div>
 

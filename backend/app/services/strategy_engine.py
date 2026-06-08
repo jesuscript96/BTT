@@ -29,6 +29,7 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "entry_root": entry_logic.get("root_condition", {}),
         "exit_root": exit_logic.get("root_condition", {}),
         "accept_reentries": risk.get("accept_reentries", False),
+        "entry_time_windows": entry_logic.get("entry_time_windows", []),
     }
 
 
@@ -62,23 +63,41 @@ def translate_strategy(
     entry_tf = compiled["entry_tf"]
     exit_tf = compiled["exit_tf"]
 
-    entry_df = _resample_if_needed(df, entry_tf)
-    exit_df = _resample_if_needed(df, exit_tf)
-
     entry_cache: dict = {}
     exit_cache: dict = entry_cache if entry_tf == exit_tf else {}
 
     entries = _evaluate_condition_group(
-        compiled["entry_root"], entry_df, daily_stats, entry_cache
+        compiled["entry_root"], df, entry_tf, daily_stats, entry_cache
     )
-    exits = _evaluate_condition_group(
-        compiled["exit_root"], exit_df, daily_stats, exit_cache
-    )
+    
+    # Filter entries strictly to configured time windows
+    time_windows = compiled.get("entry_time_windows", [])
+    if time_windows:
+        ts = pd.to_datetime(df["timestamp"])
+        minutes_since_midnight = ts.dt.hour * 60 + ts.dt.minute
+        time_mask = pd.Series(False, index=df.index)
+        for window in time_windows:
+            from_time = window.get("from_time", "")
+            to_time = window.get("to_time", "")
+            if not from_time or not to_time:
+                continue
+            try:
+                from_h, from_m = map(int, from_time.split(":"))
+                to_h, to_m = map(int, to_time.split(":"))
+                start_mins = from_h * 60 + from_m
+                end_mins = to_h * 60 + to_m
+                
+                # Check if the time falls in this range
+                window_mask = (minutes_since_midnight >= start_mins) & (minutes_since_midnight <= end_mins)
+                time_mask = time_mask | window_mask
+            except Exception as e:
+                logger.error(f"Error parsing entry time window {window}: {e}")
+                continue
+        entries = entries & time_mask
 
-    if entry_tf != "1m":
-        entries = _align_signals_to_1m(entries, df, entry_tf)
-    if exit_tf != "1m":
-        exits = _align_signals_to_1m(exits, df, exit_tf)
+    exits = _evaluate_condition_group(
+        compiled["exit_root"], df, exit_tf, daily_stats, exit_cache
+    )
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
     sl_stop, sl_trail, tp_stop, trail_pct, partial_tps = _parse_risk_management(risk, df, daily_stats, risk_cache)
@@ -104,16 +123,23 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     freq = tf_map.get(timeframe, "1min")
 
     ts = pd.to_datetime(df["timestamp"])
-    resampled = df.set_index(ts).resample(freq).agg({
+    
+    # Define aggregation rules to avoid losing other columns like 'rvol'
+    agg_dict = {
         "open": "first",
         "high": "max",
         "low": "min",
         "close": "last",
         "volume": "sum",
         "timestamp": "first",
-    }).dropna(subset=["open"])
+    }
+    for col in df.columns:
+        if col not in agg_dict:
+            agg_dict[col] = "first"
 
-    return resampled.reset_index(drop=True)
+    resampled = df.set_index(ts).resample(freq).agg(agg_dict).dropna(subset=["open"])
+
+    return resampled
 
 
 def _align_signals_to_1m(
@@ -131,67 +157,48 @@ def _align_signals_to_1m(
         return signals_tf
 
     ts_1m = pd.to_datetime(df_1m["timestamp"])
-    df_with_ts = df_1m.set_index(ts_1m)
-
     tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1D"}
     freq = tf_map.get(timeframe, "1min")
-
-    # Obtener los índices de los 1m bins agrupados por resample
-    resampler = df_with_ts.resample(freq)
-    bucket_indices = resampler.indices
-
-    # Filtrar solo los buckets no vacíos para corresponder exactamente con signals_tf
-    non_empty_buckets = {k: v for k, v in bucket_indices.items() if len(v) > 0}
-    sorted_keys = sorted(non_empty_buckets.keys())
-
-    # Inicializar el resultado con False (alineado con df_1m.index)
-    result = pd.Series(False, index=df_1m.index)
-
-    n_buckets = min(len(signals_tf), len(sorted_keys))
     delta = pd.to_timedelta(freq)
 
-    for i in range(n_buckets):
-        if not signals_tf.iloc[i]:
-            continue
-
-        # La señal del bucket i (inicia en T) se aplica en el bucket i+1 (inicia en T + delta)
-        T = sorted_keys[i]
-        T_next = T + delta
-        next_indices = bucket_indices.get(T_next, [])
-        if len(next_indices) > 0:
-            result.iloc[next_indices] = True
-
+    t_shifted = ts_1m + pd.to_timedelta("1min")
+    t_floored = t_shifted.dt.floor(freq)
+    T_closed = t_floored - delta
+    result = T_closed.map(signals_tf).fillna(False).astype(bool)
+    result.index = df_1m.index
     return result
+
 
 
 
 def _evaluate_condition_group(
     group: dict,
-    df: pd.DataFrame,
+    df_1m: pd.DataFrame,
+    parent_tf: str,
     daily_stats: dict | None,
     cache: dict | None = None,
 ) -> pd.Series:
     """Recursively evaluate a ConditionGroup with AND/OR logic."""
     if not group:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df_1m.index)
 
     operator = group.get("operator", "AND")
     conditions = group.get("conditions", [])
 
     if not conditions:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df_1m.index)
 
     results = []
     for cond in conditions:
         cond_type = cond.get("type", "")
         if cond_type == "group" or ("conditions" in cond and "operator" in cond):
-            result = _evaluate_condition_group(cond, df, daily_stats, cache)
+            result = _evaluate_condition_group(cond, df_1m, parent_tf, daily_stats, cache)
         else:
-            result = _evaluate_single_condition(cond, df, daily_stats, cache)
+            result = _evaluate_single_condition(cond, df_1m, parent_tf, daily_stats, cache)
         results.append(result)
 
     if not results:
-        return pd.Series(False, index=df.index)
+        return pd.Series(False, index=df_1m.index)
 
     combined = results[0]
     for r in results[1:]:
@@ -205,20 +212,36 @@ def _evaluate_condition_group(
 
 def _evaluate_single_condition(
     cond: dict,
-    df: pd.DataFrame,
+    df_1m: pd.DataFrame,
+    parent_tf: str,
     daily_stats: dict | None,
     cache: dict | None = None,
 ) -> pd.Series:
     cond_type = cond.get("type", "")
+    tf = cond.get("timeframe") or parent_tf or "1m"
+
+    # Evaluate the condition on its own resampled dataframe
+    cond_df = _resample_if_needed(df_1m, tf)
+
+    # Use a timeframe-specific cache to avoid key collisions of indicators across timeframes
+    tf_cache = cache.setdefault(tf, {}) if cache is not None else None
 
     if cond_type == "indicator_comparison":
-        return _eval_indicator_comparison(cond, df, daily_stats, cache)
+        res_tf = _eval_indicator_comparison(cond, cond_df, daily_stats, tf_cache)
     elif cond_type == "price_level_distance":
-        return _eval_price_level_distance(cond, df, daily_stats, cache)
+        res_tf = _eval_price_level_distance(cond, cond_df, daily_stats, tf_cache)
     elif cond_type == "candle_pattern":
-        return _eval_candle_pattern(cond, df)
+        res_tf = _eval_candle_pattern(cond, cond_df)
     else:
-        return pd.Series(False, index=df.index)
+        res_tf = pd.Series(False, index=cond_df.index)
+
+    # Align the result series back to 1m
+    if tf != "1m":
+        res_1m = _align_signals_to_1m(res_tf, df_1m, tf)
+    else:
+        res_1m = res_tf
+
+    return res_1m
 
 
 def _eval_indicator_comparison(
@@ -264,7 +287,9 @@ def _eval_price_level_distance(
     level_cfg = cond.get("level", {})
     comparator = cond.get("comparator", "DISTANCE_LESS_THAN")
     value_pct = cond.get("value_pct", 1.0)
-    position = cond.get("position", "any")
+    position = cond.get("position")
+    if position is None or position == "":
+        position = "any"
 
     # Parse source/level as IndicatorConfig objects (or string fallback)
     if isinstance(source_cfg, str):
@@ -279,9 +304,9 @@ def _eval_price_level_distance(
 
     # Apply position filter
     if position == "above":
-        position_mask = source_series > level_series
+        position_mask = source_series >= level_series
     elif position == "below":
-        position_mask = source_series < level_series
+        position_mask = source_series <= level_series
     else:  # "any"
         position_mask = pd.Series(True, index=df.index)
 
@@ -418,28 +443,29 @@ def _parse_risk_management(
             trail_pct = trailing["buffer_pct"] / 100.0
 
     # --- Take Profit ---
-    tp_mode = risk.get("take_profit_mode", "Full")
+    if risk.get("use_take_profit") is not False:
+        tp_mode = risk.get("take_profit_mode", "Full")
 
-    if tp_mode == "Partial" and risk.get("partial_take_profits"):
-        # Partial Take-Profits: array of {distance_pct, capital_pct}
-        raw_pts = risk["partial_take_profits"]
-        partial_tps = []
-        for pt in raw_pts:
-            dist = pt.get("distance_pct", 0)
-            cap = pt.get("capital_pct", 0)
-            if dist > 0 and cap > 0:
-                partial_tps.append({
-                    "distance_pct": dist / 100.0,  # Convert to fraction
-                    "capital_pct": cap / 100.0,
-                })
-        # Sort by distance ascending so nearest TP triggers first
-        partial_tps.sort(key=lambda x: x["distance_pct"])
-        if not partial_tps:
-            partial_tps = None
-        # tp_stop stays None — partial mode doesn't use a single TP
-    elif risk.get("use_take_profit") and risk.get("take_profit"):
-        tp = risk["take_profit"]
-        if tp.get("type") == "Percentage":
-            tp_stop = tp.get("value", 0) / 100.0
+        if tp_mode == "Partial" and risk.get("partial_take_profits"):
+            # Partial Take-Profits: array of {distance_pct, capital_pct}
+            raw_pts = risk["partial_take_profits"]
+            partial_tps = []
+            for pt in raw_pts:
+                dist = pt.get("distance_pct", 0)
+                cap = pt.get("capital_pct", 0)
+                if dist > 0 and cap > 0:
+                    partial_tps.append({
+                        "distance_pct": dist / 100.0,  # Convert to fraction
+                        "capital_pct": cap / 100.0,
+                    })
+            # Sort by distance ascending so nearest TP triggers first
+            partial_tps.sort(key=lambda x: x["distance_pct"])
+            if not partial_tps:
+                partial_tps = None
+            # tp_stop stays None — partial mode doesn't use a single TP
+        elif risk.get("take_profit"):
+            tp = risk["take_profit"]
+            if tp.get("type") == "Percentage":
+                tp_stop = tp.get("value", 0) / 100.0
 
     return sl_stop, sl_trail, tp_stop, trail_pct, partial_tps

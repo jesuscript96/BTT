@@ -223,7 +223,8 @@ def build_screener_query(
         "Premarket Volume": "pm_volume",
         "Open Gap %": "gap_pct",
         "EOD Volume": "rth_volume",
-        "RTH Range %": "rth_range_pct"
+        "RTH Range %": "rth_range_pct",
+        "Min Open PM price": "open"
     }
     
     for k, v in filters.items():

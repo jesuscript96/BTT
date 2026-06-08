@@ -80,6 +80,25 @@ def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
         last_write_t = time.time()
 
         for _ in iter_intraday_groups_streamed(pairs_df, date_from, date_to):
+            # Check if cancelled or deleted from saved_queries/precache_state to abort the thread
+            if count % 10 == 0:
+                state = get_precache_state(dataset_id)
+                if state and state.get("status") in ("cancelled", "failed"):
+                    print(f"[PRECACHE] Aborting pre-cache for dataset {dataset_id}: status is {state.get('status')}")
+                    return
+                
+                # Check if it was deleted from saved_queries
+                lock = get_user_db_lock()
+                with lock:
+                    con = get_user_db_connection()
+                    try:
+                        row = con.execute("SELECT 1 FROM saved_queries WHERE id = ?", [dataset_id]).fetchone()
+                        if not row:
+                            print(f"[PRECACHE] Aborting pre-cache for dataset {dataset_id}: query was deleted")
+                            return
+                    finally:
+                        con.close()
+
             count += 1
             percent = min(100.0, round((count / total) * 100.0, 1)) if total > 0 else 100.0
             # Write at most every ~5 percentage points OR every 5 seconds — whichever comes first.
@@ -101,7 +120,30 @@ def get_precache_status(dataset_id: str):
     state = get_precache_state(dataset_id)
     if state is None:
         return {"status": "completed", "percent": 100.0, "current": 0, "total": 0}
-    return state
+    
+    total_pairs = 0
+    try:
+        lock = get_user_db_lock()
+        with lock:
+            con = get_user_db_connection()
+            try:
+                row = con.execute("SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?", [dataset_id]).fetchone()
+                if row:
+                    total_pairs = row[0]
+            finally:
+                con.close()
+    except Exception as e:
+        print(f"[PRECACHE] Could not read total pairs for {dataset_id}: {e}")
+        
+    percent = state.get("percent", 0.0)
+    current_pairs = int(round(total_pairs * (percent / 100.0)))
+    
+    return {
+        "status": state.get("status"),
+        "percent": percent,
+        "current": current_pairs,
+        "total": total_pairs
+    }
 
 @router.post("/", response_model=SavedQuery)
 def create_saved_query(query: SavedQuery):
@@ -141,13 +183,15 @@ def create_saved_query(query: SavedQuery):
                            LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_1,
                            LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_1,
                            LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_1,
+                           LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_open_1,
                            
                            LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_2,
                            LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_2,
                            LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_2,
                            LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_2,
                            LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_2,
-                           LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_2
+                           LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_2,
+                           LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_open_2
                     FROM daily_metrics
                 ) dm_lagged
                 """
@@ -265,6 +309,9 @@ def delete_saved_query(query_id: str):
         con = get_user_db_connection()
         try:
             con.execute("DELETE FROM saved_queries WHERE id = ?", (query_id,))
+            con.execute("DELETE FROM datasets WHERE id = ?", (query_id,))
+            con.execute("DELETE FROM dataset_pairs WHERE dataset_id = ?", (query_id,))
+            con.execute("DELETE FROM precache_state WHERE dataset_id = ?", (query_id,))
             return {"status": "success"}
         finally:
             con.close()

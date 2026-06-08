@@ -896,6 +896,7 @@ def _compute_raw(
             pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
             val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
         return pd.Series(_safe_float(val), index=close.index)
+
     if name == "Pre-Market Low":
         val = ds.get("pm_low") if ds else None
         if val is None or pd.isna(val):

@@ -170,9 +170,15 @@ export interface ConditionGroup {
     conditions: (ConditionGroup | AnyCondition)[];
 }
 
+export interface EntryTimeWindow {
+    from_time: string; // Formato "HH:MM"
+    to_time: string;   // Formato "HH:MM"
+}
+
 export interface EntryLogic {
     timeframe: Timeframe;
     root_condition: ConditionGroup;
+    entry_time_windows?: EntryTimeWindow[];
 }
 
 export interface ExitLogic {

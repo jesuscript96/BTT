@@ -352,7 +352,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                         </div>
 
                         {risk.take_profit_mode === TakeProfitMode.FULL ? (
-                            <div className="flex gap-2 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
+                            <div className="flex gap-2 items-center justify-center animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <select
                                     value={risk.take_profit.type}
                                     onChange={(e) => updateRiskSetting('take_profit', 'type', e.target.value)}
@@ -367,11 +367,12 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                         fontFamily: 'var(--color-ec-sans)',
                                         outline: 'none',
                                         cursor: 'pointer',
+                                        height: '36px',
                                     }}
                                 >
                                     <option value={RiskType.PERCENTAGE}>%</option>
                                 </select>
-                                <div className="relative flex-1">
+                                <div className="relative" style={{ width: '120px' }}>
                                     <input
                                         type="number"
                                         value={risk.take_profit.value}
@@ -380,88 +381,122 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
-                                            padding: '7px 10px',
+                                            padding: '7px 24px 7px 10px',
                                             fontSize: 13,
                                             fontWeight: 600,
                                             color: 'var(--color-ec-text-primary)',
                                             fontFamily: 'var(--color-ec-sans)',
                                             outline: 'none',
                                             width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
                                         }}
                                     />
                                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
                                 </div>
                             </div>
                         ) : (
-                            <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
+                            <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <div className="space-y-2">
                                     {risk.partial_take_profits.map((partial, idx) => (
                                         <div key={idx} className="group relative"
                                             style={{
-                                                backgroundColor: 'var(--color-ec-bg-elevated)',
-                                                border: '0.5px solid var(--color-ec-border)',
-                                                borderRadius: 5,
-                                                padding: '12px 14px',
+                                                backgroundColor: 'transparent',
+                                                borderBottom: '0.5px dotted var(--color-ec-border)',
+                                                padding: '8px 0',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 12,
                                             }}
-                                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-profit)')}
-                                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-ec-border)')}
                                         >
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-[10px] font-black text-ec-profit/70 tracking-tighter">PARTIAL #{idx + 1}</span>
-                                                {risk.partial_take_profits.length > 1 && (
-                                                    <button
-                                                        onClick={() => removePartial(idx)}
-                                                        className="p-1 text-muted-foreground hover:text-ec-loss transition-colors opacity-0 group-hover:opacity-100"
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                    </button>
-                                                )}
-                                            </div>
-                                            
-                                            <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '16px', marginTop: 6 }}>
-                                                {/* Left Column: Distancia % */}
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                                    <label className="text-[9px] font-bold text-muted-foreground uppercase opacity-50" style={{ height: '14px', display: 'flex', alignItems: 'center' }}>
-                                                        Distancia %
-                                                    </label>
-                                                    <div className="relative" style={{ height: '28px' }}>
-                                                        <input
-                                                            type="number"
-                                                            step="0.1"
-                                                            value={partial.distance_pct}
-                                                            onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                                            className="w-full bg-background/50 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-bold focus:ring-1 focus:ring-[var(--color-ec-profit)]/30"
-                                                            style={{ height: '28px' }}
-                                                        />
-                                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/30">%</span>
-                                                    </div>
-                                                </div>
+                                            {/* Partial Tag */}
+                                            <span style={{
+                                                fontSize: 9,
+                                                fontWeight: 800,
+                                                color: 'var(--color-ec-profit)',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: '0.05em',
+                                                width: 65,
+                                                flexShrink: 0
+                                            }}>
+                                                Parcial #{idx + 1}
+                                            </span>
 
-                                                {/* Right Column: Capital % */}
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '14px' }}>
-                                                        <label className="text-[9px] font-bold text-muted-foreground uppercase opacity-50">Capital %</label>
-                                                        <span className="text-[10px] font-black text-foreground">{partial.capital_pct}%</span>
-                                                    </div>
-                                                    <div style={{ display: 'flex', alignItems: 'center', height: '28px', width: '100%' }}>
-                                                        <input
-                                                            type="range"
-                                                            min="1"
-                                                            max="100"
-                                                            value={partial.capital_pct}
-                                                            onChange={(e) => updatePartial(idx, 'capital_pct', Number(e.target.value))}
-                                                            className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer"
-                                                            style={{
-                                                                backgroundColor: 'rgba(255, 255, 255, 0.15)',
-                                                                accentColor: 'var(--color-ec-profit)',
-                                                                outline: 'none',
-                                                                height: '4px',
-                                                                width: '100%',
-                                                            }}
-                                                        />
-                                                    </div>
+                                            {/* Distance Input */}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                                <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Dist.</span>
+                                                <div className="relative" style={{ width: 65 }}>
+                                                    <input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={partial.distance_pct}
+                                                        onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
+                                                        style={{
+                                                            width: '100%',
+                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                            border: '0.5px solid var(--color-ec-border)',
+                                                            borderRadius: 4,
+                                                            padding: '4px 16px 4px 6px',
+                                                            fontSize: 11,
+                                                            fontWeight: 700,
+                                                            color: 'var(--color-ec-text-primary)',
+                                                            outline: 'none',
+                                                            textAlign: 'right',
+                                                        }}
+                                                    />
+                                                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">%</span>
                                                 </div>
                                             </div>
+
+                                            {/* Capital Slider */}
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                                                <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)', flexShrink: 0 }}>Cap.</span>
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="100"
+                                                    value={partial.capital_pct}
+                                                    onChange={(e) => updatePartial(idx, 'capital_pct', Number(e.target.value))}
+                                                    style={{
+                                                        backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                                                        accentColor: 'var(--color-ec-profit)',
+                                                        outline: 'none',
+                                                        height: '4px',
+                                                        flex: 1,
+                                                        minWidth: '50px',
+                                                        cursor: 'pointer',
+                                                        borderRadius: '2px',
+                                                        appearance: 'none',
+                                                    }}
+                                                />
+                                                <span style={{
+                                                    fontSize: 10,
+                                                    fontWeight: 800,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    width: 35,
+                                                    textAlign: 'right',
+                                                    flexShrink: 0
+                                                }}>
+                                                    {partial.capital_pct}%
+                                                </span>
+                                            </div>
+
+                                            {/* Delete button */}
+                                            {risk.partial_take_profits.length > 1 && (
+                                                <button
+                                                    onClick={() => removePartial(idx)}
+                                                    className="p-1 text-muted-foreground hover:text-ec-loss transition-colors opacity-0 group-hover:opacity-100"
+                                                    style={{
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        padding: 2,
+                                                        flexShrink: 0
+                                                    }}
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -486,6 +521,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                         gap: 6,
+                                        margin: '20px 0 16px 0',
                                     }}
                                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-profit)'; e.currentTarget.style.color = 'var(--color-ec-profit)'; }}
                                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-ec-border)'; e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}
@@ -570,47 +606,32 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                 {/* Body */}
                 {risk.trailing_stop.active && (
-                    <div className="grid grid-cols-2 gap-3 animate-in fade-in duration-200">
-                        <div>
-                            <label className="block text-[9px] font-bold text-muted-foreground uppercase mb-1.5 opacity-50">Type</label>
-                            <select
-                                value={risk.trailing_stop.type}
-                                onChange={(e) => setTrailingField('type', e.target.value)}
-                                style={{
-                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                    border: '0.5px solid var(--color-ec-border)',
-                                    borderRadius: 5,
-                                    padding: '7px 10px',
-                                    fontSize: 12,
-                                    fontWeight: 500,
-                                    color: 'var(--color-ec-text-primary)',
-                                    fontFamily: 'var(--color-ec-sans)',
-                                    outline: 'none',
-                                    cursor: 'pointer',
-                                }}
-                            >
-                                <option value="Percentage">Percentage</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-[9px] font-bold text-muted-foreground uppercase mb-1.5 opacity-50">Distance %</label>
-                            <input
-                                type="number"
-                                step="0.1"
-                                value={risk.trailing_stop.buffer_pct}
-                                onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
-                                style={{
-                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                    border: '0.5px solid var(--color-ec-border)',
-                                    borderRadius: 5,
-                                    padding: '7px 10px',
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    color: 'var(--color-ec-text-primary)',
-                                    fontFamily: 'var(--color-ec-sans)',
-                                    outline: 'none',
-                                }}
-                            />
+                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
+                            <div className="relative" style={{ width: '120px' }}>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={risk.trailing_stop.buffer_pct}
+                                    onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 24px 7px 10px',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '100%',
+                                        height: '36px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                            </div>
                         </div>
                     </div>
                 )}

@@ -55,6 +55,7 @@ interface BacktestPanelProps {
   onNewDataset: () => void;
   datasetRefreshTrigger?: number;
   pendingDatasetSelect?: string;
+  onClearPendingDataset?: () => void;
 }
 
 function formatConditionGroup(group: any): string {
@@ -132,6 +133,7 @@ export default function BacktestPanel({
   onNewDataset,
   datasetRefreshTrigger,
   pendingDatasetSelect,
+  onClearPendingDataset,
   onRun,
   onParamsChange,
   loading,
@@ -155,7 +157,7 @@ export default function BacktestPanel({
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
-  const [riskType, setRiskType] = useState<"FIXED" | "PERCENT" | "KELLY" | "FIXED_RATIO">("FIXED");
+  const [riskType, setRiskType] = useState<"FIXED" | "PERCENT" | "FIXED_RATIO">("FIXED");
   const [fixedRatioDelta, setFixedRatioDelta] = useState(500);
   const [sizeBySl, setSizeBySl] = useState(false);
   const [feeType, setFeeType] = useState<"PERCENT" | "FLAT">("PERCENT");
@@ -165,6 +167,7 @@ export default function BacktestPanel({
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [precacheStatus, setPrecacheStatus] = useState<PrecacheStatus | null>(null);
+  const [visualPercent, setVisualPercent] = useState<number>(0);
 
   const loadData = async () => {
     setLoadingData(true);
@@ -238,21 +241,29 @@ export default function BacktestPanel({
     fetchDatasets()
       .then((d) => {
         setDatasets(d);
-        if (pendingDatasetSelect) {
-          setSelectedDataset(pendingDatasetSelect);
-        }
       })
       .catch((e) => console.error("Error refreshing datasets:", e));
-  }, [datasetRefreshTrigger, pendingDatasetSelect]);
+  }, [datasetRefreshTrigger]);
+
+  useEffect(() => {
+    if (pendingDatasetSelect && datasets.some((d) => d.id === pendingDatasetSelect)) {
+      setSelectedDataset(pendingDatasetSelect);
+      onClearPendingDataset?.();
+    }
+  }, [datasets, pendingDatasetSelect, onClearPendingDataset]);
 
   useEffect(() => {
     if (!selectedDataset) {
       setPrecacheStatus(null);
+      setVisualPercent(0);
       return;
     }
 
     let isMounted = true;
     let timer: NodeJS.Timeout | null = null;
+    let progressTimer: NodeJS.Timeout | null = null;
+
+    setVisualPercent(0);
 
     const checkStatus = async () => {
       try {
@@ -263,6 +274,11 @@ export default function BacktestPanel({
 
         if (statusData.status === "running") {
           timer = setTimeout(checkStatus, 1500);
+          if (statusData.percent > 0) {
+            setVisualPercent((prev) => Math.max(prev, statusData.percent));
+          }
+        } else if (statusData.status === "completed") {
+          setVisualPercent(100);
         }
       } catch (err) {
         console.error("Error fetching precache status:", err);
@@ -272,11 +288,26 @@ export default function BacktestPanel({
       }
     };
 
+    const updateProgress = () => {
+      setVisualPercent((prev) => {
+        if (prev >= 95) return prev;
+        let increment = 1.5;
+        if (prev >= 80) increment = 0.2;
+        else if (prev >= 50) increment = 0.5;
+        return Math.min(95, prev + increment);
+      });
+      if (isMounted) {
+        progressTimer = setTimeout(updateProgress, 1000);
+      }
+    };
+
     checkStatus();
+    updateProgress();
 
     return () => {
       isMounted = false;
       if (timer) clearTimeout(timer);
+      if (progressTimer) clearTimeout(progressTimer);
     };
   }, [selectedDataset]);
 
@@ -311,6 +342,10 @@ export default function BacktestPanel({
 
   const handleRun = () => {
     if (!selectedDataset || !selectedStrategy) return;
+    if (isSelectedStratRiskInvalid) {
+      alert("La suma del capital de los parciales de Take Profit debe ser exactamente 100%.");
+      return;
+    }
     if (precacheStatus?.status === "running") {
       alert(`Espera a que se cargue el dataset (progreso: ${precacheStatus.percent}%)`);
       return;
@@ -347,6 +382,12 @@ export default function BacktestPanel({
 
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
+
+  const stratDef = selectedStrat?.definition as any;
+  const riskMgmt = stratDef?.risk_management;
+  const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
+  const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
+  const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
 
   return (
     <div style={{
@@ -482,8 +523,8 @@ export default function BacktestPanel({
                 letterSpacing: '0.08em',
                 color: 'var(--color-ec-copper)',
               }}>
-                <span>Cargando dataset...</span>
-                <span>{precacheStatus.percent}%</span>
+                <span>Descargando Data...</span>
+                <span>{Math.round(visualPercent)}%</span>
               </div>
               <div style={{
                 height: 4,
@@ -493,19 +534,27 @@ export default function BacktestPanel({
               }}>
                 <div style={{
                   height: '100%',
-                  width: `${precacheStatus.percent}%`,
+                  width: `${visualPercent}%`,
                   backgroundColor: 'var(--color-ec-copper)',
                   borderRadius: 2,
-                  transition: 'width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  transition: 'width 1000ms linear',
                 }} />
               </div>
               <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
                 fontFamily: 'var(--color-ec-sans)',
-                fontSize: 9,
+                fontSize: 8,
                 color: 'var(--color-ec-text-muted)',
-                textAlign: 'right',
+                marginTop: 2,
+                gap: 8,
               }}>
-                {precacheStatus.current} / {precacheStatus.total} pares
+                <span style={{ textAlign: 'left', flex: 1, lineHeight: '1.2' }}>
+                  La carga puede tardar unos minutos.
+                </span>
+                <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  {Math.min(precacheStatus.total, Math.round(precacheStatus.total * (visualPercent / 100)))} / {precacheStatus.total} pares
+                </span>
               </div>
             </div>
           )}
@@ -606,6 +655,14 @@ export default function BacktestPanel({
                         {displayDay && ` | Aplicar en ${displayDay}`}
                       </div>
                     )}
+                    {entryLogic?.entry_time_windows && entryLogic.entry_time_windows.length > 0 && (
+                      <div>
+                        <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>HORAS ENTRADA (ET): </span>
+                        <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
+                          {entryLogic.entry_time_windows.map((w: any) => `${w.from_time}-${w.to_time}`).join(", ")}
+                        </span>
+                      </div>
+                    )}
                     {precondsText && (
                       <div>
                         <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PRECONDICIONES: </span>
@@ -645,6 +702,23 @@ export default function BacktestPanel({
                         }}>{exitText}</span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {isSelectedStratRiskInvalid && (
+                  <div style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                    border: '0.5px solid var(--color-ec-loss)',
+                    borderRadius: 4,
+                    padding: '6px 10px',
+                    color: 'var(--color-ec-loss)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: '1.4',
+                    marginTop: 6,
+                  }}>
+                    ⚠️ Los parciales de Take Profit suman {selectedStratPartialCapital}%. Debe ser exactamente 100%. Edita la estrategia para corregirlo.
                   </div>
                 )}
               </div>
@@ -739,7 +813,7 @@ export default function BacktestPanel({
               </label>
               <select
                 value={riskType}
-                onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT" | "KELLY")}
+                onChange={(e) => setRiskType(e.target.value as "FIXED" | "PERCENT")}
                 style={{
                   backgroundColor: 'transparent',
                   border: 'none',
@@ -751,9 +825,8 @@ export default function BacktestPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="FIXED">Fijo ($)</option>
-                <option value="PERCENT">% Eq</option>
-                <option value="KELLY">Kelly</option>
+                <option value="FIXED" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>Fijo ($)</option>
+                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>% Eq</option>
               </select>
             </div>
             <div className="flex gap-2">
@@ -816,8 +889,8 @@ export default function BacktestPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="PERCENT">%</option>
-                <option value="FLAT">$</option>
+                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
+                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
               </select>
             </div>
             <input
@@ -1241,7 +1314,7 @@ export default function BacktestPanel({
 
       <button
         onClick={handleRun}
-        disabled={loading || !selectedDataset || !selectedStrategy}
+        disabled={loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid}
         onMouseEnter={() => setHoveredBtn("run")}
         onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
         onMouseDown={() => setActiveBtn("run")}
@@ -1257,12 +1330,12 @@ export default function BacktestPanel({
             fontWeight: 700,
             letterSpacing: '1.2px',
             textTransform: 'uppercase',
-            cursor: loading || !selectedDataset || !selectedStrategy ? 'not-allowed' : 'pointer',
+            cursor: loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid ? 'not-allowed' : 'pointer',
             width: '100%',
             marginTop: 8,
-            opacity: loading || !selectedDataset || !selectedStrategy ? 0.5 : 1,
-            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
-            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy ? 'scale(1.015)' : 'scale(1)',
+            opacity: loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid ? 0.35 : 1,
+            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? 'scale(1.015)' : 'scale(1)',
             transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
       >
