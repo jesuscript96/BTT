@@ -116,11 +116,25 @@ export default function IndicatorDropdown({
         </button>
 
         {isOpen && (
-          <div className="absolute left-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
+          <div 
+            className="absolute left-0 top-full mt-1.5 w-72 rounded-lg z-50 overflow-hidden border"
+            style={{
+              backgroundColor: 'var(--color-ec-bg-surface)',
+              borderColor: 'var(--color-ec-border)',
+              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.6)',
+            }}
+          >
             <div className="max-h-96 overflow-y-auto custom-scrollbar">
               {(Object.keys(grouped) as IndicatorCategory[]).map(category => (
                 <div key={category}>
-                  <div className="px-3 py-1.5 bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-gray-100 sticky top-0 z-10">
+                  <div 
+                    className="px-3.5 py-2 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border-b sticky top-0 z-10"
+                    style={{
+                      backgroundColor: 'var(--color-ec-bg-elevated)',
+                      color: 'var(--color-ec-text-secondary)',
+                      borderColor: 'var(--color-ec-border)',
+                    }}
+                  >
                     <span>{CATEGORY_ICONS[category]}</span> {category}
                   </div>
                   {grouped[category].map(def => {
@@ -132,14 +146,38 @@ export default function IndicatorDropdown({
                           onAdd(def.id);
                           if (!def.multi) setIsOpen(false);
                         }}
-                        className={`w-full text-left pl-3 pr-4 py-1.5 text-xs transition-colors flex items-center justify-between
-                          ${isActive
-                            ? "bg-blue-50 text-blue-700"
-                            : "text-gray-700 hover:bg-gray-50"
-                          }`}
+                        className="w-full text-left pl-3.5 pr-4 py-2 text-xs transition-all flex items-center justify-between cursor-pointer border-b"
+                        style={{
+                          borderColor: 'rgba(255,255,255,0.03)',
+                          backgroundColor: isActive ? 'rgba(216,122,61,0.12)' : 'transparent',
+                          color: isActive ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
+                          borderLeft: isActive ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                          fontWeight: isActive ? 600 : 400,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isActive) {
+                            e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-elevated)';
+                            e.currentTarget.style.color = 'var(--color-ec-text-high)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isActive) {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                          }
+                        }}
                       >
                         <span>{def.label}</span>
-                        <span className="text-[10px] text-gray-400">
+                        <span 
+                          style={{
+                            fontSize: '9px',
+                            color: 'var(--color-ec-text-secondary)',
+                            textTransform: 'uppercase',
+                            fontWeight: 700,
+                            letterSpacing: '0.05em',
+                            opacity: 0.8,
+                          }}
+                        >
                           {def.displayMode === "overlay" ? "chart" : "panel"}
                         </span>
                       </button>
