@@ -810,7 +810,7 @@ export default function Chart({
       {/* TOOLBAR */}
       <div 
         style={{
-          padding: '4px 24px',
+          padding: '4px 12px 4px 24px',
           borderBottom: '1px solid var(--color-ec-border)',
           display: 'flex',
           flexWrap: 'wrap',
