@@ -28,17 +28,13 @@ const Plot = dynamic(
 const METRIC_OPTIONS = [
   { value: "sharpe", label: "Sharpe Ratio" },
   { value: "total_return", label: "Total Return %" },
-  { value: "max_drawdown", label: "Max Drawdown" },
-  { value: "profit_factor", label: "Profit Factor" },
-  { value: "win_rate", label: "Win Rate %" },
-  { value: "expectancy", label: "Esperanza (EV)" },
-  { value: "calmar", label: "Calmar Ratio" },
-  { value: "sortino", label: "Sortino Ratio" },
   { value: "dd_return", label: "DD / Return" },
+  { value: "avg_r_ui", label: "AVG Y/U.Index" },
 ];
 
 interface OptimizationSurfaceTabProps {
   strategyId: string;
+  strategyDefinition?: Record<string, unknown>;
   datasetId: string;
   isDarkMode?: boolean;
   backtestParams?: Record<string, unknown>;
@@ -46,6 +42,7 @@ interface OptimizationSurfaceTabProps {
 
 export default function OptimizationSurfaceTab({
   strategyId,
+  strategyDefinition,
   datasetId,
   isDarkMode = false,
   backtestParams = {},
@@ -57,6 +54,7 @@ export default function OptimizationSurfaceTab({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [progress, setProgress] = useState<number>(0);
+  const [visualProgress, setVisualProgress] = useState<number>(0);
 
   // Config state
   const [mode, setMode] = useState<"2D" | "3D">("2D");
@@ -77,7 +75,7 @@ export default function OptimizationSurfaceTab({
     setResult(null); // Clear old optimization result when strategy changes
     setParamX("");
     setParamY("");
-    fetchOptimizationParams(strategyId)
+    fetchOptimizationParams(strategyId, strategyDefinition)
       .then((res) => {
         setParams(res.parameters);
         setStrategyName(res.strategy_name);
@@ -90,7 +88,7 @@ export default function OptimizationSurfaceTab({
       })
       .catch(() => setError("Error loading strategy parameters"))
       .finally(() => setLoadingParams(false));
-  }, [strategyId]);
+  }, [strategyId, strategyDefinition]);
 
   // Update ranges when param selection changes
   const getParamById = useCallback(
@@ -114,6 +112,7 @@ export default function OptimizationSurfaceTab({
     setError(null);
     setResult(null);
     setProgress(0);
+    setVisualProgress(0);
 
     const taskId = `opt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -129,9 +128,18 @@ export default function OptimizationSurfaceTab({
       { id: pY.id, label: pY.label, path: pY.path, min: rangeY[0], max: rangeY[1], steps: gridSteps },
     ];
 
+    let pollInterval: number | undefined;
+    let visualInterval: number | undefined;
+
+    const cleanup = () => {
+      if (pollInterval) window.clearInterval(pollInterval);
+      if (visualInterval) window.clearInterval(visualInterval);
+    };
+
     try {
       await runOptimizationSurface({
         strategy_id: strategyId,
+        strategy_definition: strategyDefinition,
         dataset_id: datasetId,
         metric,
         param_configs: configs,
@@ -139,26 +147,45 @@ export default function OptimizationSurfaceTab({
         ...backtestParams,
       });
 
-      const pollInterval = window.setInterval(async () => {
+      // Visual progress timer: climb asymptotically towards 95%
+      visualInterval = window.setInterval(() => {
+        setVisualProgress((prev) => {
+          if (prev < 95) {
+            const remaining = 95 - prev;
+            const step = Math.max(0.05, remaining * 0.015);
+            return prev + step;
+          }
+          return prev;
+        });
+      }, 150);
+
+      pollInterval = window.setInterval(async () => {
         try {
           const res = await fetchOptimizationResult(taskId);
           if ("status" in res && res.status === "running") {
             setProgress(res.progress);
+            setVisualProgress((prev) => Math.max(prev, res.progress));
           } else {
-            window.clearInterval(pollInterval);
-            setResult(res as OptimizationResult);
-            setLoading(false);
+            cleanup();
+            setProgress(100);
+            setVisualProgress(100);
+            // Small delay so user sees 100% complete
+            setTimeout(() => {
+              setResult(res as OptimizationResult);
+              setLoading(false);
+            }, 300);
           }
         } catch (e: any) {
-          window.clearInterval(pollInterval);
+          cleanup();
           console.error("Error polling optimization result", e);
           const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
           setError(msg);
           setLoading(false);
         }
-      }, 500);
+      }, 800);
 
     } catch (err: any) {
+      cleanup();
       console.error("Error starting optimization:", err);
       const msg = err.response?.data?.detail || err.message || "Error al iniciar la optimización";
       setError(msg);
@@ -287,14 +314,14 @@ export default function OptimizationSurfaceTab({
         {/* Mode toggle */}
         <div>
           <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Modo</label>
-          <div className="flex bg-[var(--color-ec-bg-sidebar)] rounded border border-[var(--color-ec-border)]" style={{ marginTop: '2px' }}>
+          <div className="flex bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[28px] p-[2px]" style={{ marginTop: '2px' }}>
             {(["2D", "3D"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`flex-1 px-3 py-1.5 text-[11px] font-mono font-bold rounded transition-colors cursor-pointer ${
+                className={`flex-1 flex items-center justify-center text-[10px] font-mono font-bold rounded transition-colors cursor-pointer ${
                   mode === m
-                    ? "bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)] shadow-sm"
+                    ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] shadow-sm"
                     : "text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)]"
                 }`}
               >
@@ -310,7 +337,8 @@ export default function OptimizationSurfaceTab({
           <select
             value={metric}
             onChange={(e) => setMetric(e.target.value)}
-            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            className="w-full h-[28px] bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono cursor-pointer"
+            style={{ marginTop: '2px' }}
           >
             {METRIC_OPTIONS.map((o) => (
               <option key={o.value} value={o.value} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{o.label}</option>
@@ -324,7 +352,8 @@ export default function OptimizationSurfaceTab({
           <select
             value={paramX}
             onChange={(e) => setParamX(e.target.value)}
-            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            className="w-full h-[28px] bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono cursor-pointer"
+            style={{ marginTop: '2px' }}
           >
             {params.filter((p) => p.id !== paramY).map((p) => (
               <option key={p.id} value={p.id} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{p.label}</option>
@@ -338,7 +367,8 @@ export default function OptimizationSurfaceTab({
           <select
             value={paramY}
             onChange={(e) => setParamY(e.target.value)}
-            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            className="w-full h-[28px] bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono cursor-pointer"
+            style={{ marginTop: '2px' }}
           >
             {params.filter((p) => p.id !== paramX).map((p) => (
               <option key={p.id} value={p.id} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{p.label}</option>
@@ -352,7 +382,8 @@ export default function OptimizationSurfaceTab({
           <select
             value={gridSteps}
             onChange={(e) => setGridSteps(Number(e.target.value))}
-            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            className="w-full h-[28px] bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono cursor-pointer"
+            style={{ marginTop: '2px' }}
           >
             {[5, 8, 10, 12, 15, 20].map((n) => (
               <option key={n} value={n} className="bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)]">{n}×{n} ({n*n} pts)</option>
@@ -361,11 +392,13 @@ export default function OptimizationSurfaceTab({
         </div>
 
         {/* Run button */}
-        <div className="flex items-end">
+        <div>
+          <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 opacity-0 pointer-events-none font-mono uppercase">Accion</label>
           <button
             onClick={handleRun}
             disabled={loading || !paramX || !paramY}
-            className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-1.5 rounded text-[11px] font-mono font-bold uppercase tracking-[0.1em] transform active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            className="w-full h-[28px] bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] rounded text-[11px] font-mono font-bold uppercase tracking-[0.1em] flex items-center justify-center transform active:scale-[0.98] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            style={{ marginTop: '2px' }}
           >
             {loading ? "..." : "Ejecutar"}
           </button>
@@ -415,13 +448,13 @@ export default function OptimizationSurfaceTab({
                   optimizing...
                 </p>
                 <span className="text-[11px] font-mono text-[var(--color-ec-text-high)] font-bold">
-                  {progress}%
+                  {Math.round(visualProgress)}%
                 </span>
               </div>
               <div className="h-[2px] w-full bg-[var(--color-ec-border)] overflow-hidden">
                 <div
                   className="h-full bg-[var(--color-ec-copper)] transition-all duration-300 ease-out"
-                  style={{ width: `${progress}%` }}
+                  style={{ width: `${visualProgress}%` }}
                 />
               </div>
               <p className="text-[9px] text-[var(--color-ec-text-muted)] uppercase tracking-wider font-mono">

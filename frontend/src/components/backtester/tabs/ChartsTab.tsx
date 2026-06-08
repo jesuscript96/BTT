@@ -300,7 +300,9 @@ export default function ChartsTab({
                 />
                 <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
-                  contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
+                  contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace', color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
+                  labelStyle={{ color: '#aaa' }}
                   formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
@@ -325,7 +327,9 @@ export default function ChartsTab({
                 <XAxis dataKey="day" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
-                  contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
+                  contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace', color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
+                  labelStyle={{ color: '#aaa' }}
                   formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
@@ -366,7 +370,9 @@ export default function ChartsTab({
                   allowDecimals={false}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
+                  contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace', color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
+                  labelStyle={{ color: '#aaa' }}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
                 <ReferenceLine x="0.00%" stroke="#6A6D72" strokeDasharray="3 3" strokeWidth={0.5} />
@@ -408,7 +414,9 @@ export default function ChartsTab({
                   allowDecimals={false}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace' }}
+                  contentStyle={{ backgroundColor: tooltipBg, fontSize: '10px', border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace', color: '#fff' }}
+                  itemStyle={{ color: '#fff' }}
+                  labelStyle={{ color: '#aaa' }}
                 />
                 <Bar dataKey="winRuns" name="Wins" fill={barPositiveFill} stroke={barPositiveStroke} fillOpacity={isDarkMode ? 0.7 : 1} radius={[1, 1, 0, 0]} />
                 <Bar dataKey="lossRuns" name="Losses" fill={barNegativeFill} stroke={barNegativeStroke} fillOpacity={isDarkMode ? 0.7 : 1} radius={[1, 1, 0, 0]} />

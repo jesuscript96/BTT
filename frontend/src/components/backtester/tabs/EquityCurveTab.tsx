@@ -698,9 +698,9 @@ export default function EquityCurveTab({
           </div>
         ) : activeMainTab === "whatif" ? (
           <div key="whatif-tab" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
-              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
-                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '16px', marginBottom: '16px' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '12px', paddingTop: '20px', paddingBottom: '20px', boxSizing: 'border-box' }}>
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-5" style={{ width: '100%', height: '100%' }}>                {/* Temporal Settings */}
+                <div style={{ borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '12px', marginBottom: '16px' }}>
                   <button 
                     onClick={() => toggleSection("temporal")}
                     style={{
@@ -723,7 +723,7 @@ export default function EquityCurveTab({
                   </button>
                   
                   {openSections.includes("temporal") && (
-                    <div style={{ paddingBottom: '16px', paddingTop: '6px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div style={{ paddingBottom: '0px', paddingTop: '6px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
                       <div>
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Días de la Semana</label>
                         <div className="flex gap-1.5">
@@ -744,7 +744,7 @@ export default function EquityCurveTab({
                           ))}
                         </div>
                       </div>
-                      <div className="pt-2">
+                      <div style={{ marginTop: '5px', paddingTop: '0px' }}>
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Meses del Año</label>
                         <div className="grid grid-cols-6 gap-1.5">
                           {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => (
@@ -764,7 +764,7 @@ export default function EquityCurveTab({
                           ))}
                         </div>
                       </div>
-                      <div className="pt-2">
+                      <div style={{ marginTop: '5px', paddingTop: '0px' }}>
                         <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-1.5 block">Excluir Rango de Horas</label>
                         <div className="flex items-center gap-4">
                           <div className="flex-1">
@@ -788,20 +788,17 @@ export default function EquityCurveTab({
                         </div>
                       </div>
                       
-                      <div className="border-t border-[var(--color-ec-border)]" style={{ marginTop: '18px', paddingTop: '12px', paddingBottom: '6px' }}>
+                      <div className="border-t border-[var(--color-ec-border)]" style={{ marginTop: '18px', paddingTop: '12px', paddingBottom: '0px' }}>
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">Excluir días aleatorios mensuales:</label>
-                          <div className="flex items-center gap-2">
-                             <input
-                               type="number"
-                               min="0"
-                               max="31"
-                               value={randomMonthlyDays}
-                               onChange={(e) => setRandomMonthlyDays(Number(e.target.value))}
-                               className="w-14 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] focus:border-[var(--color-ec-copper)] outline-none"
-                             />
-                             <span className="text-[9px] text-[var(--color-ec-text-muted)] opacity-80">días/m</span>
-                          </div>
+                          <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">Excluir días aleatorios mensuales (días/m):</label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="31"
+                            value={randomMonthlyDays}
+                            onChange={(e) => setRandomMonthlyDays(Number(e.target.value))}
+                            className="w-14 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] focus:border-[var(--color-ec-copper)] outline-none"
+                          />
                         </div>
                       </div>
                     </div>
@@ -843,7 +840,7 @@ export default function EquityCurveTab({
                           className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
                         />
                       </div>
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between" style={{ marginTop: '5px' }}>
                         <span className="text-[10px] text-[var(--color-ec-text-secondary)]">Máx trades expuestos/día:</span>
                         <input
                           type="number"
@@ -880,61 +877,55 @@ export default function EquityCurveTab({
                     <span className={`text-xs text-[var(--color-ec-text-muted)] transform transition-transform ${openSections.includes("stress") ? "rotate-180" : ""}`}>▼</span>
                   </button>
  
-                  {openSections.includes("stress") && (
-                    <div style={{ paddingBottom: '16px', paddingTop: '6px' }} className="space-y-5 animate-in fade-in slide-in-from-top-1 duration-200">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-[10px] text-[var(--color-ec-text-secondary)] block mb-1">Omitir mejores trades (%):</label>
-                          <input
-                            type="number"
-                            value={skipTopPct}
-                            onChange={(e) => setSkipTopPct(Number(e.target.value))}
-                            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-[var(--color-ec-text-secondary)] block mb-1">Deslizamiento extra (%):</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={extraSlippage}
-                            onChange={(e) => setExtraSlippage(Number(e.target.value))}
-                            className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                          />
-                        </div>
+                  {openSections.includes('stress') && (
+                    <div style={{ paddingBottom: '16px', paddingTop: '6px' }} className='space-y-5 animate-in fade-in slide-in-from-top-1 duration-200'>
+                      <div className='flex items-center justify-between'>
+                        <span className='text-[10px] text-[var(--color-ec-text-secondary)]'>Omitir mejores trades (%):</span>
+                        <input
+                          type='number'
+                          value={skipTopPct}
+                          onChange={(e) => setSkipTopPct(Number(e.target.value))}
+                          className='w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]'
+                        />
+                      </div>
+                      <div className='flex items-center justify-between' style={{ marginTop: '5px' }}>
+                        <span className='text-[10px] text-[var(--color-ec-text-secondary)]'>Deslizamiento extra (%):</span>
+                        <input
+                          type='number'
+                          step='0.01'
+                          value={extraSlippage}
+                          onChange={(e) => setExtraSlippage(Number(e.target.value))}
+                          className='w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]'
+                        />
                       </div>
                       
-                      <div className="border-t border-[var(--color-ec-border)]" style={{ marginTop: '18px', paddingTop: '12px', paddingBottom: '6px' }}>
-                        <div className="flex items-center justify-between mb-2">
-                           <label className="text-[10px] font-bold text-[var(--color-ec-text-secondary)] uppercase">Añadir Black Swans Aleatorios</label>
+                      <div className='border-t border-[var(--color-ec-border)]' style={{ marginTop: '18px', paddingTop: '12px', paddingBottom: '6px' }}>
+                        <div className='flex items-center justify-between mb-2'>
+                           <label className='text-[10px] font-bold text-[var(--color-ec-text-secondary)] uppercase'>Añadir Black Swans Aleatorios</label>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 mb-3">
-                          <div>
-                            <label className="text-[10px] text-[var(--color-ec-text-muted)] block mb-1">Cantidad de Eventos:</label>
-                            <input
-                              type="number"
-                              value={blackSwanCount}
-                              onChange={(e) => setBlackSwanCount(Number(e.target.value))}
-                              className="w-full bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2.5 py-1 text-[11px] text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-[var(--color-ec-text-muted)] block mb-1">Pérdida por Evento (%):</label>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] font-bold text-[var(--color-ec-loss)] min-w-[35px]">{blackSwanSize}%</span>
-                            </div>
-                          </div>
+                        <div className='flex items-center justify-between' style={{ marginTop: '10px' }}>
+                          <span className='text-[10px] text-[var(--color-ec-text-muted)]'>Cantidad de Eventos:</span>
+                          <input
+                            type='number'
+                            value={blackSwanCount}
+                            onChange={(e) => setBlackSwanCount(Number(e.target.value))}
+                            className='w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]'
+                          />
+                        </div>
+                        <div className='flex items-center justify-between' style={{ marginTop: '5px', marginBottom: '8px' }}>
+                          <span className='text-[10px] text-[var(--color-ec-text-muted)]'>Pérdida por Evento (%):</span>
+                          <span className='text-[11px] font-bold text-[var(--color-ec-loss)] pr-2'>{blackSwanSize}%</span>
                         </div>
                         <input
-                          type="range"
-                          min="50"
-                          max="5000"
-                          step="50"
+                          type='range'
+                          min='50'
+                          max='5000'
+                          step='50'
                           value={blackSwanSize}
                           onChange={(e) => setBlackSwanSize(Number(e.target.value))}
-                          className="w-full accent-[var(--color-ec-loss)] h-1.5 bg-[var(--color-ec-bg-elevated)] rounded-lg appearance-none cursor-pointer"
+                          className='w-full accent-[var(--color-ec-loss)] h-1.5 bg-[var(--color-ec-bg-elevated)] rounded-lg appearance-none cursor-pointer'
                         />
-                        <div className="flex justify-between text-[8px] text-[var(--color-ec-text-muted)] mt-1 font-mono">
+                        <div className='flex justify-between text-[8px] text-[var(--color-ec-text-muted)] mt-1 font-mono'>
                           <span>50%</span>
                           <span>5000%</span>
                         </div>
@@ -981,38 +972,38 @@ export default function EquityCurveTab({
             <div style={{ width: '1px', alignSelf: 'stretch', backgroundColor: 'var(--color-ec-border)', flexShrink: 0, marginTop: '16px', marginBottom: '16px' }} />
 
             {/* RIGHT COLUMN: SIMULATION RESULTS */}
-            <div className="flex-1 h-full overflow-y-auto custom-scrollbar" style={{ backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '24px', paddingBottom: '24px', boxSizing: 'border-box' }}>
-               <h4 className="text-[10px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-5 flex items-center gap-2 font-mono tracking-[0.12em]">
+             <div className="flex-1 h-full overflow-y-auto custom-scrollbar" style={{ backgroundColor: 'var(--color-ec-bg-base)', paddingLeft: '24px', paddingRight: '24px', paddingTop: '24px', paddingBottom: '24px', boxSizing: 'border-box' }}>
+               <h4 className="text-[10px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-12 flex items-center gap-2 font-mono tracking-[0.12em]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
                 Resultados Simulados
                </h4>
                
-               <div className="w-full">
-                  <div className="w-full bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 mb-6">
+               <div className="w-full" style={{ marginTop: '16px' }}>
+                  <div className="w-full mb-0">
                     <div className="grid grid-cols-2 gap-x-10 gap-y-2.5 w-full max-w-[480px]">
                       {[
-                        { label: "Días", base: metrics?.total_days ?? 0, sim: getSimValue("total_days") },
-                        { label: "Trades", base: metrics?.total_trades ?? 0, sim: getSimValue("total_trades") },
-                        { label: "Win Rate", base: `${(metrics?.win_rate_pct ?? 0).toFixed(1)}%`, sim: getSimValue("win_rate_pct", v => `${v.toFixed(1)}%`) },
-                        { label: "Profit Factor", base: (metrics?.avg_profit_factor ?? 0).toFixed(3), sim: getSimValue("avg_profit_factor", v => v.toFixed(3)) },
-                        { label: "Total Return", base: `${(metrics?.total_return_pct ?? 0).toFixed(2)}%`, sim: getSimValue("total_return_pct", v => `${v.toFixed(2)}%`) },
-                        { label: "Max MAE", base: `${(metrics?.max_mae ?? 0).toFixed(2)}%`, sim: getSimValue("max_mae", v => `${v.toFixed(2)}%`) },
-                        { label: "Avg Return/Día", base: `${(metrics?.avg_return_per_day_pct ?? 0).toFixed(3)}%`, sim: getSimValue("avg_return_per_day_pct", v => `${v.toFixed(3)}%`) },
-                        { label: "Avg R/Día", base: `${(metrics?.avg_r_per_day ?? 0).toFixed(3)}R`, sim: getSimValue("avg_r_per_day", v => `${v.toFixed(3)}R`) },
-                        { label: "Sharpe", base: (metrics?.avg_sharpe ?? 0).toFixed(3), sim: getSimValue("avg_sharpe", v => v.toFixed(3)) },
-                        { label: "Sortino", base: (metrics?.sortino_ratio ?? 0).toFixed(3), sim: getSimValue("sortino_ratio", v => v.toFixed(3)) },
-                        { label: "Calmar", base: (metrics?.calmar_ratio ?? 0).toFixed(3), sim: getSimValue("calmar_ratio", v => v.toFixed(3)) },
-                        { label: "Avg Y/U.index", base: (metrics?.avg_r_ui ?? 0).toFixed(2), sim: getSimValue("avg_r_ui", v => v.toFixed(2)) },
-                        { label: "DD/Return", base: (metrics?.dd_return_ratio ?? 0).toFixed(3), sim: getSimValue("dd_return_ratio", v => v.toFixed(3)) },
-                        { label: "Max DD", base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(2)}%`, sim: getSimValue("max_drawdown_pct", v => `${v.toFixed(2)}%`), danger: true },
-                        { label: "Max Consec. Wins", base: metrics?.max_consecutive_wins ?? 0, sim: getSimValue("max_consecutive_wins") },
-                        { label: "Max Consec. Losses", base: metrics?.max_consecutive_losses ?? 0, sim: getSimValue("max_consecutive_losses"), danger: true },
+                        { label: 'Días', base: metrics?.total_days ?? 0, sim: getSimValue('total_days') },
+                        { label: 'Trades', base: metrics?.total_trades ?? 0, sim: getSimValue('total_trades') },
+                        { label: 'Win Rate', base: `${(metrics?.win_rate_pct ?? 0).toFixed(1)}%`, sim: getSimValue('win_rate_pct', v => `${v.toFixed(1)}%`) },
+                        { label: 'Profit Factor', base: (metrics?.avg_profit_factor ?? 0).toFixed(3), sim: getSimValue('avg_profit_factor', v => v.toFixed(3)) },
+                        { label: 'Total Return', base: `${(metrics?.total_return_pct ?? 0).toFixed(2)}%`, sim: getSimValue('total_return_pct', v => `${v.toFixed(2)}%`) },
+                        { label: 'Max MAE', base: `${(metrics?.max_mae ?? 0).toFixed(2)}%`, sim: getSimValue('max_mae', v => `${v.toFixed(2)}%`) },
+                        { label: 'Avg Return/Día', base: `${(metrics?.avg_return_per_day_pct ?? 0).toFixed(3)}%`, sim: getSimValue('avg_return_per_day_pct', v => `${v.toFixed(3)}%`) },
+                        { label: 'Avg R/Día', base: `${(metrics?.avg_r_per_day ?? 0).toFixed(3)}R`, sim: getSimValue('avg_r_per_day', v => `${v.toFixed(3)}R`) },
+                        { label: 'Sharpe', base: (metrics?.avg_sharpe ?? 0).toFixed(3), sim: getSimValue('avg_sharpe', v => v.toFixed(3)) },
+                        { label: 'Sortino', base: (metrics?.sortino_ratio ?? 0).toFixed(3), sim: getSimValue('sortino_ratio', v => v.toFixed(3)) },
+                        { label: 'Calmar', base: (metrics?.calmar_ratio ?? 0).toFixed(3), sim: getSimValue('calmar_ratio', v => v.toFixed(3)) },
+                        { label: 'Avg Y/U.index', base: (metrics?.avg_r_ui ?? 0).toFixed(2), sim: getSimValue('avg_r_ui', v => v.toFixed(2)) },
+                        { label: 'DD/Return', base: (metrics?.dd_return_ratio ?? 0).toFixed(3), sim: getSimValue('dd_return_ratio', v => v.toFixed(3)) },
+                        { label: 'Max DD', base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(2)}%`, sim: getSimValue('max_drawdown_pct', v => `${v.toFixed(2)}%`), danger: true },
+                        { label: 'Max Consec. Wins', base: metrics?.max_consecutive_wins ?? 0, sim: getSimValue('max_consecutive_wins') },
+                        { label: 'Max Consec. Losses', base: metrics?.max_consecutive_losses ?? 0, sim: getSimValue('max_consecutive_losses'), danger: true },
                       ].map((m, idx) => (
-                        <div key={idx} className="flex items-baseline justify-between py-1.5 text-[11px] border-b border-[var(--color-ec-border)] border-dashed last:border-b-0">
+                        <div key={idx} className="flex items-baseline justify-between py-1.5 text-[11px] border-b border-[var(--color-ec-border)] border-dashed">
                            <span className="text-[var(--color-ec-text-secondary)] font-medium tracking-tight mr-4">{m.label}:</span>
                            <div className="flex items-center gap-3 font-mono">
                               <span className="text-[10px] text-[var(--color-ec-text-primary)] font-medium">{m.base}</span>
-                              <span className={m.danger && m.sim !== "---" ? "text-[var(--color-ec-loss)] font-bold" : "text-[var(--color-ec-copper-bright)] font-bold"}>
+                              <span className={m.danger && m.sim !== '---' ? 'text-[var(--color-ec-loss)] font-bold' : 'text-[var(--color-ec-copper-bright)] font-bold'}>
                                 {m.sim}
                               </span>
                            </div>
@@ -1020,9 +1011,10 @@ export default function EquityCurveTab({
                       ))}
                     </div>
                   </div>
-                </div>
-                   {/* What If Equity Curve: Ghost original + simulated */}
-                   <div className="mt-10 pt-6 border-t border-dashed border-[var(--border)] w-full">
+               </div>
+
+                    {/* What If Equity Curve: Ghost original + simulated */}
+                    <div className="border-t border-dashed border-[var(--border)] w-full" style={{ marginTop: '20px', paddingTop: '16px' }}>
                       <WhatIfEquityChart
                         originalEquity={globalEquity}
                         originalDrawdown={globalDrawdown}
@@ -1285,12 +1277,12 @@ function WhatIfEquityChart({
             <span className="text-[9px] text-[var(--color-ec-text-primary)] font-mono font-semibold">What If</span>
           </div>
         </div>
-        <div className="flex bg-[var(--color-ec-bg-sidebar)] p-0.5 rounded text-[9px] border border-[var(--color-ec-border)]">
+        <div className="flex gap-1 bg-[var(--color-ec-bg-sidebar)] p-0.5 rounded text-[9px] border border-[var(--color-ec-border)]">
           {(["$", "%", "R"] as WIViewMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => setWiViewMode(mode)}
-              className={`px-2.5 py-0.5 rounded transition-colors cursor-pointer ${
+              className={`px-3 py-0.5 rounded transition-colors cursor-pointer ${
                 wiViewMode === mode
                   ? "bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-high)] shadow-sm font-bold"
                   : "text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)]"

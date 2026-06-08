@@ -96,26 +96,45 @@ export default function IndicatorDropdown({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-2.5 text-[12px]">
       {/* Add Indicator Button */}
       <div ref={dropdownRef} className="relative">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`px-3 py-1.5 border rounded text-[13px] font-medium transition-all flex items-center gap-1.5
+          className={`border rounded text-[12px] font-semibold transition-all flex items-center justify-center
             ${isOpen
               ? "border-[var(--color-ec-copper)] bg-[rgba(216,122,61,0.15)] text-[var(--color-ec-copper-bright)] shadow-sm"
               : "border-[var(--color-ec-border)] bg-[var(--color-ec-bg-surface)] text-[var(--color-ec-text-secondary)] hover:bg-[var(--color-ec-bg-elevated)] hover:text-[var(--color-ec-text-primary)] hover:border-gray-500"
             }`}
+          style={{
+            paddingLeft: '14px',
+            paddingRight: '14px',
+            height: '34px',
+          }}
         >
-          <span className="text-sm">＋</span> Indicators
+          Indicators
         </button>
 
         {isOpen && (
-          <div className="absolute left-0 top-full mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
+          <div 
+            className="absolute left-0 top-full mt-1.5 w-72 rounded-lg z-50 overflow-hidden border"
+            style={{
+              backgroundColor: 'var(--color-ec-bg-surface)',
+              borderColor: 'var(--color-ec-border)',
+              boxShadow: '0 10px 30px rgba(0, 0, 0, 0.6)',
+            }}
+          >
             <div className="max-h-96 overflow-y-auto custom-scrollbar">
               {(Object.keys(grouped) as IndicatorCategory[]).map(category => (
                 <div key={category}>
-                  <div className="px-3 py-1.5 bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5 border-b border-gray-100 sticky top-0 z-10">
+                  <div 
+                    className="px-3.5 py-2 text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 border-b sticky top-0 z-10"
+                    style={{
+                      backgroundColor: 'var(--color-ec-bg-elevated)',
+                      color: 'var(--color-ec-text-secondary)',
+                      borderColor: 'var(--color-ec-border)',
+                    }}
+                  >
                     <span>{CATEGORY_ICONS[category]}</span> {category}
                   </div>
                   {grouped[category].map(def => {
@@ -127,14 +146,38 @@ export default function IndicatorDropdown({
                           onAdd(def.id);
                           if (!def.multi) setIsOpen(false);
                         }}
-                        className={`w-full text-left pl-3 pr-4 py-1.5 text-xs transition-colors flex items-center justify-between
-                          ${isActive
-                            ? "bg-blue-50 text-blue-700"
-                            : "text-gray-700 hover:bg-gray-50"
-                          }`}
+                        className="w-full text-left pl-3.5 pr-4 py-2 text-xs transition-all flex items-center justify-between cursor-pointer border-b"
+                        style={{
+                          borderColor: 'rgba(255,255,255,0.03)',
+                          backgroundColor: isActive ? 'rgba(216,122,61,0.12)' : 'transparent',
+                          color: isActive ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
+                          borderLeft: isActive ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                          fontWeight: isActive ? 600 : 400,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isActive) {
+                            e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-elevated)';
+                            e.currentTarget.style.color = 'var(--color-ec-text-high)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isActive) {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                            e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                          }
+                        }}
                       >
                         <span>{def.label}</span>
-                        <span className="text-[10px] text-gray-400">
+                        <span 
+                          style={{
+                            fontSize: '9px',
+                            color: 'var(--color-ec-text-secondary)',
+                            textTransform: 'uppercase',
+                            fontWeight: 700,
+                            letterSpacing: '0.05em',
+                            opacity: 0.8,
+                          }}
+                        >
                           {def.displayMode === "overlay" ? "chart" : "panel"}
                         </span>
                       </button>
@@ -156,7 +199,7 @@ export default function IndicatorDropdown({
         return (
           <div
             key={indicatorId}
-            className={`flex items-center gap-0.5 ${color.bg} border ${color.border} rounded overflow-hidden`}
+            className={`flex items-center gap-0.5 ${color.bg} border ${color.border} rounded-md overflow-hidden h-[34px]`}
           >
             {/* Label / toggle off */}
             <button
@@ -164,7 +207,7 @@ export default function IndicatorDropdown({
                 // Remove all instances of this indicator
                 for (const inst of instances) onRemove(inst.instanceId);
               }}
-              className={`px-2 py-1 font-semibold ${color.text} hover:opacity-70 transition-opacity`}
+              className={`px-2.5 h-full flex items-center font-bold ${color.text} hover:opacity-70 transition-opacity text-[12px]`}
               title={`Remove ${def.label}`}
             >
               {def.label}
@@ -172,17 +215,17 @@ export default function IndicatorDropdown({
 
             {/* Parameter inputs for each instance */}
             {instances.map(inst => (
-              <div key={inst.instanceId} className={`flex items-center ${color.bg} border-l ${color.border}`}>
+              <div key={inst.instanceId} className={`flex items-center h-full px-2 ${color.bg} border-l ${color.border}`}>
                 {def.params.map(p => (
-                  <div key={p.name} className="flex items-center px-1">
+                  <div key={p.name} className="flex items-center h-full px-1">
                     {def.params.length > 1 && (
-                      <span className={`text-[9px] ${color.accent} mr-0.5 opacity-70`}>{p.label}</span>
+                      <span className={`text-[9px] ${color.accent} mr-0.5 opacity-80 font-semibold`}>{p.label}</span>
                     )}
                     <input
                       type="number"
                       value={inst.params[p.name] ?? p.default}
                       onChange={e => onUpdateParam(inst.instanceId, p.name, Number(e.target.value))}
-                      className={`w-10 bg-transparent ${color.text} outline-none text-center`}
+                      className={`w-9 bg-transparent ${color.text} outline-none text-center font-semibold text-[12px]`}
                       min={p.min}
                       max={p.max}
                       step={p.step || 1}
@@ -192,7 +235,7 @@ export default function IndicatorDropdown({
                 {instances.length > 1 && (
                   <button
                     onClick={() => onRemove(inst.instanceId)}
-                    className={`px-1 ${color.accent} hover:opacity-70`}
+                    className={`px-1 h-full flex items-center ${color.accent} hover:opacity-70 font-bold text-[12px]`}
                   >
                     ×
                   </button>
@@ -204,7 +247,7 @@ export default function IndicatorDropdown({
             {def.multi && (
               <button
                 onClick={() => onAddInstance(indicatorId)}
-                className={`px-1.5 py-1 ${color.accent} hover:opacity-70 border-l ${color.border}`}
+                className={`px-2 h-full flex items-center ${color.accent} hover:opacity-70 border-l ${color.border} font-bold text-[13px]`}
                 title={`Add another ${def.label}`}
               >
                 +

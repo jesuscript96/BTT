@@ -1066,6 +1066,41 @@ export const GroupDisplay = ({
     const distCondition = formCondition.type === 'price_level_distance' ? formCondition : null;
     const activeAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
+    const handleToggleType = (newType: 'indicator_comparison' | 'price_level_distance') => {
+        if (newType === 'indicator_comparison') {
+            const allowed = getAllowedTargets(formCondition.source.name as IndicatorType, 'indicator_comparison');
+            const defaultTarget = allowed.includes(IndicatorType.VWAP)
+                ? { name: IndicatorType.VWAP, offset: 0 }
+                : allowed.length > 0
+                    ? { name: allowed[0], offset: 0 }
+                    : 0;
+
+            setFormCondition({
+                type: 'indicator_comparison',
+                source: formCondition.source,
+                comparator: Comparator.GT,
+                target: defaultTarget,
+                timeframe: formCondition.timeframe
+            });
+        } else {
+            const allowed = getAllowedTargets(formCondition.source.name as IndicatorType, 'price_level_distance');
+            const defaultLevel = allowed.includes(IndicatorType.PM_HIGH)
+                ? { name: IndicatorType.PM_HIGH, offset: 0 }
+                : allowed.length > 0
+                    ? { name: allowed[0], offset: 0 }
+                    : { name: IndicatorType.PM_HIGH, offset: 0 };
+
+            setFormCondition({
+                type: 'price_level_distance',
+                source: formCondition.source,
+                level: defaultLevel,
+                comparator: 'DISTANCE_LT',
+                value_pct: 2.0,
+                timeframe: formCondition.timeframe
+            });
+        }
+    };
+
     const handleSaveCondition = () => {
         if (editingIndex !== null) {
             const newConditions = [...group.conditions];
@@ -1275,51 +1310,18 @@ export const GroupDisplay = ({
                                 </span>
                             </div>
 
-                            {/* Timeframe & Type dropdowns (Tiempo y Tipo de indicador) */}
-                            <div style={{ display: 'flex', gap: 8 }}>
-                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                                    <span style={labelStyle}>Tiempo</span>
-                                    <select
-                                        value={formCondition.timeframe || parentTimeframe}
-                                        onChange={(e) => setFormCondition({ ...formCondition, timeframe: e.target.value as Timeframe })}
-                                        style={selectStyle}
-                                    >
-                                        {Object.values(Timeframe).filter(tf => tf !== Timeframe.D1).map(tf => (
-                                            <option key={tf} value={tf}>{tf}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                                    <span style={labelStyle}>Indicador</span>
-                                    <select
-                                        value={formCondition.type}
-                                        style={selectStyle}
-                                        onChange={(e) => {
-                                            const type = e.target.value;
-                                            if (type === 'indicator_comparison') {
-                                                setFormCondition({
-                                                    type: 'indicator_comparison',
-                                                    source: { name: IndicatorType.BAR_CLOSE },
-                                                    comparator: Comparator.GT,
-                                                    target: { name: IndicatorType.VWAP },
-                                                    timeframe: formCondition.timeframe,
-                                                });
-                                            } else if (type === 'price_level_distance') {
-                                                setFormCondition({
-                                                    type: 'price_level_distance',
-                                                    source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
-                                                    level: { name: IndicatorType.PM_HIGH, offset: 0 },
-                                                    comparator: 'DISTANCE_LT',
-                                                    value_pct: 2.0,
-                                                    timeframe: formCondition.timeframe,
-                                                });
-                                            }
-                                        }}
-                                    >
-                                        <option value="indicator_comparison">Comparación</option>
-                                        <option value="price_level_distance">Distancia %</option>
-                                    </select>
-                                </div>
+                            {/* Timeframe selector (Tiempo) */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <span style={labelStyle}>Tiempo</span>
+                                <select
+                                    value={formCondition.timeframe || parentTimeframe}
+                                    onChange={(e) => setFormCondition({ ...formCondition, timeframe: e.target.value as Timeframe })}
+                                    style={selectStyle}
+                                >
+                                    {Object.values(Timeframe).filter(tf => tf !== Timeframe.D1).map(tf => (
+                                        <option key={tf} value={tf}>{tf}</option>
+                                    ))}
+                                </select>
                             </div>
 
                             {/* Variable de entrada */}
@@ -1327,30 +1329,51 @@ export const GroupDisplay = ({
                                 <span style={labelStyle}>Variable de entrada</span>
                                 <IndicatorSelector
                                     value={formCondition.source.name}
-                                    exclude={formCondition.type === 'price_level_distance' ? [
-                                        IndicatorType.TRIANGLE_ASCENDING,
-                                        IndicatorType.TRIANGLE_DESCENDING,
-                                        IndicatorType.TRIANGLE_SYMMETRIC,
-                                        ...Object.values(IndicatorType).filter(isOnlyTarget)
-                                    ] : Object.values(IndicatorType).filter(isOnlyTarget)}
+                                    exclude={Object.values(IndicatorType).filter(isOnlyTarget)}
                                     onChange={(nameStr) => {
                                         const name = nameStr as IndicatorType;
                                         const defaultParams = getDefaultParamsForIndicator(name);
+                                        const timeframe = formCondition.timeframe;
+
                                         if (name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
                                             setFormCondition({
                                                 type: 'indicator_comparison',
                                                 source: { name, offset: 0 },
                                                 comparator: Comparator.GTE,
                                                 target: 20,
-                                                timeframe: formCondition.timeframe
+                                                timeframe
                                             });
-                                        } else if (name?.toLowerCase() === 'range of time') {
+                                            return;
+                                        }
+                                        if (name?.toLowerCase() === 'range of time') {
                                             setFormCondition({
                                                 type: 'indicator_comparison',
                                                 source: { name, offset: 0 },
                                                 comparator: Comparator.LT,
                                                 target: 30,
-                                                timeframe: formCondition.timeframe
+                                                timeframe
+                                            });
+                                            return;
+                                        }
+
+                                        // Check if distance is supported
+                                        const hasDistance = getAllowedTargets(name, 'price_level_distance').length > 0;
+                                        
+                                        // If we are in distance mode but the new indicator doesn't support it, switch to comparison mode
+                                        if (formCondition.type === 'price_level_distance' && !hasDistance) {
+                                            const allowed = getAllowedTargets(name, 'indicator_comparison');
+                                            const defaultTarget = allowed.includes(IndicatorType.VWAP)
+                                                ? { name: IndicatorType.VWAP, offset: 0 }
+                                                : allowed.length > 0
+                                                    ? { name: allowed[0], offset: 0 }
+                                                    : 0;
+                                            
+                                            setFormCondition({
+                                                type: 'indicator_comparison',
+                                                source: { name, offset: formCondition.source.offset, ...defaultParams },
+                                                comparator: Comparator.GT,
+                                                target: defaultTarget,
+                                                timeframe
                                             });
                                         } else if (formCondition.type === 'indicator_comparison') {
                                             const allowed = getAllowedTargets(name, 'indicator_comparison');
@@ -1358,14 +1381,30 @@ export const GroupDisplay = ({
                                             const isTargetAllowed = currentTargetKey === FIXED_VALUE_KEY || allowed.includes(currentTargetKey as IndicatorType);
                                             
                                             setFormCondition({
-                                                ...formCondition,
+                                                type: 'indicator_comparison',
                                                 source: { name, offset: formCondition.source.offset, ...defaultParams },
-                                                target: isTargetAllowed ? formCondition.target : getInitialTargetForSource(name)
+                                                comparator: formCondition.comparator as Comparator,
+                                                target: isTargetAllowed ? formCondition.target : getInitialTargetForSource(name),
+                                                timeframe
                                             });
                                         } else {
+                                            // We are in price_level_distance and the new indicator does support distance
+                                            const allowed = getAllowedTargets(name, 'price_level_distance');
+                                            const currentLevelKey = (formCondition.level as IndicatorConfig).name;
+                                            const isLevelAllowed = allowed.includes(currentLevelKey);
+                                            const defaultLevel = allowed.includes(IndicatorType.PM_HIGH)
+                                                ? { name: IndicatorType.PM_HIGH, offset: 0 }
+                                                : allowed.length > 0
+                                                    ? { name: allowed[0], offset: 0 }
+                                                    : { name: IndicatorType.PM_HIGH, offset: 0 };
+
                                             setFormCondition({
-                                                ...formCondition,
-                                                source: { name, offset: formCondition.source.offset, ...defaultParams }
+                                                type: 'price_level_distance',
+                                                source: { name, offset: formCondition.source.offset, ...defaultParams },
+                                                level: isLevelAllowed ? formCondition.level : defaultLevel,
+                                                comparator: formCondition.comparator as 'DISTANCE_GT' | 'DISTANCE_LT',
+                                                value_pct: formCondition.value_pct,
+                                                timeframe
                                             });
                                         }
                                     }}
@@ -1376,6 +1415,64 @@ export const GroupDisplay = ({
                                     hideOffset={true}
                                 />
                             </div>
+
+                            {/* Mode toggle (Comparación vs Distancia %) if supported */}
+                            {(() => {
+                                const hasDistance = getAllowedTargets(formCondition.source.name as IndicatorType, 'price_level_distance').length > 0;
+                                if (!hasDistance) return null;
+                                return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                        <span style={labelStyle}>Modo de Condición</span>
+                                        <div style={{
+                                            display: 'flex',
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 6,
+                                            padding: 2,
+                                            position: 'relative'
+                                        }}>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleToggleType('indicator_comparison')}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '6px 10px',
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    borderRadius: 4,
+                                                    border: 'none',
+                                                    backgroundColor: formCondition.type === 'indicator_comparison' ? 'var(--color-ec-copper)' : 'transparent',
+                                                    color: formCondition.type === 'indicator_comparison' ? '#ffffff' : 'var(--color-ec-text-muted)',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 150ms ease',
+                                                    textAlign: 'center'
+                                                }}
+                                            >
+                                                Comparación
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleToggleType('price_level_distance')}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '6px 10px',
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    borderRadius: 4,
+                                                    border: 'none',
+                                                    backgroundColor: formCondition.type === 'price_level_distance' ? 'var(--color-ec-copper)' : 'transparent',
+                                                    color: formCondition.type === 'price_level_distance' ? '#ffffff' : 'var(--color-ec-text-muted)',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 150ms ease',
+                                                    textAlign: 'center'
+                                                }}
+                                            >
+                                                Distancia %
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             {/* bars back */}
                             {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name?.toLowerCase() !== 'range of time' && (
@@ -1800,7 +1897,8 @@ export const LogicBuilder = ({
     onTimeframeChange,
     rootCondition,
     onConditionChange,
-    accentColor = 'blue'
+    accentColor = 'blue',
+    children
 }: {
     title: string;
     timeframe: Timeframe;
@@ -1808,6 +1906,7 @@ export const LogicBuilder = ({
     rootCondition: ConditionGroup;
     onConditionChange: (g: ConditionGroup) => void;
     accentColor?: 'blue' | 'rose' | 'amber';
+    children?: React.ReactNode;
 }) => {
     const headerAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
@@ -1863,6 +1962,8 @@ export const LogicBuilder = ({
                 accentColor={accentColor}
                 parentTimeframe={timeframe}
             />
+
+            {children}
         </div>
     );
 };

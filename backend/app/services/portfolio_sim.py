@@ -22,7 +22,6 @@ def simulate(
     risk_type: str = "FIXED",
     fixed_ratio_delta: float = 500.0,
     size_by_sl: bool = False,
-    prev_stats: dict | None = None,
     fees: float = 0.0,
     fee_type: str = "PERCENT",  # "PERCENT" or "FLAT"
     slippage: float = 0.0,
@@ -54,32 +53,6 @@ def simulate(
     trail_activated = False
     original_size = 0.0  # Track original position size for partial TPs
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
-
-    # Pre-calculate Kelly multiplier if needed
-    kelly_f = 0.0
-    if risk_type == "KELLY":
-        if prev_stats:
-            win_count = prev_stats.get("win_count", 0)
-            loss_count = prev_stats.get("loss_count", 0)
-            total_trades = win_count + loss_count
-        else:
-            total_trades = 0
-
-        if total_trades < 5:
-            # Bootstrap phase: Use a default seed Kelly fraction of 2%
-            # scaled by the Kelly multiplier (risk_r, e.g. 100 for full Kelly, 50 for half Kelly)
-            kelly_f = 0.02 * (risk_r / 100.0)
-        else:
-            win_rate = prev_stats.get("win_rate", 0.5)
-            avg_win = prev_stats.get("avg_win", 0.0)
-            avg_loss = abs(prev_stats.get("avg_loss", 1.0))
-            if avg_loss > 0:
-                b = avg_win / avg_loss
-                if b > 0:
-                    # Kelly Formula: f = (p * (b + 1) - 1) / b
-                    # We use risk_r as the "Kelly Fraction" (e.g. 50 for half-kelly)
-                    optimal_f = (win_rate * (b + 1) - 1) / b
-                    kelly_f = max(0, optimal_f * (risk_r / 100.0))
 
     # Risk amount tracking for reporting
     risk_amount = risk_r
@@ -132,35 +105,43 @@ def simulate(
                 # 2. Trailing Stop Logic (Standard High-Water Mark)
                 if sl_trail and trail_pct is not None:
                     if is_long:
-                        # Update MFE (Maximum Favorable Excursion)
-                        trail_extreme = max(trail_extreme, high[i])
-                        
-                        # Standard Trailing Stop: trails from the highest point reached
-                        calculated_trail_stop = trail_extreme * (1 - trail_pct)
-                        trail_sl_price = calculated_trail_stop
-                        
-                        if price_for_sl <= trail_sl_price:
-                            # Verify trailing stop doesn't override a better hard stop
-                            hard_sl_price = entry_price * (1 - sl_stop) if sl_stop is not None else -1e18
-                            if trail_sl_price > hard_sl_price:
-                                exit_triggered = True
-                                exit_price = max(trail_sl_price, low[i])
-                                exit_reason = "Trailing"
+                        # Check activation: price must go in favor by at least trail_pct
+                        if not trail_activated:
+                            if high[i] >= entry_price * (1 + trail_pct) - 1e-9:
+                                trail_activated = True
+                                trail_extreme = max(entry_price, high[i])
+
+                        # Evaluate trailing stop if active
+                        if trail_activated:
+                            trail_extreme = max(trail_extreme, high[i])
+                            trail_sl_price = trail_extreme - (entry_price * trail_pct)
+                            
+                            if price_for_sl <= trail_sl_price + 1e-9:
+                                # Verify trailing stop doesn't override a better hard stop
+                                hard_sl_price = entry_price * (1 - sl_stop) if sl_stop is not None else -1e18
+                                if trail_sl_price > hard_sl_price:
+                                    exit_triggered = True
+                                    exit_price = max(trail_sl_price, low[i])
+                                    exit_reason = "Trailing"
                     else:
-                        # Short: Update MFE (Minimum Favorable Excursion)
-                        trail_extreme = min(trail_extreme, low[i])
-                        
-                        # Standard Trailing Stop: trails from the lowest point reached
-                        calculated_trail_stop = trail_extreme * (1 + trail_pct)
-                        trail_sl_price = calculated_trail_stop
-                        
-                        if price_for_sl >= trail_sl_price:
-                            # Verify trailing stop doesn't override a better hard stop
-                            hard_sl_price = entry_price * (1 + sl_stop) if sl_stop is not None else 1e18
-                            if trail_sl_price < hard_sl_price:
-                                exit_triggered = True
-                                exit_price = min(trail_sl_price, high[i])
-                                exit_reason = "Trailing"
+                        # Short: Check activation: price must go in favor by at least trail_pct (drops)
+                        if not trail_activated:
+                            if low[i] <= entry_price * (1 - trail_pct) + 1e-9:
+                                trail_activated = True
+                                trail_extreme = min(entry_price, low[i])
+
+                        # Evaluate trailing stop if active
+                        if trail_activated:
+                            trail_extreme = min(trail_extreme, low[i])
+                            trail_sl_price = trail_extreme + (entry_price * trail_pct)
+                            
+                            if price_for_sl >= trail_sl_price - 1e-9:
+                                # Verify trailing stop doesn't override a better hard stop
+                                hard_sl_price = entry_price * (1 + sl_stop) if sl_stop is not None else 1e18
+                                if trail_sl_price < hard_sl_price:
+                                    exit_triggered = True
+                                    exit_price = min(trail_sl_price, high[i])
+                                    exit_reason = "Trailing"
 
             # take-profit (full mode — only if partial TPs are NOT configured)
             if not exit_triggered and tp_stop is not None and not partial_take_profits and not skip_exits:
@@ -407,11 +388,6 @@ def simulate(
                 # Calculate Risk Amount ($)
                 if risk_type == "PERCENT":
                     risk_amount = available_cash * (risk_r / 100.0)
-                elif risk_type == "KELLY":
-                    if kelly_f > 0:
-                        risk_amount = available_cash * kelly_f
-                    else:
-                        risk_amount = 0.0 # Don't take trade if kelly negative or no edge
                 elif risk_type == "FIXED_RATIO":
                     # Ryan Jones Fixed Ratio formula
                     # N = 0.5 + 0.5 * sqrt(1 + (8 * Profit / Delta))
@@ -495,7 +471,7 @@ def simulate(
 
     # Finalize result
     results = {"equity": equity, "trades": trades}
-    if risk_type in ["PERCENT", "KELLY"]:
+    if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:
         results["last_risk_amount"] = risk_r

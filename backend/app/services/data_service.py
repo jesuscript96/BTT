@@ -229,6 +229,7 @@ def _build_where_clause(filters: dict) -> str:
         "Day Return %": "day_return_pct",
         "Previous Close": "prev_close",
         "RTH Range %": "rth_range_pct",
+        "Min Open PM price": "open",
     }
 
     for rule in rules:
@@ -486,6 +487,7 @@ def fetch_qualifying_data(
                 'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
                 'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
                 'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
+                'LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_1',
 
                 # LEAD 2
                 'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
@@ -494,6 +496,7 @@ def fetch_qualifying_data(
                 'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
                 'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
                 'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
+                'LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_2',
 
                 # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
                 'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',
@@ -560,6 +563,7 @@ def fetch_qualifying_data(
                     df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
                     df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
                     df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
+                    df['open']       = df['lead_open_1']       if 'lead_open_1'       in df.columns else np.nan
                 elif apply_day == 'gap_2_day':
                     df = df.dropna(subset=['lead_timestamp_2']).copy()
                     df['timestamp'] = df['lead_timestamp_2']
@@ -580,6 +584,7 @@ def fetch_qualifying_data(
                     df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
                     df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
                     df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+                    df['open']       = df['lead_open_2']       if 'lead_open_2'       in df.columns else np.nan
                 # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
 
             print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
@@ -707,6 +712,7 @@ def fetch_qualifying_data(
             df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
             df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
             df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
+            df['open']       = df['lead_open_1']       if 'lead_open_1'       in df.columns else np.nan
         elif apply_day == 'gap_2_day':
             df = df.dropna(subset=['lead_timestamp_2']).copy()
             df['timestamp'] = df['lead_timestamp_2']
@@ -727,6 +733,7 @@ def fetch_qualifying_data(
             df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
             df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
             df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+            df['open']       = df['lead_open_2']       if 'lead_open_2'       in df.columns else np.nan
         # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
 
     return df
@@ -749,6 +756,8 @@ def fetch_dataset_data(
     dataset_id: str,
     req_start_date: str | None = None,
     req_end_date: str | None = None,
+    preconditions: list = None,
+    apply_day: str = 'gap_day',
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Legacy monolithic fetch. Used by optimization_service.
@@ -757,7 +766,13 @@ def fetch_dataset_data(
     """
     t0 = time.time()
 
-    qualifying = fetch_qualifying_data(dataset_id, req_start_date, req_end_date)
+    qualifying = fetch_qualifying_data(
+        dataset_id,
+        req_start_date,
+        req_end_date,
+        preconditions=preconditions,
+        apply_day=apply_day
+    )
     if qualifying.empty:
         return qualifying, pd.DataFrame()
 
@@ -847,3 +862,24 @@ def fetch_day_candles(dataset_id: str, ticker: str, date: str) -> list[dict]:
         }
         for j in range(len(df))
     ]
+
+
+def fetch_preceding_trading_dates(ticker: str, trade_date: str, count: int) -> list[str]:
+    from app.database import get_db_connection
+    con = get_db_connection()
+    try:
+        query = """
+            SELECT CAST("timestamp" AS DATE) AS date_str
+            FROM daily_metrics
+            WHERE ticker = ? AND CAST("timestamp" AS DATE) <= CAST(? AS DATE)
+            ORDER BY "timestamp" DESC
+            LIMIT ?
+        """
+        rows = con.execute(query, [ticker, trade_date, count]).fetchall()
+        dates = [str(r[0]) for r in rows]
+        dates.reverse()
+        return dates
+    except Exception as e:
+        logger.error(f"Error fetching preceding trading dates for {ticker} on {trade_date}: {e}", exc_info=True)
+        return [trade_date]
+
