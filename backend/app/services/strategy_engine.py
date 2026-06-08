@@ -112,7 +112,7 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
     resampled = df.set_index(ts).resample(freq).agg(agg_dict).dropna(subset=["open"])
 
-    return resampled.reset_index(drop=True)
+    return resampled
 
 
 def _align_signals_to_1m(
@@ -130,37 +130,17 @@ def _align_signals_to_1m(
         return signals_tf
 
     ts_1m = pd.to_datetime(df_1m["timestamp"])
-    df_with_ts = df_1m.set_index(ts_1m)
-
     tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1D"}
     freq = tf_map.get(timeframe, "1min")
-
-    # Obtener los índices de los 1m bins agrupados por resample
-    resampler = df_with_ts.resample(freq)
-    bucket_indices = resampler.indices
-
-    # Filtrar solo los buckets no vacíos para corresponder exactamente con signals_tf
-    non_empty_buckets = {k: v for k, v in bucket_indices.items() if len(v) > 0}
-    sorted_keys = sorted(non_empty_buckets.keys())
-
-    # Inicializar el resultado con False (alineado con df_1m.index)
-    result = pd.Series(False, index=df_1m.index)
-
-    n_buckets = min(len(signals_tf), len(sorted_keys))
     delta = pd.to_timedelta(freq)
 
-    for i in range(n_buckets):
-        if not signals_tf.iloc[i]:
-            continue
-
-        # La señal del bucket i (inicia en T) se aplica en el bucket i+1 (inicia en T + delta)
-        T = sorted_keys[i]
-        T_next = T + delta
-        next_indices = bucket_indices.get(T_next, [])
-        if len(next_indices) > 0:
-            result.iloc[next_indices] = True
-
+    t_shifted = ts_1m + pd.to_timedelta("1min")
+    t_floored = t_shifted.dt.floor(freq)
+    T_closed = t_floored - delta
+    result = T_closed.map(signals_tf).fillna(False).astype(bool)
+    result.index = df_1m.index
     return result
+
 
 
 
