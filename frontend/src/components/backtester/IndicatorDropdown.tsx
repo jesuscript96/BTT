@@ -101,11 +101,16 @@ export default function IndicatorDropdown({
       <div ref={dropdownRef} className="relative">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`px-8 py-1 border rounded text-[12px] font-semibold transition-all flex items-center justify-center h-[34px]
+          className={`border rounded text-[12px] font-semibold transition-all flex items-center justify-center
             ${isOpen
               ? "border-[var(--color-ec-copper)] bg-[rgba(216,122,61,0.15)] text-[var(--color-ec-copper-bright)] shadow-sm"
               : "border-[var(--color-ec-border)] bg-[var(--color-ec-bg-surface)] text-[var(--color-ec-text-secondary)] hover:bg-[var(--color-ec-bg-elevated)] hover:text-[var(--color-ec-text-primary)] hover:border-gray-500"
             }`}
+          style={{
+            paddingLeft: '32px',
+            paddingRight: '32px',
+            height: '34px',
+          }}
         >
           Indicators
         </button>
