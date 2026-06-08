@@ -198,7 +198,7 @@ def load_hot_daily_cache() -> None:
         lead_cols = [
             'rth_open', 'rth_close', 'rth_high', 'rth_low', 'rth_volume',
             'pm_high', 'pm_low', 'gap_pct', 'pm_volume', 'timestamp',
-            'prev_close'
+            'prev_close', 'open'
         ]
 
         for col in lead_cols:

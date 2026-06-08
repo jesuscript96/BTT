@@ -640,6 +640,7 @@ def fetch_qualifying_data(
                     result['pm_low'] = result['lead_pm_low_1']
                     result['gap_pct'] = result['lead_gap_pct_1']
                     result['pm_volume'] = result['lead_pm_volume_1']
+                    result['open'] = result['lead_open_1']
 
                 elif apply_day == 'gap_2_day':
                     result = result.dropna(subset=['lead_timestamp_2']).copy()
@@ -658,6 +659,7 @@ def fetch_qualifying_data(
                     result['pm_low'] = result['lead_pm_low_2']
                     result['gap_pct'] = result['lead_gap_pct_2']
                     result['pm_volume'] = result['lead_pm_volume_2']
+                    result['open'] = result['lead_open_2']
 
                 if 'date' not in result.columns:
                     result = result.copy()
