@@ -15,9 +15,12 @@ import {
   runBacktest,
   runBacktestWithDefinition,
   fetchDayCandles,
+  fetchMultiDayCandles,
   type BacktestResult,
   type DayCandles,
+  type MultiDayCandles,
 } from "@/lib/api_backtester";
+
 
 export default function Home() {
   const [mode, setMode] = useState<"config" | "builder" | "dataset">("config");
@@ -76,7 +79,10 @@ export default function Home() {
   }, []);
 
   const [dayCandles, setDayCandles] = useState<DayCandles | null>(null);
+  const [activeStrategy, setActiveStrategy] = useState<any | null>(null);
+  const [multiDayCandles, setMultiDayCandles] = useState<MultiDayCandles | null>(null);
   const [candlesLoading, setCandlesLoading] = useState(false);
+
 
   const handleRunWithDraft = async (draft: Draft) => {
     const p = panelParamsRef.current;
@@ -113,6 +119,9 @@ export default function Home() {
     setResult(null);
     setSelectedDay(0);
     setDayCandles(null);
+    setMultiDayCandles(null);
+    setActiveStrategy(null);
+
     initCashRef.current = p.init_cash;
     riskRRef.current = p.risk_r;
     datasetIdRef.current = p.dataset_id;
@@ -159,6 +168,19 @@ export default function Home() {
         look_ahead_prevention: p.look_ahead_prevention,
       });
       setResult(data);
+      setActiveStrategy({
+        id: "draft",
+        name: draft.name,
+        description: "",
+        definition: {
+          apply_day: draft.apply_day,
+          bias: draft.bias,
+          postgap_preconditions: draft.postgap_preconditions,
+          entry_logic: draft.entry_logic,
+          exit_logic: draft.exit_logic,
+          risk_management: draft.risk_management,
+        }
+      });
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
@@ -218,6 +240,8 @@ export default function Home() {
     setResult(null);
     setSelectedDay(0);
     setDayCandles(null);
+    setMultiDayCandles(null);
+    setActiveStrategy(null);
     setDraftStrategy(null);
     initCashRef.current = params.init_cash;
     riskRRef.current = params.risk_r;
@@ -238,6 +262,12 @@ export default function Home() {
     try {
       const data = await runBacktest(params);
       setResult(data);
+      try {
+        const strategyData = await getStrategy(params.strategy_id);
+        setActiveStrategy(strategyData);
+      } catch (strategyErr) {
+        console.warn("Could not fetch strategy definition:", strategyErr);
+      }
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
@@ -274,21 +304,47 @@ export default function Home() {
 
       setCandlesLoading(true);
       setDayCandles(null);
+      setMultiDayCandles(null);
       try {
-        const data = await fetchDayCandles(
+        let applyDay = "gap_day";
+        if (activeStrategy?.definition?.apply_day) {
+          applyDay = activeStrategy.definition.apply_day as string;
+        }
+
+        const data = await fetchMultiDayCandles(
           datasetIdRef.current,
           day.ticker,
-          day.date
+          day.date,
+          applyDay
         );
-        setDayCandles(data);
-      } catch {
+        setMultiDayCandles(data);
+
+        // Populate fallback dayCandles for backward compatibility
+        let mainCandlesObj = data.gap_day;
+        if (applyDay === "gap_1_day" && data.gap_1_day) {
+          mainCandlesObj = data.gap_1_day;
+        } else if (applyDay === "gap_2_day" && data.gap_2_day) {
+          mainCandlesObj = data.gap_2_day;
+        }
+
+        if (mainCandlesObj) {
+          setDayCandles({
+            ticker: day.ticker,
+            date: mainCandlesObj.date,
+            candles: mainCandlesObj.candles,
+          });
+        }
+      } catch (err) {
+        console.error("Error loading candles:", err);
         setDayCandles(null);
+        setMultiDayCandles(null);
       } finally {
         setCandlesLoading(false);
       }
     },
-    [result]
+    [result, activeStrategy]
   );
+
 
   useEffect(() => {
     if (result && result.day_results.length > 0) {
@@ -716,6 +772,8 @@ export default function Home() {
                 initCash={initCashRef.current}
                 riskR={riskRRef.current}
                 dayCandles={dayCandles}
+                multiDayCandles={multiDayCandles}
+                activeStrategy={activeStrategy}
                 candlesLoading={candlesLoading}
                 currentTrades={currentTrades || []}
                 currentEquity={currentEquity?.equity || []}

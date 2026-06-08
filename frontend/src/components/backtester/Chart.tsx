@@ -13,7 +13,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { createSeriesMarkers } from "lightweight-charts";
-import type { CandleData, TradeRecord, EquityPoint } from "@/lib/api_backtester";
+import type { CandleData, TradeRecord, EquityPoint, MultiDayCandles, Strategy } from "@/lib/api_backtester";
 import {
   getIndicatorDef,
   createDefaultParams,
@@ -120,17 +120,52 @@ function snapToCandle(epoch: number, candleTimes: number[]): number | null {
 // ---------------------------------------------------------------------------
 interface ChartProps {
   candles: CandleData[];
+  multiDayCandles?: MultiDayCandles | null;
+  activeStrategy?: Strategy | null;
   trades: TradeRecord[];
   equity: EquityPoint[];
   ticker: string;
   date: string;
 }
 
-export default function Chart({ candles, trades, equity, ticker, date }: ChartProps) {
+export default function Chart({
+  candles,
+  multiDayCandles = null,
+  activeStrategy = null,
+  trades,
+  equity,
+  ticker,
+  date,
+}: ChartProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>("1m");
   const aggregatedCandles = useMemo(() => aggregateCandles(candles, timeframe), [candles, timeframe]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const panelContainerRef = useRef<HTMLDivElement>(null);
+
+  // Refs for multi-chart view
+  const chartContainerRef1 = useRef<HTMLDivElement>(null);
+  const panelContainerRef1 = useRef<HTMLDivElement>(null);
+  const chartContainerRef2 = useRef<HTMLDivElement>(null);
+  const panelContainerRef2 = useRef<HTMLDivElement>(null);
+  const chartContainerRef3 = useRef<HTMLDivElement>(null);
+  const panelContainerRef3 = useRef<HTMLDivElement>(null);
+
+  const [multiDayEnabled, setMultiDayEnabled] = useState(false);
+
+  const applyDay = useMemo(() => {
+    if (activeStrategy?.definition && typeof activeStrategy.definition === 'object') {
+      const def = activeStrategy.definition as any;
+      if (def.apply_day) {
+        return def.apply_day as string;
+      }
+    }
+    return "gap_day";
+  }, [activeStrategy]);
+
+  const isMultiView = useMemo(() => {
+    return multiDayEnabled && !!multiDayCandles && (applyDay === "gap_1_day" || applyDay === "gap_2_day");
+  }, [multiDayEnabled, multiDayCandles, applyDay]);
+
   const chartRef = useRef<IChartApi | null>(null);
   const subChartsRef = useRef<IChartApi[]>([]);
 
@@ -220,458 +255,542 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
   // Chart rendering effect
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!chartContainerRef.current || candles.length === 0) return;
-
-    // Cleanup
+    // Cleanup of any active charts
     if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
-    for (const sc of subChartsRef.current) { try { sc.remove(); } catch { /* */ } }
+    for (const sc of subChartsRef.current) { try { sc.remove(); } catch {} }
     subChartsRef.current = [];
 
-    const sorted = [...aggregatedCandles].sort((a, b) => a.time - b.time);
-    const deduped = sorted.filter((c, i) => i === 0 || c.time !== sorted[i - 1].time);
+    const activeCharts: IChartApi[] = [];
+    const activeSubCharts: IChartApi[] = [];
 
-    const candleData: CandlestickData<Time>[] = deduped.map(c => ({
-      time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
-    }));
+    const renderChartInstance = (
+      container: HTMLDivElement | null,
+      panelContainer: HTMLDivElement | null,
+      dayCandlesList: CandleData[],
+      dayTrades: TradeRecord[],
+      dayEquity: EquityPoint[],
+      showTrades: boolean
+    ) => {
+      if (!container || dayCandlesList.length === 0) return null;
 
-    // ========== MAIN CHART ==========
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: 400,
-      layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "#ffffff" },
-      grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
-      crosshair: { mode: 0 },
-      rightPriceScale: { borderColor: "#2C2F33" },
-      timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false },
-    });
-    chartRef.current = chart;
+      const dayAggregated = aggregateCandles(dayCandlesList, timeframe);
+      const sorted = [...dayAggregated].sort((a, b) => a.time - b.time);
+      const deduped = sorted.filter((c, i) => i === 0 || c.time !== sorted[i - 1].time);
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#10b981", downColor: "#ef4444",
-      borderDownColor: "#ef4444", borderUpColor: "#10b981",
-      wickDownColor: "#ef4444", wickUpColor: "#10b981",
-    });
-    candleSeries.setData(candleData);
+      if (deduped.length === 0) return null;
 
-    // Volume on main chart
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" }, priceScaleId: "volume",
-    });
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-    volumeSeries.setData(deduped.map(c => ({
-      time: c.time as Time,
-      value: c.volume,
-      color: c.close >= c.open ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)",
-    })));
+      const candleData: CandlestickData<Time>[] = deduped.map(c => ({
+        time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
+      }));
 
-    // Trade markers — snap to nearest aggregated candle time
-    if (trades.length > 0) {
-      const candleTimes = deduped.map(c => c.time as number);
-      const candleTimeSet = new Set(candleTimes);
-
-      const markers: SeriesMarker<Time>[] = [];
-      const entryTimeSet = new Set<string>();
-      for (const t of trades) {
-        const entrySnap = timeframe === "1m" ? t.entry_time_epoch : snapToCandle(t.entry_time_epoch, candleTimes);
-        const exitSnap = timeframe === "1m" ? t.exit_time_epoch : snapToCandle(t.exit_time_epoch, candleTimes);
-
-        if (entrySnap && candleTimeSet.has(entrySnap)) {
-          const entryKey = `${entrySnap}`;
-          if (!entryTimeSet.has(entryKey)) {
-            entryTimeSet.add(entryKey);
-            const isLong = t.direction.toLowerCase().includes("long");
-            markers.push({
-              time: entrySnap as unknown as Time,
-              position: isLong ? "belowBar" : "aboveBar",
-              color: isLong ? "#10b981" : "#ef4444",
-              shape: isLong ? "arrowUp" : "arrowDown",
-              text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
-            });
-          }
-        }
-        if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed") {
-          markers.push({
-            time: exitSnap as unknown as Time,
-            position: "aboveBar",
-            color: t.pnl >= 0 ? "#10b981" : "#ef4444",
-            shape: "circle",
-            text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
-          });
-        }
-      }
-      markers.sort((a, b) => (a.time as number) - (b.time as number));
-      createSeriesMarkers(candleSeries, markers);
-    }
-
-    // ========== OVERLAY INDICATORS ==========
-    const overlayIndicators = activeIndicators.filter(a => {
-      const def = getIndicatorDef(a.indicatorId);
-      return def && def.displayMode === "overlay";
-    });
-
-    // Track instance index per indicator type for coloring
-    const overlayCounters: Record<string, number> = {};
-
-    for (const ai of overlayIndicators) {
-      const idx = overlayCounters[ai.indicatorId] ?? 0;
-      overlayCounters[ai.indicatorId] = idx + 1;
-      const color = getSeriesColor(ai.indicatorId, idx);
-
-      switch (ai.indicatorId) {
-        case "SMA": {
-          const d = calculateSMA(candles, ai.params.period ?? 20);
-          if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
-          break;
-        }
-        case "EMA": {
-          const d = calculateEMA(candles, ai.params.period ?? 20);
-          if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
-          break;
-        }
-        case "WMA": {
-          const d = calculateWMA(candles, ai.params.period ?? 20);
-          if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
-          break;
-        }
-        case "VWAP": {
-          const d = calculateVWAP(candles);
-          if (d.length > 0) { const s = chart.addSeries(LineSeries, { color: "#d4a017", lineWidth: 2 }); s.setData(d); }
-          break;
-        }
-        case "LINEAR_REGRESSION": {
-          const d = calculateLinearRegression(candles, ai.params.period ?? 14);
-          if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
-          break;
-        }
-        case "ZIGZAG": {
-          const d = calculateZigZag(candles, ai.params.reversal ?? 5);
-          if (d.length > 1) { const s = chart.addSeries(LineSeries, { color: "#e11d48", lineWidth: 2 }); s.setData(d); }
-          break;
-        }
-        case "ICHIMOKU": {
-          const d = calculateIchimoku(candles, ai.params.tenkan ?? 9, ai.params.kijun ?? 26, ai.params.senkou_b ?? 52);
-          if (d.length > 0) {
-            // Cloud (Kumo) shading using a CandlestickSeries trick
-            const cloudSeries = chart.addSeries(CandlestickSeries, {
-              upColor: "rgba(16, 185, 129, 0.15)",
-              downColor: "rgba(239, 68, 68, 0.15)",
-              borderVisible: false,
-              wickVisible: false,
-              lastValueVisible: false,
-              priceLineVisible: false,
-            });
-            const cloudData = d.filter(p => p.senkouA !== null && p.senkouB !== null).map(p => ({
-              time: p.time,
-              open: p.senkouA!,
-              close: p.senkouB!,
-              high: Math.max(p.senkouA!, p.senkouB!),
-              low: Math.min(p.senkouA!, p.senkouB!),
-            }));
-            cloudSeries.setData(cloudData);
-
-            // Tenkan-sen
-            const tenkanData = d.filter(p => p.tenkan !== null).map(p => ({ time: p.time, value: p.tenkan! }));
-            if (tenkanData.length) { chart.addSeries(LineSeries, { color: "#2563eb", lineWidth: 1 }).setData(tenkanData); }
-            // Kijun-sen
-            const kijunData = d.filter(p => p.kijun !== null).map(p => ({ time: p.time, value: p.kijun! }));
-            if (kijunData.length) { chart.addSeries(LineSeries, { color: "#dc2626", lineWidth: 1 }).setData(kijunData); }
-            // Senkou A
-            const senkouAData = d.filter(p => p.senkouA !== null).map(p => ({ time: p.time, value: p.senkouA! }));
-            if (senkouAData.length) { chart.addSeries(LineSeries, { color: "rgba(16, 185, 129, 0.5)", lineWidth: 1 }).setData(senkouAData); }
-            // Senkou B
-            const senkouBData = d.filter(p => p.senkouB !== null).map(p => ({ time: p.time, value: p.senkouB! }));
-            if (senkouBData.length) { chart.addSeries(LineSeries, { color: "rgba(239, 68, 68, 0.5)", lineWidth: 1 }).setData(senkouBData); }
-            // Chikou
-            const chikouData = d.filter(p => p.chikou !== null).map(p => ({ time: p.time, value: p.chikou! }));
-            if (chikouData.length) { chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 1, lineStyle: 2 }).setData(chikouData); }
-          }
-          break;
-        }
-        case "PARABOLIC_SAR": {
-          const d = calculateParabolicSAR(candles, ai.params.minAF ?? 0.02, ai.params.maxAF ?? 0.2);
-          if (d.length > 0) {
-            const s = chart.addSeries(LineSeries, {
-              color: "transparent", lineWidth: 1,
-              pointMarkersVisible: true, pointMarkersRadius: 2,
-              lastValueVisible: false, priceLineVisible: false,
-            });
-            // We use a dummy LineSeries with transparent line and visible markers
-            s.setData(d.map(p => ({ ...p, color: "#06b6d4" })));
-          }
-          break;
-        }
-        case "DONCHIAN": {
-          const d = calculateDonchian(candles, ai.params.period ?? 20);
-          if (d.length > 0) {
-            const sU = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1 });
-            sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
-            const sL = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1 });
-            sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
-            const sM = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1, lineStyle: 2 });
-            sM.setData(d.map(p => ({ time: p.time, value: p.middle })));
-          }
-          break;
-        }
-        case "BOLLINGER": {
-          const d = calculateBollingerBands(candles, ai.params.period ?? 20, ai.params.stdDev ?? 2);
-          if (d.length > 0) {
-            const sU = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1 });
-            sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
-            const sL = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1 });
-            sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
-            const sM = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1, lineStyle: 2 });
-            sM.setData(d.map(p => ({ time: p.time, value: p.middle })));
-          }
-          break;
-        }
-        case "OPENING_RANGE": {
-          const d = calculateOpeningRange(candles, ai.params.minutes ?? 5);
-          if (d.length > 0) {
-            const sU = chart.addSeries(LineSeries, { color: "#d946ef", lineWidth: 1 });
-            sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
-            const sL = chart.addSeries(LineSeries, { color: "#d946ef", lineWidth: 1 });
-            sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
-          }
-          break;
-        }
-      }
-    }
-
-    chart.timeScale().fitContent();
-
-    // ========== PANEL SUB-CHARTS ==========
-    const createSubChart = (container: HTMLDivElement, height: number = 120): IChartApi => {
-      const subChart = createChart(container, {
-        width: container.clientWidth, height,
-        layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "#ffffff", fontSize: 10 },
+      // Create main chart
+      const chart = createChart(container, {
+        width: container.clientWidth,
+        height: 400,
+        layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "#ffffff" },
         grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
         crosshair: { mode: 0 },
         rightPriceScale: { borderColor: "#2C2F33" },
-        timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false, visible: false },
+        timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false },
       });
-      chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) subChart.timeScale().setVisibleLogicalRange(range);
+      activeCharts.push(chart);
+
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#10b981", downColor: "#ef4444",
+        borderDownColor: "#ef4444", borderUpColor: "#10b981",
+        wickDownColor: "#ef4444", wickUpColor: "#10b981",
       });
-      subChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-        if (range) chart.timeScale().setVisibleLogicalRange(range);
+      candleSeries.setData(candleData);
+
+      // Volume on main chart
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        priceFormat: { type: "volume" }, priceScaleId: "volume",
       });
-      subChartsRef.current.push(subChart);
-      return subChart;
-    };
+      chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+      volumeSeries.setData(deduped.map(c => ({
+        time: c.time as Time,
+        value: c.volume,
+        color: c.close >= c.open ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)",
+      })));
 
-    // Render panel groups
-    if (panelContainerRef.current) {
-      // Clear panel container
-      panelContainerRef.current.innerHTML = "";
+      // Trade markers (snap to nearest aggregated candle time)
+      if (showTrades && dayTrades.length > 0) {
+        const candleTimes = deduped.map(c => c.time as number);
+        const candleTimeSet = new Set(candleTimes);
 
-      for (const group of panelGroups) {
-        const def = getIndicatorDef(group.indicatorId);
-        if (!def) continue;
+        const markers: SeriesMarker<Time>[] = [];
+        const entryTimeSet = new Set<string>();
+        for (const t of dayTrades) {
+          const entrySnap = timeframe === "1m" ? t.entry_time_epoch : snapToCandle(t.entry_time_epoch, candleTimes);
+          const exitSnap = timeframe === "1m" ? t.exit_time_epoch : snapToCandle(t.exit_time_epoch, candleTimes);
 
-        // Create wrapper
-        const wrapper = document.createElement("div");
-        wrapper.className = "border-t border-[var(--color-ec-border)]";
-
-        // Label
-        const label = document.createElement("div");
-        label.className = "px-3 py-0.5 bg-[var(--color-ec-bg-sidebar)] text-[10px] font-semibold text-[var(--color-ec-text-muted)] tracking-wider";
-        label.textContent = def.label + " " + group.instances.map(i => {
-          const paramStr = def.params.map(p => i.params[p.name]).join(",");
-          return paramStr ? `(${paramStr})` : "";
-        }).join(" ");
-        wrapper.appendChild(label);
-
-        // Chart container
-        const chartDiv = document.createElement("div");
-        chartDiv.style.width = "100%";
-        chartDiv.style.height = "120px";
-        wrapper.appendChild(chartDiv);
-        panelContainerRef.current.appendChild(wrapper);
-
-        const subChart = createSubChart(chartDiv);
-        let instanceIdx = 0;
-
-        for (const inst of group.instances) {
-          const clr = getSeriesColor(inst.indicatorId, instanceIdx++);
-
-          switch (inst.indicatorId) {
-            case "RSI": {
-              const d = calculateRSI(candles, inst.params.period ?? 14);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-                if (instanceIdx === 1) {
-                  s.createPriceLine({ price: 70, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
-                  s.createPriceLine({ price: 30, color: "#10b981", lineWidth: 1, lineStyle: 2 });
-                }
-              }
-              break;
-            }
-            case "STOCHASTIC": {
-              const d = calculateStochastic(candles, inst.params.kPeriod ?? 14, inst.params.dPeriod ?? 3, inst.params.dSlow ?? 3);
-              if (d.length > 0) {
-                const sK = subChart.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 2 });
-                sK.setData(d.map(p => ({ time: p.time, value: p.k })));
-                const sD = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1 });
-                sD.setData(d.map(p => ({ time: p.time, value: p.d })));
-                if (instanceIdx === 1) {
-                  sK.createPriceLine({ price: 80, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
-                  sK.createPriceLine({ price: 20, color: "#10b981", lineWidth: 1, lineStyle: 2 });
-                }
-              }
-              break;
-            }
-            case "MOMENTUM": {
-              const d = calculateMomentum(candles, inst.params.period ?? 10);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-                s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
-              }
-              break;
-            }
-            case "CCI": {
-              const d = calculateCCI(candles, inst.params.period ?? 20);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-                s.createPriceLine({ price: 100, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
-                s.createPriceLine({ price: -100, color: "#10b981", lineWidth: 1, lineStyle: 2 });
-              }
-              break;
-            }
-            case "ROC": {
-              const d = calculateROC(candles, inst.params.period ?? 12);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-                s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
-              }
-              break;
-            }
-            case "MACD": {
-              const d = calculateMACD(candles, inst.params.fast ?? 12, inst.params.slow ?? 26, inst.params.signal ?? 9);
-              if (d.length > 0) {
-                const sM = subChart.addSeries(LineSeries, { color: "#2563eb", lineWidth: 2 });
-                sM.setData(d.map(p => ({ time: p.time, value: p.macd })));
-                const sS = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1 });
-                sS.setData(d.map(p => ({ time: p.time, value: p.signal })));
-                const sH = subChart.addSeries(HistogramSeries, {});
-                sH.setData(d.map(p => ({
-                  time: p.time, value: p.histogram,
-                  color: p.histogram >= 0 ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)",
-                })));
-              }
-              break;
-            }
-            case "DMI": {
-              const d = calculateDMI(candles, inst.params.diPeriod ?? 14, inst.params.adxPeriod ?? 14);
-              if (d.length > 0) {
-                const sP = subChart.addSeries(LineSeries, { color: "#16a34a", lineWidth: 2 });
-                sP.setData(d.map(p => ({ time: p.time, value: p.plusDI })));
-                const sM = subChart.addSeries(LineSeries, { color: "#dc2626", lineWidth: 2 });
-                sM.setData(d.map(p => ({ time: p.time, value: p.minusDI })));
-                const sA = subChart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1, lineStyle: 2 });
-                sA.setData(d.map(p => ({ time: p.time, value: p.adx })));
-              }
-              break;
-            }
-            case "WILLIAMS_R": {
-              const d = calculateWilliamsR(candles, inst.params.period ?? 14);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-                s.createPriceLine({ price: -20, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
-                s.createPriceLine({ price: -80, color: "#10b981", lineWidth: 1, lineStyle: 2 });
-              }
-              break;
-            }
-            case "ADX": {
-              const d = calculateADX(candles, inst.params.period ?? 14);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-                s.createPriceLine({ price: 25, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
-              }
-              break;
-            }
-            case "ATR": {
-              const d = calculateATR(candles, inst.params.period ?? 14);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
-                s.setData(d);
-              }
-              break;
-            }
-            case "OBV": {
-              const d = calculateOBV(candles);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 2 });
-                s.setData(d);
-              }
-              break;
-            }
-            case "VOL_AD": {
-              const d = calculateAccDist(candles);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: "#84cc16", lineWidth: 2 });
-                s.setData(d);
-              }
-              break;
-            }
-            case "VOLUME": {
-              const d = calculateVolume(candles);
-              if (d.length > 0) {
-                const s = subChart.addSeries(HistogramSeries, { priceFormat: { type: "volume" } });
-                s.setData(d);
-              }
-              break;
-            }
-            case "RVOL": {
-              const d = calculateRVOL(candles, inst.params.period ?? 14);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2 });
-                s.setData(d);
-                s.createPriceLine({ price: 1, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
-              }
-              break;
-            }
-            case "ACCUMULATED_VOLUME": {
-              const d = calculateAccumulatedVolume(candles);
-              if (d.length > 0) {
-                const s = subChart.addSeries(LineSeries, { color: "#10b981", lineWidth: 2 });
-                s.setData(d);
-              }
-              break;
-            }
-            case "HEIKIN_ASHI": {
-              const d = calculateHeikinAshi(candles);
-              if (d.length > 0) {
-                const s = subChart.addSeries(CandlestickSeries, {
-                  upColor: "#10b981", downColor: "#ef4444",
-                  borderDownColor: "#ef4444", borderUpColor: "#10b981",
-                  wickDownColor: "#ef4444", wickUpColor: "#10b981",
-                });
-                s.setData(d.map(p => ({
-                  time: p.time, open: p.open, high: p.high, low: p.low, close: p.close,
-                })));
-              }
-              break;
+          if (entrySnap && candleTimeSet.has(entrySnap)) {
+            const entryKey = `${entrySnap}`;
+            if (!entryTimeSet.has(entryKey)) {
+              entryTimeSet.add(entryKey);
+              const isLong = t.direction.toLowerCase().includes("long");
+              markers.push({
+                time: entrySnap as unknown as Time,
+                position: isLong ? "belowBar" : "aboveBar",
+                color: isLong ? "#10b981" : "#ef4444",
+                shape: isLong ? "arrowUp" : "arrowDown",
+                text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
+              });
             }
           }
+          if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed") {
+            markers.push({
+              time: exitSnap as unknown as Time,
+              position: "aboveBar",
+              color: t.pnl >= 0 ? "#10b981" : "#ef4444",
+              shape: "circle",
+              text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
+            });
+          }
         }
-        subChart.timeScale().fitContent();
+        markers.sort((a, b) => (a.time as number) - (b.time as number));
+        createSeriesMarkers(candleSeries, markers);
+      }
+
+      // ========== OVERLAY INDICATORS ==========
+      const overlayIndicators = activeIndicators.filter(a => {
+        const def = getIndicatorDef(a.indicatorId);
+        return def && def.displayMode === "overlay";
+      });
+
+      const overlayCounters: Record<string, number> = {};
+
+      for (const ai of overlayIndicators) {
+        const idx = overlayCounters[ai.indicatorId] ?? 0;
+        overlayCounters[ai.indicatorId] = idx + 1;
+        const color = getSeriesColor(ai.indicatorId, idx);
+
+        switch (ai.indicatorId) {
+          case "SMA": {
+            const d = calculateSMA(dayCandlesList, ai.params.period ?? 20);
+            if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "EMA": {
+            const d = calculateEMA(dayCandlesList, ai.params.period ?? 20);
+            if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "WMA": {
+            const d = calculateWMA(dayCandlesList, ai.params.period ?? 20);
+            if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "VWAP": {
+            const d = calculateVWAP(dayCandlesList);
+            if (d.length > 0) { const s = chart.addSeries(LineSeries, { color: "#d4a017", lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "LINEAR_REGRESSION": {
+            const d = calculateLinearRegression(dayCandlesList, ai.params.period ?? 14);
+            if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "ZIGZAG": {
+            const d = calculateZigZag(dayCandlesList, ai.params.reversal ?? 5);
+            if (d.length > 1) { const s = chart.addSeries(LineSeries, { color: "#e11d48", lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "ICHIMOKU": {
+            const d = calculateIchimoku(dayCandlesList, ai.params.tenkan ?? 9, ai.params.kijun ?? 26, ai.params.senkou_b ?? 52);
+            if (d.length > 0) {
+              const cloudSeries = chart.addSeries(CandlestickSeries, {
+                upColor: "rgba(16, 185, 129, 0.15)",
+                downColor: "rgba(239, 68, 68, 0.15)",
+                borderVisible: false,
+                wickVisible: false,
+                lastValueVisible: false,
+                priceLineVisible: false,
+              });
+              const cloudData = d.filter(p => p.senkouA !== null && p.senkouB !== null).map(p => ({
+                time: p.time,
+                open: p.senkouA!,
+                close: p.senkouB!,
+                high: Math.max(p.senkouA!, p.senkouB!),
+                low: Math.min(p.senkouA!, p.senkouB!),
+              }));
+              cloudSeries.setData(cloudData);
+
+              const tenkanData = d.filter(p => p.tenkan !== null).map(p => ({ time: p.time, value: p.tenkan! }));
+              if (tenkanData.length) { chart.addSeries(LineSeries, { color: "#2563eb", lineWidth: 1 }).setData(tenkanData); }
+              const kijunData = d.filter(p => p.kijun !== null).map(p => ({ time: p.time, value: p.kijun! }));
+              if (kijunData.length) { chart.addSeries(LineSeries, { color: "#dc2626", lineWidth: 1 }).setData(kijunData); }
+              const senkouAData = d.filter(p => p.senkouA !== null).map(p => ({ time: p.time, value: p.senkouA! }));
+              if (senkouAData.length) { chart.addSeries(LineSeries, { color: "rgba(16, 185, 129, 0.5)", lineWidth: 1 }).setData(senkouAData); }
+              const senkouBData = d.filter(p => p.senkouB !== null).map(p => ({ time: p.time, value: p.senkouB! }));
+              if (senkouBData.length) { chart.addSeries(LineSeries, { color: "rgba(239, 68, 68, 0.5)", lineWidth: 1 }).setData(senkouBData); }
+              const chikouData = d.filter(p => p.chikou !== null).map(p => ({ time: p.time, value: p.chikou! }));
+              if (chikouData.length) { chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 1, lineStyle: 2 }).setData(chikouData); }
+            }
+            break;
+          }
+          case "PARABOLIC_SAR": {
+            const d = calculateParabolicSAR(dayCandlesList, ai.params.minAF ?? 0.02, ai.params.maxAF ?? 0.2);
+            if (d.length > 0) {
+              const s = chart.addSeries(LineSeries, {
+                color: "transparent", lineWidth: 1,
+                pointMarkersVisible: true, pointMarkersRadius: 2,
+                lastValueVisible: false, priceLineVisible: false,
+              });
+              s.setData(d.map(p => ({ ...p, color: "#06b6d4" })));
+            }
+            break;
+          }
+          case "DONCHIAN": {
+            const d = calculateDonchian(dayCandlesList, ai.params.period ?? 20);
+            if (d.length > 0) {
+              const sU = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1 });
+              sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
+              const sL = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1 });
+              sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
+              const sM = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1, lineStyle: 2 });
+              sM.setData(d.map(p => ({ time: p.time, value: p.middle })));
+            }
+            break;
+          }
+          case "BOLLINGER": {
+            const d = calculateBollingerBands(dayCandlesList, ai.params.period ?? 20, ai.params.stdDev ?? 2);
+            if (d.length > 0) {
+              const sU = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1 });
+              sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
+              const sL = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1 });
+              sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
+              const sM = chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1, lineStyle: 2 });
+              sM.setData(d.map(p => ({ time: p.time, value: p.middle })));
+            }
+            break;
+          }
+          case "OPENING_RANGE": {
+            const d = calculateOpeningRange(dayCandlesList, ai.params.minutes ?? 5);
+            if (d.length > 0) {
+              const sU = chart.addSeries(LineSeries, { color: "#d946ef", lineWidth: 1 });
+              sU.setData(d.map(p => ({ time: p.time, value: p.upper })));
+              const sL = chart.addSeries(LineSeries, { color: "#d946ef", lineWidth: 1 });
+              sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
+            }
+            break;
+          }
+        }
+      }
+
+      // ========== PANEL SUB-CHARTS ==========
+      const createSubChart = (containerDiv: HTMLDivElement, height: number = 120): IChartApi => {
+        const subChart = createChart(containerDiv, {
+          width: containerDiv.clientWidth, height,
+          layout: { background: { type: ColorType.Solid, color: "#16181A" }, textColor: "#ffffff", fontSize: 10 },
+          grid: { vertLines: { color: "#2C2F33" }, horzLines: { color: "#2C2F33" } },
+          crosshair: { mode: 0 },
+          rightPriceScale: { borderColor: "#2C2F33" },
+          timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false, visible: false },
+        });
+        chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (range) subChart.timeScale().setVisibleLogicalRange(range);
+        });
+        subChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+          if (range) chart.timeScale().setVisibleLogicalRange(range);
+        });
+        activeSubCharts.push(subChart);
+        return subChart;
+      };
+
+      if (panelContainer) {
+        panelContainer.innerHTML = "";
+
+        const panelIndicators = activeIndicators.filter(a => {
+          const def = getIndicatorDef(a.indicatorId);
+          return def && def.displayMode === "panel";
+        });
+
+        const panelGroups: { indicatorId: string; instances: ActiveIndicator[] }[] = [];
+        const panelMap = new Map<string, ActiveIndicator[]>();
+        for (const pi of panelIndicators) {
+          if (!panelMap.has(pi.indicatorId)) panelMap.set(pi.indicatorId, []);
+          panelMap.get(pi.indicatorId)!.push(pi);
+        }
+        for (const [id, insts] of panelMap) panelGroups.push({ indicatorId: id, instances: insts });
+
+        for (const group of panelGroups) {
+          const def = getIndicatorDef(group.indicatorId);
+          if (!def) continue;
+
+          const wrapper = document.createElement("div");
+          wrapper.className = "border-t border-[var(--color-ec-border)]";
+
+          const label = document.createElement("div");
+          label.className = "px-3 py-0.5 bg-[var(--color-ec-bg-sidebar)] text-[10px] font-semibold text-[var(--color-ec-text-muted)] tracking-wider";
+          label.textContent = def.label + " " + group.instances.map(i => {
+            const paramStr = def.params.map(p => i.params[p.name]).join(",");
+            return paramStr ? `(${paramStr})` : "";
+          }).join(" ");
+          wrapper.appendChild(label);
+
+          const chartDiv = document.createElement("div");
+          chartDiv.style.width = "100%";
+          chartDiv.style.height = "120px";
+          wrapper.appendChild(chartDiv);
+          panelContainer.appendChild(wrapper);
+
+          const subChart = createSubChart(chartDiv);
+          let instanceIdx = 0;
+
+          for (const inst of group.instances) {
+            const clr = getSeriesColor(inst.indicatorId, instanceIdx++);
+
+            switch (inst.indicatorId) {
+              case "RSI": {
+                const d = calculateRSI(dayCandlesList, inst.params.period ?? 14);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                  if (instanceIdx === 1) {
+                    s.createPriceLine({ price: 70, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
+                    s.createPriceLine({ price: 30, color: "#10b981", lineWidth: 1, lineStyle: 2 });
+                  }
+                }
+                break;
+              }
+              case "STOCHASTIC": {
+                const d = calculateStochastic(dayCandlesList, inst.params.kPeriod ?? 14, inst.params.dPeriod ?? 3, inst.params.dSlow ?? 3);
+                if (d.length > 0) {
+                  const sK = subChart.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 2 });
+                  sK.setData(d.map(p => ({ time: p.time, value: p.k })));
+                  const sD = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1 });
+                  sD.setData(d.map(p => ({ time: p.time, value: p.d })));
+                  if (instanceIdx === 1) {
+                    sK.createPriceLine({ price: 80, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
+                    sK.createPriceLine({ price: 20, color: "#10b981", lineWidth: 1, lineStyle: 2 });
+                  }
+                }
+                break;
+              }
+              case "MOMENTUM": {
+                const d = calculateMomentum(dayCandlesList, inst.params.period ?? 10);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "CCI": {
+                const d = calculateCCI(dayCandlesList, inst.params.period ?? 20);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 100, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
+                  s.createPriceLine({ price: -100, color: "#10b981", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "ROC": {
+                const d = calculateROC(dayCandlesList, inst.params.period ?? 12);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "MACD": {
+                const d = calculateMACD(dayCandlesList, inst.params.fast ?? 12, inst.params.slow ?? 26, inst.params.signal ?? 9);
+                if (d.length > 0) {
+                  const sM = subChart.addSeries(LineSeries, { color: "#2563eb", lineWidth: 2 });
+                  sM.setData(d.map(p => ({ time: p.time, value: p.macd })));
+                  const sS = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1 });
+                  sS.setData(d.map(p => ({ time: p.time, value: p.signal })));
+                  const sH = subChart.addSeries(HistogramSeries, {});
+                  sH.setData(d.map(p => ({
+                    time: p.time, value: p.histogram,
+                    color: p.histogram >= 0 ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)",
+                  })));
+                }
+                break;
+              }
+              case "DMI": {
+                const d = calculateDMI(dayCandlesList, inst.params.diPeriod ?? 14, inst.params.adxPeriod ?? 14);
+                if (d.length > 0) {
+                  const sP = subChart.addSeries(LineSeries, { color: "#16a34a", lineWidth: 2 });
+                  sP.setData(d.map(p => ({ time: p.time, value: p.plusDI })));
+                  const sM = subChart.addSeries(LineSeries, { color: "#dc2626", lineWidth: 2 });
+                  sM.setData(d.map(p => ({ time: p.time, value: p.minusDI })));
+                  const sA = subChart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 1, lineStyle: 2 });
+                  sA.setData(d.map(p => ({ time: p.time, value: p.adx })));
+                }
+                break;
+              }
+              case "WILLIAMS_R": {
+                const d = calculateWilliamsR(dayCandlesList, inst.params.period ?? 14);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: -20, color: "#ef4444", lineWidth: 1, lineStyle: 2 });
+                  s.createPriceLine({ price: -80, color: "#10b981", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "ADX": {
+                const d = calculateADX(dayCandlesList, inst.params.period ?? 14);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 25, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "ATR": {
+                const d = calculateATR(dayCandlesList, inst.params.period ?? 14);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: clr, lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "OBV": {
+                const d = calculateOBV(dayCandlesList);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#06b6d4", lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "VOL_AD": {
+                const d = calculateAccDist(dayCandlesList);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#84cc16", lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "VOLUME": {
+                const d = calculateVolume(dayCandlesList);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(HistogramSeries, { priceFormat: { type: "volume" } });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "RVOL": {
+                const d = calculateRVOL(dayCandlesList, inst.params.period ?? 14);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 1, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "ACCUMULATED_VOLUME": {
+                const d = calculateAccumulatedVolume(dayCandlesList);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#10b981", lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "HEIKIN_ASHI": {
+                const d = calculateHeikinAshi(dayCandlesList);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(CandlestickSeries, {
+                    upColor: "#10b981", downColor: "#ef4444",
+                    borderDownColor: "#ef4444", borderUpColor: "#10b981",
+                    wickDownColor: "#ef4444", wickUpColor: "#10b981",
+                  });
+                  s.setData(d.map(p => ({
+                    time: p.time, open: p.open, high: p.high, low: p.low, close: p.close,
+                  })));
+                }
+                break;
+              }
+            }
+          }
+          subChart.timeScale().fitContent();
+        }
+      }
+
+      chart.timeScale().fitContent();
+      return chart;
+    };
+
+    // Render single or multiple charts depending on isMultiView
+    if (isMultiView && multiDayCandles) {
+      if (multiDayCandles.gap_day?.candles) {
+        renderChartInstance(
+          chartContainerRef1.current,
+          panelContainerRef1.current,
+          multiDayCandles.gap_day.candles,
+          [],
+          [],
+          false
+        );
+      }
+
+      if (applyDay === "gap_1_day") {
+        if (multiDayCandles.gap_1_day?.candles) {
+          renderChartInstance(
+            chartContainerRef2.current,
+            panelContainerRef2.current,
+            multiDayCandles.gap_1_day.candles,
+            trades,
+            equity,
+            true
+          );
+        }
+      } else if (applyDay === "gap_2_day") {
+        if (multiDayCandles.gap_1_day?.candles) {
+          renderChartInstance(
+            chartContainerRef2.current,
+            panelContainerRef2.current,
+            multiDayCandles.gap_1_day.candles,
+            [],
+            [],
+            false
+          );
+        }
+        if (multiDayCandles.gap_2_day?.candles) {
+          renderChartInstance(
+            chartContainerRef3.current,
+            panelContainerRef3.current,
+            multiDayCandles.gap_2_day.candles,
+            trades,
+            equity,
+            true
+          );
+        }
+      }
+    } else {
+      if (candles && candles.length > 0) {
+        const mainChart = renderChartInstance(
+          chartContainerRef.current,
+          panelContainerRef.current,
+          candles,
+          trades,
+          equity,
+          true
+        );
+        if (mainChart) chartRef.current = mainChart;
       }
     }
 
     // Resize handler
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      for (const c of activeCharts) {
+        if (isMultiView) {
+          if (chartContainerRef1.current && activeCharts[0] === c) c.applyOptions({ width: chartContainerRef1.current.clientWidth });
+          if (chartContainerRef2.current && activeCharts[1] === c) c.applyOptions({ width: chartContainerRef2.current.clientWidth });
+          if (chartContainerRef3.current && activeCharts[2] === c) c.applyOptions({ width: chartContainerRef3.current.clientWidth });
+        } else {
+          if (chartContainerRef.current) c.applyOptions({ width: chartContainerRef.current.clientWidth });
+        }
       }
-      for (const sc of subChartsRef.current) {
-        if (chartContainerRef.current) {
-          sc.applyOptions({ width: chartContainerRef.current.clientWidth });
+      for (const sc of activeSubCharts) {
+        if (isMultiView) {
+          if (chartContainerRef1.current) sc.applyOptions({ width: chartContainerRef1.current.clientWidth });
+        } else {
+          if (chartContainerRef.current) sc.applyOptions({ width: chartContainerRef.current.clientWidth });
         }
       }
     };
@@ -679,36 +798,91 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
 
     return () => {
       window.removeEventListener("resize", handleResize);
-      for (const sc of subChartsRef.current) { try { sc.remove(); } catch { /* */ } }
-      subChartsRef.current = [];
-      chart.remove();
+      for (const sc of activeSubCharts) { try { sc.remove(); } catch {} }
+      for (const c of activeCharts) { try { c.remove(); } catch {} }
       chartRef.current = null;
     };
-  }, [aggregatedCandles, trades, equity, activeIndicators, panelGroups, timeframe]);
+  }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date]);
 
   return (
     <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] overflow-hidden" style={{ marginTop: 24 }}>
 
       {/* TOOLBAR */}
-      <div className="px-4 py-2 border-b border-[var(--color-ec-border)] flex flex-wrap items-center justify-between gap-3 bg-[var(--color-ec-bg-sidebar)]">
-        <div className="flex items-center gap-3">
-          <span className="font-semibold text-[15px]" style={{ color: 'var(--color-ec-text-high)' }}>{ticker}</span>
-          <span className="text-[13px]" style={{ color: 'var(--color-ec-text-primary)' }}>{date}</span>
-          <div className="flex gap-2 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-md p-1">
+      <div 
+        style={{
+          padding: '4px 24px',
+          borderBottom: '1px solid var(--color-ec-border)',
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '16px',
+          backgroundColor: 'var(--color-ec-bg-sidebar)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span style={{ fontWeight: 700, fontSize: '18px', color: 'var(--color-ec-text-high)' }}>{ticker}</span>
+          <span style={{ fontSize: '13px', color: 'var(--color-ec-text-primary)' }}>{date}</span>
+          <div 
+            style={{ 
+              display: 'flex', 
+              gap: '3px', 
+              backgroundColor: 'var(--color-ec-bg-surface)', 
+              border: '1px solid var(--color-ec-border)', 
+              borderRadius: '5px', 
+              padding: '2px 3px' 
+            }}
+          >
             {(["1m", "5m", "15m", "1h"] as Timeframe[]).map(tf => (
               <button
                 key={tf}
                 onClick={() => setTimeframe(tf)}
-                className={`text-[13px] px-2.5 py-0.5 rounded font-medium transition-colors ${
-                  timeframe === tf
-                    ? "bg-[var(--color-ec-copper)] text-white shadow-sm"
-                    : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] hover:bg-[var(--color-ec-bg-elevated)]"
-                }`}
+                style={{
+                  fontSize: '11px',
+                  padding: '3px 8px',
+                  borderRadius: '3px',
+                  fontWeight: 500,
+                  border: 'none',
+                  cursor: 'pointer',
+                  backgroundColor: timeframe === tf ? 'var(--color-ec-copper)' : 'transparent',
+                  color: timeframe === tf ? '#fff' : 'var(--color-ec-text-secondary)',
+                  transition: 'all 150ms ease',
+                }}
               >
                 {tf}
               </button>
             ))}
           </div>
+          {(applyDay === "gap_1_day" || applyDay === "gap_2_day") && (
+            <button
+              onClick={() => setMultiDayEnabled(!multiDayEnabled)}
+              style={{
+                padding: '5px 12px',
+                height: '30px',
+                backgroundColor: multiDayEnabled ? 'var(--color-ec-copper)' : 'transparent',
+                border: '1.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                fontSize: 10,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: multiDayEnabled ? '#fff' : 'var(--color-ec-text-secondary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                transition: 'all 150ms ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!multiDayEnabled) e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+              }}
+              onMouseLeave={(e) => {
+                if (!multiDayEnabled) e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+              }}
+            >
+              <span>{multiDayEnabled ? "Vista Simple" : "Comparar GAPs"}</span>
+            </button>
+          )}
         </div>
 
         <IndicatorDropdown
@@ -720,11 +894,45 @@ export default function Chart({ candles, trades, equity, ticker, date }: ChartPr
         />
       </div>
 
-      {/* MAIN CHART */}
-      <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
+      {/* CHART CONTAINERS */}
+      {!isMultiView ? (
+        <>
+          <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
+          <div ref={panelContainerRef} />
+        </>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'row', gap: 0, width: '100%', borderTop: '1px solid var(--color-ec-border)' }}>
+          {/* Panel 1: Gap Day */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Día del Gap ({multiDayCandles?.gap_day?.date || ""})
+            </div>
+            <div ref={chartContainerRef1} style={{ width: "100%", height: "400px" }} />
+            <div ref={panelContainerRef1} />
+          </div>
 
-      {/* PANEL SUB-CHARTS (rendered via DOM manipulation in effect) */}
-      <div ref={panelContainerRef} />
+          {/* Panel 2: GAP +1 Day */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid var(--color-ec-border)' }}>
+            <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              {applyDay === "gap_2_day" ? "Día GAP + 1" : "Día del Trade (GAP + 1)"} ({multiDayCandles?.gap_1_day?.date || ""})
+            </div>
+            <div ref={chartContainerRef2} style={{ width: "100%", height: "400px" }} />
+            <div ref={panelContainerRef2} />
+          </div>
+
+          {/* Panel 3: GAP +2 Day */}
+          {applyDay === "gap_2_day" && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid var(--color-ec-border)' }}>
+              <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                Día del Trade (GAP + 2) ({multiDayCandles?.gap_2_day?.date || ""})
+              </div>
+              <div ref={chartContainerRef3} style={{ width: "100%", height: "400px" }} />
+              <div ref={panelContainerRef3} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+

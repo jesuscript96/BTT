@@ -271,6 +271,26 @@ export async function fetchDayCandles(
   return data;
 }
 
+export interface MultiDayCandles {
+  gap_day?: { date: string; candles: CandleData[] };
+  gap_1_day?: { date: string; candles: CandleData[] };
+  gap_2_day?: { date: string; candles: CandleData[] };
+  [key: string]: { date: string; candles: CandleData[] } | undefined;
+}
+
+export async function fetchMultiDayCandles(
+  dataset_id: string,
+  ticker: string,
+  date: string,
+  apply_day: string
+): Promise<MultiDayCandles> {
+  const { data } = await api.get("/candles/multi", {
+    params: { dataset_id, ticker, date, apply_day },
+  });
+  return data;
+}
+
+
 // --- Optimization Surface ---
 
 export interface OptimizationParam {

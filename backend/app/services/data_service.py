@@ -810,3 +810,24 @@ def fetch_day_candles(dataset_id: str, ticker: str, date: str) -> list[dict]:
         }
         for j in range(len(df))
     ]
+
+
+def fetch_preceding_trading_dates(ticker: str, trade_date: str, count: int) -> list[str]:
+    from app.database import get_db_connection
+    con = get_db_connection()
+    try:
+        query = """
+            SELECT CAST("timestamp" AS DATE) AS date_str
+            FROM daily_metrics
+            WHERE ticker = ? AND CAST("timestamp" AS DATE) <= CAST(? AS DATE)
+            ORDER BY "timestamp" DESC
+            LIMIT ?
+        """
+        rows = con.execute(query, [ticker, trade_date, count]).fetchall()
+        dates = [str(r[0]) for r in rows]
+        dates.reverse()
+        return dates
+    except Exception as e:
+        logger.error(f"Error fetching preceding trading dates for {ticker} on {trade_date}: {e}", exc_info=True)
+        return [trade_date]
+
