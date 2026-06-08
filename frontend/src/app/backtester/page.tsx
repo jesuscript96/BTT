@@ -168,6 +168,15 @@ export default function Home() {
         look_ahead_prevention: p.look_ahead_prevention,
       });
       setResult(data);
+      if (data.trades && data.trades.length > 0) {
+        const firstTrade = data.trades[0];
+        const dayIdx = data.day_results.findIndex(
+          (d) => d.ticker === firstTrade.ticker && d.date === firstTrade.date
+        );
+        if (dayIdx !== -1) {
+          setSelectedDay(dayIdx);
+        }
+      }
       setActiveStrategy({
         id: "draft",
         name: draft.name,
@@ -262,6 +271,15 @@ export default function Home() {
     try {
       const data = await runBacktest(params);
       setResult(data);
+      if (data.trades && data.trades.length > 0) {
+        const firstTrade = data.trades[0];
+        const dayIdx = data.day_results.findIndex(
+          (d) => d.ticker === firstTrade.ticker && d.date === firstTrade.date
+        );
+        if (dayIdx !== -1) {
+          setSelectedDay(dayIdx);
+        }
+      }
       try {
         const strategyData = await getStrategy(params.strategy_id);
         setActiveStrategy(strategyData);
