@@ -29,6 +29,14 @@ export default function Home() {
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [builderDraft, setBuilderDraft] = useState<Draft | null>(null);
+
+  const computedActiveStrategy = useMemo(() => {
+    if (mode === "builder") {
+      return builderDraft;
+    }
+    return activeStrategy;
+  }, [mode, builderDraft, activeStrategy]);
   const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -593,7 +601,7 @@ export default function Home() {
               onClearPendingDataset={() => setPendingDatasetSelect(undefined)}
               loading={loading}
               isDarkMode={isDarkMode}
-              activeStrategy={activeStrategy}
+              activeStrategy={computedActiveStrategy}
             />
             {result && (
               <DaySelector
@@ -999,6 +1007,7 @@ export default function Home() {
             marketSessions={activeSessions}
             customStartTime={activeCustomStartTime}
             customEndTime={activeCustomEndTime}
+            onDraftChange={setBuilderDraft}
           />
         </div>
 

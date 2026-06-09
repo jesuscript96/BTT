@@ -76,6 +76,7 @@ interface Props {
   marketSessions?: string[];
   customStartTime?: string;
   customEndTime?: string;
+  onDraftChange?: (draft: Draft) => void;
 }
 
 export default function InlineStrategyBuilder({
@@ -84,6 +85,7 @@ export default function InlineStrategyBuilder({
   marketSessions = ["rth"],
   customStartTime = "09:30",
   customEndTime = "16:00",
+  onDraftChange,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
@@ -163,6 +165,20 @@ export default function InlineStrategyBuilder({
       if (stored) setDrafts(JSON.parse(stored));
     } catch {}
   }, []);
+
+  useEffect(() => {
+    onDraftChange?.({
+      id: "draft",
+      name,
+      bias,
+      apply_day: applyDay,
+      postgap_preconditions: postgapPreconditions,
+      entry_logic: entryLogic,
+      exit_logic: exitLogic,
+      risk_management: riskManagement,
+      created_at: new Date().toISOString(),
+    });
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
 
   const resetForm = () => {
     setName("Nueva Estrategia");
