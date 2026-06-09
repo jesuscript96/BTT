@@ -528,6 +528,12 @@ def list_strategies_backtester():
             local_ids = {r["id"] for r in results}
             for record in df.to_dict(orient="records"):
                 if record.get("id") not in local_ids:
+                    raw_defn = record.get("definition")
+                    if isinstance(raw_defn, str):
+                        try:
+                            record["definition"] = _json.loads(raw_defn)
+                        except Exception:
+                            pass
                     results.append(record)
     except Exception as e:
         print(f"[WARN] Could not read strategies from GCS: {e}")
@@ -565,7 +571,15 @@ def get_strategy_backtester(strategy_id: str):
         if df is not None and not df.empty:
             row = df[df["id"] == strategy_id]
             if not row.empty:
-                return row.iloc[0].to_dict()
+                import json as _json_fb
+                record = row.iloc[0].to_dict()
+                raw_defn = record.get("definition")
+                if isinstance(raw_defn, str):
+                    try:
+                        record["definition"] = _json_fb.loads(raw_defn)
+                    except Exception:
+                        pass
+                return record
     except Exception as e:
         print(f"[WARN] Could not read strategy from GCS: {e}")
     

@@ -392,11 +392,22 @@ export default function BacktestPanel({
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
   const getStratDef = () => {
+    let rawDef: any = null;
     if (selectedStrategy === "draft" && activeStrategy) {
-      return activeStrategy.definition || activeStrategy;
+      rawDef = activeStrategy.definition || activeStrategy;
+    } else {
+      const strat = strategies.find((s) => s.id === selectedStrategy);
+      rawDef = strat?.definition || strat;
     }
-    const strat = strategies.find((s) => s.id === selectedStrategy);
-    return strat?.definition || strat;
+    
+    if (typeof rawDef === "string") {
+      try {
+        return JSON.parse(rawDef);
+      } catch (e) {
+        console.error("Error parsing strategy definition:", e);
+      }
+    }
+    return rawDef;
   };
 
   const stratDef = getStratDef() as any;

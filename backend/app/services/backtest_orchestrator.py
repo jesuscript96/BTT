@@ -119,7 +119,12 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
 
     if req.size_by_sl:
         rm = strategy["definition"].get("risk_management", {})
-        has_hard_stop = rm.get("use_hard_stop") and rm.get("hard_stop", {}).get("value", 0) > 0
+        hs = rm.get("hard_stop", {})
+        hs_value = hs.get("value", 0)
+        if isinstance(hs_value, (int, float)):
+            has_hard_stop = rm.get("use_hard_stop") and hs_value > 0
+        else:
+            has_hard_stop = rm.get("use_hard_stop") and bool(hs_value)
         has_trailing = rm.get("trailing_stop", {}).get("active", False)
         if not has_hard_stop and not has_trailing:
             raise HTTPException(
