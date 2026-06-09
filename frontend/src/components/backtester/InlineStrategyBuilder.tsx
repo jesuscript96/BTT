@@ -272,6 +272,7 @@ export default function InlineStrategyBuilder({
             color: "var(--color-ec-text-high)",
             fontFamily: "var(--color-ec-sans)",
           }}
+        />
       </div>
 
       {/* Bias toggle */}
