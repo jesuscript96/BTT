@@ -129,11 +129,9 @@ export default function OptimizationSurfaceTab({
     ];
 
     let pollInterval: number | undefined;
-    let visualInterval: number | undefined;
 
     const cleanup = () => {
       if (pollInterval) window.clearInterval(pollInterval);
-      if (visualInterval) window.clearInterval(visualInterval);
     };
 
     try {
@@ -147,24 +145,19 @@ export default function OptimizationSurfaceTab({
         ...backtestParams,
       });
 
-      // Visual progress timer: climb asymptotically towards 95%
-      visualInterval = window.setInterval(() => {
-        setVisualProgress((prev) => {
-          if (prev < 95) {
-            const remaining = 95 - prev;
-            const step = Math.max(0.05, remaining * 0.015);
-            return prev + step;
-          }
-          return prev;
-        });
-      }, 150);
-
       pollInterval = window.setInterval(async () => {
         try {
           const res = await fetchOptimizationResult(taskId);
           if ("status" in res && res.status === "running") {
             setProgress(res.progress);
-            setVisualProgress((prev) => Math.max(prev, res.progress));
+            setVisualProgress((prev) => {
+              if (res.progress > 0) {
+                return res.progress;
+              } else {
+                // If backend is still initializing/fetching dataset, creep up slowly to 8% to show activity
+                return Math.min(8, prev + 1);
+              }
+            });
           } else {
             cleanup();
             setProgress(100);
