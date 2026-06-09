@@ -20,13 +20,13 @@ def _get_cached_client():
     gcs_key_b64 = os.getenv("GCS_KEY_B64", "")
     gcs_key_file = os.getenv("GCS_KEY_FILE", "")
 
-    if gcs_key_content:
+    if gcs_key_content and gcs_key_content.strip().startswith('{'):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             f.write(gcs_key_content)
             tmp_path = f.name
         _client_cache = storage.Client.from_service_account_json(tmp_path)
         os.unlink(tmp_path)
-    elif gcs_key_b64:
+    elif gcs_key_b64 and len(gcs_key_b64) > 100:
         key_data = base64.b64decode(gcs_key_b64).decode()
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             f.write(key_data)
