@@ -1008,6 +1008,7 @@ export default function Home() {
             customStartTime={activeCustomStartTime}
             customEndTime={activeCustomEndTime}
             onDraftChange={setBuilderDraft}
+            isOpen={mode === 'builder'}
           />
         </div>
 
