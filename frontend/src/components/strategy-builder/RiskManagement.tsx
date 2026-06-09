@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { RiskManagement, RiskType, RiskSettings, TakeProfitMode, PartialTakeProfit } from '@/types/strategy';
-import { PlusCircle, Trash2, Info } from 'lucide-react';
+import { PlusCircle, Trash2, Info, HelpCircle } from 'lucide-react';
 
 interface Props {
     risk: RiskManagement;
@@ -248,6 +248,44 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.size_by_sl ? 'left-4.5' : 'left-0.5'}`}></div>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Size by SL Description block */}
+                        <div style={{
+                            marginTop: 4,
+                            paddingTop: 10,
+                            borderTop: '0.5px dotted var(--color-ec-border)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 4,
+                            opacity: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 1 : 0.4,
+                            pointerEvents: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 'auto' : 'none',
+                            transition: 'opacity 150ms ease',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em',
+                                    color: 'var(--color-ec-text-secondary)'
+                                }}>
+                                    Cálculo de Shares por Distancia al SL
+                                </span>
+                            </div>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                color: 'var(--color-ec-text-secondary)',
+                                fontStyle: 'italic',
+                                marginLeft: 18,
+                                marginTop: 4,
+                                lineHeight: '1.3',
+                            }}>
+                                Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
+                            </span>
                         </div>
                     </div>
                 )}
