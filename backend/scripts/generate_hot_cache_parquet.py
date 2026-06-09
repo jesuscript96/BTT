@@ -88,13 +88,13 @@ gcs_key_b64 = os.getenv("GCS_KEY_B64", "")
 gcs_key_file = os.getenv("GCS_KEY_FILE", "")
 bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
 
-if gcs_key_content:
+if gcs_key_content and gcs_key_content.strip().startswith('{'):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         f.write(gcs_key_content)
         tmp_key_path = f.name
     client = storage.Client.from_service_account_json(tmp_key_path)
     os.unlink(tmp_key_path)
-elif gcs_key_b64:
+elif gcs_key_b64 and len(gcs_key_b64) > 100:
     import base64
     key_data = base64.b64decode(gcs_key_b64).decode()
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
