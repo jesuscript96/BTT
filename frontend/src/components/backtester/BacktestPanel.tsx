@@ -56,6 +56,7 @@ interface BacktestPanelProps {
   datasetRefreshTrigger?: number;
   pendingDatasetSelect?: string;
   onClearPendingDataset?: () => void;
+  activeStrategy?: any;
 }
 
 function formatConditionGroup(group: any): string {
@@ -137,7 +138,8 @@ export default function BacktestPanel({
   onRun,
   onParamsChange,
   loading,
-  isDarkMode = false
+  isDarkMode = false,
+  activeStrategy
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -251,6 +253,12 @@ export default function BacktestPanel({
       onClearPendingDataset?.();
     }
   }, [datasets, pendingDatasetSelect, onClearPendingDataset]);
+
+  useEffect(() => {
+    if (activeStrategy?.id) {
+      setSelectedStrategy(activeStrategy.id);
+    }
+  }, [activeStrategy]);
 
   useEffect(() => {
     if (!selectedDataset) {
@@ -383,7 +391,15 @@ export default function BacktestPanel({
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
-  const stratDef = selectedStrat?.definition as any;
+  const getStratDef = () => {
+    if (selectedStrategy === "draft" && activeStrategy) {
+      return activeStrategy.definition || activeStrategy;
+    }
+    const strat = strategies.find((s) => s.id === selectedStrategy);
+    return strat?.definition || strat;
+  };
+
+  const stratDef = getStratDef() as any;
   const riskMgmt = stratDef?.risk_management;
   const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
   const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
@@ -600,6 +616,11 @@ export default function BacktestPanel({
                 cursor: 'pointer',
               }}
             >
+              {selectedStrategy === "draft" && activeStrategy && (
+                <option value="draft">
+                  [Borrador] {activeStrategy.name}
+                </option>
+              )}
               {strategies.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -607,11 +628,13 @@ export default function BacktestPanel({
               ))}
             </select>
           )}
-          {selectedStrat && (() => {
-            const cleanDesc = (selectedStrat.description || "")
+          {selectedStrategy && (() => {
+            const currentStrat = selectedStrategy === "draft" ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
+            if (!currentStrat) return null;
+            const cleanDesc = (currentStrat.description || "")
               .replace(/\[What-if:[\s\S]*\]/g, "")
               .trim();
-            const stratDef = selectedStrat.definition as any;
+            const stratDef = currentStrat.definition || currentStrat as any;
             const entryLogic = stratDef?.entry_logic;
             const exitLogic = stratDef?.exit_logic;
             const bias = stratDef?.bias;
