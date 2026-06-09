@@ -75,7 +75,6 @@ interface Props {
   customStartTime?: string;
   customEndTime?: string;
   onDraftChange?: (draft: Draft) => void;
-  isOpen?: boolean;
 }
 
 export default function InlineStrategyBuilder({
@@ -85,7 +84,6 @@ export default function InlineStrategyBuilder({
   customStartTime = "09:30",
   customEndTime = "16:00",
   onDraftChange,
-  isOpen,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
@@ -156,12 +154,6 @@ export default function InlineStrategyBuilder({
       setTempDay('gap_day');
     }
   }, [applyDay]);
-
-  useEffect(() => {
-    if (isOpen) {
-      resetForm();
-    }
-  }, [isOpen]);
 
   useEffect(() => {
     onDraftChange?.({
