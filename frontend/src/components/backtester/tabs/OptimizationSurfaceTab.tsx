@@ -653,14 +653,26 @@ function RangeSlider({
   const intervals = gridSteps;
   const isMultiple = isInt ? (rangeWidth > 0 && rangeWidth % intervals === 0) : true;
 
+  let limitWarning = "";
+  if (param) {
+    if (value[0] < param.min) {
+      limitWarning = `El mínimo no puede ser menor que el límite permitido (${param.min}).`;
+    } else if (value[1] > param.max) {
+      limitWarning = `El máximo no puede ser mayor que el límite permitido (${param.max}).`;
+    }
+  }
+  if (value[0] >= value[1]) {
+    limitWarning = "El valor mínimo debe ser estrictamente menor que el máximo.";
+  }
+
   let warningMessage = "";
   let suggestions: number[] = [];
-  if (isInt && !isMultiple && rangeWidth > 0) {
+  if (!limitWarning && isInt && !isMultiple && rangeWidth > 0) {
     const kLow = Math.max(1, Math.floor(rangeWidth / intervals));
     const kHigh = Math.ceil(rangeWidth / intervals);
     const maxLow = value[0] + kLow * intervals;
     const maxHigh = value[0] + kHigh * intervals;
-    suggestions = [maxLow, maxHigh].filter((m) => m !== value[1] && m > value[0]);
+    suggestions = [maxLow, maxHigh].filter((m) => m !== value[1] && m > value[0] && (param ? m <= param.max : true));
     warningMessage = `El rango (${rangeWidth}) no es múltiplo del tamaño de la matriz (${gridSteps}).`;
   }
 
@@ -688,6 +700,11 @@ function RangeSlider({
         <p className="text-[9px] text-[var(--color-ec-text-muted)] font-mono opacity-80">
           Actual: <span className="text-[var(--color-ec-text-primary)] font-bold">{param.current_value}</span> | Paso base: {step}
         </p>
+      )}
+      {limitWarning && (
+        <div className="mt-2 p-2 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.3)] rounded text-[9px] font-mono text-red-500">
+          <p className="font-semibold">⚠️ {limitWarning}</p>
+        </div>
       )}
       {warningMessage && (
         <div className="mt-2 p-2 bg-[rgba(245,158,11,0.08)] border border-[rgba(245,158,11,0.3)] rounded text-[9px] font-mono text-amber-500">
