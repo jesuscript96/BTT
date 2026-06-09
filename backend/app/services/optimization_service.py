@@ -357,10 +357,10 @@ def run_optimization_grid(
             if is_int:
                 v_min_int = int(round(v_min))
                 v_max_int = int(round(v_max))
-                # Generate clean integer steps
-                if steps > 1:
-                    step_size = max(1, int(round((v_max_int - v_min_int) / (steps - 1))))
-                    values = [v_min_int + i * step_size for i in range(steps)]
+                # Generate clean integer steps based on matrix dimension (steps)
+                if steps > 0:
+                    step_size = max(1, int(round((v_max_int - v_min_int) / steps)))
+                    values = [v_min_int + (i + 1) * step_size for i in range(steps)]
                 else:
                     values = [v_min_int]
             else:

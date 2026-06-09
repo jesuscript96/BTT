@@ -650,7 +650,7 @@ function RangeSlider({
   const step = param?.step || 1;
   const isInt = param ? isIntegerParam(param) : false;
   const rangeWidth = value[1] - value[0];
-  const intervals = gridSteps - 1;
+  const intervals = gridSteps;
   const isMultiple = isInt ? (rangeWidth > 0 && rangeWidth % intervals === 0) : true;
 
   let warningMessage = "";
@@ -661,7 +661,7 @@ function RangeSlider({
     const maxLow = value[0] + kLow * intervals;
     const maxHigh = value[0] + kHigh * intervals;
     suggestions = [maxLow, maxHigh].filter((m) => m !== value[1] && m > value[0]);
-    warningMessage = `El rango (${rangeWidth}) no es múltiplo de ${intervals} (intervalos para la matriz ${gridSteps}x${gridSteps}).`;
+    warningMessage = `El rango (${rangeWidth}) no es múltiplo del tamaño de la matriz (${gridSteps}).`;
   }
 
   return (
