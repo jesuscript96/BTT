@@ -389,6 +389,14 @@ export default function BacktestPanel({
   const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
   const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
 
+  const isMarketStructureStop = riskMgmt?.use_hard_stop !== false && riskMgmt?.hard_stop?.type === "Market Structure (HOD/LOD)";
+
+  useEffect(() => {
+    if (!isMarketStructureStop) {
+      setSizeBySl(false);
+    }
+  }, [isMarketStructureStop]);
+
   return (
     <div style={{
       display: 'flex',
@@ -1037,12 +1045,16 @@ export default function BacktestPanel({
             alignItems: 'center',
             gap: 8,
             paddingTop: 4,
+            opacity: isMarketStructureStop ? 1 : 0.4,
+            pointerEvents: isMarketStructureStop ? 'auto' : 'none',
+            transition: 'opacity 150ms ease',
           }}>
             <div className="flex flex-col">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={sizeBySl}
+                  disabled={!isMarketStructureStop}
                   onChange={() => setSizeBySl(!sizeBySl)}
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />

@@ -94,13 +94,13 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
 
     # --- Entry/Exit logic conditions ---
     for logic_key, logic_label in [("entry_logic", "Entry"), ("exit_logic", "Exit")]:
-        logic = strategy_def.get(logic_key, {})
-        root = logic.get("root_condition", {})
+        logic = strategy_def.get(logic_key) or {}
+        root = logic.get("root_condition") or {}
         _extract_from_condition_group(root, logic_label, f"{logic_key}.root_condition",
                                       params, _seen, _add)
 
     # --- Risk management ---
-    rm = strategy_def.get("risk_management", {})
+    rm = strategy_def.get("risk_management") or {}
     
     # Hard Stop
     if rm.get("use_hard_stop") is not False:
@@ -127,20 +127,20 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                          val, "Risk", "risk_management.take_profit.value",
                          min_val=0.5, max_val=max(float(val) * 4, 30) if val else 30, step=0.5)
         elif tp_mode == "Partial":
-            for i, ptp in enumerate(rm.get("partial_take_profits", [])):
+            for i, ptp in enumerate(rm.get("partial_take_profits") or []):
                 _add(f"risk.partial_tp.{i}.distance_pct",
                      f"Parcial {i+1} Distancia %",
-                     ptp.get("distance_pct"), "Risk",
+                     ptp.get("distance_pct") if ptp else None, "Risk",
                      f"risk_management.partial_take_profits.{i}.distance_pct",
                      min_val=0.5, step=0.5)
                 _add(f"risk.partial_tp.{i}.capital_pct",
                      f"Parcial {i+1} Capital %",
-                     ptp.get("capital_pct"), "Risk",
+                     ptp.get("capital_pct") if ptp else None, "Risk",
                      f"risk_management.partial_take_profits.{i}.capital_pct",
                      min_val=5, max_val=100, step=5)
 
     # Trailing Stop
-    trailing = rm.get("trailing_stop", {})
+    trailing = rm.get("trailing_stop") or {}
     if trailing.get("active") is True:
         val = trailing.get("buffer_pct")
         if val is not None:
@@ -150,7 +150,9 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                  min_val=0.1, max_val=5.0, step=0.1)
 
     # --- Preconditions ---
-    for i, precond in enumerate(strategy_def.get("postgap_preconditions", [])):
+    for i, precond in enumerate(strategy_def.get("postgap_preconditions") or []):
+        if not precond or not isinstance(precond, dict):
+            continue
         metric = precond.get("metric")
         day_label = "T" if precond.get("day") == "gap_day" else "T+1"
         
@@ -188,34 +190,36 @@ def _extract_from_condition_group(group, logic_label, path, params, seen, add_fn
     if not group or not isinstance(group, dict):
         return
 
-    conditions = group.get("conditions", [])
+    conditions = group.get("conditions") or []
     for i, cond in enumerate(conditions):
+        if not cond or not isinstance(cond, dict):
+            continue
         cond_type = cond.get("type", "")
         cond_path = f"{path}.conditions.{i}"
 
         if cond_type == "group":
             _extract_from_condition_group(cond, logic_label, cond_path, params, seen, add_fn)
         elif cond_type == "indicator_comparison":
-            _extract_indicator_params(cond.get("source", {}), logic_label,
+            _extract_indicator_params(cond.get("source") or {}, logic_label,
                                        f"{cond_path}.source", add_fn)
-            target = cond.get("target", {})
+            target = cond.get("target")
             if isinstance(target, dict):
                 _extract_indicator_params(target, logic_label,
                                            f"{cond_path}.target", add_fn)
             elif isinstance(target, (int, float)):
-                src_name = cond.get("source", {}).get("name", "Indicator")
+                src_name = (cond.get("source") or {}).get("name", "Indicator")
                 add_fn(f"{cond_path}.target",
                        f"{logic_label} {src_name} Target Value",
                        target, "Condition", f"{cond_path}.target")
         elif cond_type == "price_level_distance":
-            _extract_indicator_params(cond.get("source", {}), logic_label,
+            _extract_indicator_params(cond.get("source") or {}, logic_label,
                                        f"{cond_path}.source", add_fn)
-            _extract_indicator_params(cond.get("level", {}), logic_label,
+            _extract_indicator_params(cond.get("level") or {}, logic_label,
                                        f"{cond_path}.level", add_fn)
             val_pct = cond.get("value_pct")
             if val_pct is not None:
-                src_name = cond.get("source", {}).get("name", "Price")
-                lvl_name = cond.get("level", {}).get("name", "Level")
+                src_name = (cond.get("source") or {}).get("name", "Price")
+                lvl_name = (cond.get("level") or {}).get("name", "Level")
                 add_fn(f"{cond_path}.value_pct",
                        f"{logic_label} Dist ({src_name}-{lvl_name}) %",
                        val_pct, "Condition", f"{cond_path}.value_pct",
@@ -273,6 +277,18 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
 def _set_nested_value(obj, path: str, value):
     """Set a value in a nested dict/list given a dot-separated path."""
     keys = path.split(".")
+    
+    # Cast value to int if it's an integer parameter
+    last_key = keys[-1]
+    if last_key in {"period", "period2", "period3", "offset", "consecutive_count", 
+                    "time_hour", "time_minute", "days_lookback", "orb_minutes", 
+                    "time_from_hour", "time_from_minute", "range_minutes", 
+                    "deviationLevel", "sma_period", "lookback"}:
+        try:
+            value = int(round(float(value)))
+        except (TypeError, ValueError):
+            pass
+
     current = obj
     for k in keys[:-1]:
         if isinstance(current, list):
@@ -328,10 +344,30 @@ def run_optimization_grid(
             v_min = pc.get("min", 1)
             v_max = pc.get("max", 20)
             steps = pc.get("steps", 10)
-            values = np.linspace(v_min, v_max, steps).tolist()
+            
+            # Check if this is an integer parameter
+            is_int = False
+            last_key = pc.get("path", "").split(".")[-1]
+            if last_key in {"period", "period2", "period3", "offset", "consecutive_count", 
+                            "time_hour", "time_minute", "days_lookback", "orb_minutes", 
+                            "time_from_hour", "time_from_minute", "range_minutes", 
+                            "deviationLevel", "sma_period", "lookback"}:
+                is_int = True
+
+            if is_int:
+                v_min_int = int(round(v_min))
+                v_max_int = int(round(v_max))
+                # Generate clean integer steps based on matrix dimension (steps)
+                if steps > 0:
+                    step_size = max(1, int(round((v_max_int - v_min_int) / steps)))
+                    values = [v_min_int + (i + 1) * step_size for i in range(steps)]
+                else:
+                    values = [v_min_int]
+            else:
+                values = np.linspace(v_min, v_max, steps).tolist()
         axes.append(values)
 
-    base_preconditions = base_def.get("postgap_preconditions", [])
+    base_preconditions = base_def.get("postgap_preconditions") or []
     apply_day = base_def.get("apply_day", "gap_day")
 
     opt_preconds = any(pc.get("path", "").startswith("postgap_preconditions") for pc in param_configs)

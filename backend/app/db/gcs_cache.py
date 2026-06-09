@@ -214,6 +214,8 @@ _glob_cache: dict[tuple[int, int, str], "str | None"] = {}
 
 def _select_intraday_glob_for_month(conn, year: int, month: int) -> str | None:
     """Pick optimized or raw intraday glob for one month; try month=09 then month=9."""
+    if ALLOW_MOCK_DATA:
+        return None
     cache_key = (year, month, GCS_BUCKET)
     if cache_key in _glob_cache:
         return _glob_cache[cache_key]
@@ -498,21 +500,22 @@ def fetch_intraday_batch(
     conn = get_connection()
 
     src_path = None
-    for pad in (f"{month:02d}", str(month)):
-        opt_glob = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
-        raw_glob = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
-        try:
-            if conn.execute(f"SELECT count(*) FROM glob('{opt_glob}')").fetchall()[0][0] > 0:
-                src_path = opt_glob
-                break
-        except Exception:
-            pass
-        try:
-            if conn.execute(f"SELECT count(*) FROM glob('{raw_glob}')").fetchall()[0][0] > 0:
-                src_path = raw_glob
-                break
-        except Exception:
-            pass
+    if not ALLOW_MOCK_DATA:
+        for pad in (f"{month:02d}", str(month)):
+            opt_glob = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
+            raw_glob = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
+            try:
+                if conn.execute(f"SELECT count(*) FROM glob('{opt_glob}')").fetchall()[0][0] > 0:
+                    src_path = opt_glob
+                    break
+            except Exception:
+                pass
+            try:
+                if conn.execute(f"SELECT count(*) FROM glob('{raw_glob}')").fetchall()[0][0] > 0:
+                    src_path = raw_glob
+                    break
+            except Exception:
+                pass
 
     if not src_path:
         if ALLOW_MOCK_DATA:

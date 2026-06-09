@@ -144,6 +144,25 @@ def run_backtest(
         # Base cash for this sim run is initial + accumulated global PnL
         compounding_cash = init_cash + global_realized_pnl
         
+        # Compute market structure levels on the full day_df
+        high_series = day_df["high"]
+        low_series = day_df["low"]
+        hod_vals = high_series.cummax().values.astype(np.float64)
+        lod_vals = low_series.cummin().values.astype(np.float64)
+        
+        # Premarket High/Low
+        ts_series = pd.to_datetime(day_df["timestamp"])
+        pm_mask = (ts_series.dt.hour * 60 + ts_series.dt.minute >= 4 * 60) & (ts_series.dt.hour * 60 + ts_series.dt.minute < 9 * 60 + 30)
+        pm_high_val = day_df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
+        pm_low_val = day_df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
+        
+        pm_highs_vals = np.full(len(day_df), pm_high_val, dtype=np.float64)
+        pm_lows_vals = np.full(len(day_df), pm_low_val, dtype=np.float64)
+        
+        # Previous Max / Previous Min (running high/low shifted by 1 bar)
+        prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)
+        prev_lows_vals = pd.Series(lod_vals).shift(1).fillna(low_series.iloc[0] if len(low_series) > 0 else 0.0).values.astype(np.float64)
+
         arrays = {
             "open": day_df["open"].values.astype(np.float64),
             "high": day_df["high"].values.astype(np.float64),
@@ -151,6 +170,12 @@ def run_backtest(
             "close": day_df["close"].values.astype(np.float64),
             "volume": day_df["volume"].values,
             "timestamp": day_df["timestamp"].values,
+            "hod": hod_vals,
+            "lod": lod_vals,
+            "pm_high": pm_highs_vals,
+            "pm_low": pm_lows_vals,
+            "prev_high": prev_highs_vals,
+            "prev_low": prev_lows_vals,
         }
         # Invert lookup from (ticker, date) to match original format
         daily_stats = qual_lookup.get((str(ticker_raw), str(date_raw)[:10]), {})
@@ -229,6 +254,12 @@ def run_backtest(
                 "close": mini_df["close"].values.astype(np.float64),
                 "volume": mini_df["volume"].values,
                 "timestamp": mini_df["timestamp"].values,
+                "hod": mini_df["hod"].values.astype(np.float64),
+                "lod": mini_df["lod"].values.astype(np.float64),
+                "pm_high": mini_df["pm_high"].values.astype(np.float64),
+                "pm_low": mini_df["pm_low"].values.astype(np.float64),
+                "prev_high": mini_df["prev_high"].values.astype(np.float64),
+                "prev_low": mini_df["prev_low"].values.astype(np.float64),
             }
             
             # Apply mask to signals
@@ -250,6 +281,13 @@ def run_backtest(
         if not np.any(entries_arr):
             del mini_df
             continue
+
+        # Parse hard stop configuration
+        risk = strategy_def.get("risk_management", {}) if strategy_def else {}
+        use_hs = risk.get("use_hard_stop", True)
+        hs = risk.get("hard_stop", {}) if use_hs else {}
+        hs_type = hs.get("type")
+        hs_value = hs.get("value")
 
         try:
             sim_result = simulate(
@@ -277,6 +315,14 @@ def run_backtest(
                 accumulate=sig_accept_reentries,
                 patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
+                hs_type=hs_type,
+                hs_value=hs_value,
+                hods=arrays.get("hod"),
+                lods=arrays.get("lod"),
+                pm_highs=arrays.get("pm_high"),
+                pm_lows=arrays.get("pm_low"),
+                prev_highs=arrays.get("prev_high"),
+                prev_lows=arrays.get("prev_low"),
             )
         except Exception as exc:
             logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")
@@ -458,6 +504,7 @@ def _enrich_trades(
             "entry_hour": entry_ts.hour,
             "entry_weekday": entry_ts.weekday(),
             "gap_pct": float(gap_pct) if gap_pct is not None else None,
+            "stop_loss": t.get("stop_loss", 0.0),
         })
     return result
 

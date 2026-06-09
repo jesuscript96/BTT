@@ -197,21 +197,37 @@ export default function OptimizationSurfaceTab({
   const plotData = useMemo(() => {
     if (!result) return null;
     const p = result.params;
-    const metricLabel = METRIC_OPTIONS.find((m) => m.value === result.metric)?.label || result.metric;
+    const metricLabel = METRIC_OPTIONS.find((m) => m.value === metric)?.label || metric;
 
     const bg = "#16181A";
     const fg = "#D4D2CF";
     const gridColor = "#2C2F33";
 
+    // Reconstruct the 2D grid for the currently selected metric from the details list
+    const shape = result.shape;
+    const details = result.details;
+    const rows = shape[0];
+    const cols = shape[1];
+
+    const grid: (number | null)[][] = [];
+    for (let r = 0; r < rows; r++) {
+      const row: (number | null)[] = [];
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
+        const val = details[idx]?.[metric];
+        row.push(val !== undefined && val !== null && !isNaN(val) ? val : null);
+      }
+      grid.push(row);
+    }
+
     if (mode === "2D" && p.length === 2) {
-      const z = result.grid;
       const x = p[0].values;
       const y = p[1].values;
 
       return {
         data: [
           {
-            z,
+            z: grid,
             x,
             y,
             type: "contour" as const,
@@ -239,10 +255,9 @@ export default function OptimizationSurfaceTab({
 
     if (mode === "3D" && p.length === 2) {
       // For 3D surface, replace nulls to avoid WebGL crashes (uniformMatrix4fv error)
-      const rawZ = result.grid as (number | null)[][];
-      const validVals = rawZ.flat().filter((v): v is number => v !== null && !isNaN(v));
+      const validVals = grid.flat().filter((v): v is number => v !== null && !isNaN(v));
       const minVal = validVals.length > 0 ? Math.min(...validVals) : 0;
-      const z = rawZ.map((row) => row.map((v) => (v === null ? minVal : v)));
+      const z = grid.map((row) => row.map((v) => (v === null ? minVal : v)));
 
       const x = p[0].values;
       const y = p[1].values;
@@ -281,7 +296,7 @@ export default function OptimizationSurfaceTab({
     }
 
     return null;
-  }, [result, mode, isDarkMode]);
+  }, [result, mode, metric, isDarkMode]);
 
   const pa = result?.plateau_analysis;
 
@@ -414,6 +429,7 @@ export default function OptimizationSurfaceTab({
               value={rangeX}
               onChange={setRangeX}
               param={getParamById(paramX)}
+              gridSteps={gridSteps}
             />
           )}
           {paramY && (
@@ -422,6 +438,7 @@ export default function OptimizationSurfaceTab({
               value={rangeY}
               onChange={setRangeY}
               param={getParamById(paramY)}
+              gridSteps={gridSteps}
             />
           )}
         </div>
@@ -604,42 +621,104 @@ export default function OptimizationSurfaceTab({
 // Sub-components
 // ---------------------------------------------------------------------------
 
+function isIntegerParam(param: OptimizationParam) {
+  if (!param) return false;
+  const keys = param.path.split(".");
+  const lastKey = keys[keys.length - 1];
+  const intKeys = [
+    "period", "period2", "period3", "offset", "consecutive_count", 
+    "time_hour", "time_minute", "days_lookback", "orb_minutes", 
+    "time_from_hour", "time_from_minute", "range_minutes", 
+    "deviationLevel", "sma_period", "lookback"
+  ];
+  return intKeys.includes(lastKey) || param.step === 1;
+}
+
 function RangeSlider({
   label,
   value,
   onChange,
   param,
+  gridSteps,
 }: {
   label: string;
   value: [number, number];
   onChange: (v: [number, number]) => void;
   param?: OptimizationParam;
+  gridSteps: number;
 }) {
   const step = param?.step || 1;
+  const rangeWidth = value[1] - value[0];
+  const intervalWidth = gridSteps * step;
+
+  // Check if rangeWidth is a multiple of intervalWidth (handling floating point precision)
+  const ratio = rangeWidth / intervalWidth;
+  const isMultiple = rangeWidth > 0 && Math.abs(ratio - Math.round(ratio)) < 1e-9;
+
+  let limitWarning = "";
+  if (value[0] >= value[1]) {
+    limitWarning = "El valor mínimo debe ser estrictamente menor que el máximo.";
+  }
+
+  let warningMessage = "";
+  let suggestions: number[] = [];
+  if (!limitWarning && !isMultiple && rangeWidth > 0) {
+    const kLow = Math.max(1, Math.floor(rangeWidth / intervalWidth));
+    const kHigh = Math.ceil(rangeWidth / intervalWidth);
+    const maxLow = Number((value[0] + kLow * intervalWidth).toFixed(4));
+    const maxHigh = Number((value[0] + kHigh * intervalWidth).toFixed(4));
+    suggestions = Array.from(new Set([maxLow, maxHigh])).filter((m) => m !== value[1] && m > value[0]);
+    warningMessage = `El rango (${rangeWidth}) debe ser múltiplo de ${intervalWidth} (para que los saltos sean múltiplos de ${step}).`;
+  }
+
   return (
-    <div>
-      <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">{label}</label>
+    <div className="flex flex-col space-y-2 p-3 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)]">
+      <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase font-semibold tracking-wider">{label}</label>
       <div className="flex items-center gap-2">
         <input
           type="number"
           value={value[0]}
           step={step}
           onChange={(e) => onChange([Number(e.target.value), value[1]])}
-          className="w-20 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+          className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
         />
-        <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono">→</span>
+        <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono font-bold">→</span>
         <input
           type="number"
           value={value[1]}
           step={step}
           onChange={(e) => onChange([value[0], Number(e.target.value)])}
-          className="w-20 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+          className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
         />
       </div>
       {param && (
-        <p className="text-[9px] text-[var(--color-ec-text-muted)] mt-1 font-mono opacity-60">
-          current: {param.current_value} | step: {step}
+        <p className="text-[9px] text-[var(--color-ec-text-muted)] font-mono opacity-80">
+          Actual: <span className="text-[var(--color-ec-text-primary)] font-bold">{param.current_value}</span> | Paso base: {step}
         </p>
+      )}
+      {limitWarning && (
+        <div className="mt-2 p-2 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.3)] rounded text-[9px] font-mono text-red-500">
+          <p className="font-semibold">⚠️ {limitWarning}</p>
+        </div>
+      )}
+      {warningMessage && (
+        <div className="mt-2 p-2 bg-[rgba(245,158,11,0.08)] border border-[rgba(245,158,11,0.3)] rounded text-[9px] font-mono text-amber-500">
+          <p className="font-semibold mb-1">⚠️ {warningMessage}</p>
+          {suggestions.length > 0 && (
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <span>Sugerir Max:</span>
+              {suggestions.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => onChange([value[0], s])}
+                  className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/35 text-amber-400 rounded cursor-pointer border border-amber-500/30 transition-all active:scale-[0.95] font-bold"
+                >
+                  {s} (Rango: {s - value[0]})
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

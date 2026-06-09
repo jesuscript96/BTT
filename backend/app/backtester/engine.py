@@ -1096,8 +1096,10 @@ class BacktestEngine:
                     "PML": 4.0,
                     "Previous Max": 5.0,
                     "Previous Low": 6.0,
+                    "Previous Min": 6.0,
                     "PrevMax": 5.0,
                     "PrevLow": 6.0,
+                    "PrevMin": 6.0,
                 }
                 if isinstance(sl_val, str):
                     sl_val = sl_map.get(sl_val, 2.0) # default to LOD (2.0) if not matched

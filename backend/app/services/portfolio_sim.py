@@ -34,6 +34,14 @@ def simulate(
     look_ahead_prevention: bool = True,
     patch_mask: np.ndarray | None = None,
     partial_take_profits: list | None = None,
+    hs_type: str | None = None,
+    hs_value: str | float | None = None,
+    hods: np.ndarray | None = None,
+    lods: np.ndarray | None = None,
+    pm_highs: np.ndarray | None = None,
+    pm_lows: np.ndarray | None = None,
+    prev_highs: np.ndarray | None = None,
+    prev_lows: np.ndarray | None = None,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -47,6 +55,7 @@ def simulate(
     entry_idx = 0
     entry_fee_amount = 0.0
     size = 0.0
+    trade_sl_price = 0.0
     trail_extreme = 0.0
     mae = 0.0  # Maximum Adverse Excursion
     mfe = 0.0  # Maximum Favorable Excursion
@@ -88,7 +97,18 @@ def simulate(
             # stop-loss / trailing stop
             if not skip_exits:
                 # 1. Hard Stop Logic
-                if sl_stop is not None:
+                if hs_type == "Market Structure (HOD/LOD)":
+                    if is_long:
+                        if price_for_sl <= trade_sl_price:
+                            exit_triggered = True
+                            exit_price = max(trade_sl_price, low[i])
+                            exit_reason = "SL"
+                    else:
+                        if price_for_sl >= trade_sl_price:
+                            exit_triggered = True
+                            exit_price = min(trade_sl_price, high[i])
+                            exit_reason = "SL"
+                elif sl_stop is not None:
                     if is_long:
                         hard_sl_price = entry_price * (1 - sl_stop)
                         if price_for_sl <= hard_sl_price:
@@ -118,7 +138,10 @@ def simulate(
                             
                             if price_for_sl <= trail_sl_price + 1e-9:
                                 # Verify trailing stop doesn't override a better hard stop
-                                hard_sl_price = entry_price * (1 - sl_stop) if sl_stop is not None else -1e18
+                                if hs_type == "Market Structure (HOD/LOD)":
+                                    hard_sl_price = trade_sl_price
+                                else:
+                                    hard_sl_price = entry_price * (1 - sl_stop) if sl_stop is not None else -1e18
                                 if trail_sl_price > hard_sl_price:
                                     exit_triggered = True
                                     exit_price = max(trail_sl_price, low[i])
@@ -137,7 +160,10 @@ def simulate(
                             
                             if price_for_sl >= trail_sl_price - 1e-9:
                                 # Verify trailing stop doesn't override a better hard stop
-                                hard_sl_price = entry_price * (1 + sl_stop) if sl_stop is not None else 1e18
+                                if hs_type == "Market Structure (HOD/LOD)":
+                                    hard_sl_price = trade_sl_price
+                                else:
+                                    hard_sl_price = entry_price * (1 + sl_stop) if sl_stop is not None else 1e18
                                 if trail_sl_price < hard_sl_price:
                                     exit_triggered = True
                                     exit_price = min(trail_sl_price, high[i])
@@ -202,6 +228,7 @@ def simulate(
                                     "exit_reason": "Partial TP",
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
+                                    "stop_loss": round(trade_sl_price, 6),
                                 })
                                 size -= pt_size
                                 if size <= 0.0001:
@@ -244,6 +271,7 @@ def simulate(
                                     "exit_reason": "Partial TP",
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
+                                    "stop_loss": round(trade_sl_price, 6),
                                 })
                                 size -= pt_size
                                 if size <= 0.0001:
@@ -343,6 +371,7 @@ def simulate(
                     "exit_reason": exit_reason,
                     "mae": round(mae, 4),
                     "mfe": round(mfe, 4),
+                    "stop_loss": round(trade_sl_price, 6),
                 })
                 in_position = False
                 size = 0.0
@@ -400,11 +429,29 @@ def simulate(
                 else:
                     risk_amount = risk_r
 
-                if size_by_sl and sl_stop is not None and sl_stop > 0:
-                    # Distance-based sizing: lose exactly risk_amount if SL is hit
-                    # Distance = price * sl_pct
-                    dist = entry_price * sl_stop
-                    if dist > 0:
+                # Determine Stop Loss Price
+                stop_loss_price = 0.0
+                if hs_type == "Market Structure (HOD/LOD)":
+                    val_struct = entry_price * (0.95 if is_long else 1.05)
+                    if hs_value == "HOD" and hods is not None:
+                        val_struct = hods[i] if hods[i] > 0 else val_struct
+                    elif hs_value == "LOD" and lods is not None:
+                        val_struct = lods[i] if lods[i] > 0 else val_struct
+                    elif hs_value == "PMH" and pm_highs is not None:
+                        val_struct = pm_highs[i] if pm_highs[i] > 0 else val_struct
+                    elif hs_value == "PML" and pm_lows is not None:
+                        val_struct = pm_lows[i] if pm_lows[i] > 0 else val_struct
+                    elif hs_value in ("Previous Max", "PrevMax") and prev_highs is not None:
+                        val_struct = prev_highs[i] if prev_highs[i] > 0 else val_struct
+                    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
+                        val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
+                    stop_loss_price = val_struct
+                elif sl_stop is not None and sl_stop > 0:
+                    stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
+
+                if size_by_sl:
+                    dist = abs(entry_price - stop_loss_price) if stop_loss_price > 0.0 else 0.0
+                    if dist > 0.0:
                         size = risk_amount / dist
                     else:
                         size = risk_amount / entry_price
@@ -423,6 +470,7 @@ def simulate(
 
                     in_position = True
                     entry_idx = eff_entry_idx
+                    trade_sl_price = stop_loss_price
                     trail_extreme = entry_price
                     trail_activated = False
                     mae = 0.0
