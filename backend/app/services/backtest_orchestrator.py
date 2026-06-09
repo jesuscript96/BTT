@@ -117,8 +117,11 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
             detail="strategy_id or strategy_definition required",
         )
 
-    if req.size_by_sl:
-        rm = strategy["definition"].get("risk_management", {})
+    strategy_rm = strategy.get("definition", {}).get("risk_management", {})
+    size_by_sl = req.size_by_sl or strategy_rm.get("size_by_sl", False)
+
+    if size_by_sl:
+        rm = strategy_rm
         hs = rm.get("hard_stop", {})
         hs_value = hs.get("value", 0)
         if isinstance(hs_value, (int, float)):
@@ -232,7 +235,7 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
             risk_r=req.risk_r,
             risk_type=req.risk_type,
             fixed_ratio_delta=req.fixed_ratio_delta,
-            size_by_sl=req.size_by_sl,
+            size_by_sl=size_by_sl,
             fees=req.fees,
             fee_type=req.fee_type,
             slippage=req.slippage,

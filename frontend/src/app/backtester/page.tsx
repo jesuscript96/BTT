@@ -169,7 +169,7 @@ export default function Home() {
         risk_r: p.risk_r,
         risk_type: p.risk_type,
         fixed_ratio_delta: p.fixed_ratio_delta,
-        size_by_sl: p.size_by_sl,
+        size_by_sl: draft.risk_management.size_by_sl || false,
         fees: p.fees,
         fee_type: p.fee_type,
         slippage: p.slippage,

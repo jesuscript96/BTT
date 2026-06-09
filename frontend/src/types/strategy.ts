@@ -212,6 +212,7 @@ export interface RiskManagement {
     partial_take_profits: PartialTakeProfit[];
     trailing_stop: TrailingStopSettings;
     max_drawdown_daily?: number;
+    size_by_sl?: boolean;
 }
 
 export interface PostGapPrecondition {
@@ -265,7 +266,8 @@ export const initialRiskManagement: RiskManagement = {
         { distance_pct: 3.0, capital_pct: 50.0 },
         { distance_pct: 6.0, capital_pct: 50.0 }
     ],
-    trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 }
+    trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
+    size_by_sl: false
 };
 
 export const initialExitLogic: ExitLogic = {
