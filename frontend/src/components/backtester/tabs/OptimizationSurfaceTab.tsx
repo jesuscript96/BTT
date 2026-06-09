@@ -648,32 +648,27 @@ function RangeSlider({
   gridSteps: number;
 }) {
   const step = param?.step || 1;
-  const isInt = param ? isIntegerParam(param) : false;
   const rangeWidth = value[1] - value[0];
-  const intervals = gridSteps;
-  const isMultiple = isInt ? (rangeWidth > 0 && rangeWidth % intervals === 0) : true;
+  const intervalWidth = gridSteps * step;
+
+  // Check if rangeWidth is a multiple of intervalWidth (handling floating point precision)
+  const ratio = rangeWidth / intervalWidth;
+  const isMultiple = rangeWidth > 0 && Math.abs(ratio - Math.round(ratio)) < 1e-9;
 
   let limitWarning = "";
-  if (param) {
-    if (value[0] < param.min) {
-      limitWarning = `El mínimo no puede ser menor que el límite permitido (${param.min}).`;
-    } else if (value[1] > param.max) {
-      limitWarning = `El máximo no puede ser mayor que el límite permitido (${param.max}).`;
-    }
-  }
   if (value[0] >= value[1]) {
     limitWarning = "El valor mínimo debe ser estrictamente menor que el máximo.";
   }
 
   let warningMessage = "";
   let suggestions: number[] = [];
-  if (!limitWarning && isInt && !isMultiple && rangeWidth > 0) {
-    const kLow = Math.max(1, Math.floor(rangeWidth / intervals));
-    const kHigh = Math.ceil(rangeWidth / intervals);
-    const maxLow = value[0] + kLow * intervals;
-    const maxHigh = value[0] + kHigh * intervals;
-    suggestions = [maxLow, maxHigh].filter((m) => m !== value[1] && m > value[0] && (param ? m <= param.max : true));
-    warningMessage = `El rango (${rangeWidth}) no es múltiplo del tamaño de la matriz (${gridSteps}).`;
+  if (!limitWarning && !isMultiple && rangeWidth > 0) {
+    const kLow = Math.max(1, Math.floor(rangeWidth / intervalWidth));
+    const kHigh = Math.ceil(rangeWidth / intervalWidth);
+    const maxLow = Number((value[0] + kLow * intervalWidth).toFixed(4));
+    const maxHigh = Number((value[0] + kHigh * intervalWidth).toFixed(4));
+    suggestions = Array.from(new Set([maxLow, maxHigh])).filter((m) => m !== value[1] && m > value[0]);
+    warningMessage = `El rango (${rangeWidth}) debe ser múltiplo de ${intervalWidth} (para que los saltos sean múltiplos de ${step}).`;
   }
 
   return (
