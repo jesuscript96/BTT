@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { RiskManagement, RiskType, RiskSettings, TakeProfitMode, PartialTakeProfit } from '@/types/strategy';
-import { PlusCircle, Trash2, Info } from 'lucide-react';
+import { PlusCircle, Trash2, Info, HelpCircle } from 'lucide-react';
 
 interface Props {
     risk: RiskManagement;
@@ -136,40 +136,22 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                 {/* Body */}
                 {(risk.use_hard_stop !== false) && (
-                    <div className="flex gap-2 animate-in fade-in duration-200">
-                        <select
-                            value={risk.hard_stop.type}
-                            onChange={(e) => {
-                                const newType = e.target.value as RiskType;
-                                const newValue = newType === RiskType.MARKET_STRUCTURE ? 'LOD' : 2.0;
-                                onChange({
-                                    ...risk,
-                                    hard_stop: {
-                                        type: newType,
-                                        value: newValue
-                                    }
-                                });
-                            }}
-                            style={{
-                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                border: '0.5px solid var(--color-ec-border)',
-                                borderRadius: 5,
-                                padding: '7px 10px',
-                                fontSize: 12,
-                                fontWeight: 500,
-                                color: 'var(--color-ec-text-primary)',
-                                fontFamily: 'var(--color-ec-sans)',
-                                outline: 'none',
-                                cursor: 'pointer',
-                            }}
-                        >
-                            <option value={RiskType.PERCENTAGE}>%</option>
-                            <option value={RiskType.MARKET_STRUCTURE}>Market Structure</option>
-                        </select>
-                        {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
+                        <div className="flex gap-2">
                             <select
-                                value={risk.hard_stop.value || 'LOD'}
-                                onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value)}
+                                value={risk.hard_stop.type}
+                                onChange={(e) => {
+                                    const newType = e.target.value as RiskType;
+                                    const newValue = newType === RiskType.MARKET_STRUCTURE ? 'LOD' : 2.0;
+                                    onChange({
+                                        ...risk,
+                                        hard_stop: {
+                                            type: newType,
+                                            value: newValue
+                                        },
+                                        size_by_sl: newType === RiskType.MARKET_STRUCTURE ? risk.size_by_sl : false
+                                    });
+                                }}
                                 style={{
                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
                                     border: '0.5px solid var(--color-ec-border)',
@@ -181,35 +163,110 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     fontFamily: 'var(--color-ec-sans)',
                                     outline: 'none',
                                     cursor: 'pointer',
-                                    flex: 1,
                                 }}
                             >
-                                <option value="HOD">HOD (High of Day)</option>
-                                <option value="LOD">LOD (Low of Day)</option>
-                                <option value="PMH">PMH (Premarket High)</option>
-                                <option value="PML">PML (Premarket Low)</option>
-                                <option value="Previous Max">Previous Max</option>
-                                <option value="Previous Min">Previous Min</option>
+                                <option value={RiskType.PERCENTAGE}>%</option>
+                                <option value={RiskType.MARKET_STRUCTURE}>Market Structure</option>
                             </select>
-                        ) : (
-                            <input
-                                type="number"
-                                value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
-                                onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
-                                style={{
-                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                    border: '0.5px solid var(--color-ec-border)',
-                                    borderRadius: 5,
-                                    padding: '7px 10px',
-                                    fontSize: 13,
-                                    fontWeight: 600,
-                                    color: 'var(--color-ec-text-primary)',
-                                    fontFamily: 'var(--color-ec-sans)',
-                                    outline: 'none',
-                                    flex: 1,
-                                }}
-                            />
-                        )}
+                            {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
+                                <select
+                                    value={risk.hard_stop.value || 'LOD'}
+                                    onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value)}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 10px',
+                                        fontSize: 12,
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                        flex: 1,
+                                    }}
+                                >
+                                    <option value="HOD">HOD (High of Day)</option>
+                                    <option value="LOD">LOD (Low of Day)</option>
+                                    <option value="PMH">PMH (Premarket High)</option>
+                                    <option value="PML">PML (Premarket Low)</option>
+                                    <option value="Previous Max">Previous Max</option>
+                                    <option value="Previous Min">Previous Min</option>
+                                </select>
+                            ) : (
+                                <input
+                                    type="number"
+                                    value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
+                                    onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 10px',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        flex: 1,
+                                    }}
+                                />
+                            )}
+                        </div>
+
+                        {/* Size by SL Description block with Switch */}
+                        <div style={{
+                            marginTop: 4,
+                            paddingTop: 10,
+                            borderTop: '0.5px dotted var(--color-ec-border)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 4,
+                            opacity: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 1 : 0.4,
+                            pointerEvents: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 'auto' : 'none',
+                            transition: 'opacity 150ms ease',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.05em',
+                                        color: 'var(--color-ec-text-secondary)'
+                                    }}>
+                                        Cálculo de Shares por Distancia al SL
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        color: 'var(--color-ec-text-muted)',
+                                    }}>{risk.size_by_sl ? 'YES' : 'NO'}</span>
+                                    <div
+                                        className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.size_by_sl ? 'bg-ec-loss/70' : 'bg-muted'}`}
+                                        onClick={() => onChange({ ...risk, size_by_sl: !risk.size_by_sl })}
+                                    >
+                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.size_by_sl ? 'left-4.5' : 'left-0.5'}`}></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                color: 'var(--color-ec-text-secondary)',
+                                fontStyle: 'italic',
+                                marginLeft: 18,
+                                marginTop: 4,
+                                lineHeight: '1.3',
+                            }}>
+                                Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
+                            </span>
+                        </div>
                     </div>
                 )}
             </div>

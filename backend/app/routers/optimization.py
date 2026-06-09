@@ -56,6 +56,7 @@ class SurfaceRequest(BaseModel):
     custom_end_time: str | None = None
     locates_cost: float = 0.0
     look_ahead_prevention: bool = False
+    is_percent: float = 100.0
     task_id: str | None = None
 
 
@@ -168,6 +169,7 @@ def run_surface(req: SurfaceRequest):
             "custom_end_time": req.custom_end_time,
             "locates_cost": req.locates_cost,
             "look_ahead_prevention": req.look_ahead_prevention,
+            "is_percent": req.is_percent,
         },
     }
 

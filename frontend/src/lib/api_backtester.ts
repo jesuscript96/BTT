@@ -371,6 +371,7 @@ export async function runOptimizationSurface(params: {
   end_date?: string;
   market_sessions?: string[];
   look_ahead_prevention?: boolean;
+  is_percent?: number;
   task_id?: string;
 }): Promise<{ task_id: string; status: string }> {
   const { data } = await api.post("/optimization/surface", params);

@@ -48,6 +48,7 @@ interface BacktestPanelProps {
     fee_type?: string;
     monthly_expenses?: number;
     fixed_ratio_delta?: number;
+    is_percent?: number;
   }) => void;
   onParamsChange?: (params: BacktestPanelParams) => void;
   loading: boolean;
@@ -56,6 +57,7 @@ interface BacktestPanelProps {
   datasetRefreshTrigger?: number;
   pendingDatasetSelect?: string;
   onClearPendingDataset?: () => void;
+  activeStrategy?: any;
 }
 
 function formatConditionGroup(group: any): string {
@@ -137,7 +139,8 @@ export default function BacktestPanel({
   onRun,
   onParamsChange,
   loading,
-  isDarkMode = false
+  isDarkMode = false,
+  activeStrategy
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -159,7 +162,6 @@ export default function BacktestPanel({
   const lookAheadPrevention = true;
   const [riskType, setRiskType] = useState<"FIXED" | "PERCENT" | "FIXED_RATIO">("FIXED");
   const [fixedRatioDelta, setFixedRatioDelta] = useState(500);
-  const [sizeBySl, setSizeBySl] = useState(false);
   const [feeType, setFeeType] = useState<"PERCENT" | "FLAT">("PERCENT");
   const [isPercent, setIsPercent] = useState(100);
   const [loadingData, setLoadingData] = useState(true);
@@ -253,6 +255,12 @@ export default function BacktestPanel({
   }, [datasets, pendingDatasetSelect, onClearPendingDataset]);
 
   useEffect(() => {
+    if (activeStrategy?.id) {
+      setSelectedStrategy(activeStrategy.id);
+    }
+  }, [activeStrategy]);
+
+  useEffect(() => {
     if (!selectedDataset) {
       setPrecacheStatus(null);
       setVisualPercent(0);
@@ -318,7 +326,7 @@ export default function BacktestPanel({
       risk_r: riskR,
       risk_type: riskType,
       fixed_ratio_delta: fixedRatioDelta,
-      size_by_sl: sizeBySl,
+      size_by_sl: getStratDef()?.risk_management?.size_by_sl || false,
       fees: feeType === "PERCENT" ? fees / 100 : fees,
       fee_type: feeType,
       slippage: slippage / 100,
@@ -334,10 +342,11 @@ export default function BacktestPanel({
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    selectedDataset, initCash, riskR, riskType, fixedRatioDelta, sizeBySl,
+    selectedDataset, initCash, riskR, riskType, fixedRatioDelta,
     fees, feeType, slippage, startDate, endDate, marketSessions,
     customStartTime, customEndTime, useLocates, locatesCost,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
+    selectedStrategy, activeStrategy, strategies,
   ]);
 
   const handleRun = () => {
@@ -368,7 +377,8 @@ export default function BacktestPanel({
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
       fixed_ratio_delta: riskType === "FIXED_RATIO" ? fixedRatioDelta : 500,
-      size_by_sl: sizeBySl,
+      size_by_sl: getStratDef()?.risk_management?.size_by_sl || false,
+      is_percent: isPercent,
     });
   };
 
@@ -383,19 +393,32 @@ export default function BacktestPanel({
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
-  const stratDef = selectedStrat?.definition as any;
+  const getStratDef = () => {
+    let rawDef: any = null;
+    if (selectedStrategy === "draft" && activeStrategy) {
+      rawDef = activeStrategy.definition || activeStrategy;
+    } else {
+      const strat = strategies.find((s) => s.id === selectedStrategy);
+      rawDef = strat?.definition || strat;
+    }
+    
+    if (typeof rawDef === "string") {
+      try {
+        return JSON.parse(rawDef);
+      } catch (e) {
+        console.error("Error parsing strategy definition:", e);
+      }
+    }
+    return rawDef;
+  };
+
+  const stratDef = getStratDef() as any;
   const riskMgmt = stratDef?.risk_management;
   const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
   const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
   const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
 
-  const isMarketStructureStop = riskMgmt?.use_hard_stop !== false && riskMgmt?.hard_stop?.type === "Market Structure (HOD/LOD)";
 
-  useEffect(() => {
-    if (!isMarketStructureStop) {
-      setSizeBySl(false);
-    }
-  }, [isMarketStructureStop]);
 
   return (
     <div style={{
@@ -600,6 +623,11 @@ export default function BacktestPanel({
                 cursor: 'pointer',
               }}
             >
+              {selectedStrategy === "draft" && activeStrategy && (
+                <option value="draft">
+                  [Borrador] {activeStrategy.name}
+                </option>
+              )}
               {strategies.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -607,11 +635,13 @@ export default function BacktestPanel({
               ))}
             </select>
           )}
-          {selectedStrat && (() => {
-            const cleanDesc = (selectedStrat.description || "")
+          {selectedStrategy && (() => {
+            const currentStrat = selectedStrategy === "draft" ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
+            if (!currentStrat) return null;
+            const cleanDesc = (currentStrat.description || "")
               .replace(/\[What-if:[\s\S]*\]/g, "")
               .trim();
-            const stratDef = selectedStrat.definition as any;
+            const stratDef = currentStrat.definition || currentStrat as any;
             const entryLogic = stratDef?.entry_logic;
             const exitLogic = stratDef?.exit_logic;
             const bias = stratDef?.bias;
@@ -1040,44 +1070,7 @@ export default function BacktestPanel({
             )}
           </div>
 
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            paddingTop: 4,
-            opacity: isMarketStructureStop ? 1 : 0.4,
-            pointerEvents: isMarketStructureStop ? 'auto' : 'none',
-            transition: 'opacity 150ms ease',
-          }}>
-            <div className="flex flex-col">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={sizeBySl}
-                  disabled={!isMarketStructureStop}
-                  onChange={() => setSizeBySl(!sizeBySl)}
-                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                />
-                <span style={{
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-secondary)',
-                }}>Size por Distancia al SL</span>
-              </label>
-              <span style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 10,
-                color: 'var(--color-ec-text-secondary)',
-                fontStyle: 'italic',
-                marginLeft: 24,
-                marginTop: 4,
-                lineHeight: '1.3',
-              }}>
-                Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
-              </span>
-            </div>
-          </div>
+
         </div>
       </div>
 

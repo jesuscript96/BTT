@@ -29,6 +29,7 @@ export default function Home() {
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveName, setSaveName] = useState("");
+  const [builderDraft, setBuilderDraft] = useState<Draft | null>(null);
   const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -90,6 +91,13 @@ export default function Home() {
   const [multiDayCandles, setMultiDayCandles] = useState<MultiDayCandles | null>(null);
   const [candlesLoading, setCandlesLoading] = useState(false);
 
+  const computedActiveStrategy = useMemo(() => {
+    if (mode === "builder") {
+      return builderDraft;
+    }
+    return activeStrategy;
+  }, [mode, builderDraft, activeStrategy]);
+
 
   const handleRunWithDraft = async (draft: Draft) => {
     const p = panelParamsRef.current;
@@ -143,6 +151,7 @@ export default function Home() {
       market_sessions: p.market_sessions,
       monthly_expenses: p.monthly_expenses,
       locates_cost: p.locates_cost,
+      is_percent: p.is_percent,
     };
 
     try {
@@ -161,7 +170,7 @@ export default function Home() {
         risk_r: p.risk_r,
         risk_type: p.risk_type,
         fixed_ratio_delta: p.fixed_ratio_delta,
-        size_by_sl: p.size_by_sl,
+        size_by_sl: draft.risk_management.size_by_sl || false,
         fees: p.fees,
         fee_type: p.fee_type,
         slippage: p.slippage,
@@ -238,7 +247,22 @@ export default function Home() {
     custom_start_time?: string;
     custom_end_time?: string;
     monthly_expenses?: number;
+    is_percent?: number;
   }) => {
+    if (params.strategy_id === "draft" && activeStrategy) {
+      const draft = {
+        name: activeStrategy.name,
+        bias: activeStrategy.definition?.bias || activeStrategy.bias,
+        apply_day: activeStrategy.definition?.apply_day || activeStrategy.apply_day,
+        postgap_preconditions: activeStrategy.definition?.postgap_preconditions || activeStrategy.postgap_preconditions,
+        entry_logic: activeStrategy.definition?.entry_logic || activeStrategy.entry_logic,
+        exit_logic: activeStrategy.definition?.exit_logic || activeStrategy.exit_logic,
+        risk_management: activeStrategy.definition?.risk_management || activeStrategy.risk_management,
+      } as any;
+      await handleRunWithDraft(draft);
+      return;
+    }
+
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
@@ -273,6 +297,7 @@ export default function Home() {
       market_sessions: params.market_sessions,
       monthly_expenses: params.monthly_expenses,
       locates_cost: (params as any).locates_cost,
+      is_percent: params.is_percent,
     };
 
     try {
@@ -579,6 +604,7 @@ export default function Home() {
               onClearPendingDataset={() => setPendingDatasetSelect(undefined)}
               loading={loading}
               isDarkMode={isDarkMode}
+              activeStrategy={computedActiveStrategy}
             />
             {result && (
               <DaySelector
@@ -984,6 +1010,7 @@ export default function Home() {
             marketSessions={activeSessions}
             customStartTime={activeCustomStartTime}
             customEndTime={activeCustomEndTime}
+            onDraftChange={setBuilderDraft}
           />
         </div>
 

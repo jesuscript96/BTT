@@ -23,8 +23,6 @@ import type {
 import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock } from "lucide-react";
 
-const STORAGE_KEY = "btt_draft_strategies";
-
 export interface Draft {
   id: string;
   name: string;
@@ -76,6 +74,7 @@ interface Props {
   marketSessions?: string[];
   customStartTime?: string;
   customEndTime?: string;
+  onDraftChange?: (draft: Draft) => void;
 }
 
 export default function InlineStrategyBuilder({
@@ -84,6 +83,7 @@ export default function InlineStrategyBuilder({
   marketSessions = ["rth"],
   customStartTime = "09:30",
   customEndTime = "16:00",
+  onDraftChange,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const [bias, setBias] = useState<"long" | "short">("long");
@@ -92,8 +92,6 @@ export default function InlineStrategyBuilder({
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
-  const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [showDrafts, setShowDrafts] = useState(false);
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
   const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct'>('cierre');
   const [tempOperator, setTempOperator] = useState<'>' | '<'>('>');
@@ -158,11 +156,18 @@ export default function InlineStrategyBuilder({
   }, [applyDay]);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setDrafts(JSON.parse(stored));
-    } catch {}
-  }, []);
+    onDraftChange?.({
+      id: "draft",
+      name,
+      bias,
+      apply_day: applyDay,
+      postgap_preconditions: postgapPreconditions,
+      entry_logic: entryLogic,
+      exit_logic: exitLogic,
+      risk_management: riskManagement,
+      created_at: new Date().toISOString(),
+    });
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
 
   const resetForm = () => {
     setName("Nueva Estrategia");
@@ -211,29 +216,7 @@ export default function InlineStrategyBuilder({
     }
 
     const draft = buildDraft();
-    try {
-      const updated = [draft, ...drafts].slice(0, 200);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      setDrafts(updated);
-    } catch {}
     onTest(draft);
-  };
-
-  const handleLoadDraft = (draft: Draft) => {
-    setName(draft.name);
-    setBias(draft.bias);
-    setApplyDay(draft.apply_day || 'gap_day');
-    setPostgapPreconditions(draft.postgap_preconditions || []);
-    setEntryLogic(draft.entry_logic);
-    setExitLogic(draft.exit_logic);
-    setRiskManagement(draft.risk_management);
-    setShowDrafts(false);
-  };
-
-  const handleDeleteDraft = (id: string) => {
-    const updated = drafts.filter((d) => d.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setDrafts(updated);
   };
 
   const isPartialTPMode = riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === "Partial";
@@ -282,86 +265,7 @@ export default function InlineStrategyBuilder({
             fontFamily: "var(--color-ec-sans)",
           }}
         />
-        {drafts.length > 0 && (
-          <button
-            onClick={() => setShowDrafts(!showDrafts)}
-            style={{
-              fontSize: 9,
-              fontWeight: 700,
-              letterSpacing: 1,
-              textTransform: "uppercase",
-              color: "var(--color-ec-text-muted)",
-              background: "var(--color-ec-bg-elevated)",
-              border: "0.5px solid var(--color-ec-border)",
-              borderRadius: 4,
-              padding: "3px 8px",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Drafts ({drafts.length})
-          </button>
-        )}
       </div>
-
-      {/* Drafts panel */}
-      {showDrafts && (
-        <div
-          style={{
-            borderBottom: "0.5px solid var(--color-ec-border)",
-            maxHeight: 200,
-            overflowY: "auto",
-            backgroundColor: "var(--color-ec-bg-surface)",
-            flexShrink: 0,
-          }}
-        >
-          {drafts.map((d) => (
-            <div
-              key={d.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "6px 16px",
-                borderBottom: "0.5px solid var(--color-ec-border)",
-                gap: 8,
-              }}
-            >
-              <button
-                onClick={() => handleLoadDraft(d)}
-                style={{
-                  flex: 1,
-                  textAlign: "left",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  color: "var(--color-ec-text-primary)",
-                  fontFamily: "var(--color-ec-sans)",
-                }}
-              >
-                {d.name}{" "}
-                <span style={{ color: "var(--color-ec-text-muted)", fontSize: 10 }}>
-                  {new Date(d.created_at).toLocaleDateString()}
-                </span>
-              </button>
-              <button
-                onClick={() => handleDeleteDraft(d.id)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "var(--color-ec-loss)",
-                  fontSize: 14,
-                  lineHeight: 1,
-                  padding: "0 2px",
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Bias toggle */}
       <div

@@ -63,6 +63,11 @@ def run_backtest(
     _signal_cache: dict | None = None,
     progress_callback=None,
 ) -> dict:
+    if strategy_def:
+        rm = strategy_def.get("risk_management", {})
+        if rm.get("size_by_sl") is not None:
+            size_by_sl = size_by_sl or rm.get("size_by_sl", False)
+
     t_total = time.time()
 
     # Proactively prefetch daily historical metrics for the tickers involved in this backtest
