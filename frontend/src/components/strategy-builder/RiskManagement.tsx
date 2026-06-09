@@ -214,43 +214,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             )}
                         </div>
 
-                        {/* Size by SL Distance checkbox/switch */}
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            paddingTop: 8,
-                            opacity: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 1 : 0.4,
-                            pointerEvents: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 'auto' : 'none',
-                            transition: 'opacity 150ms ease',
-                        }}>
-                            <span style={{
-                                fontFamily: 'var(--color-ec-sans)',
-                                fontSize: 10,
-                                fontWeight: 600,
-                                color: 'var(--color-ec-text-muted)',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.05em',
-                            }}>
-                                Size por Distancia al SL
-                            </span>
-                            <div className="flex items-center gap-2">
-                                <span style={{
-                                    fontFamily: 'var(--color-ec-sans)',
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    color: 'var(--color-ec-text-muted)',
-                                }}>{risk.size_by_sl ? 'YES' : 'NO'}</span>
-                                <div
-                                    className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.size_by_sl ? 'bg-ec-loss/70' : 'bg-muted'}`}
-                                    onClick={() => onChange({ ...risk, size_by_sl: !risk.size_by_sl })}
-                                >
-                                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.size_by_sl ? 'left-4.5' : 'left-0.5'}`}></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Size by SL Description block */}
+                        {/* Size by SL Description block with Switch */}
                         <div style={{
                             marginTop: 4,
                             paddingTop: 10,
@@ -262,18 +226,34 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             pointerEvents: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 'auto' : 'none',
                             transition: 'opacity 150ms ease',
                         }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
-                                <span style={{
-                                    fontFamily: 'var(--color-ec-sans)',
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.05em',
-                                    color: 'var(--color-ec-text-secondary)'
-                                }}>
-                                    Cálculo de Shares por Distancia al SL
-                                </span>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.05em',
+                                        color: 'var(--color-ec-text-secondary)'
+                                    }}>
+                                        Cálculo de Shares por Distancia al SL
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        color: 'var(--color-ec-text-muted)',
+                                    }}>{risk.size_by_sl ? 'YES' : 'NO'}</span>
+                                    <div
+                                        className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.size_by_sl ? 'bg-ec-loss/70' : 'bg-muted'}`}
+                                        onClick={() => onChange({ ...risk, size_by_sl: !risk.size_by_sl })}
+                                    >
+                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.size_by_sl ? 'left-4.5' : 'left-0.5'}`}></div>
+                                    </div>
+                                </div>
                             </div>
                             <span style={{
                                 fontFamily: 'var(--color-ec-sans)',
