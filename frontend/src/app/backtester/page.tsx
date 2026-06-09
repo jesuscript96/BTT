@@ -151,6 +151,7 @@ export default function Home() {
       market_sessions: p.market_sessions,
       monthly_expenses: p.monthly_expenses,
       locates_cost: p.locates_cost,
+      is_percent: p.is_percent,
     };
 
     try {
@@ -246,6 +247,7 @@ export default function Home() {
     custom_start_time?: string;
     custom_end_time?: string;
     monthly_expenses?: number;
+    is_percent?: number;
   }) => {
     if (params.strategy_id === "draft" && activeStrategy) {
       const draft = {
@@ -295,6 +297,7 @@ export default function Home() {
       market_sessions: params.market_sessions,
       monthly_expenses: params.monthly_expenses,
       locates_cost: (params as any).locates_cost,
+      is_percent: params.is_percent,
     };
 
     try {

@@ -382,6 +382,7 @@ def run_optimization_grid(
 
     start_date = backtest_params.get("start_date")
     end_date = backtest_params.get("end_date")
+    is_percent = backtest_params.get("is_percent", 100.0)
 
     if task_id:
         OPTIMIZATION_PROGRESS[task_id] = 1.0
@@ -405,6 +406,17 @@ def run_optimization_grid(
     if end_date:
         intraday_df = intraday_df[intraday_df["date"].astype(str) <= end_date]
         qualifying_df = qualifying_df[qualifying_df["date"].astype(str) <= end_date]
+
+    # Apply In-Sample split percentage (is_percent) filter to keep only IS days for optimization
+    if is_percent < 100.0:
+        unique_dates = sorted(intraday_df["date"].unique())
+        n_dates = len(unique_dates)
+        if n_dates > 0:
+            cutoff_idx = max(1, int(n_dates * is_percent / 100.0))
+            cutoff_date = unique_dates[cutoff_idx - 1]
+            intraday_df = intraday_df[intraday_df["date"] <= cutoff_date]
+            qualifying_df = qualifying_df[qualifying_df["date"] <= cutoff_date]
+            logger.info(f"[OPT] In-Sample split filter applied: kept first {cutoff_idx} of {n_dates} dates (up to {cutoff_date}) using is_percent={is_percent}%")
 
     if qualifying_df.empty or intraday_df.empty:
         raise ValueError("No data for selected period/preconditions")

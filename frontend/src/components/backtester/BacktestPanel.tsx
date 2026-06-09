@@ -48,6 +48,7 @@ interface BacktestPanelProps {
     fee_type?: string;
     monthly_expenses?: number;
     fixed_ratio_delta?: number;
+    is_percent?: number;
   }) => void;
   onParamsChange?: (params: BacktestPanelParams) => void;
   loading: boolean;
@@ -377,6 +378,7 @@ export default function BacktestPanel({
       risk_type: riskType,
       fixed_ratio_delta: riskType === "FIXED_RATIO" ? fixedRatioDelta : 500,
       size_by_sl: getStratDef()?.risk_management?.size_by_sl || false,
+      is_percent: isPercent,
     });
   };
 
