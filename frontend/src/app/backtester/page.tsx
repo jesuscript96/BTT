@@ -30,13 +30,6 @@ export default function Home() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [builderDraft, setBuilderDraft] = useState<Draft | null>(null);
-
-  const computedActiveStrategy = useMemo(() => {
-    if (mode === "builder") {
-      return builderDraft;
-    }
-    return activeStrategy;
-  }, [mode, builderDraft, activeStrategy]);
   const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,6 +90,13 @@ export default function Home() {
   const [activeStrategy, setActiveStrategy] = useState<any | null>(null);
   const [multiDayCandles, setMultiDayCandles] = useState<MultiDayCandles | null>(null);
   const [candlesLoading, setCandlesLoading] = useState(false);
+
+  const computedActiveStrategy = useMemo(() => {
+    if (mode === "builder") {
+      return builderDraft;
+    }
+    return activeStrategy;
+  }, [mode, builderDraft, activeStrategy]);
 
 
   const handleRunWithDraft = async (draft: Draft) => {
