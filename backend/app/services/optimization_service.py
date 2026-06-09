@@ -108,10 +108,17 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         if hs:
             val = hs.get("value")
             if val is not None:
-                _add("risk.hard_stop.value",
-                     f"Stop Loss ({hs.get('type', 'Pct')})",
-                     val, "Risk", "risk_management.hard_stop.value",
-                     min_val=0.1, max_val=max(float(val) * 4, 20) if val else 20, step=0.5)
+                is_numeric = False
+                try:
+                    float_val = float(val)
+                    is_numeric = True
+                except (ValueError, TypeError):
+                    pass
+                if is_numeric:
+                    _add("risk.hard_stop.value",
+                         f"Stop Loss ({hs.get('type', 'Pct')})",
+                         val, "Risk", "risk_management.hard_stop.value",
+                         min_val=0.1, max_val=max(float_val * 4, 20) if val else 20, step=0.5)
 
     # Take Profit & Partials
     if rm.get("use_take_profit") is not False:
