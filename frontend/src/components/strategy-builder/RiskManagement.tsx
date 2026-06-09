@@ -188,8 +188,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 <option value="LOD">LOD (Low of Day)</option>
                                 <option value="PMH">PMH (Premarket High)</option>
                                 <option value="PML">PML (Premarket Low)</option>
-                                <option value="Previous Max">Previous Max (Yesterday High)</option>
-                                <option value="Previous Low">Previous Low (Yesterday Low)</option>
+                                <option value="Previous Max">Previous Max</option>
+                                <option value="Previous Min">Previous Min</option>
                             </select>
                         ) : (
                             <input
