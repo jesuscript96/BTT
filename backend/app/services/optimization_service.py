@@ -17,9 +17,13 @@ from app.services.data_service import (
     get_strategy,
     fetch_dataset_data,
     fetch_qualifying_data,
-    _resolve_filters,
 )
-from app.db.gcs_cache import fetch_intraday_batch
+from app.db.gcs_cache import (
+    _fetch_and_cache_month,
+    _select_intraday_glob_for_month,
+    get_connection,
+    INTRADAY_BATCH_SIZE,
+)
 from app.services.backtest_service import run_backtest
 
 logger = logging.getLogger("backtester.optimization")
@@ -426,28 +430,38 @@ def run_optimization_grid(
     if task_id:
         OPTIMIZATION_PROGRESS[task_id] = 2.0
 
-    # 2. Fetch intraday data only for the resolved In-Sample dates
-    filters = _resolve_filters(dataset_id, start_date, opt_end_date)
-    df_from = filters.get("start_date") or filters.get("date_from")
-    df_to = filters.get("end_date") or filters.get("date_to")
-
-    unique_tickers = qualifying_df["ticker"].unique().tolist()
+    # 2. Fetch intraday data only for the resolved In-Sample dates.
+    # Uses the SAME per-month disk cache layer as the streaming backtest path
+    # (_fetch_and_cache_month): identical cache keys mean the months the
+    # dataset precache already wrote to disk are CACHE HITs here, instead of
+    # re-downloading everything from GCS on every optimization run.
     dates = pd.to_datetime(qualifying_df["date"])
     ym_pairs = sorted(set(zip(dates.dt.year, dates.dt.month)))
 
     chunks = []
     n_chunks = len(ym_pairs)
+    conn = get_connection()
     for i, (year, month) in enumerate(ym_pairs):
-        m_dates = qualifying_df.loc[(dates.dt.year == year) & (dates.dt.month == month), "date"]
-        day_list = (
-            pd.to_datetime(m_dates).dt.strftime("%Y-%m-%d").unique().tolist()
-            if not m_dates.empty
-            else None
+        month_mask = (dates.dt.year == year) & (dates.dt.month == month)
+        valid_pairs_month = qualifying_df.loc[month_mask, ["ticker", "date"]].drop_duplicates().copy()
+        if valid_pairs_month.empty:
+            continue
+        # String dates: required by the cache-key json and matches the
+        # streaming caller so precache-written months hash identically
+        valid_pairs_month["date"] = pd.to_datetime(valid_pairs_month["date"]).dt.strftime("%Y-%m-%d")
+
+        path = _select_intraday_glob_for_month(conn, year, month)
+        if path is None:
+            logger.warning(f"[OPT] {year}-{month:02d}: no intraday parquet found (skipped)")
+            continue
+
+        chunk = _fetch_and_cache_month(
+            year, month, path, valid_pairs_month,
+            batch_size=max(1, int(INTRADAY_BATCH_SIZE)),
+            mi=i + 1,
+            n_months=n_chunks,
         )
-        chunk = fetch_intraday_batch(
-            year, month, unique_tickers, df_from, df_to, qualifying_dates=day_list
-        )
-        if not chunk.empty:
+        if chunk is not None and not chunk.empty:
             chunks.append(chunk)
         if task_id:
             # Load progress goes smoothly from 2.0% to 5.0%
