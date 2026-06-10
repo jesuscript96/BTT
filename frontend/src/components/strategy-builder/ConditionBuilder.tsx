@@ -315,41 +315,174 @@ export const IndicatorSelector = ({
     exclude?: IndicatorType[],
     width?: string | number
 }) => {
+    const [isOpen, setIsOpen] = React.useState(false);
+    const dropdownRef = React.useRef<HTMLDivElement>(null);
+
+    React.useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const selectedLabel = value === FIXED_VALUE_KEY ? '── Fixed Value ──' : (INDICATOR_LABELS[value as IndicatorType] || value);
+
     return (
-        <select
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            style={{
-                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 5,
-                padding: '5px 10px',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-primary)',
-                fontFamily: 'var(--color-ec-sans)',
+        <div 
+            ref={dropdownRef} 
+            style={{ 
+                position: 'relative', 
                 width: width,
-                outline: 'none',
-                cursor: 'pointer',
+                display: 'inline-block'
             }}
         >
-            {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
-                const filtered = indicators.filter(t => 
-                    (allowedTargets ? allowedTargets.includes(t) : true) && 
-                    !exclude.includes(t)
-                );
-                if (filtered.length === 0) return null;
-                
-                return (
-                    <optgroup key={category} label={category}>
-                        {filtered.map(t => (
-                            <option key={t} value={t}>{INDICATOR_LABELS[t] || t}</option>
-                        ))}
-                    </optgroup>
-                );
-            })}
-            {isTarget && <option value={FIXED_VALUE_KEY}>── Fixed Value ──</option>}
-        </select>
+            <div
+                onClick={() => setIsOpen(!isOpen)}
+                style={{
+                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '5px 10px',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-primary)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    width: '100%',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    userSelect: 'none',
+                    boxSizing: 'border-box'
+                }}
+            >
+                <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{selectedLabel}</span>
+                <span style={{ fontSize: 8, color: 'var(--color-ec-text-muted)', marginLeft: 6 }}>
+                    {isOpen ? '▲' : '▼'}
+                </span>
+            </div>
+
+            {isOpen && (
+                <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    marginTop: 4,
+                    width: '100%',
+                    minWidth: 220,
+                    maxHeight: 280,
+                    overflowY: 'auto',
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                    zIndex: 9999, // Ensure it floats above everything
+                    fontFamily: 'var(--color-ec-sans)',
+                }}>
+                    {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
+                        const filtered = indicators.filter(t => 
+                            (allowedTargets ? allowedTargets.includes(t) : true) && 
+                            !exclude.includes(t)
+                        );
+                        if (filtered.length === 0) return null;
+                        
+                        return (
+                            <div key={category}>
+                                <div style={{
+                                    padding: '5px 10px',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    color: 'var(--color-ec-text-muted)',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.08em',
+                                    backgroundColor: 'rgba(255,255,255,0.01)',
+                                    borderBottom: '0.5px solid var(--color-ec-border)',
+                                    borderTop: '0.5px solid var(--color-ec-border)',
+                                }}>
+                                    {category}
+                                </div>
+                                {filtered.map(t => {
+                                    const isSelected = value === t;
+                                    return (
+                                        <div 
+                                            key={t}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
+                                                borderLeft: isSelected ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-surface)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                                            }}
+                                        >
+                                            <div 
+                                                onClick={() => { onChange(t); setIsOpen(false); }}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '6px 10px',
+                                                    cursor: 'pointer',
+                                                    color: isSelected ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
+                                                    fontWeight: isSelected ? 600 : 400,
+                                                    fontSize: 11.5,
+                                                    textOverflow: 'ellipsis',
+                                                    overflow: 'hidden',
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                            >
+                                                {INDICATOR_LABELS[t] || t}
+                                            </div>
+                                            <div style={{ paddingRight: 8, display: 'flex', alignItems: 'center' }}>
+                                                <TooltipIcon indicatorName={t} />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
+                    {isTarget && (
+                        <div 
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                backgroundColor: value === FIXED_VALUE_KEY ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
+                                borderLeft: value === FIXED_VALUE_KEY ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                                borderTop: '0.5px solid var(--color-ec-border)',
+                            }}
+                            onMouseEnter={(e) => {
+                                if (value !== FIXED_VALUE_KEY) e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-surface)';
+                            }}
+                            onMouseLeave={(e) => {
+                                if (value !== FIXED_VALUE_KEY) e.currentTarget.style.backgroundColor = 'transparent';
+                            }}
+                        >
+                            <div 
+                                onClick={() => { onChange(FIXED_VALUE_KEY); setIsOpen(false); }}
+                                style={{
+                                    flex: 1,
+                                    padding: '6px 10px',
+                                    cursor: 'pointer',
+                                    color: value === FIXED_VALUE_KEY ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
+                                    fontWeight: value === FIXED_VALUE_KEY ? 600 : 400,
+                                    fontSize: 11.5,
+                                }}
+                            >
+                                ── Fixed Value ──
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
     );
 };
 
