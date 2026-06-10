@@ -139,6 +139,59 @@ function formatPreconditions(preconditions: any[]): string {
   }).join(", ");
 }
 
+function formatDate(dStr: string): string {
+  if (!dStr) return '';
+  const parts = dStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dStr;
+}
+
+function formatFilterValue(key: string, value: any): string | null {
+  if (key === 'rules') return null; // handle separately
+  if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) return null;
+  const labels: Record<string, string> = {
+    min_market_cap: 'Min MCap',
+    max_market_cap: 'Max MCap',
+    min_price: 'Min Price',
+    max_price: 'Max Price',
+    min_volume: 'Min Vol',
+    max_shares_float: 'Max Float',
+    require_shortable: 'Shortable',
+    exclude_dilution: 'No Dilution',
+    date_from: 'Desde',
+    date_to: 'Hasta',
+    min_change_pct: 'Min Chg%',
+    max_change_pct: 'Max Chg%',
+    start_date: 'Desde',
+    end_date: 'Hasta',
+  };
+  const label = labels[key] || key;
+  if (typeof value === 'boolean') return value ? label : null;
+  if (typeof value === 'number') {
+    if (value >= 1_000_000_000) return `${label}: $${(value / 1_000_000_000).toFixed(1)}B`;
+    if (value >= 1_000_000) return `${label}: $${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1_000) return `${label}: ${(value / 1_000).toFixed(0)}K`;
+    return `${label}: ${value}`;
+  }
+  return `${label}: ${value}`;
+}
+
+function formatRule(rule: any): string {
+  if (!rule || !rule.metric) return '';
+  const opMap: Record<string, string> = {
+    'GT': '>',
+    'LT': '<',
+    'GTE': '>=',
+    'LTE': '<=',
+    'EQ': '=',
+    'NEQ': '!=',
+  };
+  const op = opMap[rule.operator] || rule.operator;
+  return `${rule.metric} ${op} ${rule.value}`;
+}
+
 export default function BacktestPanel({
   refreshTrigger,
   onNewStrategy,
@@ -514,6 +567,128 @@ export default function BacktestPanel({
               ))}
             </select>
           )}
+          {!loadingData && selectedDataset && (() => {
+            const currentDs = datasets.find((d) => d.id === selectedDataset);
+            if (!currentDs) return null;
+
+            const filters = currentDs.filters || {};
+            const rules = filters.rules || [];
+
+            // Gather formatted basic filters
+            const basicFiltersText = Object.entries(filters)
+              .map(([key, value]) => formatFilterValue(key, value))
+              .filter(Boolean) as string[];
+
+            const formattedRules = rules.map((r: any) => formatRule(r)).filter(Boolean) as string[];
+
+            const hasDetails = basicFiltersText.length > 0 || formattedRules.length > 0 || currentDs.min_date || currentDs.max_date || (currentDs.pair_count !== undefined && currentDs.pair_count !== null);
+            if (!hasDetails) return null;
+
+            return (
+              <div style={{
+                marginTop: 8,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+              }}>
+                {/* Meta details (Dates and Tickers) */}
+                {((currentDs.pair_count !== undefined && currentDs.pair_count !== null) || currentDs.min_date || currentDs.max_date) && (
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-secondary)',
+                  }}>
+                    <div>
+                      {currentDs.pair_count !== undefined && currentDs.pair_count !== null && (
+                        <>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
+                          <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
+                            {currentDs.pair_count} {currentDs.pair_count === 1 ? 'par' : 'pares'}
+                          </span>
+                        </>
+                      )}
+                      {(currentDs.min_date || currentDs.max_date) && (
+                        <>
+                          {currentDs.pair_count !== undefined && currentDs.pair_count !== null && (
+                            <span style={{ color: 'var(--color-ec-text-muted)' }}> | </span>
+                          )}
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
+                          <span>
+                            {currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Filter list */}
+                {(basicFiltersText.length > 0 || formattedRules.length > 0) && (
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10.5,
+                  }}>
+                    {basicFiltersText.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-ec-copper)', fontSize: 9.5 }}>FILTROS BÁSICOS:</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {basicFiltersText.map((txt, idx) => (
+                            <span
+                              key={idx}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '2px 6px',
+                                borderRadius: 4,
+                                backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                                border: '0.5px solid rgba(216, 122, 61, 0.2)',
+                                color: 'var(--color-ec-copper)',
+                                fontSize: 9.5,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {txt}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {formattedRules.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontWeight: 700, color: 'var(--color-ec-copper)', fontSize: 9.5 }}>REGLAS AVANZADAS:</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {formattedRules.map((txt, idx) => (
+                            <span
+                              key={idx}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '2px 6px',
+                                borderRadius: 4,
+                                backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                                border: '0.5px solid rgba(216, 122, 61, 0.2)',
+                                color: 'var(--color-ec-copper)',
+                                fontSize: 9.5,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {txt}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <button
             type="button"
             onClick={onNewDataset}

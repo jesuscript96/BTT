@@ -49,6 +49,7 @@ export interface Dataset {
   created_at: string;
   min_date?: string;
   max_date?: string;
+  filters?: Record<string, any>;
 }
 
 export interface Strategy {
