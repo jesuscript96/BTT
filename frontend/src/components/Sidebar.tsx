@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useUser, useClerk } from "@clerk/nextjs";
 
 const ISOTIPO = (
     <svg width="24" height="24" viewBox="0 0 90 90" className="flex-shrink-0">
@@ -29,8 +30,17 @@ const wordmarkStyle: React.CSSProperties = {
 export const Sidebar = () => {
     const pathname = usePathname();
     const [isHovered, setIsHovered] = useState(false);
+    const { user } = useUser();
+    const { signOut } = useClerk();
 
     const isCollapsed = !isHovered;
+
+    const displayName =
+        user?.fullName ??
+        user?.emailAddresses[0]?.emailAddress ??
+        "Usuario";
+    const avatarLetter = displayName[0]?.toUpperCase() ?? "U";
+    const tier = (user?.publicMetadata?.tier as string) ?? "Free";
 
     const isActive = (href: string) => {
         if (href === "/") return pathname === "/";
@@ -179,12 +189,20 @@ export const Sidebar = () => {
             <div
                 style={{
                     flexShrink: 0,
-                    padding: '10px 8px',
                     borderTop: '0.5px solid var(--color-ec-border)',
                     display: 'flex',
+                    flexDirection: 'row',
                     alignItems: 'center',
+                    padding: '10px 8px',
                     gap: 10,
+                    cursor: 'pointer',
+                    borderRadius: 5,
+                    transition: 'background 0.15s',
                 }}
+                onClick={() => signOut(() => { window.location.href = '/sign-in'; })}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-ec-surface-hover)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                title="Cerrar sesión"
             >
                 <div style={{
                     width: 28,
@@ -195,39 +213,42 @@ export const Sidebar = () => {
                     alignItems: 'center',
                     justifyContent: 'center',
                     flexShrink: 0,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: 'var(--color-ec-copper-text)',
+                    fontFamily: "'General Sans', sans-serif",
                 }}>
-                    <span style={{
-                        fontFamily: "'General Sans', sans-serif",
-        fontSize: 12,
-                        fontWeight: 700,
-                        color: 'var(--color-ec-copper-text)',
-                    }}>T</span>
+                    {avatarLetter}
                 </div>
                 {!isCollapsed && (
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{
+                    <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        overflow: 'hidden',
+                        flex: 1,
+                        minWidth: 0,
+                    }}>
+                        <span style={{
                             fontFamily: "'General Sans', sans-serif",
                             fontSize: 12,
                             fontWeight: 600,
                             color: 'var(--color-ec-text-high)',
-                            margin: 0,
+                            whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
                         }}>
-                            Tito el Man
-                        </p>
-                        <p style={{
+                            {displayName}
+                        </span>
+                        <span style={{
                             fontFamily: "'General Sans', sans-serif",
                             fontSize: 9,
                             fontWeight: 700,
                             textTransform: 'uppercase',
                             letterSpacing: '1.5px',
-                            color: 'var(--color-ec-text-muted)',
-                            margin: 0,
+                            color: 'var(--color-ec-copper)',
                         }}>
-                            Admin
-                        </p>
+                            {tier}
+                        </span>
                     </div>
                 )}
             </div>
