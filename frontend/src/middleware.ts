@@ -1,14 +1,16 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
+import { clerkMiddleware } from '@clerk/nextjs/server'
 
-const isPublicRoute = createRouteMatcher([
-  '/sign-in(.*)',
-  '/sign-up(.*)',
-])
+// AUTH PAUSADO — descomentar cuando se reactive Fase 2
+// const isPublicRoute = createRouteMatcher([
+//   '/sign-in(.*)',
+//   '/sign-up(.*)',
+// ])
 
-export default clerkMiddleware(async (auth, request) => {
-  if (!isPublicRoute(request)) {
-    await auth.protect()
-  }
+export default clerkMiddleware(() => {
+  // Auth desactivado temporalmente
+  // if (!isPublicRoute(request)) {
+  //   auth().protect()
+  // }
 })
 
 export const config = {
