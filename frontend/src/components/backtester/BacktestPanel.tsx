@@ -107,19 +107,29 @@ function formatPreconditions(preconditions: any[]): string {
     
     if (cond.metric === 'volume') {
       metricLabel = 'Volume';
-      valLabel = `${cond.operator} ${(cond.value ?? 0).toLocaleString()}`;
+      const volVal = cond.value ?? 0;
+      valLabel = `${cond.operator} ${volVal >= 1000000 ? `${volVal / 1000000}M` : volVal.toLocaleString()}`;
     } else if (cond.metric === 'close_vs_open') {
       valLabel = `${cond.operator} Open`;
     } else if (cond.metric === 'close_vs_high_low') {
       valLabel = cond.operator === '> High' ? '> Prev High' : '< Prev Low';
+    } else if (cond.metric === 'close_vs_high') {
+      valLabel = `${cond.operator} High`;
+    } else if (cond.metric === 'close_vs_low') {
+      valLabel = `${cond.operator} Low`;
     } else if (cond.metric === 'close_vs_pm_high') {
       valLabel = `${cond.operator} PM High`;
+    } else if (cond.metric === 'close_vs_pm_low') {
+      valLabel = `${cond.operator} PM Low`;
     } else if (cond.metric === 'close_vs_vwap') {
       valLabel = `${cond.operator} VWAP`;
     } else if (cond.metric === 'close_vs_sma') {
       valLabel = `${cond.operator} SMA ${cond.sma_period}`;
     } else if (cond.metric === 'candle_range_pct') {
       metricLabel = 'Candle Range %';
+      valLabel = `${cond.operator} ${cond.value}%`;
+    } else if (cond.metric === 'candle_range_ratio_gap_1_vs_gap') {
+      metricLabel = cond.day === 'gap_1_day' ? 'Candle Range Gap+1 vs Gap' : 'Candle Range vs Prev';
       valLabel = `${cond.operator} ${cond.value}%`;
     } else {
       valLabel = `${cond.operator || ""} ${cond.value !== undefined ? cond.value : ""}`.trim();

@@ -105,13 +105,26 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
             volume: 'Volume',
             close_vs_open: 'Close vs Open',
             close_vs_high_low: 'Close vs High/Low',
+            close_vs_high: 'Close vs High',
+            close_vs_low: 'Close vs Low',
             close_vs_pm_high: 'Close vs PM High',
+            close_vs_pm_low: 'Close vs PM Low',
             close_vs_vwap: 'Close vs VWAP',
             close_vs_sma: `Close vs SMA(${pre.sma_period || 20})`,
-            candle_range_pct: 'Candle Range %'
+            candle_range_pct: 'Candle Range %',
+            candle_range_ratio_gap_1_vs_gap: pre.day === 'gap_1_day' ? 'Candle Range Gap+1 vs Gap' : 'Candle Range vs Prev'
         };
         const metricStr = metricLabels[pre.metric] || pre.metric;
-        const valueStr = pre.value != null && pre.value as any !== "" ? ` ${pre.value}` : '';
+        let valueStr = '';
+        if (pre.value != null && (pre.value as any) !== "") {
+            if (pre.metric === 'volume') {
+                valueStr = pre.value >= 1000000 ? ` ${pre.value / 1000000}M` : ` ${pre.value.toLocaleString()}`;
+            } else if (pre.metric === 'candle_range_pct' || pre.metric === 'candle_range_ratio_gap_1_vs_gap') {
+                valueStr = ` ${pre.value}%`;
+            } else {
+                valueStr = ` ${pre.value}`;
+            }
+        }
         return `${dayStr}: ${metricStr} ${pre.operator}${valueStr}`;
     };
 

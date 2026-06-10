@@ -19,6 +19,15 @@ const isTriangle = (name: string) =>
     name === IndicatorType.TRIANGLE_DESCENDING ||
     name === IndicatorType.TRIANGLE_SYMMETRIC;
 
+const isVolumeIndicator = (name?: string): boolean => {
+    if (!name) return false;
+    return (
+        name === IndicatorType.VOLUME ||
+        name === IndicatorType.ACCUMULATED_VOLUME ||
+        name === IndicatorType.YESTERDAY_VOLUME
+    );
+};
+
 const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
     switch (name) {
         case IndicatorType.SMA:
@@ -624,15 +633,20 @@ export const TargetInput = ({
     value,
     onChange,
     allowedTargets,
-    hideOffset = false
+    hideOffset = false,
+    sourceIndicatorName
 }: {
     value: IndicatorConfig | number;
     onChange: (val: IndicatorConfig | number) => void;
     allowedTargets?: IndicatorType[];
     hideOffset?: boolean;
+    sourceIndicatorName?: IndicatorType;
 }) => {
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
+    const isVol = isFixed && isVolumeIndicator(sourceIndicatorName);
+
+    const [localText, setLocalText] = React.useState("");
 
     React.useEffect(() => {
         if (!isFixed && allowedTargets) {
@@ -652,6 +666,41 @@ export const TargetInput = ({
             }
         }
     }, [value, isFixed, allowedTargets, onChange]);
+
+    React.useEffect(() => {
+        if (isFixed) {
+            if (isVol) {
+                const clean = localText.trim().toLowerCase();
+                const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
+                const parsedVal = parseFloat(numericStr) * 1000000;
+                if (isNaN(parsedVal) || parsedVal !== value || localText === "") {
+                    setLocalText((value / 1000000).toString());
+                }
+            } else {
+                const parsedVal = parseFloat(localText);
+                if (isNaN(parsedVal) || parsedVal !== value || localText === "") {
+                    setLocalText(value.toString());
+                }
+            }
+        }
+    }, [value, isFixed, isVol]);
+
+    const handleTextChange = (txt: string) => {
+        setLocalText(txt);
+        if (isVol) {
+            const clean = txt.trim().toLowerCase();
+            const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
+            const num = parseFloat(numericStr);
+            if (!isNaN(num)) {
+                onChange(num * 1000000);
+            }
+        } else {
+            const num = parseFloat(txt);
+            if (!isNaN(num)) {
+                onChange(num);
+            }
+        }
+    };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
@@ -679,24 +728,61 @@ export const TargetInput = ({
             )}
 
             {isFixed && (
-                <input
-                    type="number"
-                    value={value as number}
-                    onChange={(e) => onChange(Number(e.target.value))}
-                    placeholder="Value"
-                    style={{
-                        width: '100%',
-                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5,
-                        padding: '5px 8px',
-                        fontSize: 12,
-                        fontWeight: 500,
-                        color: 'var(--color-ec-text-primary)',
-                        fontFamily: 'var(--color-ec-sans)',
-                        outline: 'none',
-                    }}
-                />
+                isVol ? (
+                    <div style={{ position: 'relative', width: '100%' }}>
+                        <input
+                            type="text"
+                            value={localText}
+                            onChange={(e) => handleTextChange(e.target.value)}
+                            placeholder="e.g. 1.5"
+                            style={{
+                                width: '100%',
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                padding: '5px 24px 5px 8px',
+                                fontSize: 12,
+                                fontWeight: 500,
+                                color: 'var(--color-ec-text-primary)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                outline: 'none',
+                            }}
+                        />
+                        <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                            opacity: 0.6,
+                            pointerEvents: 'none',
+                            fontFamily: 'var(--color-ec-sans)',
+                        }}>
+                            M
+                        </span>
+                    </div>
+                ) : (
+                    <input
+                        type="number"
+                        value={localText}
+                        onChange={(e) => handleTextChange(e.target.value)}
+                        placeholder="Value"
+                        style={{
+                            width: '100%',
+                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                            border: '0.5px solid var(--color-ec-border)',
+                            borderRadius: 5,
+                            padding: '5px 8px',
+                            fontSize: 12,
+                            fontWeight: 500,
+                            color: 'var(--color-ec-text-primary)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            outline: 'none',
+                        }}
+                    />
+                )
             )}
         </div>
     );
@@ -828,6 +914,7 @@ export const ConditionRow = ({
                                     value={condition.target}
                                     onChange={handleTargetChange}
                                     allowedTargets={getAllowedTargets(condition.source.name as IndicatorType, 'indicator_comparison')}
+                                    sourceIndicatorName={condition.source.name}
                                 />
                             </>
                         )}
@@ -1022,7 +1109,11 @@ export const formatConditionText = (c: AnyCondition): string => {
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
         if (typeof c.target === 'number') {
-            targetStr = String(c.target);
+            if (isVolumeIndicator(c.source.name)) {
+                targetStr = `${(c.target / 1000000).toString()}M`;
+            } else {
+                targetStr = String(c.target);
+            }
         } else {
             targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
         }
@@ -1601,6 +1692,7 @@ export const GroupDisplay = ({
                                         })}
                                         allowedTargets={getAllowedTargets(formCondition.source.name as IndicatorType, 'indicator_comparison')}
                                         hideOffset={true}
+                                        sourceIndicatorName={formCondition.source.name}
                                     />
                                 </div>
                             ) : distCondition ? (
