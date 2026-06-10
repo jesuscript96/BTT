@@ -651,21 +651,23 @@ export default function BacktestPanel({
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 5,
+                        gap: 4,
                         cursor: 'pointer',
                         userSelect: 'none',
                         color: 'var(--color-ec-copper)',
+                        fontSize: 9,
                         fontWeight: 700,
                         textTransform: 'uppercase',
-                        letterSpacing: '0.05em',
+                        letterSpacing: '0.08em',
                         transition: 'opacity 150ms',
                         width: 'fit-content',
+                        opacity: 0.85,
                       }}
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.75'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.85'}
                     >
                       <span>Filtros seleccionados: {totalFiltersCount}</span>
-                      <span style={{ fontSize: 8 }}>{showDatasetFilters ? '▲' : '▼'}</span>
+                      <span style={{ fontSize: 7, marginLeft: 2 }}>{showDatasetFilters ? '▲' : '▼'}</span>
                     </div>
 
                     {showDatasetFilters && (
