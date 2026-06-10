@@ -260,10 +260,11 @@ def list_saved_queries():
     con = get_user_db_connection()
     try:
         try:
+            # massive.* is never attached on get_user_db_connection() connections,
+            # so the old UNION with massive.main.saved_queries always threw a
+            # Catalog Error and forced the fallback. users.duckdb is the only source.
             rows = con.execute("""
-                SELECT id, name, filters, created_at, updated_at FROM saved_queries 
-                UNION ALL 
-                SELECT id, name, filters, created_at, updated_at FROM massive.main.saved_queries
+                SELECT id, name, filters, created_at, updated_at FROM users.saved_queries
                 ORDER BY created_at DESC
             """).fetchall()
         except Exception as e:

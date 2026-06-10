@@ -26,6 +26,7 @@ export default function Home() {
   const [mode, setMode] = useState<"config" | "builder" | "dataset">("config");
   const [datasetRefresh, setDatasetRefresh] = useState(0);
   const [pendingDatasetSelect, setPendingDatasetSelect] = useState<string | undefined>(undefined);
+  const [isSavingDataset, setIsSavingDataset] = useState(false);
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -1033,7 +1034,10 @@ export default function Home() {
         }}>
           <InlineDatasetBuilder
             onBack={() => setMode('config')}
+            isSaving={isSavingDataset}
             onSave={async (name, filters) => {
+              if (isSavingDataset) return;
+              setIsSavingDataset(true);
               try {
                 setError(null);
                 const newQuery = await createQuery({ name, filters });
@@ -1044,6 +1048,8 @@ export default function Home() {
                 setMode("config");
               } catch (err: any) {
                 setError(err.message || "Error al guardar el dataset");
+              } finally {
+                setIsSavingDataset(false);
               }
             }}
           />
