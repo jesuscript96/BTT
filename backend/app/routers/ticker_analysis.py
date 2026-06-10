@@ -39,6 +39,87 @@ _gap_stats_cache = {}
 _gap_stats_cache_lock = threading.Lock()
 GAP_STATS_CACHE_TTL = timedelta(minutes=15)
 
+# In-flight refresh dedup for the persistent SWR cache
+_swr_inflight: set = set()
+_swr_inflight_lock = threading.Lock()
+
+
+def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
+    """Persistent stale-while-revalidate cache over users.duckdb.
+
+    If a stored payload exists it is returned IMMEDIATELY — even when older
+    than ttl — and a background thread refreshes it. Only a ticker never seen
+    before blocks on fetch_fn. fetch_fn must return a JSON-serializable dict
+    or raise; exceptions on the refresh path are swallowed (the stale copy
+    stays), on the sync path they propagate to the endpoint's handler.
+    """
+    import json as _json
+    from app.database import get_user_db_connection, get_user_db_lock
+
+    def _read():
+        with get_user_db_lock():
+            con = get_user_db_connection()
+            try:
+                return con.execute(
+                    "SELECT payload, updated_at FROM ticker_analysis_cache "
+                    "WHERE ticker = ? AND endpoint = ?",
+                    [ticker, endpoint],
+                ).fetchone()
+            finally:
+                con.close()
+
+    def _store(payload):
+        try:
+            with get_user_db_lock():
+                con = get_user_db_connection()
+                try:
+                    con.execute(
+                        "INSERT OR REPLACE INTO ticker_analysis_cache "
+                        "(ticker, endpoint, payload, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                        [ticker, endpoint, _json.dumps(payload)],
+                    )
+                finally:
+                    con.close()
+        except Exception as e:
+            print(f"[SWR] store failed for {ticker}/{endpoint}: {e}")
+
+    row = None
+    try:
+        row = _read()
+    except Exception as e:
+        print(f"[SWR] read failed for {ticker}/{endpoint}: {e}")
+
+    if row is not None:
+        payload, updated_at = row
+        stale = True
+        try:
+            stale = (datetime.now() - updated_at) > ttl
+        except Exception:
+            pass
+        if stale:
+            key = (ticker, endpoint)
+            with _swr_inflight_lock:
+                already = key in _swr_inflight
+                if not already:
+                    _swr_inflight.add(key)
+            if not already:
+                def _refresh():
+                    try:
+                        _store(fetch_fn())
+                        print(f"[SWR] refreshed {ticker}/{endpoint}")
+                    except Exception as e:
+                        print(f"[SWR] refresh failed for {ticker}/{endpoint}: {e}")
+                    finally:
+                        with _swr_inflight_lock:
+                            _swr_inflight.discard(key)
+                threading.Thread(target=_refresh, daemon=True).start()
+        return _json.loads(payload) if isinstance(payload, str) else payload
+
+    # Never seen: fetch synchronously, persist, return
+    payload = fetch_fn()
+    _store(payload)
+    return payload
+
 def safe_float(val):
     try:
         if val is None: return None
@@ -416,40 +497,64 @@ def get_ticker_analysis(ticker: str):
                 print(f"[CACHE] Returning cached ticker analysis for {ticker}")
                 return cached_data
 
-    try:
+    def _compute():
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+        def _fetch_info():
+            session = get_yfinance_session()
+            stock = yf.Ticker(ticker, session=session)
+            return stock.info
+
+        def _fetch_db_profile():
+            from app.database import get_db_connection
+            con = get_db_connection()
+            ticker_df = con.execute(
+                "SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]
+            ).fetchdf()
+            if ticker_df.empty:
+                return {}
+            return {
+                "longName": ticker_df.iloc[0]['name'],
+                "exchange": ticker_df.iloc[0]['primary_exchange'],
+            }
+
+        # yfinance .info, Finviz scrape and DB lookup run in PARALLEL.
+        # yfinance is capped at 4s: Finviz + DB already cover the primary
+        # fields, so a rate-limited Yahoo no longer gates the response.
+        # shutdown(wait=False) so a hung thread doesn't block the return —
+        # the per-request HTTP timeouts (5s adapter) bound it anyway.
         info = {}
+        finviz_data = {}
+        db_info = {}
+        executor = ThreadPoolExecutor(max_workers=3)
         try:
-            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-            def _fetch_info():
-                session = get_yfinance_session()
-                stock = yf.Ticker(ticker, session=session)
-                return stock.info
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_fetch_info)
-                result = future.result(timeout=10)
+            fut_info = executor.submit(_fetch_info)
+            fut_finviz = executor.submit(scrape_finviz_snapshot, ticker)
+            fut_db = executor.submit(_fetch_db_profile)
+            try:
+                result = fut_info.result(timeout=4)
                 if isinstance(result, dict):
                     info = result
-        except FuturesTimeoutError:
-            print(f"[TIMEOUT] yfinance info for {ticker} timed out after 10s")
-        except Exception as e:
-            print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
-
-        # Fallback to database tickers info if yfinance failed or returned empty
-        if not info or not info.get("longName"):
+            except FuturesTimeoutError:
+                print(f"[TIMEOUT] yfinance info for {ticker} timed out after 4s")
+            except Exception as e:
+                print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
             try:
-                from app.database import get_db_connection
-                con = get_db_connection()
-                ticker_df = con.execute("SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]).fetchdf()
-                if not ticker_df.empty:
-                    db_name = ticker_df.iloc[0]['name']
-                    db_ex = ticker_df.iloc[0]['primary_exchange']
-                    if not info:
-                        info = {}
-                    info["longName"] = db_name
-                    info["exchange"] = db_ex
-                    print(f"[INFO] Loaded profile info from database for {ticker}: name={db_name}, exchange={db_ex}")
+                finviz_data = fut_finviz.result(timeout=6) or {}
+            except Exception as e:
+                print(f"[WARN] Finviz snapshot failed for {ticker}: {e}")
+            try:
+                db_info = fut_db.result(timeout=6) or {}
             except Exception as e:
                 print(f"Error fetching database tickers info fallback for {ticker}: {e}")
+        finally:
+            executor.shutdown(wait=False)
+
+        # Fallback to database tickers info if yfinance failed or returned empty
+        if not info.get("longName") and db_info:
+            info["longName"] = db_info.get("longName")
+            info["exchange"] = info.get("exchange") or db_info.get("exchange")
+            print(f"[INFO] Loaded profile info from database for {ticker}: name={db_info.get('longName')}, exchange={db_info.get('exchange')}")
 
         # Try to resolve website domain for Clearbit, fallback to FMP ticker-based logo
         logo_url = None
@@ -478,10 +583,7 @@ def get_ticker_analysis(ticker: str):
             "logo_url": logo_url
         }
 
-        # --- Market ---
-        # Initialize primary fields from Finviz scraping
-        finviz_data = scrape_finviz_snapshot(ticker)
-        
+        # --- Market --- (Finviz primary, yfinance fallback)
         market = {
             "market_cap": finviz_data.get("market_cap"),
             "shares_outstanding": finviz_data.get("shares_outstanding"),
@@ -491,7 +593,6 @@ def get_ticker_analysis(ticker: str):
             "price": info.get("currentPrice") or info.get("previousClose") # Fallback
         }
 
-        # Fallback to yfinance if any of the three main data values is missing
         if market["market_cap"] is None or market["shares_outstanding"] is None or market["float_shares"] is None:
             print(f"[FALLBACK] Missing market data from Finviz for {ticker}. Fetching from yfinance...")
             if market["market_cap"] is None:
@@ -512,15 +613,17 @@ def get_ticker_analysis(ticker: str):
             "working_capital": None # Loaded via balance-sheet endpoint
         }
 
-        res = {
+        return {
             "profile": profile,
             "market": market,
             "financials": financials
         }
+
+    try:
+        res = _swr_cache(ticker, "analysis", ANALYSIS_CACHE_TTL, _compute)
         with _analysis_cache_lock:
             _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
         return res
-
     except Exception as e:
         print(f"Error fetching ticker analysis for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -537,7 +640,7 @@ def get_ticker_chart(ticker: str):
             if now < expiry:
                 return cached_data
 
-    try:
+    def _compute():
         hist = pd.DataFrame()
         try:
             hist_df = _fetch_yfinance_history(ticker)
@@ -572,7 +675,9 @@ def get_ticker_chart(ticker: str):
                         'close': 'Close',
                         'volume': 'Volume'
                     })
-                    hist['Date'] = pd.to_datetime(hist['Date']).dt.date
+                    # Keep a DatetimeIndex (.dt.date produced an object Index
+                    # that broke hist.index.year in the YTD calc → 500)
+                    hist['Date'] = pd.to_datetime(hist['Date'])
                     hist = hist.set_index('Date')
                     print(f"[INFO] Loaded chart history from database for {ticker}: {len(hist)} rows")
             except Exception as e:
@@ -632,10 +737,13 @@ def get_ticker_chart(ticker: str):
             except Exception as e:
                 print(f"Error extracting daily history for {ticker}: {e}")
 
-        res = {
+        return {
             "daily_history": daily_history,
             "performance": perf
         }
+
+    try:
+        res = _swr_cache(ticker, "chart", CHART_CACHE_TTL, _compute)
         with _chart_cache_lock:
             _chart_cache[ticker] = (res, now + CHART_CACHE_TTL)
         return res
@@ -655,7 +763,7 @@ def get_ticker_balance_sheet(ticker: str):
             if now < expiry:
                 return cached_data
 
-    try:
+    def _compute():
         bs = pd.DataFrame()
         try:
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -698,10 +806,13 @@ def get_ticker_balance_sheet(ticker: str):
             if charts["working_capital_history"]:
                  working_capital = charts["working_capital_history"][-1]["value"]
 
-        res = {
+        return {
             "charts": charts,
             "working_capital": working_capital
         }
+
+    try:
+        res = _swr_cache(ticker, "balance_sheet", BALANCE_SHEET_CACHE_TTL, _compute)
         with _balance_sheet_cache_lock:
             _balance_sheet_cache[ticker] = (res, now + BALANCE_SHEET_CACHE_TTL)
         return res
@@ -754,7 +865,7 @@ def get_sec_filings(ticker: str):
                 print(f"[CACHE] Returning cached SEC filings for {ticker}")
                 return cached_data
 
-    try:
+    def _compute():
         # SEC RSS Feed URL pattern
         # CIKS are usually mapped, but searching by Ticker works on this endpoint often, 
         # or we might need to lookup CIK from yfinance info if ticker lookup fails.
@@ -810,10 +921,13 @@ def get_sec_filings(ticker: str):
             else:
                 filings["others"].append(item)
 
-        with _filings_cache_lock:
-            _filings_cache[ticker] = (filings, now + FILINGS_CACHE_TTL)
         return filings
 
+    try:
+        res = _swr_cache(ticker, "sec_filings", FILINGS_CACHE_TTL, _compute)
+        with _filings_cache_lock:
+            _filings_cache[ticker] = (res, now + FILINGS_CACHE_TTL)
+        return res
     except Exception as e:
         print(f"Error fetching SEC filings for {ticker}: {e}")
         # Return empty structure rather than 500 to not break entire dashboard
@@ -840,7 +954,7 @@ def get_finviz_news(ticker: str):
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    try:
+    def _compute():
         api_key = os.getenv("MASSIVE_API_KEY", "")
         base_url = os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")
 
@@ -895,11 +1009,13 @@ def get_finviz_news(ticker: str):
                 "link": article_url,
             })
 
-        result = {"news": news, "ticker": ticker}
+        return {"news": news, "ticker": ticker}
+
+    try:
+        result = _swr_cache(ticker, "news", FINVIZ_NEWS_CACHE_TTL, _compute)
         with _finviz_news_cache_lock:
             _finviz_news_cache[ticker] = (result, now + FINVIZ_NEWS_CACHE_TTL)
         return result
-
     except Exception as e:
         print(f"[WARN] Massive news failed for {ticker}: {e}")
         return {"news": [], "ticker": ticker}

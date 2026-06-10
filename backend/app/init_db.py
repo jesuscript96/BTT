@@ -193,6 +193,19 @@ def init_db():
             )
         """)
 
+        # ticker_analysis_cache: persistent stale-while-revalidate cache for the
+        # Ticker Analysis endpoints (yfinance/Finviz/SEC are slow and flaky).
+        # Survives restarts/deploys via the users.duckdb GCS sync cycle.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ticker_analysis_cache (
+                ticker VARCHAR,
+                endpoint VARCHAR,
+                payload JSON,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (ticker, endpoint)
+            )
+        """)
+
         # precache_state: process-shared status of dataset intraday pre-caching.
         # Survives restarts so the backtest endpoint and clients can know whether
         # a precache is still running, finished, or failed without relying on

@@ -1524,7 +1524,9 @@ const BalanceSheetTrendsCard = ({ data }: { data: TickerAnalysisData | null }) =
 
 export default function TickerAnalysis({ ticker: initialTicker, availableTickers }: TickerAnalysisProps) {
     const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || '');
-    const [loading, setLoading] = useState(false);
+    const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+    const [loadingChart, setLoadingChart] = useState(false);
+    const [loadingGap, setLoadingGap] = useState(false);
     const [data, setData] = useState<TickerAnalysisData | null>(null);
     const [filings, setFilings] = useState<FilingsData | null>(null);
     const [finvizNews, setFinvizNews] = useState<FinvizNewsItem[]>([]);
@@ -1532,6 +1534,9 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [logoFailed, setLogoFailed] = useState(false);
     const [logoUrlIndex, setLogoUrlIndex] = useState(0);
     const [logoData, setLogoData] = useState<TickerLogoData | null>(null);
+    // Text in the detail-view search box; decoupled from selectedTicker so
+    // typing doesn't fire the full 6-endpoint fetch on every keystroke
+    const [searchText, setSearchText] = useState<string>(initialTicker || '');
 
     // Adjust state when props/state change during render (standard React pattern)
     const [prevInitialTicker, setPrevInitialTicker] = useState(initialTicker);
@@ -1543,6 +1548,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [prevSelectedTicker, setPrevSelectedTicker] = useState(selectedTicker);
     if (selectedTicker !== prevSelectedTicker) {
         setPrevSelectedTicker(selectedTicker);
+        setSearchText(selectedTicker || '');
         setLogoFailed(false);
         setLogoUrlIndex(0);
         setLogoData(null);
@@ -1571,71 +1577,83 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
 
     const currentLogoUrl = logoCandidates[logoUrlIndex];
 
-    // Fetch Data
+    // Fetch Data — progressive: each endpoint resolves independently and merges
+    // its slice into state, so fast sources (hot cache, DB) render immediately
+    // instead of waiting for the slowest external (yfinance/Finviz/SEC).
     useEffect(() => {
         if (!selectedTicker) return;
+        let cancelled = false;
 
-        const fetchData = async () => {
-            setLoading(true);
-            setFinvizNews([]);
-            try {
-                // Parallel fetching of all ticker-related data endpoints
-                const [analysisRes, filingsRes, chartRes, bsRes, gapRes, newsRes] = await Promise.allSettled([
-                    getTickerAnalysis(selectedTicker),
-                    getTickerSecFilings(selectedTicker),
-                    getTickerChart(selectedTicker),
-                    getTickerBalanceSheet(selectedTicker),
-                    getTickerGapStats(selectedTicker),
-                    getTickerFinvizNews(selectedTicker)
-                ]);
+        setData(null);
+        setFilings(null);
+        setFinvizNews([]);
+        setLoadingAnalysis(true);
+        setLoadingChart(true);
+        setLoadingGap(true);
 
-                let combinedData: TickerAnalysisData = {};
-
-                if (analysisRes.status === 'fulfilled' && analysisRes.value) {
-                    combinedData = { ...combinedData, ...(analysisRes.value as object) };
-                }
-                if (chartRes.status === 'fulfilled' && chartRes.value) {
-                    combinedData = { ...combinedData, ...(chartRes.value as object) };
-                }
-                if (bsRes.status === 'fulfilled' && bsRes.value) {
-                    const bsVal = bsRes.value as { charts?: any; working_capital?: number | null };
-                    combinedData = { 
-                        ...combinedData, 
-                        charts: bsVal.charts,
-                        financials: {
-                            ...combinedData.financials,
-                            working_capital: bsVal.working_capital
-                        }
-                    };
-                }
-                if (gapRes.status === 'fulfilled' && gapRes.value) {
-                    combinedData = { ...combinedData, ...(gapRes.value as object) };
-                }
-
-                setData(combinedData);
-
-                if (filingsRes.status === 'fulfilled' && filingsRes.value) {
-                    setFilings(filingsRes.value as FilingsData);
-                } else {
-                    setFilings(null);
-                }
-
-                if (newsRes.status === 'fulfilled' && newsRes.value) {
-                    const payload = newsRes.value as FinvizNewsItem[] | { news?: FinvizNewsItem[] };
-                    const items = Array.isArray(payload) ? payload : (payload.news ?? []);
-                    setFinvizNews(items);
-                } else {
-                    setFinvizNews([]);
-                }
-
-            } catch (error) {
-                console.error("Error fetching ticker analysis:", error);
-            } finally {
-                setLoading(false);
-            }
+        const merge = (patch: Partial<TickerAnalysisData>) => {
+            if (cancelled) return;
+            setData(prev => ({ ...(prev ?? {}), ...patch }));
         };
 
-        fetchData();
+        getTickerAnalysis(selectedTicker)
+            .then(v => {
+                if (cancelled) return;
+                const val = v as TickerAnalysisData;
+                // Preserve working_capital if balance-sheet already merged it
+                setData(prev => ({
+                    ...(prev ?? {}),
+                    ...val,
+                    financials: {
+                        ...(val.financials ?? {}),
+                        ...(prev?.financials?.working_capital !== undefined
+                            ? { working_capital: prev.financials.working_capital }
+                            : {}),
+                    },
+                }));
+            })
+            .catch(e => console.error("Error fetching ticker analysis:", e))
+            .finally(() => { if (!cancelled) setLoadingAnalysis(false); });
+
+        getTickerChart(selectedTicker)
+            .then(v => merge(v as object))
+            .catch(e => console.error("Error fetching ticker chart:", e))
+            .finally(() => { if (!cancelled) setLoadingChart(false); });
+
+        getTickerBalanceSheet(selectedTicker)
+            .then(v => {
+                if (cancelled) return;
+                const bsVal = v as { charts?: any; working_capital?: number | null };
+                setData(prev => ({
+                    ...(prev ?? {}),
+                    charts: bsVal.charts,
+                    financials: {
+                        ...(prev?.financials ?? {}),
+                        working_capital: bsVal.working_capital,
+                    },
+                }));
+            })
+            .catch(e => console.error("Error fetching balance sheet:", e));
+
+        getTickerGapStats(selectedTicker)
+            .then(v => merge(v as object))
+            .catch(e => console.error("Error fetching gap stats:", e))
+            .finally(() => { if (!cancelled) setLoadingGap(false); });
+
+        getTickerSecFilings(selectedTicker)
+            .then(v => { if (!cancelled) setFilings(v as FilingsData); })
+            .catch(e => { console.error("Error fetching SEC filings:", e); if (!cancelled) setFilings(null); });
+
+        getTickerFinvizNews(selectedTicker)
+            .then(v => {
+                if (cancelled) return;
+                const payload = v as FinvizNewsItem[] | { news?: FinvizNewsItem[] };
+                const items = Array.isArray(payload) ? payload : (payload.news ?? []);
+                setFinvizNews(items);
+            })
+            .catch(e => { console.error("Error fetching Finviz news:", e); if (!cancelled) setFinvizNews([]); });
+
+        return () => { cancelled = true; };
     }, [selectedTicker]);
 
     // Empty state - Clean, centered search box
@@ -1891,10 +1909,21 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         type="text"
                         list="ticker-options"
                         placeholder="Buscar ticker..."
-                        value={selectedTicker || ''}
+                        value={searchText}
                         onChange={(e) => {
                             const val = e.target.value.toUpperCase().trim();
-                            setSelectedTicker(val);
+                            setSearchText(val);
+                            // Only trigger the full data fetch on an exact match —
+                            // firing per keystroke burned 6 API calls per letter
+                            if (availableTickers.includes(val)) {
+                                setSelectedTicker(val);
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                const val = (e.target as HTMLInputElement).value.toUpperCase().trim();
+                                if (val) setSelectedTicker(val);
+                            }
                         }}
                         style={{
                             background: 'transparent',
@@ -1913,28 +1942,28 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 </div>
             </div>
 
-            {loading ? (
-                <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: 24,
-                    padding: '20px 0'
-                }}>
-                    {[1, 2, 3, 4, 5, 6].map(i => (
-                        <div 
-                            key={i} 
-                            className="animate-pulse" 
-                            style={{ 
-                                height: '120px', 
-                                backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)', 
-                                borderRadius: '8px' 
-                            }} 
-                        />
-                    ))}
-                </div>
-            ) : (
                 <>
                     {/* Market Metrics Row */}
+                    {loadingAnalysis && !data?.market ? (
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                            gap: 24,
+                            paddingBottom: 0
+                        }}>
+                            {[1, 2, 3].map(i => (
+                                <div
+                                    key={i}
+                                    className="animate-pulse"
+                                    style={{
+                                        height: '64px',
+                                        backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                                        borderRadius: '8px'
+                                    }}
+                                />
+                            ))}
+                        </div>
+                    ) : (
                     <div style={{
                         display: 'grid',
                         gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
@@ -1943,14 +1972,15 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     }}>
                         <MetricCard title="Market Cap" value={formatNumber(data?.market?.market_cap)} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
                         <MetricCard title="Shares Outstanding" value={formatNumber(data?.market?.shares_outstanding).replace('$', '')} icon={<Users size={12} />} indicatorColor="var(--color-ec-copper)" />
-                        <MetricCard 
-                            title="Float Shares" 
-                            value={formatNumber(data?.market?.float_shares).replace('$', '')} 
+                        <MetricCard
+                            title="Float Shares"
+                            value={formatNumber(data?.market?.float_shares).replace('$', '')}
                             subtext={`${formatPercent(data?.market?.held_percent_insiders)} Insiders / ${formatPercent(data?.market?.held_percent_institutions)} Inst.`}
-                            icon={<Users size={12} />} 
-                            indicatorColor="var(--color-ec-copper)" 
+                            icon={<Users size={12} />}
+                            indicatorColor="var(--color-ec-copper)"
                         />
                     </div>
+                    )}
 
                     {/* Latest News Banner */}
                     {latestNews && (
@@ -2007,15 +2037,40 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
                         <div className="lg:col-span-2">
-                            <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
+                            {loadingChart && !data?.daily_history?.length ? (
+                                <div
+                                    className="animate-pulse"
+                                    style={{
+                                        height: '419px',
+                                        backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                                        borderRadius: '8px'
+                                    }}
+                                />
+                            ) : (
+                                <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
+                            )}
                         </div>
                         <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
+                            {loadingGap && !data?.know_the_float ? (
+                                <div
+                                    className="animate-pulse"
+                                    style={{
+                                        height: '100%',
+                                        minHeight: '200px',
+                                        backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
+                                        borderRadius: '8px'
+                                    }}
+                                />
+                            ) : (
+                            <>
                             <KnowTheFloatTable floatData={data?.know_the_float} />
-                            <GapStatsSection 
-                                gapStats={data?.gap_stats} 
-                                gapStatsPlus1={data?.gap_stats_plus_1} 
-                                gapStatsPlus2={data?.gap_stats_plus_2} 
+                            <GapStatsSection
+                                gapStats={data?.gap_stats}
+                                gapStatsPlus1={data?.gap_stats_plus_1}
+                                gapStatsPlus2={data?.gap_stats_plus_2}
                             />
+                            </>
+                            )}
                         </div>
                     </div>
 
@@ -2210,7 +2265,6 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         </div>
                     </div>
                 </>
-            )}
         </div>
     );
 }
