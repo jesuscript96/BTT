@@ -55,10 +55,16 @@ interface IncludedCondition {
   unit: string;
 }
 
+const MIN_DATE = "2006-01-01";
+const MAX_DATE = new Date().toISOString().split("T")[0];
+const TWO_YEARS_AGO = new Date(
+  new Date().setFullYear(new Date().getFullYear() - 2)
+).toISOString().split("T")[0];
+
 export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
   const [name, setName] = useState("Nuevo Dataset");
-  const [dateFrom, setDateFrom] = useState("2024-01-01");
-  const [dateTo, setDateTo] = useState("2024-12-31");
+  const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
+  const [dateTo, setDateTo] = useState(MAX_DATE);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [tempName, setTempName] = useState("");
@@ -313,6 +319,8 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
               <input
                 type="date"
                 value={dateFrom}
+                min={MIN_DATE}
+                max={dateTo || MAX_DATE}
                 onChange={(e) => setDateFrom(e.target.value)}
                 style={{
                   backgroundColor: "var(--color-ec-bg-elevated)",
@@ -331,6 +339,8 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
               <input
                 type="date"
                 value={dateTo}
+                min={dateFrom || MIN_DATE}
+                max={MAX_DATE}
                 onChange={(e) => setDateTo(e.target.value)}
                 style={{
                   backgroundColor: "var(--color-ec-bg-elevated)",
