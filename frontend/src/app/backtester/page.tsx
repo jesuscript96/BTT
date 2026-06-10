@@ -686,7 +686,7 @@ export default function Home() {
                   </div>
                   {backtestProgress && backtestProgress.total > 0 && (
                     <p className="text-[10px] text-[var(--color-ec-text-muted)] font-mono text-right">
-                      {backtestProgress.current} / {backtestProgress.total} días procesados
+                      {backtestProgress.current} / {backtestProgress.total} pares procesados
                     </p>
                   )}
                 </div>
