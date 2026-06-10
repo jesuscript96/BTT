@@ -78,10 +78,11 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
     // Preconditions builder temp state
     const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
-    const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct'>('cierre');
+    const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap'>('cierre');
     const [tempOperator, setTempOperator] = useState<'>' | '<'>('>');
-    const [tempTarget, setTempTarget] = useState<'apertura' | 'high_low_previo' | 'pm_high' | 'vwap' | 'sma'>('apertura');
+    const [tempTarget, setTempTarget] = useState<'apertura' | 'high_gap_day' | 'low_gap_day' | 'pm_high' | 'pm_low' | 'vwap' | 'sma'>('apertura');
     const [tempValue, setTempValue] = useState<number>(1000000);
+    const [tempVolumeText, setTempVolumeText] = useState<string>("1.0");
     const [tempSmaPeriod, setTempSmaPeriod] = useState<number>(20);
 
     useEffect(() => {
@@ -90,6 +91,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
         } else if (applyDay === 'gap_1_day') {
             setPostgapPreconditions(prev => prev.map(p => ({ ...p, day: 'gap_day' })));
             setTempDay('gap_day');
+            if (tempSource === 'candle_range_ratio_gap_1_vs_gap') {
+                setTempSource('cierre');
+            }
         }
     }, [applyDay]);
 
@@ -456,13 +460,33 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                 border: '0.5px solid var(--color-ec-border)',
                                 borderRadius: 6,
                             }}>
+                                {/* "Presets gap day" indicator */}
+                                <div style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.08em',
+                                    color: 'var(--color-ec-copper)',
+                                    borderBottom: '0.5px solid rgba(255, 255, 255, 0.05)',
+                                    paddingBottom: 4,
+                                    marginBottom: 2
+                                }}>
+                                    {applyDay === 'gap_2_day' ? 'Presets gap day y gap +1 day' : 'Presets gap day'}
+                                </div>
                                 {/* Top: Day selector (only for gap_2_day) */}
                                 {applyDay === 'gap_2_day' && (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, borderBottom: '0.5px solid var(--color-ec-border)', paddingBottom: 10, marginBottom: 2 }}>
                                         <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Evaluar en</label>
                                         <select
                                             value={tempDay}
-                                            onChange={(e) => setTempDay(e.target.value as any)}
+                                            onChange={(e) => {
+                                                const val = e.target.value as 'gap_day' | 'gap_1_day';
+                                                setTempDay(val);
+                                                if (val !== 'gap_1_day' && tempSource === 'candle_range_ratio_gap_1_vs_gap') {
+                                                    setTempSource('cierre');
+                                                }
+                                            }}
                                             style={{
                                                 background: 'var(--color-ec-bg-surface)',
                                                 border: '0.5px solid var(--color-ec-border)',
@@ -496,7 +520,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                         <select
                                             value={tempSource}
                                             onChange={(e) => {
-                                                const src = e.target.value as 'cierre' | 'volume' | 'candle_range_pct';
+                                                const src = e.target.value as 'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap';
                                                 setTempSource(src);
                                                 
                                                 // Set sensible default values/operators
@@ -504,6 +528,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                                     setTempValue(1000000);
                                                 } else if (src === 'candle_range_pct') {
                                                     setTempValue(2.0);
+                                                } else if (src === 'candle_range_ratio_gap_1_vs_gap') {
+                                                    setTempValue(150.0);
                                                 }
                                             }}
                                             style={{
@@ -522,6 +548,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                             <option value="cierre">Cierre</option>
                                             <option value="volume">Volumen Total</option>
                                             <option value="candle_range_pct">Rango de Vela %</option>
+                                            {applyDay === 'gap_2_day' && tempDay === 'gap_1_day' && (
+                                                <option value="candle_range_ratio_gap_1_vs_gap">Rango vela Gap+1 vs Gap (%)</option>
+                                            )}
                                         </select>
                                     </div>
 
@@ -570,8 +599,10 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                                 }}
                                             >
                                                 <option value="apertura">Apertura</option>
-                                                <option value="high_low_previo">High/Low Previo</option>
-                                                <option value="pm_high">PM High</option>
+                                                <option value="high_gap_day">RTH high</option>
+                                                <option value="low_gap_day">RTH low</option>
+                                                <option value="pm_high">PM high</option>
+                                                <option value="pm_low">PM low</option>
                                                 <option value="vwap">VWAP</option>
                                                 <option value="sma">SMA</option>
                                             </select>
@@ -605,27 +636,65 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
 
                                     {/* Value input (only for volume and candle_range_pct) */}
                                     {tempSource !== 'cierre' && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: tempSource === 'volume' ? 90 : 70 }}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: tempSource === 'volume' ? 100 : 70 }}>
                                             <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Valor</label>
-                                            <input
-                                                type="number"
-                                                value={tempValue}
-                                                onChange={(e) => {
-                                                    const val = parseFloat(e.target.value);
-                                                    setTempValue(isNaN(val) ? 0 : val);
-                                                }}
-                                                style={{
-                                                    background: 'var(--color-ec-bg-surface)',
-                                                    border: '0.5px solid var(--color-ec-border)',
-                                                    color: 'var(--color-ec-text-primary)',
-                                                    fontSize: 11,
-                                                    padding: '4px 8px',
-                                                    borderRadius: 4,
-                                                    outline: 'none',
-                                                    fontFamily: 'var(--color-ec-sans)',
-                                                    width: '100%',
-                                                }}
-                                            />
+                                            {tempSource === 'volume' ? (
+                                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                                    <input
+                                                        type="text"
+                                                        value={tempVolumeText}
+                                                        onChange={(e) => {
+                                                            const val = e.target.value;
+                                                            if (/^\d*\.?\d*$/.test(val)) {
+                                                                setTempVolumeText(val);
+                                                            }
+                                                        }}
+                                                        placeholder="0"
+                                                        style={{
+                                                            background: 'var(--color-ec-bg-surface)',
+                                                            border: '0.5px solid var(--color-ec-border)',
+                                                            color: 'var(--color-ec-text-primary)',
+                                                            fontSize: 11,
+                                                            padding: '4px 20px 4px 8px',
+                                                            borderRadius: 4,
+                                                            outline: 'none',
+                                                            fontFamily: 'var(--color-ec-sans)',
+                                                            width: '100%',
+                                                        }}
+                                                    />
+                                                    <span style={{
+                                                        position: 'absolute',
+                                                        right: 8,
+                                                        fontSize: 10,
+                                                        fontWeight: 600,
+                                                        color: 'rgba(255, 255, 255, 0.35)',
+                                                        pointerEvents: 'none',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                    }}>
+                                                        M
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <input
+                                                    type="number"
+                                                    value={tempValue}
+                                                    onChange={(e) => {
+                                                        const val = parseFloat(e.target.value);
+                                                        setTempValue(isNaN(val) ? 0 : val);
+                                                    }}
+                                                    style={{
+                                                        background: 'var(--color-ec-bg-surface)',
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        color: 'var(--color-ec-text-primary)',
+                                                        fontSize: 11,
+                                                        padding: '4px 8px',
+                                                        borderRadius: 4,
+                                                        outline: 'none',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                        width: '100%',
+                                                    }}
+                                                />
+                                            )}
                                         </div>
                                     )}
 
@@ -642,11 +711,17 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                                 if (tempTarget === 'apertura') {
                                                     metric = 'close_vs_open';
                                                     operator = tempOperator;
-                                                } else if (tempTarget === 'high_low_previo') {
-                                                    metric = 'close_vs_high_low';
-                                                    operator = tempOperator === '>' ? '> High' : '< Low';
+                                                } else if (tempTarget === 'high_gap_day') {
+                                                    metric = 'close_vs_high';
+                                                    operator = tempOperator;
+                                                } else if (tempTarget === 'low_gap_day') {
+                                                    metric = 'close_vs_low';
+                                                    operator = tempOperator;
                                                 } else if (tempTarget === 'pm_high') {
                                                     metric = 'close_vs_pm_high';
+                                                    operator = tempOperator;
+                                                } else if (tempTarget === 'pm_low') {
+                                                    metric = 'close_vs_pm_low';
                                                     operator = tempOperator;
                                                 } else if (tempTarget === 'vwap') {
                                                     metric = 'close_vs_vwap';
@@ -659,9 +734,14 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                             } else if (tempSource === 'volume') {
                                                 metric = 'volume';
                                                 operator = tempOperator;
-                                                value = tempValue;
+                                                const parsedVol = parseFloat(tempVolumeText);
+                                                value = (isNaN(parsedVol) ? 0 : parsedVol) * 1000000;
                                             } else if (tempSource === 'candle_range_pct') {
                                                 metric = 'candle_range_pct';
+                                                operator = tempOperator;
+                                                value = tempValue;
+                                            } else if (tempSource === 'candle_range_ratio_gap_1_vs_gap') {
+                                                metric = 'candle_range_ratio_gap_1_vs_gap';
                                                 operator = tempOperator;
                                                 value = tempValue;
                                             }
@@ -716,19 +796,27 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                         
                                         if (cond.metric === 'volume') {
                                             metricLabel = 'Volumen Total';
-                                            valLabel = `${cond.operator} ${(cond.value ?? 0).toLocaleString()}`;
+                                            const volVal = cond.value ?? 0;
+                                            valLabel = `${cond.operator} ${volVal >= 1000000 ? `${volVal / 1000000}M` : volVal.toLocaleString()}`;
                                         } else if (cond.metric === 'close_vs_open') {
                                             valLabel = `${cond.operator} Apertura`;
-                                        } else if (cond.metric === 'close_vs_high_low') {
-                                            valLabel = cond.operator === '> High' ? '> High Previo' : '< Low Previo';
+                                        } else if (cond.metric === 'close_vs_high') {
+                                            valLabel = `${cond.operator} High`;
+                                        } else if (cond.metric === 'close_vs_low') {
+                                            valLabel = `${cond.operator} Low`;
                                         } else if (cond.metric === 'close_vs_pm_high') {
                                             valLabel = `${cond.operator} PM High`;
+                                        } else if (cond.metric === 'close_vs_pm_low') {
+                                            valLabel = `${cond.operator} PM Low`;
                                         } else if (cond.metric === 'close_vs_vwap') {
                                             valLabel = `${cond.operator} VWAP`;
                                         } else if (cond.metric === 'close_vs_sma') {
                                             valLabel = `${cond.operator} SMA ${cond.sma_period}`;
                                         } else if (cond.metric === 'candle_range_pct') {
                                             metricLabel = 'Rango de Vela %';
+                                            valLabel = `${cond.operator} ${cond.value}%`;
+                                        } else if (cond.metric === 'candle_range_ratio_gap_1_vs_gap') {
+                                            metricLabel = cond.day === 'gap_1_day' ? 'Rango vela Gap+1 vs Gap' : 'Rango vela vs Previo';
                                             valLabel = `${cond.operator} ${cond.value}%`;
                                         }
                                         

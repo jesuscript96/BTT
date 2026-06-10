@@ -88,6 +88,7 @@ def _core_backtest_jit(
     # Strategy Configs
     strat_sl_types,   # int32 array (n_strats)
     strat_sl_values,  # float64 array
+    strat_sl_offsets, # float64 array
     strat_tp_types,   # int32 array
     strat_tp_values,  # float64 array
     strat_weights,    # float64 array
@@ -331,7 +332,7 @@ def _core_backtest_jit(
                                     val_struct = prev_lows[i] if prev_lows[i] > 0 else entry_px * 0.95
                                 else:
                                     val_struct = pm_lows[i] if pm_lows[i] > 0 else entry_px * 0.95
-                                stop_loss = val_struct
+                                stop_loss = val_struct * (1.0 + strat_sl_offsets[s])
                             else: stop_loss = entry_px * 0.95
                             if strat_use_hard_stop[s] == 0:
                                 stop_loss = 0.0
@@ -357,7 +358,7 @@ def _core_backtest_jit(
                                     val_struct = prev_lows[i] if prev_lows[i] > 0 else entry_px * 1.05
                                 else:
                                     val_struct = pm_highs[i] if pm_highs[i] > 0 else entry_px * 1.05
-                                stop_loss = val_struct
+                                stop_loss = val_struct * (1.0 + strat_sl_offsets[s])
                             else: stop_loss = entry_px * 1.05
                             if strat_use_hard_stop[s] == 0:
                                 stop_loss = entry_px * 2.0
@@ -1038,6 +1039,7 @@ class BacktestEngine:
         
         strat_sl_types = []
         strat_sl_values = []
+        strat_sl_offsets = []
         strat_tp_types = []
         strat_tp_values = []
         strat_weights = []
@@ -1106,6 +1108,13 @@ class BacktestEngine:
                     
             strat_sl_values.append(float(sl_val))
             
+            # Calculate sl_offset
+            offset_pct = float(hard_stop.get('offset_pct', 0.0))
+            offset_op = hard_stop.get('operator', '>=')
+            sign = 1.0 if offset_op in ('>', '>=') else -1.0
+            sl_offset = sign * offset_pct / 100.0
+            strat_sl_offsets.append(float(sl_offset))
+            
             tp_val = take_profit.get('value', 6.0)
             tp_type_str = take_profit.get('type', RiskType.PERCENTAGE)
             strat_tp_types.append(_risk_type_to_int(tp_type_str))
@@ -1119,6 +1128,7 @@ class BacktestEngine:
             exit_signals,
             np.array(strat_sl_types, dtype=np.int32),
             np.array(strat_sl_values, dtype=np.float64),
+            np.array(strat_sl_offsets, dtype=np.float64),
             np.array(strat_tp_types, dtype=np.int32),
             np.array(strat_tp_values, dtype=np.float64),
             np.array(strat_weights, dtype=np.float64),

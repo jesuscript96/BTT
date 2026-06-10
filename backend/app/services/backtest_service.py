@@ -293,6 +293,8 @@ def run_backtest(
         hs = risk.get("hard_stop", {}) if use_hs else {}
         hs_type = hs.get("type")
         hs_value = hs.get("value")
+        hs_operator = hs.get("operator", ">=")
+        hs_offset_pct = float(hs.get("offset_pct", 0.0))
 
         try:
             sim_result = simulate(
@@ -322,6 +324,8 @@ def run_backtest(
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,
                 hs_value=hs_value,
+                hs_operator=hs_operator,
+                hs_offset_pct=hs_offset_pct,
                 hods=arrays.get("hod"),
                 lods=arrays.get("lod"),
                 pm_highs=arrays.get("pm_high"),

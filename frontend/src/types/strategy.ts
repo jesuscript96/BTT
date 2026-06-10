@@ -189,6 +189,8 @@ export interface ExitLogic {
 export interface RiskSettings {
     type: RiskType;
     value: number | string;
+    operator?: string;
+    offset_pct?: number;
 }
 
 export interface PartialTakeProfit {
@@ -218,7 +220,7 @@ export interface RiskManagement {
 export interface PostGapPrecondition {
     id: string;
     day: 'gap_day' | 'gap_1_day';
-    metric: 'volume' | 'close_vs_open' | 'close_vs_high_low' | 'close_vs_pm_high' | 'close_vs_vwap' | 'close_vs_sma' | 'candle_range_pct';
+    metric: 'volume' | 'close_vs_open' | 'close_vs_high_low' | 'close_vs_pm_high' | 'close_vs_pm_low' | 'close_vs_high' | 'close_vs_low' | 'close_vs_vwap' | 'close_vs_sma' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap';
     operator: '>' | '<' | '> High' | '< Low';
     value?: number;
     sma_period?: number;

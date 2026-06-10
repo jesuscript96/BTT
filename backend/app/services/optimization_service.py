@@ -11,8 +11,15 @@ import time
 from itertools import product
 
 import numpy as np
+import pandas as pd
 
-from app.services.data_service import get_strategy, fetch_dataset_data
+from app.services.data_service import (
+    get_strategy,
+    fetch_dataset_data,
+    fetch_qualifying_data,
+    _resolve_filters,
+)
+from app.db.gcs_cache import fetch_intraday_batch
 from app.services.backtest_service import run_backtest
 
 logger = logging.getLogger("backtester.optimization")
@@ -387,36 +394,84 @@ def run_optimization_grid(
     if task_id:
         OPTIMIZATION_PROGRESS[task_id] = 1.0
 
-    # Fetch dataset once (fast, with DB-level date/preconditions filters)
-    qualifying_df, intraday_df = fetch_dataset_data(
+    # 1. Fetch daily qualifying data first to find unique dates and apply IS split
+    qualifying_df = fetch_qualifying_data(
         dataset_id,
         req_start_date=start_date,
         req_end_date=end_date,
         preconditions=fetch_preconditions,
         apply_day=apply_day,
     )
+    if qualifying_df.empty:
+        raise ValueError("No data for selected period/preconditions")
 
-    if task_id:
-        OPTIMIZATION_PROGRESS[task_id] = 5.0
-
-    # Apply date filters (fallback in case database didn't apply them)
-    if start_date:
-        intraday_df = intraday_df[intraday_df["date"].astype(str) >= start_date]
-        qualifying_df = qualifying_df[qualifying_df["date"].astype(str) >= start_date]
-    if end_date:
-        intraday_df = intraday_df[intraday_df["date"].astype(str) <= end_date]
-        qualifying_df = qualifying_df[qualifying_df["date"].astype(str) <= end_date]
-
-    # Apply In-Sample split percentage (is_percent) filter to keep only IS days for optimization
+    # Determine In-Sample cutoff date using qualifying_df dates
+    opt_end_date = end_date
     if is_percent < 100.0:
-        unique_dates = sorted(intraday_df["date"].unique())
+        unique_dates = sorted(qualifying_df["date"].unique())
         n_dates = len(unique_dates)
         if n_dates > 0:
             cutoff_idx = max(1, int(n_dates * is_percent / 100.0))
             cutoff_date = unique_dates[cutoff_idx - 1]
-            intraday_df = intraday_df[intraday_df["date"] <= cutoff_date]
             qualifying_df = qualifying_df[qualifying_df["date"] <= cutoff_date]
-            logger.info(f"[OPT] In-Sample split filter applied: kept first {cutoff_idx} of {n_dates} dates (up to {cutoff_date}) using is_percent={is_percent}%")
+            opt_end_date = cutoff_date
+            logger.info(f"[OPT] In-Sample split filter applied on qualifying dates: kept {len(qualifying_df)} rows up to {cutoff_date} using is_percent={is_percent}%")
+
+    # Apply fallbacks for start_date / end_date
+    if start_date:
+        qualifying_df = qualifying_df[qualifying_df["date"].astype(str) >= start_date]
+    if opt_end_date:
+        qualifying_df = qualifying_df[qualifying_df["date"].astype(str) <= opt_end_date]
+
+    if task_id:
+        OPTIMIZATION_PROGRESS[task_id] = 2.0
+
+    # 2. Fetch intraday data only for the resolved In-Sample dates
+    filters = _resolve_filters(dataset_id, start_date, opt_end_date)
+    df_from = filters.get("start_date") or filters.get("date_from")
+    df_to = filters.get("end_date") or filters.get("date_to")
+
+    unique_tickers = qualifying_df["ticker"].unique().tolist()
+    dates = pd.to_datetime(qualifying_df["date"])
+    ym_pairs = sorted(set(zip(dates.dt.year, dates.dt.month)))
+
+    chunks = []
+    n_chunks = len(ym_pairs)
+    for i, (year, month) in enumerate(ym_pairs):
+        m_dates = qualifying_df.loc[(dates.dt.year == year) & (dates.dt.month == month), "date"]
+        day_list = (
+            pd.to_datetime(m_dates).dt.strftime("%Y-%m-%d").unique().tolist()
+            if not m_dates.empty
+            else None
+        )
+        chunk = fetch_intraday_batch(
+            year, month, unique_tickers, df_from, df_to, qualifying_dates=day_list
+        )
+        if not chunk.empty:
+            chunks.append(chunk)
+        if task_id:
+            # Load progress goes smoothly from 2.0% to 5.0%
+            prog_val = round(2.0 + ((i + 1) / n_chunks) * 3.0, 2)
+            OPTIMIZATION_PROGRESS[task_id] = prog_val
+
+    if not chunks:
+        intraday_df = pd.DataFrame()
+    else:
+        intraday_df = pd.concat(chunks, ignore_index=True)
+        # Filter to exact (ticker, date) pairs
+        valid_pairs = qualifying_df[["ticker", "date"]].drop_duplicates().copy()
+        valid_pairs["date"] = valid_pairs["date"].astype(str)
+        intraday_df["date"] = intraday_df["date"].astype(str)
+        intraday_df = intraday_df.merge(valid_pairs, on=["ticker", "date"], how="inner")
+
+    # Apply date filters to intraday as fallback
+    if start_date:
+        intraday_df = intraday_df[intraday_df["date"].astype(str) >= start_date]
+    if opt_end_date:
+        intraday_df = intraday_df[intraday_df["date"].astype(str) <= opt_end_date]
+
+    if task_id:
+        OPTIMIZATION_PROGRESS[task_id] = 5.0
 
     if qualifying_df.empty or intraday_df.empty:
         raise ValueError("No data for selected period/preconditions")
@@ -509,7 +564,7 @@ def run_optimization_grid(
             details_flat[idx] = {}
 
         if task_id:
-            prog = round(((idx + 1) / len(grid_points)) * 100, 2)
+            prog = round(5.0 + ((idx + 1) / len(grid_points)) * 95.0, 2)
             OPTIMIZATION_PROGRESS[task_id] = prog
             if (idx + 1) % 5 == 0:
                 logger.info(f"[PROGRESS] {task_id}: {prog}%")
@@ -521,8 +576,25 @@ def run_optimization_grid(
     # Reshape to grid
     results_grid = results_flat.reshape(shape)
 
-    # Run plateau analysis
+    # Run plateau analysis for the main metric
     plateau = _compute_plateau_analysis(results_grid, axes, param_configs, details_flat, shape)
+
+    # Run plateau analysis for all other available metrics
+    plateau_analyses = {}
+    if details_flat and details_flat[0]:
+        available_keys = [k for k in details_flat[0].keys() if k in METRICS]
+        for m_key in available_keys:
+            try:
+                m_flat = np.array([
+                    (d.get(m_key, 0.0) if (d and d.get(m_key) is not None) else 0.0)
+                    for d in details_flat
+                ])
+                m_grid = m_flat.reshape(shape)
+                plateau_analyses[m_key] = _compute_plateau_analysis(
+                    m_grid, axes, param_configs, details_flat, shape
+                )
+            except Exception as e:
+                logger.warning(f"[OPT] Failed to compute plateau analysis for {m_key}: {e}")
 
     elapsed = round(time.time() - t0, 1)
     logger.info(f"[OPT] Grid sweep complete in {elapsed}s")
@@ -546,6 +618,7 @@ def run_optimization_grid(
         "details": [d if d else {} for d in details_flat],
         "shape": list(shape),
         "plateau_analysis": plateau,
+        "plateau_analyses": plateau_analyses,
         "elapsed_seconds": elapsed,
     }
 

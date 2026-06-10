@@ -343,6 +343,7 @@ export interface OptimizationResult {
   details: Record<string, number>[];
   shape: number[];
   plateau_analysis: PlateauAnalysis;
+  plateau_analyses?: Record<string, PlateauAnalysis>;
   elapsed_seconds: number;
 }
 

@@ -169,30 +169,88 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 <option value={RiskType.MARKET_STRUCTURE}>Market Structure</option>
                             </select>
                             {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
-                                <select
-                                    value={risk.hard_stop.value || 'LOD'}
-                                    onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value)}
-                                    style={{
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '7px 10px',
-                                        fontSize: 12,
-                                        fontWeight: 500,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        cursor: 'pointer',
-                                        flex: 1,
-                                    }}
-                                >
-                                    <option value="HOD">HOD (High of Day)</option>
-                                    <option value="LOD">LOD (Low of Day)</option>
-                                    <option value="PMH">PMH (Premarket High)</option>
-                                    <option value="PML">PML (Premarket Low)</option>
-                                    <option value="Previous Max">Previous Max</option>
-                                    <option value="Previous Min">Previous Min</option>
-                                </select>
+                                <>
+                                    <select
+                                        value={risk.hard_stop.value || 'LOD'}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value)}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 10px',
+                                            fontSize: 12,
+                                            fontWeight: 500,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                            flex: 2,
+                                        }}
+                                    >
+                                        <option value="HOD">HOD (High of Day)</option>
+                                        <option value="LOD">LOD (Low of Day)</option>
+                                        <option value="PMH">PMH (Premarket High)</option>
+                                        <option value="PML">PML (Premarket Low)</option>
+                                        <option value="Previous Max">Previous Max</option>
+                                        <option value="Previous Min">Previous Min</option>
+                                    </select>
+                                    
+                                    <select
+                                        value={risk.hard_stop.operator || '>='}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'operator', e.target.value)}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 10px',
+                                            fontSize: 12,
+                                            fontWeight: 500,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                            width: '60px',
+                                        }}
+                                    >
+                                        <option value=">">&gt;</option>
+                                        <option value="<">&lt;</option>
+                                        <option value=">=">&gt;=</option>
+                                        <option value="<=">&lt;=</option>
+                                    </select>
+
+                                    <div style={{ position: 'relative', width: '80px' }}>
+                                        <input
+                                            type="number"
+                                            step="0.1"
+                                            value={risk.hard_stop.offset_pct ?? 0.0}
+                                            onChange={(e) => updateRiskSetting('hard_stop', 'offset_pct', parseFloat(e.target.value) || 0.0)}
+                                            style={{
+                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                border: '0.5px solid var(--color-ec-border)',
+                                                borderRadius: 5,
+                                                padding: '7px 18px 7px 8px',
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                color: 'var(--color-ec-text-primary)',
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                outline: 'none',
+                                                width: '100%',
+                                            }}
+                                        />
+                                        <span style={{
+                                            position: 'absolute',
+                                            right: 8,
+                                            top: '50%',
+                                            transform: 'translateY(-50%)',
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            color: 'var(--color-ec-text-muted)',
+                                            pointerEvents: 'none',
+                                        }}>
+                                            %
+                                        </span>
+                                    </div>
+                                </>
                             ) : (
                                 <input
                                     type="number"
