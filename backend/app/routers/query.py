@@ -329,6 +329,15 @@ def delete_saved_query(query_id: str):
             con.execute("DELETE FROM datasets WHERE id = ?", (query_id,))
             con.execute("DELETE FROM dataset_pairs WHERE dataset_id = ?", (query_id,))
             con.execute("DELETE FROM precache_state WHERE dataset_id = ?", (query_id,))
-            return {"status": "success"}
         finally:
             con.close()
+
+    # Persist the deletion: without this, a container restart re-downloads
+    # users.duckdb from GCS and resurrects the deleted dataset
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+    except Exception as e:
+        print(f"[WARN] GCS upload after delete failed: {e}")
+
+    return {"status": "success"}
