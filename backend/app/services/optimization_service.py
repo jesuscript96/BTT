@@ -7,7 +7,11 @@ computes surface data and identifies robust parameter regions.
 import copy
 import json
 import logging
+import math
+import multiprocessing
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import product
 
 import numpy as np
@@ -17,6 +21,7 @@ from app.services.data_service import (
     get_strategy,
     fetch_dataset_data,
     fetch_qualifying_data,
+    _evaluate_postgap_preconditions,
 )
 from app.db.gcs_cache import (
     _fetch_and_cache_month,
@@ -33,6 +38,16 @@ OPTIMIZATION_PROGRESS = {}
 
 # Global dict to store completed optimization results (in-memory for local use)
 OPTIMIZATION_RESULTS = {}
+
+# Dataset context for forked grid workers. Populated by run_optimization_grid
+# right before the pool forks so children inherit it via copy-on-write instead
+# of pickling the dataset per task; cleared after the sweep. Only valid while
+# a sweep is running (one optimization at a time per process).
+_GRID_CTX = {}
+
+# Per-process signal cache for risk-only sweeps. Each forked worker fills its
+# own copy across the chunks it processes; stays empty in the parent.
+_WORKER_SIGNAL_CACHE = {}
 
 # Performance metrics we can optimise for
 METRICS = {
@@ -319,6 +334,80 @@ def _set_nested_value(obj, path: str, value):
         current[last_key] = value
 
 
+def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
+    """Run one grid point. Returns (idx, metric_val_or_nan, detail_dict)."""
+    point = ctx["grid_points"][idx]
+    param_configs = ctx["param_configs"]
+    qualifying_df = ctx["qualifying_df"]
+    precomputed_groups = ctx["precomputed_groups"]
+    backtest_params = ctx["backtest_params"]
+
+    modified_def = copy.deepcopy(ctx["base_def"])
+    for dim, val in enumerate(point):
+        _set_nested_value(modified_def, param_configs[dim]["path"], val)
+
+    # If optimizing preconditions, we must re-evaluate them for this point
+    if ctx["opt_preconds"]:
+        point_preconditions = modified_def.get("postgap_preconditions", [])
+        point_qualifying_df = _evaluate_postgap_preconditions(qualifying_df, point_preconditions)
+        valid_keys = set(zip(point_qualifying_df["date"].astype(str), point_qualifying_df["ticker"]))
+        point_groups = [g for g in precomputed_groups if (str(g[0][0])[:10], g[0][1]) in valid_keys]
+    else:
+        point_qualifying_df = qualifying_df
+        point_groups = precomputed_groups
+
+    try:
+        bt_result = run_backtest(
+            qualifying_df=point_qualifying_df,
+            strategy_def=modified_def,
+            init_cash=backtest_params.get("init_cash", 10000),
+            risk_r=backtest_params.get("risk_r", 100),
+            risk_type=backtest_params.get("risk_type", "FIXED"),
+            size_by_sl=backtest_params.get("size_by_sl", False),
+            fees=backtest_params.get("fees", 0),
+            fee_type=backtest_params.get("fee_type", "PERCENT"),
+            slippage=backtest_params.get("slippage", 0),
+            market_sessions=backtest_params.get("market_sessions"),
+            custom_start_time=backtest_params.get("custom_start_time"),
+            custom_end_time=backtest_params.get("custom_end_time"),
+            locates_cost=backtest_params.get("locates_cost", 0),
+            look_ahead_prevention=backtest_params.get("look_ahead_prevention", False),
+            day_group_iter=iter(point_groups),
+            n_groups_hint=len(point_groups),
+            _signal_cache=signal_cache,
+        )
+        agg = bt_result.get("aggregate_metrics", {})
+        metric_val = agg.get(ctx["metric_key"], 0)
+        detail = {
+            "sharpe": agg.get("avg_sharpe", 0),
+            "total_return": agg.get("total_return_pct", 0),
+            "max_drawdown": agg.get("max_drawdown_pct", 0),
+            "profit_factor": agg.get("avg_profit_factor", 0),
+            "win_rate": agg.get("win_rate_pct", 0),
+            "expectancy": agg.get("expectancy", 0),
+            "total_trades": agg.get("total_trades", 0),
+            "dd_return": agg.get("dd_return_ratio", 0),
+            "avg_r_ui": agg.get("avg_r_ui", 0),
+        }
+        return idx, (float(metric_val) if metric_val is not None else np.nan), detail
+    except Exception as e:
+        logger.warning(f"[OPT] Point {idx} failed: {e}")
+        return idx, np.nan, {}
+
+
+def _run_grid_chunk(idx_list: list[int]):
+    """Worker for a contiguous chunk of grid points — runs in a forked child.
+
+    Reads the dataset from _GRID_CTX inherited at fork time; only the index
+    list and the per-point results cross the process boundary. The signal
+    cache persists in the child across chunks, so each worker translates the
+    strategy signals at most once per (ticker, date) on risk-only sweeps.
+    """
+    ctx = _GRID_CTX
+    signal_cache = _WORKER_SIGNAL_CACHE if ctx.get("is_risk_only") else None
+    return [_run_grid_point(idx, ctx, signal_cache) for idx in idx_list]
+
+
 def run_optimization_grid(
     strategy_id: str,
     dataset_id: str,
@@ -500,8 +589,6 @@ def run_optimization_grid(
         pc["path"].startswith("risk_management.")
         for pc in param_configs
     )
-    signal_cache = {} if is_risk_only else None
-
     if is_risk_only:
         logger.info("[OPT] Risk-only parameters detected — signal caching ENABLED")
     else:
@@ -512,80 +599,87 @@ def run_optimization_grid(
     n_dims = len(param_configs)
     shape = tuple(len(a) for a in axes)
 
-    results_flat = np.full(len(grid_points), np.nan)
-    details_flat = [None] * len(grid_points)
+    n_points = len(grid_points)
+    results_flat = np.full(n_points, np.nan)
+    details_flat = [None] * n_points
 
-    logger.info(f"[OPT] Starting grid sweep: {len(grid_points)} points, shape={shape}")
+    # Parallel sweep requires fork (COW data sharing); on spawn platforms
+    # (Windows) the dataset would be pickled per worker, so fall back.
+    n_workers = max(1, min((os.cpu_count() or 1) - 1, n_points, 8))
+    use_parallel = n_workers > 1 and "fork" in multiprocessing.get_all_start_methods()
 
-    for idx, point in enumerate(grid_points):
-        # Clone strategy definition and set parameter values
-        modified_def = copy.deepcopy(base_def)
-        for dim, val in enumerate(point):
-            path = param_configs[dim]["path"]
-            _set_nested_value(modified_def, path, val)
+    ctx = {
+        "grid_points": grid_points,
+        "base_def": base_def,
+        "param_configs": param_configs,
+        "opt_preconds": opt_preconds,
+        "qualifying_df": qualifying_df,
+        "precomputed_groups": precomputed_groups,
+        "backtest_params": backtest_params,
+        "metric_key": metric_key,
+        "is_risk_only": is_risk_only,
+    }
 
-        # If optimizing preconditions, we must re-evaluate them for this point
-        if opt_preconds:
-            point_preconditions = modified_def.get("postgap_preconditions", [])
-            from app.services.data_service import _evaluate_postgap_preconditions
-            point_qualifying_df = _evaluate_postgap_preconditions(qualifying_df, point_preconditions)
-            
-            valid_keys = set(zip(point_qualifying_df["date"].astype(str), point_qualifying_df["ticker"]))
-            point_groups = [g for g in precomputed_groups if (str(g[0][0])[:10], g[0][1]) in valid_keys]
-            n_groups_point = len(point_groups)
-        else:
-            point_qualifying_df = qualifying_df
-            point_groups = precomputed_groups
-            n_groups_point = n_groups
+    logger.info(
+        f"[OPT] Starting grid sweep: {n_points} points, shape={shape}, "
+        f"mode={f'parallel x{n_workers}' if use_parallel else 'sequential'}"
+    )
 
+    if use_parallel:
+        # Pre-warm the daily OHLC cache in the parent so forked children
+        # inherit it and never open DuckDB (connections don't survive fork).
         try:
-            bt_result = run_backtest(
-                qualifying_df=point_qualifying_df,
-                strategy_def=modified_def,
-                init_cash=backtest_params.get("init_cash", 10000),
-                risk_r=backtest_params.get("risk_r", 100),
-                risk_type=backtest_params.get("risk_type", "FIXED"),
-                size_by_sl=backtest_params.get("size_by_sl", False),
-                fees=backtest_params.get("fees", 0),
-                fee_type=backtest_params.get("fee_type", "PERCENT"),
-                slippage=backtest_params.get("slippage", 0),
-                market_sessions=backtest_params.get("market_sessions"),
-                custom_start_time=backtest_params.get("custom_start_time"),
-                custom_end_time=backtest_params.get("custom_end_time"),
-                locates_cost=backtest_params.get("locates_cost", 0),
-                look_ahead_prevention=backtest_params.get("look_ahead_prevention", False),
-                day_group_iter=iter(point_groups),
-                n_groups_hint=n_groups_point,
-                _signal_cache=signal_cache,
-            )
-            agg = bt_result.get("aggregate_metrics", {})
-            metric_val = agg.get(metric_key, 0)
-            results_flat[idx] = float(metric_val) if metric_val is not None else np.nan
-            details_flat[idx] = {
-                "sharpe": agg.get("avg_sharpe", 0),
-                "total_return": agg.get("total_return_pct", 0),
-                "max_drawdown": agg.get("max_drawdown_pct", 0),
-                "profit_factor": agg.get("avg_profit_factor", 0),
-                "win_rate": agg.get("win_rate_pct", 0),
-                "expectancy": agg.get("expectancy", 0),
-                "total_trades": agg.get("total_trades", 0),
-                "dd_return": agg.get("dd_return_ratio", 0),
-                "avg_r_ui": agg.get("avg_r_ui", 0),
-            }
+            from app.services.indicators import prefetch_daily_ohlc
+            prefetch_daily_ohlc(list(qualifying_df["ticker"].unique()))
         except Exception as e:
-            logger.warning(f"[OPT] Point {idx}/{len(grid_points)} failed: {e}")
-            results_flat[idx] = np.nan
-            details_flat[idx] = {}
+            logger.warning(f"[OPT] prefetch_daily_ohlc pre-warm failed: {e}")
 
-        if task_id:
-            prog = round(5.0 + ((idx + 1) / len(grid_points)) * 95.0, 2)
-            OPTIMIZATION_PROGRESS[task_id] = prog
-            if (idx + 1) % 5 == 0:
-                logger.info(f"[PROGRESS] {task_id}: {prog}%")
+        _GRID_CTX.update(ctx)
+        try:
+            chunk_size = max(1, math.ceil(n_points / (n_workers * 4)))
+            chunks = [
+                list(range(i, min(i + chunk_size, n_points)))
+                for i in range(0, n_points, chunk_size)
+            ]
+            completed = 0
+            mp_ctx = multiprocessing.get_context("fork")
+            with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as pool:
+                futures = {pool.submit(_run_grid_chunk, chunk): chunk for chunk in chunks}
+                for future in as_completed(futures):
+                    chunk = futures[future]
+                    try:
+                        for idx, metric_val, detail in future.result():
+                            results_flat[idx] = metric_val
+                            details_flat[idx] = detail
+                    except Exception as e:
+                        logger.error(f"[OPT] Chunk {chunk[0]}-{chunk[-1]} failed: {e}")
+                        for idx in chunk:
+                            results_flat[idx] = np.nan
+                            details_flat[idx] = {}
+                    completed += len(chunk)
+                    if task_id:
+                        prog = round(5.0 + (completed / n_points) * 95.0, 2)
+                        OPTIMIZATION_PROGRESS[task_id] = prog
+                    elapsed = round(time.time() - t0, 1)
+                    logger.info(f"[OPT] Progress: {completed}/{n_points} ({elapsed}s)")
+        finally:
+            _GRID_CTX.clear()
+    else:
+        signal_cache = {} if is_risk_only else None
+        for idx in range(n_points):
+            _, metric_val, detail = _run_grid_point(idx, ctx, signal_cache)
+            results_flat[idx] = metric_val
+            details_flat[idx] = detail
 
-        if (idx + 1) % 10 == 0:
-            elapsed = round(time.time() - t0, 1)
-            logger.info(f"[OPT] Progress: {idx+1}/{len(grid_points)} ({elapsed}s)")
+            if task_id:
+                prog = round(5.0 + ((idx + 1) / n_points) * 95.0, 2)
+                OPTIMIZATION_PROGRESS[task_id] = prog
+                if (idx + 1) % 5 == 0:
+                    logger.info(f"[PROGRESS] {task_id}: {prog}%")
+
+            if (idx + 1) % 10 == 0:
+                elapsed = round(time.time() - t0, 1)
+                logger.info(f"[OPT] Progress: {idx+1}/{n_points} ({elapsed}s)")
 
     # Reshape to grid
     results_grid = results_flat.reshape(shape)
