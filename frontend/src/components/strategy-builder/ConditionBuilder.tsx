@@ -155,6 +155,135 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.ATR]: "ATR",
 };
 
+interface TooltipContextType {
+    setActiveTooltip: (tooltip: { text: string; x: number; y: number; width: number; } | null) => void;
+    containerRef: React.RefObject<HTMLDivElement | null>;
+}
+const TooltipContext = React.createContext<TooltipContextType | null>(null);
+
+export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
+    [IndicatorType.BAR_CLOSE]: "Precio de cierre de la barra actual.",
+    [IndicatorType.BAR_OPEN]: "Precio de apertura de la barra actual.",
+    [IndicatorType.HIGH_BAR]: "Precio máximo de la barra actual.",
+    [IndicatorType.LOW_BAR]: "Precio mínimo de la barra actual.",
+    [IndicatorType.PM_OPEN]: "Apertura del Premarket (04:00).",
+    [IndicatorType.PM_HIGH]: "Máximo de la sesión de Premarket.",
+    [IndicatorType.PM_LOW]: "Mínimo de la sesión de Premarket.",
+    [IndicatorType.RTH_OPEN]: "Precio de apertura de la sesión ordinaria de mercado (RTH, 09:30).",
+    [IndicatorType.RTH_HIGH]: "Máximo de la sesión ordinaria de mercado (RTH).",
+    [IndicatorType.RTH_LOW]: "Mínimo de la sesión ordinaria de mercado (RTH).",
+    [IndicatorType.AM_OPEN]: "Apertura de la sesión After Market (16:00).",
+    [IndicatorType.PREVIOUS_MAX]: "Último Máximo desde la apertura de la sesión de referencia y la vela actual",
+    [IndicatorType.PREVIOUS_MIN]: "Último Mínimo desde la apertura de la sesión de referencia y la vela actual",
+    [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Minutos transcurridos desde el último máximo de la sesión.",
+    [IndicatorType.YESTERDAY_OPEN]: "Precio de apertura de ayer.",
+    [IndicatorType.YESTERDAY_CLOSE]: "Precio de cierre de ayer.",
+    [IndicatorType.YESTERDAY_HIGH]: "Precio máximo de ayer.",
+    [IndicatorType.YESTERDAY_LOW]: "Precio mínimo de ayer.",
+    [IndicatorType.HIGH_X_DAYS]: "El máximo más alto de los últimos X días (diario).",
+    [IndicatorType.LOW_X_DAYS]: "El mínimo más bajo de los últimos X días (diario).",
+    
+    // Behaviour & Patterns
+    [IndicatorType.CONSEC_HIGHER_HIGHS]: "Número de máximos consecutivos más altos (velas consecutivas subiendo).",
+    [IndicatorType.CONSEC_LOWER_LOWS]: "Número de mínimos consecutivos más bajos.",
+    [IndicatorType.CONSEC_LOWER_HIGHS]: "Número de velas consecutivas con máximos más bajos.",
+    [IndicatorType.CONSEC_HIGHER_LOWS]: "Número de velas consecutivas con mínimos más altos.",
+    [IndicatorType.CONSEC_GREEN_CANDLES]: "Número de velas consecutivas alcistas (cierre > apertura).",
+    [IndicatorType.CONSEC_RED_CANDLES]: "Número de velas consecutivas bajistas (cierre < apertura).",
+    [IndicatorType.CANDLE_RANGE_PCT]: "Rango de la vela actual en porcentaje (High vs Low).",
+    [IndicatorType.RANGE_OF_TIME]: "Rango de precio entre dos momentos específicos del día.",
+    [IndicatorType.OPENING_RANGE_PLUS]: "Rompimiento alcista del rango de apertura (ej. los primeros 5/15/30 mins).",
+    [IndicatorType.OPENING_RANGE_MINUS]: "Rompimiento bajista del rango de apertura.",
+    [IndicatorType.OPENING_RANGE_AM_PLUS]: "Rompimiento alcista en After Market.",
+    [IndicatorType.OPENING_RANGE_AM_MINUS]: "Rompimiento bajista en After Market.",
+    [IndicatorType.TRIANGLE_ASCENDING]: "Patrón de triángulo ascendente.",
+    [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
+    [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
+    
+    // Technical Indicators
+    [IndicatorType.SMA]: "Media Móvil Simple.",
+    [IndicatorType.EMA]: "Media Móvil Exponencial.",
+    [IndicatorType.VWAP]: "Precio Medio Ponderado por Volumen de la sesión.",
+    [IndicatorType.DONCHIAN]: "Canales de Donchian.",
+    [IndicatorType.BOLLINGER_BANDS]: "Bandas de Bollinger.",
+    [IndicatorType.ACCUMULATED_VOLUME]: "Volumen total acumulado desde el inicio de la sesión en Premarket hasta la vela actual",
+    [IndicatorType.YESTERDAY_VOLUME]: "Volumen total registrado el día de ayer.",
+    [IndicatorType.RVOL]: "Volumen relativo de la barra respecto a su hora histórica.",
+    [IndicatorType.VOLUME]: "Volumen individual de la barra actual.",
+    [IndicatorType.ATR]: "Rango Medio Verdadero."
+};
+
+const TooltipIcon = ({ indicatorName }: { indicatorName: IndicatorType }) => {
+    const context = React.useContext(TooltipContext);
+    if (!context) return null;
+
+    const { setActiveTooltip, containerRef } = context;
+    const description = INDICATOR_DESCRIPTIONS[indicatorName];
+    if (!description) return null;
+
+    return (
+        <span
+            onMouseEnter={(e) => {
+                if (!containerRef.current) return;
+                const containerRect = containerRef.current.getBoundingClientRect();
+                const rect = e.currentTarget.getBoundingClientRect();
+                
+                // Estimar el ancho del tooltip basado en el largo del texto
+                const estimatedWidth = Math.min(Math.max(description.length * 6.5 + 24, 100), 240);
+                const halfWidth = estimatedWidth / 2;
+                
+                let tooltipX = rect.left - containerRect.left + rect.width / 2;
+                const tooltipY = rect.top - containerRect.top - 6;
+                
+                const minMargin = 16;
+                if (tooltipX - halfWidth < minMargin) {
+                    tooltipX = minMargin + halfWidth;
+                }
+                
+                const maxRight = containerRect.width - minMargin;
+                if (tooltipX + halfWidth > maxRight) {
+                    tooltipX = maxRight - halfWidth;
+                }
+                
+                setActiveTooltip({
+                    text: description,
+                    x: tooltipX,
+                    y: tooltipY,
+                    width: estimatedWidth,
+                });
+                e.currentTarget.style.color = "var(--color-ec-text-primary)";
+                e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
+                e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
+            }}
+            onMouseLeave={(e) => {
+                setActiveTooltip(null);
+                e.currentTarget.style.color = "var(--color-ec-text-muted)";
+                e.currentTarget.style.borderColor = "var(--color-ec-border)";
+                e.currentTarget.style.backgroundColor = "var(--color-ec-bg-elevated)";
+            }}
+            style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 14,
+                height: 14,
+                borderRadius: "50%",
+                backgroundColor: "var(--color-ec-bg-elevated)",
+                border: "0.5px solid var(--color-ec-border)",
+                color: "var(--color-ec-text-muted)",
+                fontSize: 9,
+                fontWeight: 700,
+                cursor: "help",
+                flexShrink: 0,
+                userSelect: "none",
+                transition: "all 150ms ease",
+            }}
+        >
+            ?
+        </span>
+    );
+};
+
 const FIXED_VALUE_KEY = "__FIXED_VALUE__";
 
 export const getInitialTargetForSource = (sourceName: IndicatorType): IndicatorConfig | number => {
@@ -610,16 +739,19 @@ export const SourceIndicatorInput = ({
 }) => {
     return (
         <div className="flex flex-col gap-1.5 items-stretch bg-muted/5 border border-border/20 rounded p-1.5 w-full md:w-auto min-w-[200px]">
-            <IndicatorSelector
-                value={value.name}
-                exclude={exclude}
-                allowedTargets={allowedTargets}
-                onChange={(nameStr) => {
-                    const name = nameStr as IndicatorType;
-                    const defaultParams = getDefaultParamsForIndicator(name);
-                    onChange({ name, ...defaultParams });
-                }}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <IndicatorSelector
+                    value={value.name}
+                    exclude={exclude}
+                    allowedTargets={allowedTargets}
+                    onChange={(nameStr) => {
+                        const name = nameStr as IndicatorType;
+                        const defaultParams = getDefaultParamsForIndicator(name);
+                        onChange({ name, ...defaultParams });
+                    }}
+                />
+                <TooltipIcon indicatorName={value.name} />
+            </div>
             <IndicatorParams value={value} onChange={onChange} hideOffset={hideOffset} />
         </div>
     );
@@ -704,20 +836,23 @@ export const TargetInput = ({
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
-            <IndicatorSelector
-                isTarget
-                value={selectedKey}
-                allowedTargets={allowedTargets}
-                onChange={(key) => {
-                    if (key === FIXED_VALUE_KEY) {
-                        onChange(0);
-                    } else {
-                        const name = key as IndicatorType;
-                        const defaultParams = getDefaultParamsForIndicator(name);
-                        onChange({ name, ...defaultParams });
-                    }
-                }}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <IndicatorSelector
+                    isTarget
+                    value={selectedKey}
+                    allowedTargets={allowedTargets}
+                    onChange={(key) => {
+                        if (key === FIXED_VALUE_KEY) {
+                            onChange(0);
+                        } else {
+                            const name = key as IndicatorType;
+                            const defaultParams = getDefaultParamsForIndicator(name);
+                            onChange({ name, ...defaultParams });
+                        }
+                    }}
+                />
+                {!isFixed && <TooltipIcon indicatorName={selectedKey as IndicatorType} />}
+            </div>
 
             {!isFixed && (
                 <IndicatorParams
@@ -2002,60 +2137,102 @@ export const LogicBuilder = ({
 }) => {
     const headerAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
 
+    const [activeTooltip, setActiveTooltip] = React.useState<{
+        text: string;
+        x: number;
+        y: number;
+        width: number;
+    } | null>(null);
+
+    const containerRef = React.useRef<HTMLDivElement>(null);
+
     return (
-        <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 16,
-            padding: '20px 0',
-            backgroundColor: 'transparent',
-            borderBottom: '0.5px solid var(--color-ec-border)',
-        }}>
-            {/* Header with Title and Global Timeframe */}
-            <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                paddingBottom: 4,
-                marginBottom: 4,
-            }}>
-                <div className="flex flex-col gap-1">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{
-                            width: 3,
-                            height: 14,
-                            borderRadius: 1,
-                            backgroundColor: headerAccentColor,
-                        }} />
-                        <h2 style={{
+        <TooltipContext.Provider value={{ setActiveTooltip, containerRef }}>
+            <div 
+                ref={containerRef}
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                    padding: '20px 0',
+                    backgroundColor: 'transparent',
+                    borderBottom: '0.5px solid var(--color-ec-border)',
+                    position: 'relative',
+                }}
+            >
+                {/* Header with Title and Global Timeframe */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingBottom: 4,
+                    marginBottom: 4,
+                }}>
+                    <div className="flex flex-col gap-1">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: headerAccentColor,
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>{title}</h2>
+                        </div>
+                        <span style={{
                             fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 13,
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            color: 'var(--color-ec-text-high)',
-                            margin: 0,
-                        }}>{title}</h2>
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Define logic conditions and timeframe execution</span>
                     </div>
-                    <span style={{
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 10,
-                        fontWeight: 400,
-                        color: 'var(--color-ec-text-muted)',
-                        marginTop: 2,
-                    }}>Define logic conditions and timeframe execution</span>
                 </div>
+
+                {/* Root Condition Group */}
+                <GroupDisplay
+                    group={rootCondition}
+                    onChange={onConditionChange}
+                    accentColor={accentColor}
+                    parentTimeframe={timeframe}
+                />
+
+                {children}
+
+                {activeTooltip && (
+                    <div
+                        style={{
+                            position: "absolute",
+                            top: activeTooltip.y,
+                            left: activeTooltip.x,
+                            transform: "translate(-50%, -100%)",
+                            backgroundColor: "var(--color-ec-bg-sidebar)",
+                            color: "var(--color-ec-text-primary)",
+                            border: "0.5px solid var(--color-ec-border)",
+                            borderRadius: 6,
+                            padding: "8px 12px",
+                            fontSize: 10,
+                            fontStyle: "italic",
+                            lineHeight: 1.4,
+                            width: activeTooltip.width,
+                            zIndex: 9999,
+                            pointerEvents: "none",
+                            boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
+                            fontFamily: "var(--color-ec-sans)",
+                            transition: "opacity 150ms ease",
+                        }}
+                    >
+                        {activeTooltip.text}
+                    </div>
+                )}
             </div>
-
-            {/* Root Condition Group */}
-            <GroupDisplay
-                group={rootCondition}
-                onChange={onConditionChange}
-                accentColor={accentColor}
-                parentTimeframe={timeframe}
-            />
-
-            {children}
-        </div>
+        </TooltipContext.Provider>
     );
 };
