@@ -153,18 +153,11 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
     intraday pre-cache. Raises on failure so the caller can mark the dataset
     creation as errored.
     """
-    pairs_df = pd.DataFrame()
-    date_from = ""
-    date_to = ""
-    lock = get_user_db_lock()
-    with lock:
-        con = get_user_db_connection()
-        try:
-            from app.services.query_service import build_screener_query
+    from app.services.query_service import build_screener_query
 
-            _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
+    _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
 
-            subquery_lagged = """
+    subquery_lagged = """
                 (
                     SELECT *,
                            LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_1,
@@ -185,26 +178,42 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
                     FROM daily_metrics
                 ) dm_lagged
                 """
-            insert_sql = f"""
-                INSERT INTO dataset_pairs (dataset_id, ticker, date)
-                SELECT ? as dataset_id, ticker, CAST(timestamp AS DATE) as date
-                FROM {subquery_lagged}
-                WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
-            """
+    select_sql = f"""
+        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date
+        FROM {subquery_lagged}
+        WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
+    """
 
-            con.execute(insert_sql, [query_id] + params)
-            print(f"Saved combinations for dataset {query_id}")
+    # Heavy phase WITHOUT the global lock: a read-only scan over daily_metrics
+    # (GCS reads, can take minutes). Holding the lock here froze /data/datasets
+    # and /precache-status — the picker and progress bar hung until done.
+    con = get_user_db_connection()
+    try:
+        pairs_df = con.execute(select_sql, params).fetchdf()
+    finally:
+        con.close()
 
-            # Fetch pairs in-memory BEFORE closing the connection (for pre-cache)
-            pairs_df = con.execute(
-                "SELECT ticker, CAST(date AS VARCHAR) as date FROM dataset_pairs WHERE dataset_id = ?",
-                [query_id]
-            ).fetchdf()
-            if not pairs_df.empty:
-                date_from = pairs_df['date'].min()
-                date_to = pairs_df['date'].max()
-        finally:
-            con.close()
+    date_from = ""
+    date_to = ""
+    if not pairs_df.empty:
+        date_from = pairs_df['date'].min()
+        date_to = pairs_df['date'].max()
+
+    # Fast phase WITH the lock: bulk-insert the precomputed pairs (sub-second)
+    if not pairs_df.empty:
+        lock = get_user_db_lock()
+        with lock:
+            con = get_user_db_connection()
+            try:
+                con.register("pairs_tmp", pairs_df)
+                con.execute(
+                    "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
+                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp",
+                    [query_id],
+                )
+            finally:
+                con.close()
+    print(f"Saved combinations for dataset {query_id}: {len(pairs_df)} pairs")
 
     return pairs_df, date_from, date_to
 
