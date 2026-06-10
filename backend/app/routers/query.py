@@ -145,36 +145,26 @@ def get_precache_status(dataset_id: str):
         "total": total_pairs
     }
 
-@router.post("/", response_model=SavedQuery)
-def create_saved_query(query: SavedQuery):
+def _populate_dataset_pairs(query_id: str, filters: dict):
+    """Heavy phase of dataset creation: compute and persist ticker-day pairs.
+
+    Runs the screener query with LEAD windows over daily_metrics (GCS reads in
+    prod, can take minutes). Returns (pairs_df, date_from, date_to) for the
+    intraday pre-cache. Raises on failure so the caller can mark the dataset
+    creation as errored.
+    """
+    pairs_df = pd.DataFrame()
+    date_from = ""
+    date_to = ""
     lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
         try:
-            query_id = str(uuid4())
-            
-            # 1. Save main query definition (legacy metadata)
-            con.execute(
-                "INSERT INTO saved_queries (id, name, filters) VALUES (?, ?, ?)",
-                (query_id, query.name, json.dumps(query.filters))
-            )
-            
-            # 2. Save to datasets metadata table
-            con.execute(
-                "INSERT INTO datasets (id, name) VALUES (?, ?)",
-                (query_id, query.name)
-            )
-            
-            # 3. Handle ticker-day combinations persistence
-            pairs_df = pd.DataFrame()
-            date_from = ""
-            date_to = ""
-            try:
-                from app.services.query_service import build_screener_query
-                
-                _, params, _, _, _, where_m_stats = build_screener_query(query.filters, limit=100000)
-                
-                subquery_lagged = """
+            from app.services.query_service import build_screener_query
+
+            _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
+
+            subquery_lagged = """
                 (
                     SELECT *,
                            LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_1,
@@ -195,50 +185,76 @@ def create_saved_query(query: SavedQuery):
                     FROM daily_metrics
                 ) dm_lagged
                 """
-                insert_sql = f"""
-                    INSERT INTO dataset_pairs (dataset_id, ticker, date)
-                    SELECT ? as dataset_id, ticker, CAST(timestamp AS DATE) as date
-                    FROM {subquery_lagged}
-                    WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
-                """
-                
-                con.execute(insert_sql, [query_id] + params)
-                print(f"Saved combinations for dataset {query_id}")
-                
-                # Fetch pairs in-memory BEFORE closing the connection (for pre-cache)
-                pairs_df = con.execute(
-                    "SELECT ticker, CAST(date AS VARCHAR) as date FROM dataset_pairs WHERE dataset_id = ?",
-                    [query_id]
-                ).fetchdf()
-                if not pairs_df.empty:
-                    date_from = pairs_df['date'].min()
-                    date_to = pairs_df['date'].max()
-                else:
-                    date_from = ""
-                    date_to = ""
-                
-            except Exception as e:
-                print(f"Warning: Could not save dataset combinations: {e}")
-            
+            insert_sql = f"""
+                INSERT INTO dataset_pairs (dataset_id, ticker, date)
+                SELECT ? as dataset_id, ticker, CAST(timestamp AS DATE) as date
+                FROM {subquery_lagged}
+                WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
+            """
+
+            con.execute(insert_sql, [query_id] + params)
+            print(f"Saved combinations for dataset {query_id}")
+
+            # Fetch pairs in-memory BEFORE closing the connection (for pre-cache)
+            pairs_df = con.execute(
+                "SELECT ticker, CAST(date AS VARCHAR) as date FROM dataset_pairs WHERE dataset_id = ?",
+                [query_id]
+            ).fetchdf()
+            if not pairs_df.empty:
+                date_from = pairs_df['date'].min()
+                date_to = pairs_df['date'].max()
         finally:
             con.close()
-    
-    # Launch intraday pre-cache in background thread (receives data in memory)
-    threading.Thread(
-        target=_precache_dataset_intraday,
-        args=(pairs_df, date_from, date_to, query_id),
-        daemon=True
-    ).start()
-    print(f"[PRECACHE] Background pre-cache started for dataset {query_id}")
-    
-    # Upload users.duckdb to GCS synchronously (ensure persistence before response)
-    from app.gcs_sync import upload_user_db
-    try:
-        upload_user_db()
-        print(f"[GCS] users.duckdb uploaded after dataset save")
-    except Exception as e:
-        print(f"[WARN] GCS upload failed: {e}")
-    
+
+    return pairs_df, date_from, date_to
+
+
+@router.post("/", response_model=SavedQuery)
+def create_saved_query(query: SavedQuery):
+    query_id = str(uuid4())
+
+    # Phase A — synchronous and fast: register the dataset so it is listable
+    # immediately, then return. The heavy pair computation must not block the
+    # HTTP response (in prod it exceeded the frontend timeout and caused
+    # duplicate saves).
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            con.execute(
+                "INSERT INTO saved_queries (id, name, filters) VALUES (?, ?, ?)",
+                (query_id, query.name, json.dumps(query.filters))
+            )
+            con.execute(
+                "INSERT INTO datasets (id, name) VALUES (?, ?)",
+                (query_id, query.name)
+            )
+        finally:
+            con.close()
+
+    # Outside the lock: _write_precache_state takes the same non-reentrant lock
+    _write_precache_state(query_id, "pending", 0.0)
+
+    # Phase B — background: dataset_pairs, GCS persistence, intraday pre-cache
+    def _background_work():
+        try:
+            pairs_df, date_from, date_to = _populate_dataset_pairs(query_id, query.filters)
+
+            from app.gcs_sync import upload_user_db
+            try:
+                upload_user_db()
+                print(f"[GCS] users.duckdb uploaded after dataset save")
+            except Exception as e:
+                print(f"[WARN] GCS upload failed: {e}")
+
+            _precache_dataset_intraday(pairs_df, date_from, date_to, query_id)
+        except Exception as e:
+            print(f"[ERROR] Background dataset creation failed for {query_id}: {e}")
+            _write_precache_state(query_id, "error", 0.0)
+
+    threading.Thread(target=_background_work, daemon=False).start()
+    print(f"[ASYNC] Dataset {query_id} registered; pairs + pre-cache running in background")
+
     return {**query.dict(), "id": query_id}
 
 def _parse_filters(raw):
