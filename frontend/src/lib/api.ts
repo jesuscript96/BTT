@@ -178,6 +178,7 @@ export function createQuery(
   return apiRequest<SavedQuery>("/queries/", {
     method: "POST",
     body: JSON.stringify(data),
+    timeoutMs: 300_000, // dataset_pairs insert + GCS upload can take minutes in prod
   });
 }
 

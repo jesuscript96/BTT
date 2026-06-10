@@ -145,36 +145,19 @@ def get_precache_status(dataset_id: str):
         "total": total_pairs
     }
 
-@router.post("/", response_model=SavedQuery)
-def create_saved_query(query: SavedQuery):
-    lock = get_user_db_lock()
-    with lock:
-        con = get_user_db_connection()
-        try:
-            query_id = str(uuid4())
-            
-            # 1. Save main query definition (legacy metadata)
-            con.execute(
-                "INSERT INTO saved_queries (id, name, filters) VALUES (?, ?, ?)",
-                (query_id, query.name, json.dumps(query.filters))
-            )
-            
-            # 2. Save to datasets metadata table
-            con.execute(
-                "INSERT INTO datasets (id, name) VALUES (?, ?)",
-                (query_id, query.name)
-            )
-            
-            # 3. Handle ticker-day combinations persistence
-            pairs_df = pd.DataFrame()
-            date_from = ""
-            date_to = ""
-            try:
-                from app.services.query_service import build_screener_query
-                
-                _, params, _, _, _, where_m_stats = build_screener_query(query.filters, limit=100000)
-                
-                subquery_lagged = """
+def _populate_dataset_pairs(query_id: str, filters: dict):
+    """Heavy phase of dataset creation: compute and persist ticker-day pairs.
+
+    Runs the screener query with LEAD windows over daily_metrics (GCS reads in
+    prod, can take minutes). Returns (pairs_df, date_from, date_to) for the
+    intraday pre-cache. Raises on failure so the caller can mark the dataset
+    creation as errored.
+    """
+    from app.services.query_service import build_screener_query
+
+    _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
+
+    subquery_lagged = """
                 (
                     SELECT *,
                            LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_1,
@@ -195,50 +178,92 @@ def create_saved_query(query: SavedQuery):
                     FROM daily_metrics
                 ) dm_lagged
                 """
-                insert_sql = f"""
-                    INSERT INTO dataset_pairs (dataset_id, ticker, date)
-                    SELECT ? as dataset_id, ticker, CAST(timestamp AS DATE) as date
-                    FROM {subquery_lagged}
-                    WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
-                """
-                
-                con.execute(insert_sql, [query_id] + params)
-                print(f"Saved combinations for dataset {query_id}")
-                
-                # Fetch pairs in-memory BEFORE closing the connection (for pre-cache)
-                pairs_df = con.execute(
-                    "SELECT ticker, CAST(date AS VARCHAR) as date FROM dataset_pairs WHERE dataset_id = ?",
-                    [query_id]
-                ).fetchdf()
-                if not pairs_df.empty:
-                    date_from = pairs_df['date'].min()
-                    date_to = pairs_df['date'].max()
-                else:
-                    date_from = ""
-                    date_to = ""
-                
-            except Exception as e:
-                print(f"Warning: Could not save dataset combinations: {e}")
-            
+    select_sql = f"""
+        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date
+        FROM {subquery_lagged}
+        WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
+    """
+
+    # Heavy phase WITHOUT the global lock: a read-only scan over daily_metrics
+    # (GCS reads, can take minutes). Holding the lock here froze /data/datasets
+    # and /precache-status — the picker and progress bar hung until done.
+    con = get_user_db_connection()
+    try:
+        pairs_df = con.execute(select_sql, params).fetchdf()
+    finally:
+        con.close()
+
+    date_from = ""
+    date_to = ""
+    if not pairs_df.empty:
+        date_from = pairs_df['date'].min()
+        date_to = pairs_df['date'].max()
+
+    # Fast phase WITH the lock: bulk-insert the precomputed pairs (sub-second)
+    if not pairs_df.empty:
+        lock = get_user_db_lock()
+        with lock:
+            con = get_user_db_connection()
+            try:
+                con.register("pairs_tmp", pairs_df)
+                con.execute(
+                    "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
+                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp",
+                    [query_id],
+                )
+            finally:
+                con.close()
+    print(f"Saved combinations for dataset {query_id}: {len(pairs_df)} pairs")
+
+    return pairs_df, date_from, date_to
+
+
+@router.post("/", response_model=SavedQuery)
+def create_saved_query(query: SavedQuery):
+    query_id = str(uuid4())
+
+    # Phase A — synchronous and fast: register the dataset so it is listable
+    # immediately, then return. The heavy pair computation must not block the
+    # HTTP response (in prod it exceeded the frontend timeout and caused
+    # duplicate saves).
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            con.execute(
+                "INSERT INTO saved_queries (id, name, filters) VALUES (?, ?, ?)",
+                (query_id, query.name, json.dumps(query.filters))
+            )
+            con.execute(
+                "INSERT INTO datasets (id, name) VALUES (?, ?)",
+                (query_id, query.name)
+            )
         finally:
             con.close()
-    
-    # Launch intraday pre-cache in background thread (receives data in memory)
-    threading.Thread(
-        target=_precache_dataset_intraday,
-        args=(pairs_df, date_from, date_to, query_id),
-        daemon=True
-    ).start()
-    print(f"[PRECACHE] Background pre-cache started for dataset {query_id}")
-    
-    # Upload users.duckdb to GCS synchronously (ensure persistence before response)
-    from app.gcs_sync import upload_user_db
-    try:
-        upload_user_db()
-        print(f"[GCS] users.duckdb uploaded after dataset save")
-    except Exception as e:
-        print(f"[WARN] GCS upload failed: {e}")
-    
+
+    # Outside the lock: _write_precache_state takes the same non-reentrant lock
+    _write_precache_state(query_id, "pending", 0.0)
+
+    # Phase B — background: dataset_pairs, GCS persistence, intraday pre-cache
+    def _background_work():
+        try:
+            pairs_df, date_from, date_to = _populate_dataset_pairs(query_id, query.filters)
+
+            from app.gcs_sync import upload_user_db
+            try:
+                upload_user_db()
+                print(f"[GCS] users.duckdb uploaded after dataset save")
+            except Exception as e:
+                print(f"[WARN] GCS upload failed: {e}")
+
+            _precache_dataset_intraday(pairs_df, date_from, date_to, query_id)
+        except Exception as e:
+            print(f"[ERROR] Background dataset creation failed for {query_id}: {e}")
+            _write_precache_state(query_id, "error", 0.0)
+
+    threading.Thread(target=_background_work, daemon=False).start()
+    print(f"[ASYNC] Dataset {query_id} registered; pairs + pre-cache running in background")
+
     return {**query.dict(), "id": query_id}
 
 def _parse_filters(raw):
@@ -260,10 +285,11 @@ def list_saved_queries():
     con = get_user_db_connection()
     try:
         try:
+            # massive.* is never attached on get_user_db_connection() connections,
+            # so the old UNION with massive.main.saved_queries always threw a
+            # Catalog Error and forced the fallback. users.duckdb is the only source.
             rows = con.execute("""
-                SELECT id, name, filters, created_at, updated_at FROM saved_queries 
-                UNION ALL 
-                SELECT id, name, filters, created_at, updated_at FROM massive.main.saved_queries
+                SELECT id, name, filters, created_at, updated_at FROM users.saved_queries
                 ORDER BY created_at DESC
             """).fetchall()
         except Exception as e:
@@ -312,6 +338,15 @@ def delete_saved_query(query_id: str):
             con.execute("DELETE FROM datasets WHERE id = ?", (query_id,))
             con.execute("DELETE FROM dataset_pairs WHERE dataset_id = ?", (query_id,))
             con.execute("DELETE FROM precache_state WHERE dataset_id = ?", (query_id,))
-            return {"status": "success"}
         finally:
             con.close()
+
+    # Persist the deletion: without this, a container restart re-downloads
+    # users.duckdb from GCS and resurrects the deleted dataset
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+    except Exception as e:
+        print(f"[WARN] GCS upload after delete failed: {e}")
+
+    return {"status": "success"}
