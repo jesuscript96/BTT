@@ -290,7 +290,7 @@ class RiskManagement(BaseModel):
 class PostGapPrecondition(BaseModel):
     id: str
     day: Literal['gap_day', 'gap_1_day']
-    metric: Literal['volume', 'close_vs_open', 'close_vs_high_low', 'close_vs_pm_high', 'close_vs_vwap', 'close_vs_sma', 'candle_range_pct']
+    metric: Literal['volume', 'close_vs_open', 'close_vs_high_low', 'close_vs_pm_high', 'close_vs_pm_low', 'close_vs_high', 'close_vs_low', 'close_vs_vwap', 'close_vs_sma', 'candle_range_pct', 'candle_range_ratio_gap_1_vs_gap']
     operator: Literal['>', '<', '> High', '< Low']
     value: Optional[float] = None
     sma_period: Optional[int] = None

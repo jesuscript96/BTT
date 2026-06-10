@@ -570,19 +570,29 @@ export default function TrunkPage() {
     
     if (pre.metric === 'volume') {
       metricLabel = 'Volumen Total';
-      valLabel = `${pre.operator} ${(pre.value ?? 0).toLocaleString()}`;
+      const volVal = pre.value ?? 0;
+      valLabel = `${pre.operator} ${volVal >= 1000000 ? `${volVal / 1000000}M` : volVal.toLocaleString()}`;
     } else if (pre.metric === 'close_vs_open') {
       valLabel = `${pre.operator} Apertura`;
     } else if (pre.metric === 'close_vs_high_low') {
       valLabel = pre.operator === '> High' ? '> High Previo' : '< Low Previo';
+    } else if (pre.metric === 'close_vs_high') {
+      valLabel = `${pre.operator} High`;
+    } else if (pre.metric === 'close_vs_low') {
+      valLabel = `${pre.operator} Low`;
     } else if (pre.metric === 'close_vs_pm_high') {
       valLabel = `${pre.operator} PM High`;
+    } else if (pre.metric === 'close_vs_pm_low') {
+      valLabel = `${pre.operator} PM Low`;
     } else if (pre.metric === 'close_vs_vwap') {
       valLabel = `${pre.operator} VWAP`;
     } else if (pre.metric === 'close_vs_sma') {
       valLabel = `${pre.operator} SMA ${pre.sma_period || 20}`;
     } else if (pre.metric === 'candle_range_pct') {
       metricLabel = 'Rango de Vela %';
+      valLabel = `${pre.operator} ${pre.value}%`;
+    } else if (pre.metric === 'candle_range_ratio_gap_1_vs_gap') {
+      metricLabel = pre.day === 'gap_1_day' ? 'Rango vela Gap+1 vs Gap' : 'Rango vela vs Previo';
       valLabel = `${pre.operator} ${pre.value}%`;
     }
     return `${dayLabel} • ${metricLabel}: ${valLabel}`;

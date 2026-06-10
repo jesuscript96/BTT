@@ -36,6 +36,8 @@ def simulate(
     partial_take_profits: list | None = None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
+    hs_operator: str | None = ">=",
+    hs_offset_pct: float | None = 0.0,
     hods: np.ndarray | None = None,
     lods: np.ndarray | None = None,
     pm_highs: np.ndarray | None = None,
@@ -445,7 +447,13 @@ def simulate(
                         val_struct = prev_highs[i] if prev_highs[i] > 0 else val_struct
                     elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
                         val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
-                    stop_loss_price = val_struct
+                    
+                    # Calculate sl_offset
+                    offset_pct = float(hs_offset_pct) if hs_offset_pct is not None else 0.0
+                    offset_op = hs_operator or ">="
+                    sign = 1.0 if offset_op in (">", ">=") else -1.0
+                    sl_offset = sign * offset_pct / 100.0
+                    stop_loss_price = val_struct * (1.0 + sl_offset)
                 elif sl_stop is not None and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 

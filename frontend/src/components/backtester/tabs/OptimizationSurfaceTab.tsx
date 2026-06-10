@@ -151,11 +151,22 @@ export default function OptimizationSurfaceTab({
           if ("status" in res && res.status === "running") {
             setProgress(res.progress);
             setVisualProgress((prev) => {
-              if (res.progress > 0) {
-                return res.progress;
-              } else {
+              if (res.progress <= 0) {
                 // If backend is still initializing/fetching dataset, creep up slowly to 8% to show activity
                 return Math.min(8, prev + 1);
+              } else if (res.progress <= 1) {
+                // Phase 1: Loading dataset (usually stays at 1%). Creep up to 15%
+                return Math.min(15, prev + 1.5);
+              } else if (res.progress <= 2) {
+                // Phase 2: Init database / cache (usually stays at 2%). Creep up to 25%
+                return Math.min(25, Math.max(prev, 15) + 1.2);
+              } else if (res.progress <= 5) {
+                // Phase 3: Loading intraday (usually stays at 2% to 5%). Creep up to 35%
+                return Math.min(35, Math.max(prev, 25) + 1.0);
+              } else {
+                // Backtests running (5% to 100%). Scale progress to start from 35% to 100%
+                const scaled = 35 + (65 * (res.progress - 5)) / 95;
+                return Math.max(prev, scaled);
               }
             });
           } else {
@@ -291,7 +302,7 @@ export default function OptimizationSurfaceTab({
     return null;
   }, [result, mode, metric, isDarkMode]);
 
-  const pa = result?.plateau_analysis;
+  const pa = result?.plateau_analyses?.[metric] || result?.plateau_analysis;
 
   if (!strategyId || !datasetId) {
     return (
@@ -455,7 +466,7 @@ export default function OptimizationSurfaceTab({
             <div className="space-y-3">
               <div className="flex justify-between items-end mb-1">
                 <p className="text-[11px] font-mono text-[var(--color-ec-text-primary)]">
-                  optimizing...
+                  {progress <= 5 ? "Cargando dataset..." : "Optimizando..."}
                 </p>
                 <span className="text-[11px] font-mono text-[var(--color-ec-text-high)] font-bold">
                   {Math.round(visualProgress)}%
@@ -468,7 +479,9 @@ export default function OptimizationSurfaceTab({
                 />
               </div>
               <p className="text-[9px] text-[var(--color-ec-text-muted)] uppercase tracking-wider font-mono">
-                {gridSteps * gridSteps} backtests
+                {progress <= 5
+                  ? "Inicializando datos de mercado..."
+                  : `Procesando: ${Math.min(gridSteps * gridSteps, Math.round(((progress - 5) / 95) * (gridSteps * gridSteps)))} / ${gridSteps * gridSteps} backtests`}
               </p>
             </div>
           </div>

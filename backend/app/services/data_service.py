@@ -343,6 +343,7 @@ def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd
             low_col = "rth_low"
             volume_col = "rth_volume"
             pm_high_col = "pm_high"
+            pm_low_col = "pm_low"
             lag_high_col = "lag_rth_high_1"
             lag_low_col = "lag_rth_low_1"
             sma_col = f"sma_{sma_period}" if sma_period else None
@@ -353,12 +354,13 @@ def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd
             low_col = "lead_rth_low_1"
             volume_col = "lead_rth_volume_1"
             pm_high_col = "lead_pm_high_1"
+            pm_low_col = "lead_pm_low_1"
             lag_high_col = "rth_high" # T is the previous day of T+1
             lag_low_col = "rth_low"   # T is the previous day of T+1
             sma_col = f"lead_sma_{sma_period}_1" if sma_period else None
 
         # Check if required columns exist
-        needed_cols = [close_col, open_col, high_col, low_col, volume_col, pm_high_col]
+        needed_cols = [close_col, open_col, high_col, low_col, volume_col, pm_high_col, pm_low_col]
         if lag_high_col: needed_cols.append(lag_high_col)
         if lag_low_col: needed_cols.append(lag_low_col)
         if sma_col: needed_cols.append(sma_col)
@@ -385,11 +387,26 @@ def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd
                 cond_mask = df[close_col] > df[lag_high_col]
             elif op == "< Low":
                 cond_mask = df[close_col] < df[lag_low_col]
+        elif metric == "close_vs_high":
+            if op == ">":
+                cond_mask = df[close_col] > df[high_col]
+            else:
+                cond_mask = df[close_col] < df[high_col]
+        elif metric == "close_vs_low":
+            if op == ">":
+                cond_mask = df[close_col] > df[low_col]
+            else:
+                cond_mask = df[close_col] < df[low_col]
         elif metric == "close_vs_pm_high":
             if op == ">":
                 cond_mask = df[close_col] > df[pm_high_col]
             else:
                 cond_mask = df[close_col] < df[pm_high_col]
+        elif metric == "close_vs_pm_low":
+            if op == ">":
+                cond_mask = df[close_col] > df[pm_low_col]
+            else:
+                cond_mask = df[close_col] < df[pm_low_col]
         elif metric == "close_vs_vwap":
             vwap = (df[high_col] + df[low_col] + df[close_col]) / 3.0
             if op == ">":
@@ -409,6 +426,15 @@ def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd
                 cond_mask = range_pct > val
             else:
                 cond_mask = range_pct < val
+        elif metric == "candle_range_ratio_gap_1_vs_gap":
+            # (High_current - Low_current) / (High_prev - Low_prev) * 100.0
+            range_current = df[high_col] - df[low_col]
+            range_prev = df[lag_high_col] - df[lag_low_col]
+            ratio = (range_current / range_prev.replace(0, np.nan)) * 100.0
+            if op == ">":
+                cond_mask = ratio > val
+            else:
+                cond_mask = ratio < val
 
         mask = mask & cond_mask
 
