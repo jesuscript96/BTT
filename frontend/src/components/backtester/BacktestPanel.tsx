@@ -1058,7 +1058,7 @@ export default function BacktestPanel({
                 fontSize: 11,
                 fontWeight: 500,
                 color: 'var(--color-ec-text-secondary)',
-              }}>Gastos fijos mensuales ($)</span>
+              }}>Gastos fijos/mes ($)</span>
             </label>
             {useMonthlyExpenses && (
               <input
