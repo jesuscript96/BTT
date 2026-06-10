@@ -5,6 +5,7 @@ import { useState, useRef } from "react";
 interface Props {
   onSave: (name: string, filters: any) => Promise<void>;
   onBack: () => void;
+  isSaving?: boolean;
 }
 
 interface ParameterConfig {
@@ -61,7 +62,7 @@ const TWO_YEARS_AGO = new Date(
   new Date().setFullYear(new Date().getFullYear() - 2)
 ).toISOString().split("T")[0];
 
-export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
+export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false }: Props) {
   const [name, setName] = useState("Nuevo Dataset");
   const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
   const [dateTo, setDateTo] = useState(MAX_DATE);
@@ -725,7 +726,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
             setTempName(name);
             setShowSaveModal(true);
           }}
-          disabled={includedConditions.length === 0}
+          disabled={includedConditions.length === 0 || isSaving}
           style={{
             width: "100%",
             padding: "8px 0",
@@ -734,15 +735,15 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
             fontWeight: 700,
             letterSpacing: 1.2,
             textTransform: "uppercase",
-            cursor: "pointer",
+            cursor: isSaving ? "wait" : "pointer",
             border: "none",
             backgroundColor: "var(--color-ec-copper)",
             color: "var(--color-ec-copper-text)",
             fontFamily: "var(--color-ec-sans)",
-            opacity: includedConditions.length === 0 ? 0.5 : 1,
+            opacity: includedConditions.length === 0 || isSaving ? 0.5 : 1,
           }}
         >
-          Guardar y Probar
+          {isSaving ? "Guardando..." : "Guardar y Probar"}
         </button>
       </div>
       {showSaveModal && (
@@ -804,7 +805,7 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
               autoFocus
               onFocus={(e) => e.target.select()}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && tempName.trim()) {
+                if (e.key === "Enter" && tempName.trim() && !isSaving) {
                   const finalName = tempName.trim();
                   setName(finalName);
                   setShowSaveModal(false);
@@ -847,14 +848,14 @@ export default function InlineDatasetBuilder({ onSave, onBack }: Props) {
               <button
                 type="button"
                 onClick={() => {
-                  if (tempName.trim()) {
+                  if (tempName.trim() && !isSaving) {
                     const finalName = tempName.trim();
                     setName(finalName);
                     setShowSaveModal(false);
                     handleSave(finalName);
                   }
                 }}
-                disabled={!tempName.trim()}
+                disabled={!tempName.trim() || isSaving}
                 style={{
                   padding: "6px 12px",
                   borderRadius: 4,
