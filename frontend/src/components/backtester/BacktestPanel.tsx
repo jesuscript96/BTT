@@ -209,6 +209,7 @@ export default function BacktestPanel({
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedDataset, setSelectedDataset] = useState("");
   const [selectedStrategy, setSelectedStrategy] = useState("");
+  const [showDatasetFilters, setShowDatasetFilters] = useState(false);
   const [initCash, setInitCash] = useState(10000);
   const [riskR, setRiskR] = useState(100);
   const [fees, setFees] = useState(0.01);
@@ -292,6 +293,7 @@ export default function BacktestPanel({
       if (ds.min_date) setStartDate(ds.min_date);
       if (ds.max_date) setEndDate(ds.max_date);
     }
+    setShowDatasetFilters(false);
   }, [selectedDataset, datasets]);
 
   useEffect(() => {
@@ -582,12 +584,17 @@ export default function BacktestPanel({
             const filters = currentDs.filters || {};
             const rules = filters.rules || [];
 
+            // Skip keys that represent dates, pagination, counts, or are shown elsewhere
+            const keysToSkip = ['date_from', 'date_to', 'start_date', 'end_date', 'min_date', 'max_date', 'pair_count', 'id', 'name', 'created_at', 'updated_at', 'rules', 'ticker'];
+
             // Gather formatted basic filters
             const basicFiltersText = Object.entries(filters)
+              .filter(([key]) => !keysToSkip.includes(key))
               .map(([key, value]) => formatFilterValue(key, value))
               .filter(Boolean) as string[];
 
             const formattedRules = rules.map((r: any) => formatRule(r)).filter(Boolean) as string[];
+            const totalFiltersCount = basicFiltersText.length + formattedRules.length;
 
             const hasDetails = basicFiltersText.length > 0 || formattedRules.length > 0 || currentDs.min_date || currentDs.max_date || (currentDs.pair_count !== undefined && currentDs.pair_count !== null);
             if (!hasDetails) return null;
@@ -633,63 +640,63 @@ export default function BacktestPanel({
                   </div>
                 )}
 
-                {/* Filter list */}
-                {(basicFiltersText.length > 0 || formattedRules.length > 0) && (
+                {/* Collapsible Filters Accordion */}
+                {totalFiltersCount > 0 && (
                   <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
                     fontFamily: 'var(--color-ec-sans)',
                     fontSize: 10.5,
                   }}>
-                    {basicFiltersText.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span style={{ fontWeight: 700, color: 'var(--color-ec-copper)', fontSize: 9.5 }}>FILTROS BÁSICOS:</span>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {basicFiltersText.map((txt, idx) => (
-                            <span
-                              key={idx}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                                backgroundColor: 'rgba(216, 122, 61, 0.08)',
-                                border: '0.5px solid rgba(216, 122, 61, 0.2)',
-                                color: 'var(--color-ec-copper)',
-                                fontSize: 9.5,
-                                fontWeight: 700,
-                              }}
-                            >
-                              {txt}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {formattedRules.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span style={{ fontWeight: 700, color: 'var(--color-ec-copper)', fontSize: 9.5 }}>REGLAS AVANZADAS:</span>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                          {formattedRules.map((txt, idx) => (
-                            <span
-                              key={idx}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                                backgroundColor: 'rgba(216, 122, 61, 0.08)',
-                                border: '0.5px solid rgba(216, 122, 61, 0.2)',
-                                color: 'var(--color-ec-copper)',
-                                fontSize: 9.5,
-                                fontWeight: 700,
-                              }}
-                            >
-                              {txt}
-                            </span>
-                          ))}
-                        </div>
+                    <div
+                      onClick={() => setShowDatasetFilters(!showDatasetFilters)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        color: 'var(--color-ec-copper)',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        transition: 'opacity 150ms',
+                        width: 'fit-content',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.75'}
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                    >
+                      <span>Filtros seleccionados: {totalFiltersCount}</span>
+                      <span style={{ fontSize: 8 }}>{showDatasetFilters ? '▲' : '▼'}</span>
+                    </div>
+
+                    {showDatasetFilters && (
+                      <div style={{
+                        marginTop: 6,
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '8px 10px',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 4,
+                      }}>
+                        {[...basicFiltersText, ...formattedRules].map((txt, idx) => (
+                          <span
+                            key={idx}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '2px 6px',
+                              borderRadius: 4,
+                              backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                              border: '0.5px solid rgba(216, 122, 61, 0.2)',
+                              color: 'var(--color-ec-copper)',
+                              fontSize: 9.5,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {txt}
+                          </span>
+                        ))}
                       </div>
                     )}
                   </div>
