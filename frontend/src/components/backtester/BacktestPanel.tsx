@@ -280,6 +280,7 @@ export default function BacktestPanel({
     let isMounted = true;
     let timer: NodeJS.Timeout | null = null;
     let progressTimer: NodeJS.Timeout | null = null;
+    let currentStatus: string | null = null;
 
     setVisualPercent(0);
 
@@ -288,11 +289,14 @@ export default function BacktestPanel({
         const statusData = await fetchPrecacheStatus(selectedDataset);
         if (!isMounted) return;
 
+        currentStatus = statusData.status;
         setPrecacheStatus(statusData);
 
-        if (statusData.status === "running") {
+        // "pending" = pairs still being computed in background; keep polling
+        // so the card flips to the real download progress when it starts
+        if (statusData.status === "running" || statusData.status === "pending") {
           timer = setTimeout(checkStatus, 1500);
-          if (statusData.percent > 0) {
+          if (statusData.status === "running" && statusData.percent > 0) {
             setVisualPercent((prev) => Math.max(prev, statusData.percent));
           }
         } else if (statusData.status === "completed") {
@@ -307,13 +311,17 @@ export default function BacktestPanel({
     };
 
     const updateProgress = () => {
-      setVisualPercent((prev) => {
-        if (prev >= 95) return prev;
-        let increment = 1.5;
-        if (prev >= 80) increment = 0.2;
-        else if (prev >= 50) increment = 0.5;
-        return Math.min(95, prev + increment);
-      });
+      // Only animate fake progress while the download itself is running —
+      // during "pending" the bar would otherwise climb before data flows
+      if (currentStatus === "running") {
+        setVisualPercent((prev) => {
+          if (prev >= 95) return prev;
+          let increment = 1.5;
+          if (prev >= 80) increment = 0.2;
+          else if (prev >= 50) increment = 0.5;
+          return Math.min(95, prev + increment);
+        });
+      }
       if (isMounted) {
         progressTimer = setTimeout(updateProgress, 1000);
       }
@@ -543,7 +551,7 @@ export default function BacktestPanel({
           >
             + NUEVO DATASET
           </button>
-          {precacheStatus && precacheStatus.status === "running" && (
+          {precacheStatus && (precacheStatus.status === "running" || precacheStatus.status === "pending") && (
             <div style={{
               marginTop: 8,
               padding: '8px 10px',
@@ -564,9 +572,10 @@ export default function BacktestPanel({
                 letterSpacing: '0.08em',
                 color: 'var(--color-ec-copper)',
               }}>
-                <span>Descargando Data...</span>
-                <span>{Math.round(visualPercent)}%</span>
+                <span>{precacheStatus.status === "pending" ? "Preparando dataset (calculando pares)..." : "Descargando Data..."}</span>
+                {precacheStatus.status === "running" && <span>{Math.round(visualPercent)}%</span>}
               </div>
+              {precacheStatus.status === "running" && (
               <div style={{
                 height: 4,
                 backgroundColor: 'rgba(216, 122, 61, 0.15)',
@@ -581,6 +590,7 @@ export default function BacktestPanel({
                   transition: 'width 1000ms linear',
                 }} />
               </div>
+              )}
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -593,9 +603,11 @@ export default function BacktestPanel({
                 <span style={{ textAlign: 'left', flex: 1, lineHeight: '1.2' }}>
                   La carga puede tardar unos minutos.
                 </span>
+                {precacheStatus.status === "running" && (
                 <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                   {Math.min(precacheStatus.total, Math.round(precacheStatus.total * (visualPercent / 100)))} / {precacheStatus.total} pares
                 </span>
+                )}
               </div>
             </div>
           )}
