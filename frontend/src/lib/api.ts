@@ -14,6 +14,14 @@ const API_BASE = (() => {
   return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
 })();
 
+// ─── Auth headers (Clerk) ───────────────────────────────────
+// Phase 1: client-side helper, token injection wired in Phase 2 once backend verifies JWT.
+export async function getAuthHeaders(): Promise<HeadersInit> {
+  return {
+    'Content-Type': 'application/json',
+  };
+}
+
 // ─── Centralized error class ─────────────────────────────────
 export class ApiError extends Error {
   constructor(
