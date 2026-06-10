@@ -675,7 +675,9 @@ def get_ticker_chart(ticker: str):
                         'close': 'Close',
                         'volume': 'Volume'
                     })
-                    hist['Date'] = pd.to_datetime(hist['Date']).dt.date
+                    # Keep a DatetimeIndex (.dt.date produced an object Index
+                    # that broke hist.index.year in the YTD calc → 500)
+                    hist['Date'] = pd.to_datetime(hist['Date'])
                     hist = hist.set_index('Date')
                     print(f"[INFO] Loaded chart history from database for {ticker}: {len(hist)} rows")
             except Exception as e:

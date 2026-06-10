@@ -1534,6 +1534,9 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [logoFailed, setLogoFailed] = useState(false);
     const [logoUrlIndex, setLogoUrlIndex] = useState(0);
     const [logoData, setLogoData] = useState<TickerLogoData | null>(null);
+    // Text in the detail-view search box; decoupled from selectedTicker so
+    // typing doesn't fire the full 6-endpoint fetch on every keystroke
+    const [searchText, setSearchText] = useState<string>(initialTicker || '');
 
     // Adjust state when props/state change during render (standard React pattern)
     const [prevInitialTicker, setPrevInitialTicker] = useState(initialTicker);
@@ -1545,6 +1548,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [prevSelectedTicker, setPrevSelectedTicker] = useState(selectedTicker);
     if (selectedTicker !== prevSelectedTicker) {
         setPrevSelectedTicker(selectedTicker);
+        setSearchText(selectedTicker || '');
         setLogoFailed(false);
         setLogoUrlIndex(0);
         setLogoData(null);
@@ -1905,10 +1909,21 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         type="text"
                         list="ticker-options"
                         placeholder="Buscar ticker..."
-                        value={selectedTicker || ''}
+                        value={searchText}
                         onChange={(e) => {
                             const val = e.target.value.toUpperCase().trim();
-                            setSelectedTicker(val);
+                            setSearchText(val);
+                            // Only trigger the full data fetch on an exact match —
+                            // firing per keystroke burned 6 API calls per letter
+                            if (availableTickers.includes(val)) {
+                                setSelectedTicker(val);
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                                const val = (e.target as HTMLInputElement).value.toUpperCase().trim();
+                                if (val) setSelectedTicker(val);
+                            }
                         }}
                         style={{
                             background: 'transparent',
