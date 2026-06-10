@@ -676,6 +676,34 @@ class BacktestEngine:
                 series = df.groupby(['ticker', df['timestamp'].dt.date])['low'].transform(
                     lambda x: x.where(pm_mask).min()
                 )
+        elif name in [IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN]:
+            ap_sess = getattr(config, 'ap_session', 'ap.PM') or 'ap.PM'
+            timestamps = pd.to_datetime(source_df["timestamp"])
+            hours = timestamps.dt.hour
+            minutes = timestamps.dt.minute
+            if ap_sess == "ap.RTH":
+                start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
+            elif ap_sess == "ap.AM":
+                start_mask = hours >= 16
+            else:  # ap.PM default
+                start_mask = pd.Series(True, index=source_df.index)
+
+            col = 'high' if name == IndicatorType.PREVIOUS_MAX else 'low'
+
+            # Mask values outside session
+            vals = source_df[col].copy()
+            vals[~start_mask] = np.nan
+
+            # Calculate cumulative running value per ticker/date using transform
+            if name == IndicatorType.PREVIOUS_MAX:
+                running = source_df.groupby(['ticker', source_df['timestamp'].dt.date], group_keys=False)[col].transform(lambda x: vals.loc[x.index].cummax())
+            else:
+                running = source_df.groupby(['ticker', source_df['timestamp'].dt.date], group_keys=False)[col].transform(lambda x: vals.loc[x.index].cummin())
+
+            # Shift by 1 bar per ticker/date to prevent look-ahead bias
+            series = running.groupby([source_df['ticker'], source_df['timestamp'].dt.date]).shift(1)
+            if len(series) == len(df):
+                series.index = df.index
         elif name == IndicatorType.RTH_HIGH:
             if 'rth_high' in df.columns:
                 series = df['rth_high']
