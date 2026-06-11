@@ -273,7 +273,7 @@ class ExitLogic(BaseModel):
     root_condition: ConditionGroup
 
 class PartialTakeProfit(BaseModel):
-    distance_pct: float
+    distance_pct: Union[float, str]
     capital_pct: float
 
 class RiskManagement(BaseModel):

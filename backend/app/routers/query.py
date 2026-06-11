@@ -244,11 +244,9 @@ def create_saved_query(query: SavedQuery):
     # Outside the lock: _write_precache_state takes the same non-reentrant lock
     _write_precache_state(query_id, "pending", 0.0)
 
-    # Phase B — background: dataset_pairs, GCS persistence, intraday pre-cache
+    # Phase B — background: GCS persistence
     def _background_work():
         try:
-            pairs_df, date_from, date_to = _populate_dataset_pairs(query_id, query.filters)
-
             from app.gcs_sync import upload_user_db
             try:
                 upload_user_db()
@@ -256,13 +254,14 @@ def create_saved_query(query: SavedQuery):
             except Exception as e:
                 print(f"[WARN] GCS upload failed: {e}")
 
-            _precache_dataset_intraday(pairs_df, date_from, date_to, query_id)
+            # Pre-caching and pair calculation are now done on-the-fly when running the backtest, so we mark it completed
+            _write_precache_state(query_id, "completed", 100.0)
         except Exception as e:
             print(f"[ERROR] Background dataset creation failed for {query_id}: {e}")
             _write_precache_state(query_id, "error", 0.0)
 
     threading.Thread(target=_background_work, daemon=False).start()
-    print(f"[ASYNC] Dataset {query_id} registered; pairs + pre-cache running in background")
+    print(f"[ASYNC] Dataset {query_id} registered; GCS upload running in background")
 
     return {**query.dict(), "id": query_id}
 

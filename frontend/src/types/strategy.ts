@@ -194,7 +194,7 @@ export interface RiskSettings {
 }
 
 export interface PartialTakeProfit {
-    distance_pct: number;
+    distance_pct: number | 'EOD';
     capital_pct: number;
 }
 

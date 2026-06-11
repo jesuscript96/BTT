@@ -23,7 +23,11 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
     const addPartial = () => {
         const currentPartials = risk.partial_take_profits || [];
         // Default to a reasonable new partial: next 2% distance, remaining capital or 25%
-        const lastDist = currentPartials.length > 0 ? currentPartials[currentPartials.length - 1].distance_pct : 3.0;
+        const lastPartial = currentPartials.length > 0 ? currentPartials[currentPartials.length - 1] : null;
+        let lastDist = 3.0;
+        if (lastPartial && typeof lastPartial.distance_pct === 'number') {
+            lastDist = lastPartial.distance_pct;
+        }
         const currentTotal = currentPartials.reduce((sum, p) => sum + p.capital_pct, 0);
         const remaining = Math.max(0, 100 - currentTotal);
         
@@ -43,7 +47,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
         });
     };
 
-    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: number) => {
+    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: number | 'EOD') => {
         onChange({
             ...risk,
             partial_take_profits: risk.partial_take_profits.map((p, i) =>
@@ -539,28 +543,69 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                                             {/* Distance Input */}
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                                <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Dist.</span>
-                                                <div className="relative" style={{ width: 65 }}>
-                                                    <input
-                                                        type="number"
-                                                        step="0.1"
-                                                        value={partial.distance_pct}
-                                                        onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                                        style={{
-                                                            width: '100%',
-                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                            border: '0.5px solid var(--color-ec-border)',
-                                                            borderRadius: 4,
-                                                            padding: '4px 16px 4px 6px',
-                                                            fontSize: 11,
-                                                            fontWeight: 700,
-                                                            color: 'var(--color-ec-text-primary)',
-                                                            outline: 'none',
-                                                            textAlign: 'right',
-                                                        }}
-                                                    />
-                                                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">%</span>
-                                                </div>
+                                                <select
+                                                    value={partial.distance_pct === 'EOD' ? 'EOD' : 'PCT'}
+                                                    onChange={(e) => {
+                                                        if (e.target.value === 'EOD') {
+                                                            updatePartial(idx, 'distance_pct', 'EOD');
+                                                        } else {
+                                                            updatePartial(idx, 'distance_pct', 3.0);
+                                                        }
+                                                    }}
+                                                    style={{
+                                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        borderRadius: 4,
+                                                        padding: '4px 6px',
+                                                        fontSize: 10,
+                                                        fontWeight: 600,
+                                                        color: 'var(--color-ec-text-primary)',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                        outline: 'none',
+                                                        cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    <option value="PCT">% Distancia</option>
+                                                    <option value="EOD">Fin del Día (EOD)</option>
+                                                </select>
+                                                
+                                                {partial.distance_pct !== 'EOD' ? (
+                                                    <div className="relative" style={{ width: 65 }}>
+                                                        <input
+                                                            type="number"
+                                                            step="0.1"
+                                                            value={partial.distance_pct}
+                                                            onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
+                                                            style={{
+                                                                width: '100%',
+                                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                border: '0.5px solid var(--color-ec-border)',
+                                                                borderRadius: 4,
+                                                                padding: '4px 16px 4px 6px',
+                                                                fontSize: 11,
+                                                                fontWeight: 700,
+                                                                color: 'var(--color-ec-text-primary)',
+                                                                outline: 'none',
+                                                                textAlign: 'right',
+                                                            }}
+                                                        />
+                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">%</span>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{
+                                                        width: 65,
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        borderRadius: 4,
+                                                        padding: '4px 6px',
+                                                        fontSize: 11,
+                                                        fontWeight: 700,
+                                                        color: 'var(--color-ec-text-muted)',
+                                                        textAlign: 'center',
+                                                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                                    }}>
+                                                        EOD
+                                                    </div>
+                                                )}
                                             </div>
 
                                             {/* Capital Slider */}

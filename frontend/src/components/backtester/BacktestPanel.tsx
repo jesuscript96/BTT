@@ -152,30 +152,89 @@ function formatFilterValue(key: string, value: any): string | null {
   if (key === 'rules') return null; // handle separately
   if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) return null;
   const labels: Record<string, string> = {
-    min_market_cap: 'Min MCap',
-    max_market_cap: 'Max MCap',
-    min_price: 'Min Price',
-    max_price: 'Max Price',
-    min_volume: 'Min Vol',
-    max_shares_float: 'Max Float',
-    require_shortable: 'Shortable',
-    exclude_dilution: 'No Dilution',
-    date_from: 'Desde',
-    date_to: 'Hasta',
-    min_change_pct: 'Min Chg%',
-    max_change_pct: 'Max Chg%',
-    start_date: 'Desde',
-    end_date: 'Hasta',
+    min_market_cap: 'mcap mín',
+    max_market_cap: 'mcap máx',
+    min_price: 'precio mín',
+    max_price: 'precio máx',
+    min_volume: 'volumen mín',
+    max_shares_float: 'float máx',
+    require_shortable: 'shortable',
+    exclude_dilution: 'sin dilución',
+    date_from: 'desde',
+    date_to: 'hasta',
+    min_change_pct: 'variación mín %',
+    max_change_pct: 'variación máx %',
+    start_date: 'desde',
+    end_date: 'hasta',
   };
-  const label = labels[key] || key;
+  const label = labels[key] || key.replace(/_/g, " ").toLowerCase();
+  
   if (typeof value === 'boolean') return value ? label : null;
   if (typeof value === 'number') {
-    if (value >= 1_000_000_000) return `${label}: $${(value / 1_000_000_000).toFixed(1)}B`;
-    if (value >= 1_000_000) return `${label}: $${(value / 1_000_000).toFixed(1)}M`;
-    if (value >= 1_000) return `${label}: ${(value / 1_000).toFixed(0)}K`;
+    if (key.includes('market_cap')) {
+      if (value >= 1_000_000_000) return `${label}: $${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+      if (value >= 1_000_000) return `${label}: $${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    }
+    if (value >= 1_000_000) return `${label}: ${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    if (value >= 1_000) return `${label}: ${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
     return `${label}: ${value}`;
   }
   return `${label}: ${value}`;
+}
+
+function getFriendlyMetricLabel(metric: string): string {
+  if (!metric) return "";
+  const m = metric.replace(/['"]+/g, '');
+  const labelMap: Record<string, string> = {
+    // Gap Day
+    "Close Price": "cierre",
+    "Min Open PM price": "apertura pm",
+    "PMH Gap %": "gap pm high %",
+    "Premarket Volume": "volumen premarket",
+    "Open Gap %": "gap de apertura %",
+    "EOD Volume": "volumen rth",
+    "RTH Range %": "rango rth %",
+    "Open Price": "apertura rth",
+    "High Price": "máximo rth",
+    "Low Price": "mínimo rth",
+    "RTH Run %": "run rth %",
+    "High Spike %": "spike máximo %",
+    "Low Spike %": "spike mínimo %",
+    "M15 Return %": "retorno m15 %",
+    "M30 Return %": "retorno m30 %",
+    "M60 Return %": "retorno m60 %",
+    "Day Return %": "retorno del día %",
+    "Previous Close": "cierre anterior",
+
+    // Gap+1 Day
+    "lead_rth_close_1": "cierre gap+1",
+    "lead_open_1": "apertura pm gap+1",
+    "lead_pmh_gap_pct_1": "gap pm high gap+1 %",
+    "lead_pm_volume_1": "volumen premarket gap+1",
+    "lead_gap_pct_1": "gap de apertura gap+1 %",
+    "lead_rth_volume_1": "volumen rth gap+1",
+    "lead_rth_range_pct_1": "rango rth gap+1 %",
+    "lead_rth_open_1": "apertura rth gap+1",
+    "lead_rth_high_1": "máximo rth gap+1",
+    "lead_rth_low_1": "mínimo rth gap+1",
+
+    // Gap+2 Day
+    "lead_rth_close_2": "cierre gap+2",
+    "lead_open_2": "apertura pm gap+2",
+    "lead_pmh_gap_pct_2": "gap pm high gap+2 %",
+    "lead_pm_volume_2": "volumen premarket gap+2",
+    "lead_gap_pct_2": "gap de apertura gap+2 %",
+    "lead_rth_volume_2": "volumen rth gap+2",
+    "lead_rth_range_pct_2": "rango rth gap+2 %",
+    "lead_rth_open_2": "apertura rth gap+2",
+    "lead_rth_high_2": "máximo rth gap+2",
+    "lead_rth_low_2": "mínimo rth gap+2",
+  };
+
+  if (labelMap[m]) {
+    return labelMap[m];
+  }
+  return m.replace(/_/g, " ").toLowerCase();
 }
 
 function formatRule(rule: any): string {
@@ -185,11 +244,38 @@ function formatRule(rule: any): string {
     'LT': '<',
     'GTE': '>=',
     'LTE': '<=',
-    'EQ': '=',
+    'EQUAL': '=',
     'NEQ': '!=',
+    'GREATER_THAN_OR_EQUAL': '>=',
+    'LESS_THAN_OR_EQUAL': '<=',
+    'GREATER_THAN': '>',
+    'LESS_THAN': '<',
   };
   const op = opMap[rule.operator] || rule.operator;
-  return `${rule.metric} ${op} ${rule.value}`;
+  const friendlyMetric = getFriendlyMetricLabel(rule.metric);
+  
+  let friendlyVal = rule.value;
+  const numVal = parseFloat(rule.value);
+  if (!isNaN(numVal)) {
+    // Format volume metrics
+    if (rule.metric.toLowerCase().includes('volume')) {
+      if (numVal >= 1_000_000) {
+        friendlyVal = `${(numVal / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+      } else if (numVal >= 1_000) {
+        friendlyVal = `${(numVal / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+      }
+    } 
+    // Format percentage metrics
+    else if (rule.metric.includes('%') || rule.metric.toLowerCase().includes('pct')) {
+      friendlyVal = `${numVal}%`;
+    }
+    // Format dollar price metrics
+    else if (rule.metric.toLowerCase().includes('price') || rule.metric.toLowerCase().includes('close') || rule.metric.toLowerCase().includes('open') || rule.metric.toLowerCase().includes('high') || rule.metric.toLowerCase().includes('low')) {
+      friendlyVal = `$${numVal.toFixed(2).replace(/\.00$/, '')}`;
+    }
+  }
+
+  return `${friendlyMetric} ${op} ${friendlyVal}`;
 }
 
 export default function BacktestPanel({
@@ -572,7 +658,7 @@ export default function BacktestPanel({
             >
               {datasets.map((d) => (
                 <option key={d.id} value={d.id}>
-                  {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : ""}
+                  {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : " (Pendiente)"}
                 </option>
               ))}
             </select>
@@ -621,7 +707,7 @@ export default function BacktestPanel({
                         <>
                           <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
                           <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
-                            {currentDs.pair_count} {currentDs.pair_count === 1 ? 'par' : 'pares'}
+                            {currentDs.pair_count > 0 ? `${currentDs.pair_count} ${currentDs.pair_count === 1 ? 'par' : 'pares'}` : "Pendiente"}
                           </span>
                         </>
                       )}
@@ -949,22 +1035,7 @@ export default function BacktestPanel({
                   </div>
                 )}
 
-                {isSelectedStratRiskInvalid && (
-                  <div style={{
-                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-                    border: '0.5px solid var(--color-ec-loss)',
-                    borderRadius: 4,
-                    padding: '6px 10px',
-                    color: 'var(--color-ec-loss)',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 10,
-                    fontWeight: 700,
-                    lineHeight: '1.4',
-                    marginTop: 6,
-                  }}>
-                    ⚠️ Los parciales de Take Profit suman {selectedStratPartialCapital}%. Debe ser exactamente 100%. Edita la estrategia para corregirlo.
-                  </div>
-                )}
+
               </div>
             );
           })()}

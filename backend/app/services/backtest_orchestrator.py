@@ -184,6 +184,46 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
         date_from = filters.get("start_date") or filters.get("date_from")
         date_to = filters.get("end_date") or filters.get("date_to")
 
+        # Populate dataset_pairs dynamically when the backtest is run for the first time
+        # (so the dataset details show the real number of pairs).
+        try:
+            from app.database import get_user_db_connection, get_user_db_lock
+            lock = get_user_db_lock()
+            with lock:
+                con = get_user_db_connection()
+                try:
+                    # Check if pairs already exist for this dataset
+                    pc_row = con.execute("SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?", [req.dataset_id]).fetchone()
+                    if pc_row and pc_row[0] == 0:
+                        # Fetch base qualifying data (without preconditions/apply_day shifts) to get the dataset's base pairs
+                        base_qualifying = fetch_qualifying_data(
+                            req.dataset_id,
+                            req.start_date,
+                            req.end_date,
+                            preconditions=None,
+                            apply_day='gap_day'
+                        )
+                        if base_qualifying is not None and not base_qualifying.empty:
+                            pairs_to_insert = base_qualifying[['ticker', 'date']].drop_duplicates()
+                            con.register("pairs_tmp", pairs_to_insert)
+                            con.execute(
+                                "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
+                                "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp",
+                                [req.dataset_id],
+                            )
+                            print(f"[BACKTEST] Saved {len(pairs_to_insert)} base dataset pairs dynamically")
+                            
+                            # Update GCS DB so the sync persists this info
+                            try:
+                                from app.gcs_sync import upload_user_db
+                                upload_user_db()
+                            except Exception as upload_err:
+                                print(f"[WARN] GCS upload after dynamic pairs save failed: {upload_err}")
+                finally:
+                    con.close()
+        except Exception as pc_err:
+            print(f"[WARN] Could not dynamically save dataset pairs: {pc_err}")
+
         # ── PHASE 3: create streaming iterator ──
         print(f"[DEBUG] calling get_intraday_stream with qualifying={len(qualifying)} rows, date_from={date_from}, date_to={date_to}")
         intraday_stream = get_intraday_stream(qualifying, date_from, date_to)

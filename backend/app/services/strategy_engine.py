@@ -453,14 +453,16 @@ def _parse_risk_management(
             for pt in raw_pts:
                 dist = pt.get("distance_pct", 0)
                 cap = pt.get("capital_pct", 0)
-                if dist > 0 and cap > 0:
+                is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
+                if (is_eod_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
                     partial_tps.append({
-                        "distance_pct": dist / 100.0,  # Convert to fraction
+                        "distance_pct": "EOD" if is_eod_val else (dist / 100.0),
                         "capital_pct": cap / 100.0,
                     })
-            # Sort by distance ascending so nearest TP triggers first
-            partial_tps.sort(key=lambda x: x["distance_pct"])
-            if not partial_tps:
+            # Sort by distance ascending so nearest TP triggers first, and EOD goes last
+            if partial_tps:
+                partial_tps.sort(key=lambda x: float('inf') if isinstance(x["distance_pct"], str) and x["distance_pct"].upper() == "EOD" else x["distance_pct"])
+            else:
                 partial_tps = None
             # tp_stop stays None — partial mode doesn't use a single TP
         elif risk.get("take_profit"):

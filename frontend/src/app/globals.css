@@ -171,5 +171,11 @@ input[type="number"] {
   -moz-appearance: textfield; /* For Firefox */
 }
 
+/* Styling for input placeholders to make them fainter */
+input::placeholder {
+  color: var(--color-ec-text-muted) !important;
+  opacity: 1 !important;
+}
+
 
 

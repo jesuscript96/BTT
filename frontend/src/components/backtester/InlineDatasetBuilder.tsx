@@ -19,10 +19,10 @@ interface ParameterConfig {
 const SECTION_PARAMS: ParameterConfig[] = [
   { key: "rth_close", label: "Min Open price", unit: "$", placeholder: "0.00" },
   { key: "pm_open", label: "Min Open PM price", unit: "$", placeholder: "0.00" },
-  { key: "pmh_gap_pct_min", label: "PM High Gap min", unit: "%", placeholder: "10.0", min: 10 },
+  { key: "pmh_gap_pct_min", label: "PM High Gap min", unit: "%", placeholder: "min 10%", min: 10 },
   { key: "pmh_gap_pct_max", label: "PM High Gap max", unit: "%", placeholder: "0.0" },
   { key: "pm_volume", label: "Min Premarket total volume", unit: "M", placeholder: "0.0" },
-  { key: "gap_pct_min", label: "Gap min", unit: "%", placeholder: "10.0", min: 10 },
+  { key: "gap_pct_min", label: "Gap min", unit: "%", placeholder: "min 10%", min: 10 },
   { key: "gap_pct_max", label: "Gap max", unit: "%", placeholder: "0.0" },
   { key: "rth_volume", label: "Min RTH Total Volume", unit: "M", placeholder: "0.0" },
   { key: "rth_range_pct", label: "Bar RTH Range", unit: "%", placeholder: "0.0" },
@@ -552,7 +552,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                                 opacity: included ? 0.6 : 1,
                               }}
                             />
-                            {param.unit !== "$" && (
+                            {param.unit !== "$" && (!param.placeholder.includes("%") || val) && (
                               <span
                                 style={{
                                   position: "absolute",

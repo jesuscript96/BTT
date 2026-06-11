@@ -630,7 +630,7 @@ export default function TrunkPage() {
     if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
       risk.partial_take_profits.forEach((pt: any, i: number) => {
         if (pt && pt.capital_pct != null && pt.capital_pct !== "" && pt.distance_pct != null && pt.distance_pct !== "") {
-          tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct}%`);
+          tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct === 'EOD' ? 'EOD' : pt.distance_pct + '%'}`);
         }
       });
     }
