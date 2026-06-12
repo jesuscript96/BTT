@@ -33,6 +33,7 @@ def _safe_float(val) -> float:
 
 # Global cache for "High of last X days" and "Low of last X days" lookup
 _ticker_daily_ohlc_cache = {}
+_global_daily_metrics_df = None
 
 def prefetch_daily_ohlc(tickers: list[str]):
     """
@@ -40,7 +41,7 @@ def prefetch_daily_ohlc(tickers: list[str]):
     and stores them in the process-global cache _ticker_daily_ohlc_cache.
     This prevents individual slow GCS queries during the backtest loop.
     """
-    global _ticker_daily_ohlc_cache
+    global _ticker_daily_ohlc_cache, _global_daily_metrics_df
     if not tickers:
         return
         
@@ -49,21 +50,30 @@ def prefetch_daily_ohlc(tickers: list[str]):
     if not tickers_to_fetch:
         return
         
+    import time
     from app.database import get_db_connection
     con = get_db_connection()
     try:
-        # Build IN clause safely
-        tickers_str = ", ".join(f"'{t}'" for t in tickers_to_fetch)
-        df_all = con.execute(f"""
-            SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low 
-            FROM daily_metrics 
-            WHERE ticker IN ({tickers_str})
-            ORDER BY ticker, "timestamp"
-        """).fetchdf()
+        if _global_daily_metrics_df is None:
+            print("[INFO] Fetching entire daily_metrics table for global cache...")
+            t0 = time.time()
+            df_all = con.execute("""
+                SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low 
+                FROM daily_metrics 
+                ORDER BY ticker, "timestamp"
+            """).fetchdf()
+            # Convert date to string format
+            df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
+            _global_daily_metrics_df = df_all
+            print(f"[INFO] Fetched and prepared {len(df_all):,} daily metrics in {time.time()-t0:.2f}s")
+        else:
+            df_all = _global_daily_metrics_df
+
+        # Filter to tickers_to_fetch in Pandas
+        df_filtered = df_all[df_all["ticker"].isin(tickers_to_fetch)]
         
         # Group by ticker and store in cache
-        df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
-        for ticker_symbol, group in df_all.groupby("ticker"):
+        for ticker_symbol, group in df_filtered.groupby("ticker"):
             group_indexed = group.set_index("date")
             group_indexed = group_indexed[~group_indexed.index.duplicated(keep='first')]
             _ticker_daily_ohlc_cache[ticker_symbol] = group_indexed
@@ -79,6 +89,7 @@ def prefetch_daily_ohlc(tickers: list[str]):
         for t in tickers_to_fetch:
             if t not in _ticker_daily_ohlc_cache:
                 _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+
 
 
 # ---------------------------------------------------------------------------

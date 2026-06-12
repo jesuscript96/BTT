@@ -120,7 +120,7 @@ def filter_strategies(filters: StrategySearchFilters):
     Filter saved strategies using Pass Criteria
     """
     try:
-        con = get_db_connection(read_only=True)
+        con = get_user_db_connection(read_only=True)
         
         # Build dynamic query
         query = """
@@ -221,7 +221,7 @@ def list_all_strategies(
     Get all saved strategies with pagination
     """
     try:
-        con = get_db_connection(read_only=True)
+        con = get_user_db_connection(read_only=True)
         
         rows = con.execute(
             """
@@ -332,26 +332,29 @@ def delete_strategy(strategy_id: str):
     """
     Delete a saved strategy
     """
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                "SELECT id FROM backtest_results WHERE id = ?",
+                (strategy_id,)
+            ).fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            
+            con.execute("DELETE FROM backtest_results WHERE id = ?", (strategy_id,))
+        finally:
+            con.close()
+            
     try:
-        con = get_db_connection()
-        
-        row = con.execute(
-            "SELECT id FROM backtest_results WHERE id = ?",
-            (strategy_id,)
-        ).fetchone()
-        
-        if not row:
-            raise HTTPException(status_code=404, detail="Strategy not found")
-        
-        con.execute("DELETE FROM backtest_results WHERE id = ?", (strategy_id,))
-        
-        return {"status": "success", "message": "Strategy deleted"}
-        
-    except HTTPException:
-        raise
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
     except Exception as e:
-        print(f"Error deleting strategy: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[WARN] GCS upload failed after delete_strategy: {e}")
+        
+    return {"status": "success", "message": "Strategy deleted"}
 
 
 @router.post("/export")
@@ -360,7 +363,7 @@ def export_strategies(strategy_ids: List[str]):
     Export selected strategies to CSV format
     """
     try:
-        con = get_db_connection(read_only=True)
+        con = get_user_db_connection(read_only=True)
         
         placeholders = ",".join(["?" for _ in strategy_ids])
         query = f"""

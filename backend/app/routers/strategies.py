@@ -62,7 +62,7 @@ def create_strategy(strategy: StrategyCreate):
 
 @router.get("/")
 def list_strategies():
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     try:
         rows = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies ORDER BY created_at DESC").fetchall()
     except Exception as e:
@@ -123,7 +123,7 @@ def list_strategies():
 
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str):
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     try:
         row = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
         if row:

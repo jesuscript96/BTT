@@ -59,7 +59,7 @@ def get_strategy(strategy_id: str) -> dict | None:
     try:
         from app.database import get_user_db_connection, get_user_db_lock
         with get_user_db_lock():
-            con = get_user_db_connection()
+            con = get_user_db_connection(read_only=True)
             try:
                 row = con.execute(
                     "SELECT id, name, description, definition FROM strategies WHERE id = ?",
@@ -137,7 +137,7 @@ def get_dataset(dataset_id: str) -> dict | None:
     try:
         from app.database import get_user_db_connection, get_user_db_lock
         with get_user_db_lock():
-            con = get_user_db_connection()
+            con = get_user_db_connection(read_only=True)
             try:
                 row = con.execute(
                     "SELECT id, name, filters FROM saved_queries WHERE id = ?",
@@ -272,7 +272,7 @@ def _resolve_filters(dataset_id: str, req_start: str | None, req_end: str | None
         from app.database import get_user_db_connection, get_user_db_lock
         import json
         with get_user_db_lock():
-            con = get_user_db_connection()
+            con = get_user_db_connection(read_only=True)
             try:
                 row = con.execute(
                     "SELECT filters FROM saved_queries WHERE id = ?",
@@ -442,6 +442,93 @@ def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd
     print(f"[PRECONDITIONS] filtered from {len(df)} to {len(filtered_df)} rows")
     return filtered_df
 
+
+
+
+def _can_use_hot_cache(filters: dict) -> bool:
+    # Check top-level min_gap_pct
+    min_gap_raw = filters.get("min_gap_pct")
+    if min_gap_raw is not None:
+        try:
+            if float(min_gap_raw) >= 5.0:
+                return True
+        except ValueError:
+            pass
+
+    # Check custom rules
+    rules = filters.get("rules", [])
+    for rule in rules:
+        field = rule.get("field") or rule.get("metric")
+        op = rule.get("operator")
+        val = rule.get("value")
+        if field and op in ("GREATER_THAN", "GREATER_THAN_OR_EQUAL") and val is not None:
+            try:
+                val_f = float(val)
+                if field in ("Open Gap %", "gap_pct") and val_f >= 5.0:
+                    return True
+                if field in ("PMH Gap %", "pmh_gap_pct") and val_f >= 20.0:
+                    return True
+            except ValueError:
+                pass
+                
+    return False
+
+
+def _evaluate_rules_on_df(df: pd.DataFrame, rules: list) -> pd.DataFrame:
+    if df.empty or not rules:
+        return df
+    
+    import numpy as np
+    mask = pd.Series(True, index=df.index)
+    
+    field_map = {
+        "Open Price": "rth_open",
+        "Close Price": "rth_close",
+        "High Price": "rth_high",
+        "Low Price": "rth_low",
+        "EOD Volume": "rth_volume",
+        "Premarket Volume": "pm_volume",
+        "Open Gap %": "gap_pct",
+        "PMH Gap %": "pmh_gap_pct",
+        "RTH Run %": "rth_run_pct",
+        "High Spike %": "high_spike_pct",
+        "Low Spike %": "low_spike_pct",
+        "M15 Return %": "m15_return_pct",
+        "M30 Return %": "m30_return_pct",
+        "M60 Return %": "m60_return_pct",
+        "Day Return %": "day_return_pct",
+        "Previous Close": "prev_close",
+        "RTH Range %": "rth_range_pct",
+        "Min Open PM price": "open",
+    }
+    
+    for rule in rules:
+        field = rule.get("field") or rule.get("metric")
+        field = field_map.get(field, field)
+        op = rule.get("operator")
+        val = rule.get("value")
+        
+        if field and op and val is not None and field in df.columns:
+            try:
+                val = float(val)
+            except ValueError:
+                pass
+            
+            col_series = df[field]
+            if op == "GREATER_THAN":
+                mask = mask & (col_series > val)
+            elif op == "GREATER_THAN_OR_EQUAL":
+                mask = mask & (col_series >= val)
+            elif op == "LESS_THAN":
+                mask = mask & (col_series < val)
+            elif op == "LESS_THAN_OR_EQUAL":
+                mask = mask & (col_series <= val)
+            elif op == "EQUAL":
+                mask = mask & (col_series == val)
+            elif op == "CONTAINS":
+                mask = mask & (col_series.astype(str).str.contains(str(val), case=False, na=False))
+                
+    return df[mask]
 
 
 def fetch_qualifying_data(
@@ -632,10 +719,12 @@ def fetch_qualifying_data(
             start_date = filters.get("start_date")
             end_date = filters.get("end_date")
 
-            if min_gap >= 10.0:
+            if _can_use_hot_cache(filters):
                 result = hot_df.copy()
-                result = result[result['gap_pct'] >= min_gap]
-                result = result[result['gap_pct'] <= max_gap]
+                if min_gap > 0.0:
+                    result = result[result['gap_pct'] >= min_gap]
+                if max_gap < 999999.0:
+                    result = result[result['gap_pct'] <= max_gap]
                 if min_pm_vol:
                     result = result[result['pm_volume'] >= min_pm_vol]
                 if start_date or end_date:
@@ -647,6 +736,11 @@ def fetch_qualifying_data(
                     result = result[result['timestamp'] >= pd.Timestamp(start_date)]
                 if end_date:
                     result = result[result['timestamp'] <= pd.Timestamp(end_date)]
+
+                # Apply custom rules in pandas
+                rules = filters.get("rules", [])
+                if rules:
+                    result = _evaluate_rules_on_df(result, rules)
 
                 # Reanclar al día de trading correcto según apply_day
                 if apply_day == 'gap_1_day':

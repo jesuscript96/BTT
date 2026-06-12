@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import BacktestPanel, { type BacktestPanelParams } from "@/components/backtester/BacktestPanel";
 import InlineStrategyBuilder, { type Draft } from "@/components/backtester/InlineStrategyBuilder";
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
+import StrategyModeSelector from "@/components/strategy-builder/StrategyModeSelector";
+import WizardStrategyBuilder from "@/components/strategy-builder/WizardStrategyBuilder";
 import MetricsCard from "@/components/backtester/MetricsCard";
 import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
@@ -23,7 +25,8 @@ import {
 
 
 export default function Home() {
-  const [mode, setMode] = useState<"config" | "builder" | "dataset">("config");
+  const [mode, setMode] = useState<"config" | "builder_choice" | "builder" | "wizard" | "dataset">("config");
+  const [strategySessionKey, setStrategySessionKey] = useState<string>("init");
   const [datasetRefresh, setDatasetRefresh] = useState(0);
   const [pendingDatasetSelect, setPendingDatasetSelect] = useState<string | undefined>(undefined);
   const [isSavingDataset, setIsSavingDataset] = useState(false);
@@ -82,9 +85,28 @@ export default function Home() {
 
   const handlePanelParamsChange = useCallback((params: BacktestPanelParams) => {
     panelParamsRef.current = params;
-    setActiveSessions(params.market_sessions || ["rth"]);
-    setActiveCustomStartTime(params.custom_start_time || "09:30");
-    setActiveCustomEndTime(params.custom_end_time || "16:00");
+    
+    setActiveSessions((prev) => {
+      const next = params.market_sessions || ["rth"];
+      if (prev.length === next.length && prev.every((v, i) => v === next[i])) {
+        return prev;
+      }
+      return next;
+    });
+    
+    setActiveCustomStartTime((prev) => {
+      const next = params.custom_start_time || "09:30";
+      return prev === next ? prev : next;
+    });
+    
+    setActiveCustomEndTime((prev) => {
+      const next = params.custom_end_time || "16:00";
+      return prev === next ? prev : next;
+    });
+  }, []);
+
+  const handleDraftChange = useCallback((draft: any) => {
+    setBuilderDraft(draft);
   }, []);
 
   const [dayCandles, setDayCandles] = useState<DayCandles | null>(null);
@@ -93,7 +115,7 @@ export default function Home() {
   const [candlesLoading, setCandlesLoading] = useState(false);
 
   const computedActiveStrategy = useMemo(() => {
-    if (mode === "builder") {
+    if (mode === "builder" || mode === "wizard") {
       return builderDraft;
     }
     return activeStrategy;
@@ -136,7 +158,19 @@ export default function Home() {
     setSelectedDay(0);
     setDayCandles(null);
     setMultiDayCandles(null);
-    setActiveStrategy(null);
+    setActiveStrategy({
+      id: "draft",
+      name: draft.name,
+      description: "",
+      definition: {
+        apply_day: draft.apply_day,
+        bias: draft.bias,
+        postgap_preconditions: draft.postgap_preconditions,
+        entry_logic: draft.entry_logic,
+        exit_logic: draft.exit_logic,
+        risk_management: draft.risk_management,
+      }
+    });
 
     initCashRef.current = p.init_cash;
     riskRRef.current = p.risk_r;
@@ -194,19 +228,6 @@ export default function Home() {
           setSelectedDay(dayIdx);
         }
       }
-      setActiveStrategy({
-        id: "draft",
-        name: draft.name,
-        description: "",
-        definition: {
-          apply_day: draft.apply_day,
-          bias: draft.bias,
-          postgap_preconditions: draft.postgap_preconditions,
-          entry_logic: draft.entry_logic,
-          exit_logic: draft.exit_logic,
-          risk_management: draft.risk_management,
-        }
-      });
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
@@ -596,7 +617,13 @@ export default function Home() {
           <div style={{ padding: '16px 12px 24px 12px', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <BacktestPanel
               onRun={handleRun}
-              onNewStrategy={() => setMode((prev) => (prev === 'builder' ? 'config' : 'builder'))}
+              onNewStrategy={() => setMode((prev) => {
+                const isOpening = !(prev === 'builder' || prev === 'builder_choice' || prev === 'wizard');
+                if (isOpening) {
+                  return 'builder_choice';
+                }
+                return 'config';
+              })}
               onNewDataset={() => setMode((prev) => (prev === 'dataset' ? 'config' : 'dataset'))}
               onParamsChange={handlePanelParamsChange}
               refreshTrigger={strategiesRefresh}
@@ -968,7 +995,7 @@ export default function Home() {
         </main>
 
         {/* Backdrop blur overlay for the main content area */}
-        {(mode === 'builder' || mode === 'dataset') && (
+        {(mode === 'builder_choice' || mode === 'builder' || mode === 'wizard' || mode === 'dataset') && (
           <div 
             onClick={() => setMode('config')}
             style={{
@@ -984,7 +1011,7 @@ export default function Home() {
           />
         )}
 
-        {/* Drawer/Desplegable de la lógica (InlineStrategyBuilder) */}
+        {/* Drawer/Desplegable de la lógica (Strategy Builder / Mode Selector) */}
         <div style={{
           position: 'absolute',
           top: 0,
@@ -994,25 +1021,75 @@ export default function Home() {
           backgroundColor: 'var(--color-ec-bg-sidebar)',
           borderRight: '0.5px solid var(--color-ec-border)',
           zIndex: 40,
-          transform: mode === 'builder' ? 'translateX(0)' : 'translateX(-100%)',
+          transform: (mode === 'builder_choice' || mode === 'builder' || mode === 'wizard') ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '10px 0 30px rgba(0, 0, 0, 0.15)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}>
-          <InlineStrategyBuilder
-            onBack={() => setMode('config')}
-            onTest={async (draft) => {
-              setDraftStrategy(draft);
-              setMode('config');
-              await handleRunWithDraft(draft);
+          <div
+            key={strategySessionKey}
+            style={{
+              display: 'flex',
+              width: '200%',
+              height: '100%',
+              transform: (mode === 'builder' || mode === 'wizard') ? 'translateX(-50%)' : 'translateX(0)',
+              transition: 'transform 350ms cubic-bezier(0.16, 1, 0.3, 1)',
             }}
-            marketSessions={activeSessions}
-            customStartTime={activeCustomStartTime}
-            customEndTime={activeCustomEndTime}
-            onDraftChange={setBuilderDraft}
-          />
+          >
+            {/* Panel 1: Mode Selector */}
+            <div style={{
+              width: '50%',
+              height: '100%',
+              flexShrink: 0,
+              opacity: mode === 'builder_choice' ? 1 : 0,
+              transition: 'opacity 280ms ease-out',
+            }}>
+              <StrategyModeSelector
+                onBack={() => setMode('config')}
+                onSelectFree={() => setMode('builder')}
+                onSelectWizard={() => setMode('wizard')}
+              />
+            </div>
+            {/* Panel 2: Strategy Builder OR Wizard */}
+            <div style={{
+              width: '50%',
+              height: '100%',
+              flexShrink: 0,
+              opacity: (mode === 'builder' || mode === 'wizard') ? 1 : 0,
+              transition: 'opacity 280ms ease-out',
+            }}>
+              <div style={{ display: mode === 'wizard' ? 'block' : 'none', height: '100%' }}>
+                <WizardStrategyBuilder
+                  onBack={() => setMode('builder_choice')}
+                  onTest={async (draft) => {
+                    setDraftStrategy(draft as Draft);
+                    setMode('config');
+                    await handleRunWithDraft(draft as Draft);
+                  }}
+                  onDraftChange={handleDraftChange}
+                  marketSessions={activeSessions}
+                  customStartTime={activeCustomStartTime}
+                  customEndTime={activeCustomEndTime}
+                />
+              </div>
+              <div style={{ display: mode === 'builder' ? 'block' : 'none', height: '100%' }}>
+                <InlineStrategyBuilder
+                  onBack={() => setMode('builder_choice')}
+                  onTest={async (draft) => {
+                    setDraftStrategy(draft);
+                    setMode('config');
+                    await handleRunWithDraft(draft);
+                  }}
+                  marketSessions={activeSessions}
+                  customStartTime={activeCustomStartTime}
+                  customEndTime={activeCustomEndTime}
+                  onDraftChange={handleDraftChange}
+                />
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Drawer/Desplegable de la creación de Dataset (InlineDatasetBuilder) */}

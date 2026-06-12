@@ -213,12 +213,12 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.ATR]: "Rango Medio Verdadero."
 };
 
-const TooltipIcon = ({ indicatorName }: { indicatorName: IndicatorType }) => {
+const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorType; customText?: string }) => {
     const context = React.useContext(TooltipContext);
     if (!context) return null;
 
     const { setActiveTooltip, containerRef } = context;
-    const description = INDICATOR_DESCRIPTIONS[indicatorName];
+    const description = customText || (indicatorName ? INDICATOR_DESCRIPTIONS[indicatorName] : undefined);
     if (!description) return null;
 
     return (
@@ -229,7 +229,7 @@ const TooltipIcon = ({ indicatorName }: { indicatorName: IndicatorType }) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 
                 // Estimar el ancho del tooltip basado en el largo del texto
-                const estimatedWidth = Math.min(Math.max(description.length * 6.5 + 24, 100), 240);
+                const estimatedWidth = Math.min(Math.max(description.length * 6.5 + 24, 100), 280);
                 const halfWidth = estimatedWidth / 2;
                 
                 let tooltipX = rect.left - containerRect.left + rect.width / 2;
@@ -1436,7 +1436,7 @@ export const GroupDisplay = ({
 
             setFormCondition({
                 type: 'indicator_comparison',
-                source: formCondition.source,
+                source: { ...formCondition.source, offset: 0 },
                 comparator: Comparator.GT,
                 target: defaultTarget,
                 timeframe: formCondition.timeframe
@@ -1451,7 +1451,7 @@ export const GroupDisplay = ({
 
             setFormCondition({
                 type: 'price_level_distance',
-                source: formCondition.source,
+                source: { ...formCondition.source, offset: 0 },
                 level: defaultLevel,
                 comparator: 'DISTANCE_LT',
                 value_pct: 2.0,
@@ -1461,15 +1461,22 @@ export const GroupDisplay = ({
     };
 
     const handleSaveCondition = () => {
+        const savedCondition = {
+            ...formCondition,
+            source: {
+                ...formCondition.source,
+                offset: 0
+            }
+        };
         if (editingIndex !== null) {
             const newConditions = [...group.conditions];
-            newConditions[editingIndex] = formCondition;
+            newConditions[editingIndex] = savedCondition;
             onChange({ ...group, conditions: newConditions });
             setEditingIndex(null);
         } else {
             onChange({
                 ...group,
-                conditions: [...group.conditions, formCondition]
+                conditions: [...group.conditions, savedCondition]
             });
         }
         setShowForm(false);
@@ -1729,7 +1736,7 @@ export const GroupDisplay = ({
                                             
                                             setFormCondition({
                                                 type: 'indicator_comparison',
-                                                source: { name, offset: formCondition.source.offset, ...defaultParams },
+                                                source: { name, offset: 0, ...defaultParams },
                                                 comparator: Comparator.GT,
                                                 target: defaultTarget,
                                                 timeframe
@@ -1741,7 +1748,7 @@ export const GroupDisplay = ({
                                             
                                             setFormCondition({
                                                 type: 'indicator_comparison',
-                                                source: { name, offset: formCondition.source.offset, ...defaultParams },
+                                                source: { name, offset: 0, ...defaultParams },
                                                 comparator: formCondition.comparator as Comparator,
                                                 target: isTargetAllowed ? formCondition.target : getInitialTargetForSource(name),
                                                 timeframe
@@ -1759,7 +1766,7 @@ export const GroupDisplay = ({
 
                                             setFormCondition({
                                                 type: 'price_level_distance',
-                                                source: { name, offset: formCondition.source.offset, ...defaultParams },
+                                                source: { name, offset: 0, ...defaultParams },
                                                 level: isLevelAllowed ? formCondition.level : defaultLevel,
                                                 comparator: formCondition.comparator as 'DISTANCE_GT' | 'DISTANCE_LT',
                                                 value_pct: formCondition.value_pct,
@@ -1833,22 +1840,7 @@ export const GroupDisplay = ({
                                 );
                             })()}
 
-                            {/* bars back */}
-                            {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name?.toLowerCase() !== 'range of time' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <span style={labelStyle}>Bars back</span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        value={formCondition.source.offset || 0}
-                                        onChange={(e) => setFormCondition({
-                                            ...formCondition,
-                                            source: { ...formCondition.source, offset: Math.max(0, Number(e.target.value)) }
-                                        })}
-                                        style={inputStyle}
-                                    />
-                                </div>
-                            )}
+
 
                             {/* relación */}
                             {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
@@ -2028,35 +2020,124 @@ export const GroupDisplay = ({
                                 </div>
                             ) : null}
 
-                            {/* segundo barsback */}
-                            {formCondition.type === 'indicator_comparison' && typeof formCondition.target !== 'number' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <span style={labelStyle}>Segundo bars back</span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        value={formCondition.target.offset || 0}
-                                        onChange={(e) => setFormCondition({
-                                            ...formCondition,
-                                            target: { ...(formCondition.target as IndicatorConfig), offset: Math.max(0, Number(e.target.value)) }
-                                        })}
-                                        style={inputStyle}
-                                    />
-                                </div>
-                            )}
-                            {formCondition.type === 'price_level_distance' && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <span style={labelStyle}>Segundo bars back</span>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        value={formCondition.level.offset || 0}
-                                        onChange={(e) => setFormCondition({
-                                            ...formCondition,
-                                            level: { ...formCondition.level, offset: Math.max(0, Number(e.target.value)) }
-                                        })}
-                                        style={inputStyle}
-                                    />
+                            {/* Checkbox for Offset to Variable de cruce */}
+                            {((formCondition.type === 'indicator_comparison' && typeof formCondition.target !== 'number') || 
+                              formCondition.type === 'price_level_distance') && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <input
+                                            type="checkbox"
+                                            id="offset-checkbox"
+                                            checked={
+                                                formCondition.type === 'indicator_comparison'
+                                                    ? !!(formCondition.target as IndicatorConfig).offset
+                                                    : !!formCondition.level.offset
+                                            }
+                                            onChange={(e) => {
+                                                const checked = e.target.checked;
+                                                if (formCondition.type === 'indicator_comparison') {
+                                                    const target = formCondition.target as IndicatorConfig;
+                                                    setFormCondition({
+                                                        ...formCondition,
+                                                        target: {
+                                                            ...target,
+                                                            offset: checked ? (target.offset || 1) : 0
+                                                        }
+                                                    });
+                                                } else {
+                                                    setFormCondition({
+                                                        ...formCondition,
+                                                        level: {
+                                                            ...formCondition.level,
+                                                            offset: checked ? (formCondition.level.offset || 1) : 0
+                                                        }
+                                                    });
+                                                }
+                                            }}
+                                            style={{
+                                                width: 14,
+                                                height: 14,
+                                                accentColor: 'var(--color-ec-copper)',
+                                                cursor: 'pointer'
+                                            }}
+                                        />
+                                        <label
+                                            htmlFor="offset-checkbox"
+                                            style={{
+                                                fontSize: 11,
+                                                fontWeight: 600,
+                                                color: 'var(--color-ec-text-primary)',
+                                                cursor: 'pointer',
+                                                userSelect: 'none'
+                                            }}
+                                        >
+                                            ¿Offset a Variable de cruce?
+                                        </label>
+                                        <TooltipIcon
+                                            customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual"
+                                        />
+                                    </div>
+
+                                    {/* Mostrar select de velas de retraso si el checkbox está activo */}
+                                    {!!((formCondition.type === 'indicator_comparison' && typeof formCondition.target !== 'number' && (formCondition.target as IndicatorConfig).offset) ||
+                                      (formCondition.type === 'price_level_distance' && formCondition.level.offset)) && (
+                                        <div style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: 8, 
+                                            paddingLeft: 20,
+                                            marginTop: 2
+                                        }}>
+                                            <span style={{
+                                                fontSize: 11,
+                                                fontWeight: 600,
+                                                color: 'var(--color-ec-text-secondary)',
+                                                fontFamily: 'var(--color-ec-sans)',
+                                            }}>Velas atrás:</span>
+                                            <select
+                                                value={
+                                                    formCondition.type === 'indicator_comparison'
+                                                        ? (formCondition.target as IndicatorConfig).offset || 1
+                                                        : formCondition.level.offset || 1
+                                                }
+                                                onChange={(e) => {
+                                                    const val = Number(e.target.value);
+                                                    if (formCondition.type === 'indicator_comparison') {
+                                                        const target = formCondition.target as IndicatorConfig;
+                                                        setFormCondition({
+                                                            ...formCondition,
+                                                            target: { ...target, offset: val }
+                                                        });
+                                                    } else {
+                                                        setFormCondition({
+                                                            ...formCondition,
+                                                            level: { ...formCondition.level, offset: val }
+                                                        });
+                                                    }
+                                                }}
+                                                style={{
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 4,
+                                                    padding: '2px 8px 2px 6px',
+                                                    fontSize: 11,
+                                                    fontWeight: 700,
+                                                    color: 'var(--color-ec-copper)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                    cursor: 'pointer',
+                                                    width: 55,
+                                                    textAlign: 'center'
+                                                }}
+                                            >
+                                                {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                                    <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                                        {val}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

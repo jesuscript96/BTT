@@ -94,20 +94,69 @@ def _get_key_file() -> str | None:
     return None
 
 
+def get_s3_client():
+    """Create a boto3 S3 client with SSL verification fallback."""
+    import os
+    import boto3
+    from botocore.config import Config
+    import urllib3
+    
+    key = os.getenv("GCS_ACCESS_KEY_ID") or os.getenv("GCS_HMAC_KEY")
+    secret = os.getenv("GCS_SECRET_ACCESS_KEY") or os.getenv("GCS_HMAC_SECRET")
+    bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+    
+    if not key or not secret:
+        print("[WARN] GCS HMAC credentials not found, cannot create S3 client.")
+        return None, None
+        
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    s3_config = Config(
+        signature_version="s3v4",
+        request_checksum_calculation="when_required",
+        response_checksum_validation="when_required"
+    )
+    
+    try:
+        # Try with SSL verification first
+        client = boto3.client(
+            "s3",
+            endpoint_url="https://storage.googleapis.com",
+            aws_access_key_id=key,
+            aws_secret_access_key=secret,
+            config=s3_config
+        )
+        # Quick check if it connects
+        client.list_objects_v2(Bucket=bucket, MaxKeys=1)
+        return client, bucket
+    except Exception as e:
+        print(f"[WARN] S3 client SSL verification failed: {e}. Retrying with verify=False.")
+        
+    client = boto3.client(
+        "s3",
+        endpoint_url="https://storage.googleapis.com",
+        aws_access_key_id=key,
+        aws_secret_access_key=secret,
+        config=s3_config,
+        verify=False
+    )
+    return client, bucket
+
+
 def get_gcs_client():
-    """Create a native Google Cloud Storage client."""
+    """Native GCS client fallback for legacy code."""
     key_path = _get_key_file()
     if not key_path:
         return None
     try:
         return storage.Client.from_service_account_json(key_path)
     except Exception as e:
-        print(f"[WARN] Error creating GCS client: {e}")
+        print(f"[WARN] Error creating native GCS client: {e}")
         return None
 
 
 def download_user_db() -> bool:
-    """Download users.duckdb from GCS on startup."""
+    """Download users.duckdb from GCS on startup using S3-compatible API."""
     if os.getenv("DISABLE_GCS_SYNC", "false").lower() == "true":
         print("[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).")
         return False
@@ -115,27 +164,40 @@ def download_user_db() -> bool:
     if os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
         return False
 
-    client = get_gcs_client()
+    client, bucket_name = get_s3_client()
     if not client:
         return False
 
-    bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
     object_name = "users.duckdb"
     local_file = "users.duckdb"
 
     global _startup_download_ok
-    print(f"[INFO] Attempting to download {object_name} from gs://{bucket_name}...")
+    print(f"[INFO] Attempting to download {object_name} from gs://{bucket_name} via S3 API...")
     try:
-        bucket = client.bucket(bucket_name)
-        blob = bucket.blob(object_name)
-        if blob.exists(timeout=5):
-            blob.download_to_filename(local_file, timeout=5)
-            print(f"[INFO] Successfully downloaded {local_file}")
+        # Check if remote exists and get size
+        try:
+            head = client.head_object(Bucket=bucket_name, Key=object_name)
+            remote_size = head.get('ContentLength', 0)
+            exists = True
+        except Exception:
+            exists = False
+            remote_size = 0
+            
+        if exists:
+            # Safety check: do not overwrite a populated local DB with an empty/small remote DB
+            if os.path.exists(local_file):
+                local_size = os.path.getsize(local_file)
+                if local_size > remote_size and remote_size < 100_000:
+                    print(f"[WARN] Local users.duckdb ({local_size:,} bytes) is larger than remote copy ({remote_size:,} bytes). Skipping download to protect local data.")
+                    _startup_download_ok = True
+                    return True
+            
+            client.download_file(bucket_name, object_name, local_file)
+            print(f"[INFO] Successfully downloaded {local_file} ({remote_size:,} bytes)")
             _startup_download_ok = True
             return True
         else:
             print(f"[WARN] {object_name} not found in GCS. A new local file will be created.")
-            # No remote copy exists, so uploads cannot destroy anything
             _startup_download_ok = True
             return False
     except Exception as e:
@@ -144,7 +206,7 @@ def download_user_db() -> bool:
 
 
 def upload_user_db() -> bool:
-    """Upload users.duckdb to GCS with retry on lock."""
+    """Upload users.duckdb to GCS with retry on lock using S3-compatible API."""
     import time
 
     if os.getenv("DISABLE_GCS_SYNC", "false").lower() == "true":
@@ -159,9 +221,7 @@ def upload_user_db() -> bool:
         print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False
 
-    # Fold the WAL into the main file before uploading. DuckDB keeps recent
-    # writes in users.duckdb.wal; uploading only the main file ships a stale
-    # (often empty 12KB) database even when the live data is intact.
+    # Force checkpoint to merge WAL
     try:
         import duckdb
         con = duckdb.connect(local_file)
@@ -175,16 +235,16 @@ def upload_user_db() -> bool:
         print(f"[WARN] Refusing to upload suspiciously small DB ({local_size} bytes) - startup download may have failed")
         return False
 
-    bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+    client, bucket_name = get_s3_client()
+    if not client:
+        return False
+
     object_name = "users.duckdb"
 
     for attempt in range(3):
         try:
-            client = _get_cached_client()
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(object_name)
-            blob.upload_from_filename(local_file, timeout=5)
-            print(f"[INFO] Successfully uploaded users.duckdb to GCS")
+            client.upload_file(local_file, bucket_name, object_name)
+            print(f"[INFO] Successfully uploaded users.duckdb to GCS ({local_size:,} bytes)")
             return True
         except PermissionError:
             if attempt < 2:

@@ -41,7 +41,7 @@ def get_precache_state(dataset_id: str) -> dict | None:
     try:
         lock = get_user_db_lock()
         with lock:
-            con = get_user_db_connection()
+            con = get_user_db_connection(read_only=True)
             try:
                 row = con.execute(
                     "SELECT status, progress_pct FROM precache_state WHERE dataset_id = ?",
@@ -90,7 +90,7 @@ def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
                 # Check if it was deleted from saved_queries
                 lock = get_user_db_lock()
                 with lock:
-                    con = get_user_db_connection()
+                    con = get_user_db_connection(read_only=True)
                     try:
                         row = con.execute("SELECT 1 FROM saved_queries WHERE id = ?", [dataset_id]).fetchone()
                         if not row:
@@ -125,7 +125,7 @@ def get_precache_status(dataset_id: str):
     try:
         lock = get_user_db_lock()
         with lock:
-            con = get_user_db_connection()
+            con = get_user_db_connection(read_only=True)
             try:
                 row = con.execute("SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?", [dataset_id]).fetchone()
                 if row:
@@ -187,7 +187,7 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
     # Heavy phase WITHOUT the global lock: a read-only scan over daily_metrics
     # (GCS reads, can take minutes). Holding the lock here froze /data/datasets
     # and /precache-status — the picker and progress bar hung until done.
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     try:
         pairs_df = con.execute(select_sql, params).fetchdf()
     finally:
@@ -281,7 +281,7 @@ def _parse_filters(raw):
 
 @router.get("/", response_model=List[SavedQuery])
 def list_saved_queries():
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     try:
         try:
             # massive.* is never attached on get_user_db_connection() connections,
@@ -312,7 +312,7 @@ def list_saved_queries():
 
 @router.get("/{query_id}", response_model=SavedQuery)
 def get_saved_query(query_id: str):
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     try:
         row = con.execute("SELECT id, name, filters, created_at, updated_at FROM saved_queries WHERE id = ?", (query_id,)).fetchone()
         if not row:

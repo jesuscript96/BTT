@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
@@ -86,6 +86,7 @@ export default function InlineStrategyBuilder({
   onDraftChange,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
+  const createdAtRef = useRef(new Date().toISOString());
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
   const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
@@ -169,7 +170,7 @@ export default function InlineStrategyBuilder({
       entry_logic: entryLogic,
       exit_logic: exitLogic,
       risk_management: riskManagement,
-      created_at: new Date().toISOString(),
+      created_at: createdAtRef.current,
     });
   }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
 

@@ -406,10 +406,10 @@ export default function BacktestPanel({
   }, [datasets, pendingDatasetSelect, onClearPendingDataset]);
 
   useEffect(() => {
-    if (activeStrategy?.id) {
+    if (activeStrategy?.id && activeStrategy.id !== selectedStrategy) {
       setSelectedStrategy(activeStrategy.id);
     }
-  }, [activeStrategy]);
+  }, [activeStrategy, selectedStrategy]);
 
   useEffect(() => {
     if (!selectedDataset) {

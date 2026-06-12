@@ -146,6 +146,9 @@ def _months_spanned(date_from: str | None, date_to: str | None) -> list[tuple[in
     return pairs
 
 
+_daily_path_existence_cache: dict[str, bool] = {}
+
+
 def _daily_metrics_read_paths(conn, years: set[int], filters: dict) -> list[str]:
     """
     Prefer hive month=MM globs when the bucket uses monthly partitions; otherwise
@@ -167,11 +170,16 @@ def _daily_metrics_read_paths(conn, years: set[int], filters: dict) -> list[str]
         sub = [(yy, m) for yy, m in ym_list if yy == y]
         if not sub:
             continue
+        
         probe = f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/year={y}/month=*/*.parquet"
-        try:
-            has_month = conn.execute(f"SELECT count(*) FROM glob('{probe}')").fetchall()[0][0] > 0
-        except Exception:
-            has_month = False
+        if probe in _daily_path_existence_cache:
+            has_month = _daily_path_existence_cache[probe]
+        else:
+            try:
+                has_month = conn.execute(f"SELECT count(*) FROM glob('{probe}')").fetchall()[0][0] > 0
+            except Exception:
+                has_month = False
+            _daily_path_existence_cache[probe] = has_month
 
         if not has_month:
             paths.append(f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/year={y}/**/*.parquet")
@@ -182,11 +190,15 @@ def _daily_metrics_read_paths(conn, years: set[int], filters: dict) -> list[str]
             chosen = None
             for pad in (f"{m:02d}", str(m)):
                 pth = f"gs://{GCS_BUCKET}/cold_storage/daily_metrics/year={yy}/month={pad}/*.parquet"
-                try:
-                    n = conn.execute(f"SELECT count(*) FROM glob('{pth}')").fetchall()[0][0]
-                except Exception:
-                    n = 0
-                if n > 0:
+                if pth in _daily_path_existence_cache:
+                    exists = _daily_path_existence_cache[pth]
+                else:
+                    try:
+                        exists = conn.execute(f"SELECT count(*) FROM glob('{pth}')").fetchall()[0][0] > 0
+                    except Exception:
+                        exists = False
+                    _daily_path_existence_cache[pth] = exists
+                if exists:
                     chosen = pth
                     break
             if chosen:
@@ -206,39 +218,50 @@ def _tickers_sql_in_clause(tickers: list[str]) -> str:
     return ", ".join("'" + str(t).replace("'", "''") + "'" for t in tickers)
 
 
-# In-process cache for monthly intraday glob lookups. Result depends only on
-# (year, month, bucket) and only changes when new data is uploaded — invalidates
-# at process restart, which is acceptable for an MVP. Includes None entries.
-_glob_cache: dict[tuple[int, int, str], "str | None"] = {}
+_glob_metadata_cached = False
+_available_optimized_paths = set()
+_available_raw_paths = set()
+
+def _ensure_glob_metadata_cached(conn):
+    global _glob_metadata_cached, _available_optimized_paths, _available_raw_paths
+    if _glob_metadata_cached:
+        return
+    try:
+        logger.info("Caching all available GCS intraday parquet paths...")
+        # Get optimized
+        df_opt = conn.execute(f"SELECT file FROM glob('gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/*/*/*.parquet')").fetchdf()
+        _available_optimized_paths = set(df_opt["file"].tolist())
+        # Get raw
+        df_raw = conn.execute(f"SELECT file FROM glob('gs://{GCS_BUCKET}/cold_storage/intraday_1m/*/*/*.parquet')").fetchdf()
+        _available_raw_paths = set(df_raw["file"].tolist())
+        _glob_metadata_cached = True
+        logger.info(f"Cached GCS paths: {len(_available_optimized_paths)} optimized, {len(_available_raw_paths)} raw.")
+    except Exception as e:
+        logger.error(f"Failed to cache glob metadata from GCS: {e}")
 
 
 def _select_intraday_glob_for_month(conn, year: int, month: int) -> str | None:
     """Pick optimized or raw intraday glob for one month; try month=09 then month=9."""
     if ALLOW_MOCK_DATA:
         return None
-    cache_key = (year, month, GCS_BUCKET)
-    if cache_key in _glob_cache:
-        return _glob_cache[cache_key]
+        
+    _ensure_glob_metadata_cached(conn)
 
-    result: str | None = None
+    # Check optimized paths
     for pad in (f"{month:02d}", str(month)):
-        opt = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
-        try:
-            if conn.execute(f"SELECT count(*) FROM glob('{opt}')").fetchall()[0][0] > 0:
-                result = opt
-                break
-        except Exception:
-            pass
-        raw = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
-        try:
-            if conn.execute(f"SELECT count(*) FROM glob('{raw}')").fetchall()[0][0] > 0:
-                result = raw
-                break
-        except Exception:
-            pass
+        opt_pattern = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/"
+        for p in _available_optimized_paths:
+            if p.startswith(opt_pattern):
+                return f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
+                
+    # Check raw paths
+    for pad in (f"{month:02d}", str(month)):
+        raw_pattern = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/"
+        for p in _available_raw_paths:
+            if p.startswith(raw_pattern):
+                return f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
 
-    _glob_cache[cache_key] = result
-    return result
+    return None
 
 
 # (Using shared get_connection from backend.db.connection)
@@ -605,54 +628,51 @@ def _fetch_and_cache_month(
     y: int, m: int, path: str, valid_pairs_month: pd.DataFrame, batch_size: int, mi: int, n_months: int
 ) -> pd.DataFrame | None:
     t_month_start = time.time()
-    tickers_month = valid_pairs_month["ticker"].unique().tolist()
-    valid_dates = valid_pairs_month["date"].unique().tolist()
     
-    logger.info(f"[DEBUG] fetching month {y}-{m:02d}, tickers: {len(tickers_month)}, path: {path}")
+    unique_tickers = valid_pairs_month["ticker"].unique().tolist()
+    if not unique_tickers:
+        return None
+        
+    tickers_hash = hashlib.md5(",".join(sorted(unique_tickers)).encode("utf-8")).hexdigest()
+    kind = "opt" if "optimized" in path else "raw"
+    cache_file = os.path.join(LOCAL_CACHE_DIR, f"month_{y}_{m:02d}_{kind}_{tickers_hash}.parquet")
     
-    cache_key = _get_cache_hash(y, m, path, tickers_month, valid_dates)
-    cache_file = os.path.join(LOCAL_CACHE_DIR, f"{cache_key}.parquet")
+    df_month = None
     if os.path.exists(cache_file):
         try:
-            df = pd.read_parquet(cache_file)
+            df_month = pd.read_parquet(cache_file)
             logger.info(f"  [CACHE HIT] Month {y}-{m:02d} ({mi}/{n_months}) loaded from local disk ({round(time.time()-t_month_start, 3)}s)")
-            return df
         except Exception as e:
             logger.warning(f"  [CACHE ERROR] Could not read {cache_file}: {e}")
-    
-    n_tm = len(tickers_month)
-    n_sub = math.ceil(n_tm / batch_size) if n_tm else 0
-    month_date_filter = _intraday_date_predicate_from_qualifying_dates("i", valid_pairs_month["date"])
+            df_month = None
 
-    logger.info(f"  [CACHE MISS] Month {y}-{m:02d} ({mi}/{n_months}): fetching {n_tm} tickers via GCS in {n_sub} query(ies)...")
-    
-    conn = get_connection()
-    month_chunks: list[pd.DataFrame] = []
-    
-    try:
-        for si in range(0, n_tm, batch_size):
-            batch_tickers = tickers_month[si : si + batch_size]
-            sub_num = (si // batch_size) + 1
-            ticker_filter = f"i.ticker IN ({_tickers_sql_in_clause(batch_tickers)})"
-
-            hive_f = _hive_partition_year_month_sql("i", y, m)
-            sql = f"""
-            SELECT i.ticker, i.date, i."timestamp",
-                   i.open, i.high, i.low, i."close", i.volume
-            FROM read_parquet('{path}', hive_partitioning=true) i
-            WHERE {ticker_filter} AND {month_date_filter} AND {hive_f}
-            """
-
+    if df_month is None:
+        logger.info(f"  [CACHE MISS] Month {y}-{m:02d} ({mi}/{n_months}): downloading GCS data for {len(unique_tickers)} tickers...")
+        conn = get_connection()
+        hive_f = _hive_partition_year_month_sql("i", y, m)
+        tickers_str = ", ".join(f"'{t}'" for t in unique_tickers)
+        sql = f"""
+        SELECT i.ticker, i.date, i."timestamp",
+               i.open, i.high, i.low, i."close", i.volume
+        FROM read_parquet('{path}', hive_partitioning=true) i
+        WHERE {hive_f} AND i.ticker IN ({tickers_str})
+        """
+        try:
             t_sql = time.time()
-            chunk = conn.execute(sql).fetchdf()
+            df_month = conn.execute(sql).fetchdf()
             t_done = round(time.time() - t_sql, 2)
-            logger.info(f"  [FETCH GCS]   {y}-{m:02d} sub {sub_num}/{n_sub}: {len(chunk)} rows ({t_done}s)")
-            if not chunk.empty:
-                month_chunks.append(chunk)
-
-        if not month_chunks:
+            logger.info(f"  [FETCH GCS]   {y}-{m:02d}: {len(df_month):,} rows downloaded ({t_done}s)")
+            
+            # Cache the full month to disk
+            try:
+                df_month.to_parquet(cache_file)
+                logger.info(f"  [CACHE WRITE] Month {y}-{m:02d} saved to local disk")
+            except Exception as e:
+                logger.warning(f"  [CACHE WRITE ERROR] Failed saving {cache_file}: {e}")
+        except Exception as e:
+            logger.error(f"  [ERROR] Failed downloading month {y}-{m:02d}: {e}")
             if ALLOW_MOCK_DATA:
-                logger.warning(f"[MOCK] Month {y}-{m:02d}: 0 GCS rows. Using synthetic data.")
+                logger.warning(f"[MOCK] Month {y}-{m:02d} FAILED: {e}. Using synthetic data.")
                 try:
                     intraday = _generate_mock_intraday_df(valid_pairs_month)
                     if not intraday.empty:
@@ -662,47 +682,24 @@ def _fetch_and_cache_month(
                         if "volume" in intraday.columns:
                             intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
                         intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                        try:
-                            intraday.to_parquet(cache_file)
-                        except:
-                            pass
                         return intraday
                 except Exception as mock_err:
                     logger.error(f"Failed generating mock data: {mock_err}")
-            else:
-                logger.warning(f"[WARN] Month {y}-{m:02d}: 0 GCS rows. No data available.")
             return None
 
-        intraday = pd.concat(month_chunks, ignore_index=True)
-        del month_chunks
-        gc.collect()
+    if df_month is None or df_month.empty:
+        return None
 
+    # Filter the month DataFrame by the requested tickers and dates
+    try:
         vp_copy = valid_pairs_month.copy()
         vp_copy["date"] = pd.to_datetime(vp_copy["date"]).dt.strftime("%Y-%m-%d")
-        intraday["date"] = pd.to_datetime(intraday["date"]).dt.strftime("%Y-%m-%d")
-        intraday = intraday.merge(vp_copy, on=["ticker", "date"], how="inner")
-
+        df_month["date"] = pd.to_datetime(df_month["date"]).dt.strftime("%Y-%m-%d")
+        
+        intraday = df_month.merge(vp_copy, on=["ticker", "date"], how="inner")
+        
         if intraday.empty:
-            if ALLOW_MOCK_DATA:
-                logger.warning(f"[MOCK] Month {y}-{m:02d}: merged 0 rows. Using synthetic data.")
-                try:
-                    intraday = _generate_mock_intraday_df(valid_pairs_month)
-                    if not intraday.empty:
-                        for col in ("open", "high", "low", "close"):
-                            if col in intraday.columns:
-                                intraday[col] = intraday[col].astype("float32")
-                        if "volume" in intraday.columns:
-                            intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
-                        intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                        try:
-                            intraday.to_parquet(cache_file)
-                        except:
-                            pass
-                        return intraday
-                except Exception as mock_err:
-                    logger.error(f"Failed generating mock data: {mock_err}")
-            else:
-                logger.warning(f"[WARN] Month {y}-{m:02d}: merged 0 rows. No data available.")
+            logger.warning(f"  [WARN] Month {y}-{m:02d}: merged 0 rows for requested pairs.")
             return None
 
         for col in ("open", "high", "low", "close"):
@@ -712,39 +709,10 @@ def _fetch_and_cache_month(
             intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
 
         intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-        
-        logger.info(f"[DEBUG] month {y}-{m:02d} result shape: {intraday.shape}")
-        
-        try:
-            intraday.to_parquet(cache_file)
-            logger.info(f"  [CACHE WRITE] Month {y}-{m:02d} saved to local disk")
-        except Exception as e:
-            logger.warning(f"  [CACHE WRITE ERROR] Failed saving {cache_file}: {e}")
-
-        logger.info(f"  [DONE] Month {y}-{m:02d}: fetch finished. Total {round(time.time()-t_month_start, 2)}s")
+        logger.info(f"  [DONE] Month {y}-{m:02d}: processed {len(intraday):,} rows in {round(time.time()-t_month_start, 2)}s")
         return intraday
-
     except Exception as e:
-        if ALLOW_MOCK_DATA:
-            logger.warning(f"[MOCK] Month {y}-{m:02d} FAILED: {e}. Using synthetic data.")
-            try:
-                intraday = _generate_mock_intraday_df(valid_pairs_month)
-                if not intraday.empty:
-                    for col in ("open", "high", "low", "close"):
-                        if col in intraday.columns:
-                            intraday[col] = intraday[col].astype("float32")
-                    if "volume" in intraday.columns:
-                        intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
-                    intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                    try:
-                        intraday.to_parquet(cache_file)
-                    except:
-                        pass
-                    return intraday
-            except Exception as mock_err:
-                logger.error(f"Failed generating mock data: {mock_err}")
-        else:
-            logger.error(f"  [ERROR] Month {y}-{m:02d} FAILED: {e}.")
+        logger.error(f"  [ERROR] Filtering month {y}-{m:02d} failed: {e}")
         return None
 
 
