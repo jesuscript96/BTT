@@ -424,7 +424,7 @@ const DailyStockChart = ({
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 540,
+            height: 580,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -658,7 +658,7 @@ const DailyStockChart = ({
             <div style={{ 
                 position: 'relative', 
                 width: '100%', 
-                height: '540px',
+                height: '580px',
                 display: activeTab === 'chart' ? 'block' : 'none'
             }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -670,7 +670,7 @@ const DailyStockChart = ({
                 <div style={{ 
                     overflowY: 'auto', 
                     width: '100%', 
-                    height: '540px',
+                    height: '580px',
                     border: '1px solid var(--color-ec-border)',
                     borderRadius: 6,
                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -1240,7 +1240,7 @@ const GapStatsSection = ({
                     </div>
 
                     {/* Frequencies and Progress Bars */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 3, marginTop: -24 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 2, marginTop: -16 }}>
                         {/* Negative Close Frequency (Bidirectional Bar) */}
                         {(() => {
                             const negClose = currentStats.neg_close_freq ?? 0;
@@ -1251,7 +1251,7 @@ const GapStatsSection = ({
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
                                     </div>
                                     <div style={{
-                                        height: 14,
+                                        height: 16,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
@@ -1306,7 +1306,7 @@ const GapStatsSection = ({
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
                                     </div>
                                     <div style={{
-                                        height: 14,
+                                        height: 16,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
@@ -1361,7 +1361,7 @@ const GapStatsSection = ({
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
                                     </div>
                                     <div style={{
-                                        height: 14,
+                                        height: 16,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
@@ -2274,7 +2274,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <div
                                     className="animate-pulse"
                                     style={{
-                                        height: '540px',
+                                        height: '580px',
                                         backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                                         borderRadius: '8px'
                                     }}
@@ -2283,7 +2283,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
                             )}
                         </div>
-                        <div className="lg:col-span-1 flex flex-col lg:min-h-[540px] h-auto gap-6 justify-start">
+                        <div className="lg:col-span-1 flex flex-col lg:min-h-[580px] h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
                                 <div
                                     className="animate-pulse"
