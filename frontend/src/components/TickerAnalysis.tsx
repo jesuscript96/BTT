@@ -888,12 +888,12 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
     if (!data || data.length === 0) {
         return (
             <div style={{
-                height: '140px',
+                height: '170px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: 'var(--color-ec-text-muted)',
-                fontSize: '11px',
+                fontSize: '13px',
                 border: '1px dashed rgba(255, 255, 255, 0.1)',
                 borderRadius: '4px',
                 width: '100%'
@@ -903,12 +903,12 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
         );
     }
 
-    const viewBoxW = 340;
-    const viewBoxH = 140;
-    const paddingLeft = 38;
+    const viewBoxW = 240;
+    const viewBoxH = 150;
+    const paddingLeft = 48;
     const paddingRight = 10;
-    const paddingTop = 12;
-    const paddingBottom = 26;
+    const paddingTop = 15;
+    const paddingBottom = 28;
 
     const W = viewBoxW - paddingLeft - paddingRight;
     const H = viewBoxH - paddingTop - paddingBottom;
@@ -1010,19 +1010,19 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                         />
                         <text
                             x={paddingLeft + preWidth / 2}
-                            y={paddingTop + 11}
+                            y={paddingTop + 14}
                             textAnchor="middle"
                             fill="var(--color-ec-text-muted)"
-                            style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px' }}
+                            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}
                         >
                             PRE
                         </text>
                         <text
                             x={paddingLeft + preWidth + (W - preWidth) / 2}
-                            y={paddingTop + 11}
+                            y={paddingTop + 14}
                             textAnchor="middle"
                             fill="var(--color-ec-text-muted)"
-                            style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px' }}
+                            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}
                         >
                             RTH
                         </text>
@@ -1046,11 +1046,11 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                                 strokeDasharray={isZero ? undefined : "2,4"}
                             />
                             <text
-                                x={paddingLeft - 6}
-                                y={y + 3}
+                                x={paddingLeft - 8}
+                                y={y + 4}
                                 textAnchor="end"
                                 fill="var(--color-ec-text-muted)"
-                                style={{ fontSize: 8, fontFamily: 'monospace', fontWeight: 600 }}
+                                style={{ fontSize: 11, fontFamily: 'monospace', fontWeight: 600 }}
                             >
                                 {tickVal >= 0 ? '+' : ''}{tickVal.toFixed(1)}%
                             </text>
@@ -1084,10 +1084,10 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                         />
                         <text
                             x={tick.x}
-                            y={paddingTop + H + 13}
+                            y={paddingTop + H + 16}
                             textAnchor="middle"
                             fill="var(--color-ec-text-secondary)"
-                            style={{ fontSize: 8, fontWeight: 600 }}
+                            style={{ fontSize: 11, fontWeight: 600 }}
                         >
                             {tick.label}
                         </text>
@@ -1233,32 +1233,32 @@ const GapStatsSection = ({
                         {/* Chart Area (Right side, width ~62%) */}
                         <div style={{ width: '62%', flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Precio medio desde el Open</span>
-                            <div style={{ height: '140px', width: '100%' }}>
+                            <div style={{ height: '170px', width: '100%' }}>
                                 <AvgPriceChangeChart data={currentStats.price_change_chart} />
                             </div>
                         </div>
                     </div>
 
                     {/* Frequencies and Progress Bars */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 8 }}>
                         {/* Negative Close Frequency (Bidirectional Bar) */}
                         {(() => {
                             const negClose = currentStats.neg_close_freq ?? 0;
                             const posClose = 100 - negClose;
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
                                     </div>
                                     <div style={{
-                                        height: 18,
+                                        height: 10,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
                                         overflow: 'hidden',
                                         display: 'flex',
                                         fontFamily: "'General Sans', sans-serif",
-                                        fontSize: 9,
+                                        fontSize: 8.5,
                                         fontWeight: 700
                                     }}>
                                         {negClose > 0 && (
@@ -1301,19 +1301,19 @@ const GapStatsSection = ({
                             const val = currentStats.close_above_pmh_freq ?? 0;
                             const restVal = 100 - val;
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
                                     </div>
                                     <div style={{
-                                        height: 18,
+                                        height: 10,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
                                         overflow: 'hidden',
                                         display: 'flex',
                                         fontFamily: "'General Sans', sans-serif",
-                                        fontSize: 9,
+                                        fontSize: 8.5,
                                         fontWeight: 700
                                     }}>
                                         {restVal > 0 && (
@@ -1356,19 +1356,19 @@ const GapStatsSection = ({
                             const val = currentStats.close_below_vwap_freq ?? 0;
                             const restVal = 100 - val;
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
                                     </div>
                                     <div style={{
-                                        height: 18,
+                                        height: 10,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
                                         overflow: 'hidden',
                                         display: 'flex',
                                         fontFamily: "'General Sans', sans-serif",
-                                        fontSize: 9,
+                                        fontSize: 8.5,
                                         fontWeight: 700
                                     }}>
                                         {val > 0 && (
@@ -2283,7 +2283,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
                             )}
                         </div>
-                        <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
+                        <div className="lg:col-span-1 flex flex-col lg:min-h-[419px] h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
                                 <div
                                     className="animate-pulse"
