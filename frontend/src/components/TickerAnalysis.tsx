@@ -2268,7 +2268,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     )}
 
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-0 pt-4" style={{ borderColor: 'var(--color-ec-border)', paddingBottom: '32px' }}>
                         <div className="lg:col-span-2">
                             {loadingChart && !data?.daily_history?.length ? (
                                 <div
