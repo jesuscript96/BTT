@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import dynamic from "next/dynamic";
 import {
   fetchOptimizationParams,
@@ -56,6 +56,66 @@ export default function OptimizationSurfaceTab({
   const [progress, setProgress] = useState<number>(0);
   const [visualProgress, setVisualProgress] = useState<number>(0);
 
+  const pollIntervalRef = useRef<number | null>(null);
+
+  // Clean up interval on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        window.clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const startPolling = useCallback((taskId: string, currentMetric: string) => {
+    if (pollIntervalRef.current) {
+      window.clearInterval(pollIntervalRef.current);
+    }
+
+    const interval = window.setInterval(async () => {
+      try {
+        const res = await fetchOptimizationResult(taskId);
+        if ("status" in res && res.status === "running") {
+          setProgress(res.progress);
+          setVisualProgress((prev) => {
+            if (res.progress <= 0) {
+              return Math.min(8, prev + 1);
+            } else if (res.progress <= 1) {
+              return Math.min(15, prev + 1.5);
+            } else if (res.progress <= 2) {
+              return Math.min(25, Math.max(prev, 15) + 1.2);
+            } else if (res.progress <= 5) {
+              return Math.min(35, Math.max(prev, 25) + 1.0);
+            } else {
+              const scaled = 35 + (65 * (res.progress - 5)) / 95;
+              return Math.max(prev, scaled);
+            }
+          });
+        } else {
+          if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("active_optimization_task");
+          setProgress(100);
+          setVisualProgress(100);
+          setTimeout(() => {
+            setResult(res as OptimizationResult);
+            setLoading(false);
+          }, 300);
+        }
+      } catch (e: any) {
+        if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        localStorage.removeItem("active_optimization_task");
+        console.error("Error polling optimization result", e);
+        const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
+        setError(msg);
+        setLoading(false);
+      }
+    }, 800);
+
+    pollIntervalRef.current = interval;
+  }, []);
+
   // Config state
   const [mode, setMode] = useState<"2D" | "3D">("2D");
   const [metric, setMetric] = useState("sharpe");
@@ -70,6 +130,12 @@ export default function OptimizationSurfaceTab({
   // Load parameters when strategy changes
   useEffect(() => {
     if (!strategyId) return;
+
+    if (pollIntervalRef.current) {
+      window.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
     setLoadingParams(true);
     setError(null);
     setResult(null); // Clear old optimization result when strategy changes
@@ -89,6 +155,30 @@ export default function OptimizationSurfaceTab({
       .catch(() => setError("Error loading strategy parameters"))
       .finally(() => setLoadingParams(false));
   }, [strategyId, strategyDefinition]);
+
+  // Load active task from localStorage on mount/strategy change
+  useEffect(() => {
+    if (!strategyId || !datasetId) return;
+    const rawTask = localStorage.getItem("active_optimization_task");
+    if (!rawTask) return;
+    try {
+      const taskState = JSON.parse(rawTask);
+      if (taskState.strategyId === strategyId && taskState.datasetId === datasetId) {
+        setMetric(taskState.metric);
+        setParamX(taskState.paramX);
+        setParamY(taskState.paramY);
+        setRangeX(taskState.rangeX);
+        setRangeY(taskState.rangeY);
+        setGridSteps(taskState.gridSteps);
+        
+        // Start polling the existing taskId
+        startPolling(taskState.taskId, taskState.metric);
+      }
+    } catch (e) {
+      console.warn("Failed to parse active optimization task from localStorage", e);
+      localStorage.removeItem("active_optimization_task");
+    }
+  }, [strategyId, datasetId, startPolling]);
 
   // Update ranges when param selection changes
   const getParamById = useCallback(
@@ -128,13 +218,21 @@ export default function OptimizationSurfaceTab({
       { id: pY.id, label: pY.label, path: pY.path, min: rangeY[0], max: rangeY[1], steps: gridSteps },
     ];
 
-    let pollInterval: number | undefined;
-
-    const cleanup = () => {
-      if (pollInterval) window.clearInterval(pollInterval);
-    };
-
     try {
+      const taskState = {
+        taskId,
+        strategyId,
+        strategyDefinition,
+        datasetId,
+        metric,
+        paramX,
+        paramY,
+        rangeX,
+        rangeY,
+        gridSteps
+      };
+      localStorage.setItem("active_optimization_task", JSON.stringify(taskState));
+
       await runOptimizationSurface({
         strategy_id: strategyId,
         strategy_definition: strategyDefinition,
@@ -145,51 +243,12 @@ export default function OptimizationSurfaceTab({
         ...backtestParams,
       });
 
-      pollInterval = window.setInterval(async () => {
-        try {
-          const res = await fetchOptimizationResult(taskId);
-          if ("status" in res && res.status === "running") {
-            setProgress(res.progress);
-            setVisualProgress((prev) => {
-              if (res.progress <= 0) {
-                // If backend is still initializing/fetching dataset, creep up slowly to 8% to show activity
-                return Math.min(8, prev + 1);
-              } else if (res.progress <= 1) {
-                // Phase 1: Loading dataset (usually stays at 1%). Creep up to 15%
-                return Math.min(15, prev + 1.5);
-              } else if (res.progress <= 2) {
-                // Phase 2: Init database / cache (usually stays at 2%). Creep up to 25%
-                return Math.min(25, Math.max(prev, 15) + 1.2);
-              } else if (res.progress <= 5) {
-                // Phase 3: Loading intraday (usually stays at 2% to 5%). Creep up to 35%
-                return Math.min(35, Math.max(prev, 25) + 1.0);
-              } else {
-                // Backtests running (5% to 100%). Scale progress to start from 35% to 100%
-                const scaled = 35 + (65 * (res.progress - 5)) / 95;
-                return Math.max(prev, scaled);
-              }
-            });
-          } else {
-            cleanup();
-            setProgress(100);
-            setVisualProgress(100);
-            // Small delay so user sees 100% complete
-            setTimeout(() => {
-              setResult(res as OptimizationResult);
-              setLoading(false);
-            }, 300);
-          }
-        } catch (e: any) {
-          cleanup();
-          console.error("Error polling optimization result", e);
-          const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
-          setError(msg);
-          setLoading(false);
-        }
-      }, 800);
+      startPolling(taskId, metric);
 
     } catch (err: any) {
-      cleanup();
+      if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+      localStorage.removeItem("active_optimization_task");
       console.error("Error starting optimization:", err);
       const msg = err.response?.data?.detail || err.message || "Error al iniciar la optimización";
       setError(msg);

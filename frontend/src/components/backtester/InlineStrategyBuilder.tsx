@@ -75,6 +75,7 @@ interface Props {
   customStartTime?: string;
   customEndTime?: string;
   onDraftChange?: (draft: Draft) => void;
+  initialStrategy?: any;
 }
 
 export default function InlineStrategyBuilder({
@@ -84,9 +85,43 @@ export default function InlineStrategyBuilder({
   customStartTime = "09:30",
   customEndTime = "16:00",
   onDraftChange,
+  initialStrategy,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const createdAtRef = useRef(new Date().toISOString());
+  const lastLoadedStrategyRef = useRef<string>("");
+
+  // Load strategy from prop when initialStrategy is provided
+  useEffect(() => {
+    if (!initialStrategy) return;
+    if (initialStrategy.id === "draft" && lastLoadedStrategyRef.current !== "") return;
+
+    const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+    const str = JSON.stringify({
+      name: stratObj.name || initialStrategy.name,
+      bias: stratObj.bias,
+      apply_day: stratObj.apply_day,
+      postgap_preconditions: stratObj.postgap_preconditions,
+      entry_logic: stratObj.entry_logic,
+      exit_logic: stratObj.exit_logic,
+      risk_management: stratObj.risk_management,
+    });
+    if (str === lastLoadedStrategyRef.current) return;
+    lastLoadedStrategyRef.current = str;
+
+    const finalName = stratObj.name || initialStrategy.name;
+    if (finalName) setName(finalName);
+    if (stratObj.bias) setBias(stratObj.bias);
+    if (stratObj.apply_day) setApplyDay(stratObj.apply_day);
+    if (stratObj.postgap_preconditions) {
+      setPostgapPreconditions(stratObj.postgap_preconditions);
+    } else {
+      setPostgapPreconditions([]);
+    }
+    if (stratObj.entry_logic) setEntryLogic(stratObj.entry_logic);
+    if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
+    if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
+  }, [initialStrategy]);
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
   const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);

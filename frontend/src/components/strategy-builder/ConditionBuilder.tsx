@@ -28,7 +28,7 @@ const isVolumeIndicator = (name?: string): boolean => {
     );
 };
 
-const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
+export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
     switch (name) {
         case IndicatorType.SMA:
         case IndicatorType.EMA:
@@ -62,7 +62,7 @@ const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorCon
     }
 };
 
-const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
+export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     "Price Variables": [
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
@@ -229,7 +229,7 @@ const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorT
                 const rect = e.currentTarget.getBoundingClientRect();
                 
                 // Estimar el ancho del tooltip basado en el largo del texto
-                const estimatedWidth = Math.min(Math.max(description.length * 6.5 + 24, 100), 280);
+                const estimatedWidth = Math.min(Math.max(description.length * 6.5 + 24, 100), 320);
                 const halfWidth = estimatedWidth / 2;
                 
                 let tooltipX = rect.left - containerRect.left + rect.width / 2;
@@ -359,7 +359,14 @@ export const IndicatorSelector = ({
                     boxSizing: 'border-box'
                 }}
             >
-                <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{selectedLabel}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', flex: 1 }}>
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{selectedLabel}</span>
+                    {value !== FIXED_VALUE_KEY && (
+                        <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            <TooltipIcon indicatorName={value as IndicatorType} />
+                        </span>
+                    )}
+                </div>
                 <span style={{ fontSize: 8, color: 'var(--color-ec-text-muted)', marginLeft: 6 }}>
                     {isOpen ? '▲' : '▼'}
                 </span>
@@ -412,9 +419,11 @@ export const IndicatorSelector = ({
                                             style={{
                                                 display: 'flex',
                                                 alignItems: 'center',
-                                                justifyContent: 'space-between',
+                                                justifyContent: 'flex-start',
+                                                gap: 5,
                                                 backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
                                                 borderLeft: isSelected ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                                                padding: '4px 10px',
                                             }}
                                             onMouseEnter={(e) => {
                                                 if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-surface)';
@@ -426,8 +435,6 @@ export const IndicatorSelector = ({
                                             <div 
                                                 onClick={() => { onChange(t); setIsOpen(false); }}
                                                 style={{
-                                                    flex: 1,
-                                                    padding: '6px 10px',
                                                     cursor: 'pointer',
                                                     color: isSelected ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
                                                     fontWeight: isSelected ? 600 : 400,
@@ -439,7 +446,7 @@ export const IndicatorSelector = ({
                                             >
                                                 {INDICATOR_LABELS[t] || t}
                                             </div>
-                                            <div style={{ paddingRight: 8, display: 'flex', alignItems: 'center' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center' }}>
                                                 <TooltipIcon indicatorName={t} />
                                             </div>
                                         </div>
@@ -2339,6 +2346,8 @@ export const LogicBuilder = ({
     rootCondition,
     onConditionChange,
     accentColor = 'blue',
+    candleDelay,
+    onCandleDelayChange,
     children
 }: {
     title: string;
@@ -2347,9 +2356,15 @@ export const LogicBuilder = ({
     rootCondition: ConditionGroup;
     onConditionChange: (g: ConditionGroup) => void;
     accentColor?: 'blue' | 'rose' | 'amber';
+    candleDelay?: number;
+    onCandleDelayChange?: (delay: number | undefined) => void;
     children?: React.ReactNode;
 }) => {
     const headerAccentColor = accentColor === 'blue' ? 'var(--color-ec-profit)' : accentColor === 'rose' ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)';
+    const isEntry = title.toLowerCase().includes('entry');
+    const tooltipText = `Esta opción (también llamada "slippage sintético") permite ejecutar la entrada o salida N velas después de que se cumpla la señal (por defecto es 1 vela para evitar look-ahead bias). Es una función especial orientada al trading sistemático de ejecución manual para dar tiempo a preparar y enviar la orden manualmente tras recibir o ver la alerta de ${isEntry ? 'entrada' : 'salida'}.
+
+Con esta función podrás asegurarte de que tu sistema sigue siendo rentable incluso con retardo en la ejecución, puesto que la volatilidad instantanea puede "falsear" los resultados de un backtest si no se aplica de manera algorítmica (bot).`;
 
     const [activeTooltip, setActiveTooltip] = React.useState<{
         text: string;
@@ -2418,6 +2433,93 @@ export const LogicBuilder = ({
                     parentTimeframe={timeframe}
                 />
 
+                {/* Delayed Execution (Candle Delay) */}
+                {onCandleDelayChange && (
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        marginTop: -10,
+                        paddingTop: 6,
+                        borderTop: '0.5px dotted var(--color-ec-border)',
+                        paddingLeft: 4,
+                        paddingRight: 4,
+                        width: '100%',
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <label style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                cursor: 'pointer',
+                                userSelect: 'none',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-primary)',
+                                fontFamily: 'var(--color-ec-sans)',
+                            }}>
+                                <input
+                                    type="checkbox"
+                                    checked={candleDelay !== undefined && candleDelay > 1}
+                                    onChange={(e) => {
+                                        if (e.target.checked) {
+                                            onCandleDelayChange(3); // Default to 3 candles when checked
+                                        } else {
+                                            onCandleDelayChange(undefined); // Reset/Disable delay
+                                        }
+                                    }}
+                                    style={{
+                                        accentColor: headerAccentColor,
+                                        cursor: 'pointer',
+                                    }}
+                                />
+                                Retardar ejecución (velas futuras)
+                            </label>
+                            <TooltipIcon customText={tooltipText} />
+                        </div>
+
+                        {candleDelay !== undefined && candleDelay > 1 && (
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                paddingLeft: 12,
+                                borderLeft: '0.5px solid var(--color-ec-border)',
+                            }}>
+                                <span style={{
+                                    fontSize: 11,
+                                    color: 'var(--color-ec-text-muted)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                }}>
+                                    Ejecutar en la vela futura número:
+                                </span>
+                                <select
+                                    value={candleDelay}
+                                    onChange={(e) => onCandleDelayChange(Number(e.target.value))}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: '4px',
+                                        padding: '3px 8px',
+                                        fontSize: '11px',
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    {[2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 30, 45, 60].map((num) => (
+                                        <option key={num} value={num}>
+                                            {num}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {children}
 
                 {activeTooltip && (
@@ -2441,6 +2543,7 @@ export const LogicBuilder = ({
                             boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
                             fontFamily: "var(--color-ec-sans)",
                             transition: "opacity 150ms ease",
+                            whiteSpace: "pre-line",
                         }}
                     >
                         {activeTooltip.text}

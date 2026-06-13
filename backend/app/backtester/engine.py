@@ -1051,17 +1051,72 @@ class BacktestEngine:
         entry_signals = self.generate_boolean_signals("entry")
         exit_signals = self.generate_boolean_signals("exit")
         
-        # Look-ahead prevention: shift signals by 1 bar per ticker
-        if self.lookahead_prevention and len(df) > 0:
+        # Look-ahead prevention and candle delay: shift signals per ticker/strategy
+        if len(df) > 0:
             n_strats = entry_signals.shape[1]
             entry_shifted = np.zeros_like(entry_signals)
             exit_shifted = np.zeros_like(exit_signals)
-            for ticker in unique_tickers:
-                mask = df['ticker'].values == ticker
-                idx = np.where(mask)[0]
-                if len(idx) > 1:
-                    entry_shifted[idx[1:], :] = entry_signals[idx[:-1], :]
-                    exit_shifted[idx[1:], :] = exit_signals[idx[:-1], :]
+            
+            from app.services.strategy_engine import get_lowest_timeframe_mins
+
+            for s_idx, s in enumerate(self.strategies):
+                entry_logic = getattr(s, 'entry_logic', None)
+                exit_logic = getattr(s, 'exit_logic', None)
+                
+                entry_logic_dict = {}
+                if entry_logic:
+                    if hasattr(entry_logic, 'model_dump'):
+                        entry_logic_dict = entry_logic.model_dump()
+                    elif hasattr(entry_logic, 'dict'):
+                        entry_logic_dict = entry_logic.dict()
+                    else:
+                        entry_logic_dict = dict(entry_logic)
+                
+                exit_logic_dict = {}
+                if exit_logic:
+                    if hasattr(exit_logic, 'model_dump'):
+                        exit_logic_dict = exit_logic.model_dump()
+                    elif hasattr(exit_logic, 'dict'):
+                        exit_logic_dict = exit_logic.dict()
+                    else:
+                        exit_logic_dict = dict(exit_logic)
+                
+                lowest_entry_tf_mins = get_lowest_timeframe_mins(entry_logic_dict)
+                lowest_exit_tf_mins = get_lowest_timeframe_mins(exit_logic_dict)
+
+                entry_delay = 1
+                if entry_logic_dict and entry_logic_dict.get("candle_delay") is not None:
+                    try:
+                        entry_delay = int(entry_logic_dict["candle_delay"])
+                    except (ValueError, TypeError):
+                        entry_delay = 1
+
+                exit_delay = 1
+                if exit_logic_dict and exit_logic_dict.get("candle_delay") is not None:
+                    try:
+                        exit_delay = int(exit_logic_dict["candle_delay"])
+                    except (ValueError, TypeError):
+                        exit_delay = 1
+
+                shift_entry = (1 if self.lookahead_prevention else 0) + (max(1, entry_delay) - 1) * lowest_entry_tf_mins
+                shift_exit = (1 if self.lookahead_prevention else 0) + (max(1, exit_delay) - 1) * lowest_exit_tf_mins
+
+                for ticker in unique_tickers:
+                    mask = df['ticker'].values == ticker
+                    idx = np.where(mask)[0]
+                    
+                    if shift_entry > 0:
+                        if len(idx) > shift_entry:
+                            entry_shifted[idx[shift_entry:], s_idx] = entry_signals[idx[:-shift_entry], s_idx]
+                    else:
+                        entry_shifted[idx, s_idx] = entry_signals[idx, s_idx]
+
+                    if shift_exit > 0:
+                        if len(idx) > shift_exit:
+                            exit_shifted[idx[shift_exit:], s_idx] = exit_signals[idx[:-shift_exit], s_idx]
+                    else:
+                        exit_shifted[idx, s_idx] = exit_signals[idx, s_idx]
+            
             entry_signals = entry_shifted
             exit_signals = exit_shifted
         

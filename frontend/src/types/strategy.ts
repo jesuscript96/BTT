@@ -179,11 +179,13 @@ export interface EntryLogic {
     timeframe: Timeframe;
     root_condition: ConditionGroup;
     entry_time_windows?: EntryTimeWindow[];
+    candle_delay?: number;
 }
 
 export interface ExitLogic {
     timeframe: Timeframe;
     root_condition: ConditionGroup;
+    candle_delay?: number;
 }
 
 export interface RiskSettings {

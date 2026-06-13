@@ -267,10 +267,12 @@ class EntryLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
     entry_time_windows: Optional[List[EntryTimeWindow]] = None
+    candle_delay: Optional[int] = None
 
 class ExitLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
+    candle_delay: Optional[int] = None
 
 class PartialTakeProfit(BaseModel):
     distance_pct: Union[float, str]

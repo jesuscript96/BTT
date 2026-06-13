@@ -17,6 +17,8 @@ export const ExitLogicBuilder = React.memo(({ logic, onChange }: Props) => {
             rootCondition={logic.root_condition}
             onConditionChange={(g) => onChange({ ...logic, root_condition: g })}
             accentColor="rose"
+            candleDelay={logic.candle_delay}
+            onCandleDelayChange={(delay) => onChange({ ...logic, candle_delay: delay })}
         />
     );
 });

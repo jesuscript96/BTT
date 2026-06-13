@@ -11,6 +11,34 @@ from app.services.indicators import compute_indicator, detect_candle_pattern
 logger = logging.getLogger("backtester.strategy_engine")
 
 
+def get_lowest_timeframe_mins(logic_dict: dict | None) -> int:
+    if not logic_dict:
+        return 1
+    
+    tf_map = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 1440}
+    
+    # Base timeframe
+    base_tf = logic_dict.get("timeframe", "1m")
+    lowest_mins = tf_map.get(base_tf, 1)
+    
+    # Check conditions recursively
+    def check_group(group):
+        nonlocal lowest_mins
+        if not group:
+            return
+        conditions = group.get("conditions", [])
+        for cond in conditions:
+            if cond.get("type") == "group" or "conditions" in cond:
+                check_group(cond)
+            else:
+                cond_tf = cond.get("timeframe")
+                if cond_tf:
+                    lowest_mins = min(lowest_mins, tf_map.get(cond_tf, 1))
+                    
+    check_group(logic_dict.get("root_condition", {}))
+    return lowest_mins
+
+
 def compile_strategy_def(strategy_def: dict) -> dict:
     """Pre-extract all per-strategy fields once so the per-day translate_strategy
     call avoids repeating dict.get() lookups inside the day loop."""
@@ -30,6 +58,8 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "exit_root": exit_logic.get("root_condition", {}),
         "accept_reentries": risk.get("accept_reentries", False),
         "entry_time_windows": entry_logic.get("entry_time_windows", []),
+        "entry_candle_delay": entry_logic.get("candle_delay"),
+        "exit_candle_delay": exit_logic.get("candle_delay"),
     }
 
 
@@ -98,6 +128,8 @@ def translate_strategy(
     exits = _evaluate_condition_group(
         compiled["exit_root"], df, exit_tf, daily_stats, exit_cache
     )
+
+
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
     sl_stop, sl_trail, tp_stop, trail_pct, partial_tps = _parse_risk_management(risk, df, daily_stats, risk_cache)

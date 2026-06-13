@@ -141,7 +141,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                 {/* Body */}
                 {(risk.use_hard_stop !== false) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
-                        <div className="flex gap-2">
+                        <div className={`flex gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
                             <select
                                 value={risk.hard_stop.type}
                                 onChange={(e) => {
@@ -167,6 +167,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     fontFamily: 'var(--color-ec-sans)',
                                     outline: 'none',
                                     cursor: 'pointer',
+                                    height: '36px',
+                                    width: risk.hard_stop.type === RiskType.PERCENTAGE ? '52px' : 'auto',
                                 }}
                             >
                                 <option value={RiskType.PERCENTAGE}>%</option>
@@ -189,6 +191,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                             outline: 'none',
                                             cursor: 'pointer',
                                             flex: 2,
+                                            height: '36px',
                                         }}
                                     >
                                         <option value="HOD">HOD (High of Day)</option>
@@ -214,6 +217,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                             outline: 'none',
                                             cursor: 'pointer',
                                             width: '60px',
+                                            height: '36px',
                                         }}
                                     >
                                         <option value=">">&gt;</option>
@@ -239,6 +243,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                                 fontFamily: 'var(--color-ec-sans)',
                                                 outline: 'none',
                                                 width: '100%',
+                                                height: '36px',
                                             }}
                                         />
                                         <span style={{
@@ -256,23 +261,28 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     </div>
                                 </>
                             ) : (
-                                <input
-                                    type="number"
-                                    value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
-                                    onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
-                                    style={{
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '7px 10px',
-                                        fontSize: 13,
-                                        fontWeight: 600,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        flex: 1,
-                                    }}
-                                />
+                                <div className="relative" style={{ width: '120px' }}>
+                                    <input
+                                        type="number"
+                                        value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 24px 7px 10px',
+                                            fontSize: 13,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
+                                        }}
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                </div>
                             )}
                         </div>
 
@@ -472,25 +482,25 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                         {risk.take_profit_mode === TakeProfitMode.FULL ? (
                             <div className="flex gap-2 items-center justify-center animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
-                                <select
-                                    value={risk.take_profit.type}
-                                    onChange={(e) => updateRiskSetting('take_profit', 'type', e.target.value)}
+                                <div
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 5,
-                                        padding: '7px 10px',
+                                        padding: '7px 14px',
                                         fontSize: 12,
-                                        fontWeight: 500,
+                                        fontWeight: 600,
                                         color: 'var(--color-ec-text-primary)',
                                         fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        cursor: 'pointer',
                                         height: '36px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        userSelect: 'none',
                                     }}
                                 >
-                                    <option value={RiskType.PERCENTAGE}>%</option>
-                                </select>
+                                    %
+                                </div>
                                 <div className="relative" style={{ width: '120px' }}>
                                     <input
                                         type="number"

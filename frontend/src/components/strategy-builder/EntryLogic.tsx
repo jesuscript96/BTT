@@ -18,6 +18,8 @@ export const EntryLogicBuilder = React.memo(({ logic, onChange, children }: Prop
             rootCondition={logic.root_condition}
             onConditionChange={(g) => onChange({ ...logic, root_condition: g })}
             accentColor="blue"
+            candleDelay={logic.candle_delay}
+            onCandleDelayChange={(delay) => onChange({ ...logic, candle_delay: delay })}
         >
             {children}
         </LogicBuilder>

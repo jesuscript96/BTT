@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { Dataset, Strategy, PrecacheStatus } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies, fetchPrecacheStatus } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
@@ -293,8 +293,10 @@ export default function BacktestPanel({
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const isInitialMountRef = useRef(true);
   const [selectedDataset, setSelectedDataset] = useState("");
   const [selectedStrategy, setSelectedStrategy] = useState("");
+  const lastActiveStrategyRef = useRef<any>(null);
   const [showDatasetFilters, setShowDatasetFilters] = useState(false);
   const [initCash, setInitCash] = useState(10000);
   const [riskR, setRiskR] = useState(100);
@@ -321,10 +323,49 @@ export default function BacktestPanel({
   const [precacheStatus, setPrecacheStatus] = useState<PrecacheStatus | null>(null);
   const [visualPercent, setVisualPercent] = useState<number>(0);
 
+  const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
+  const selectedDs = datasets.find((d) => d.id === selectedDataset);
+
+  const getStratDef = () => {
+    let rawDef: any = null;
+    if ((selectedStrategy === "draft" || selectedStrategy === "wizard_draft") && activeStrategy) {
+      rawDef = activeStrategy.definition || activeStrategy;
+    } else {
+      const strat = strategies.find((s) => s.id === selectedStrategy);
+      rawDef = strat?.definition || strat;
+    }
+    
+    if (typeof rawDef === "string") {
+      try {
+        return JSON.parse(rawDef);
+      } catch (e) {
+        console.error("Error parsing strategy definition:", e);
+      }
+    }
+    return rawDef;
+  };
+
+  const stratDef = getStratDef() as any;
+  const riskMgmt = stratDef?.risk_management;
+  const sizeBySl = riskMgmt?.size_by_sl || false;
+  const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
+  const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
+  const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
+
   const loadData = async () => {
     setLoadingData(true);
     setLoadError(false);
     let failed = false;
+
+    let savedState: any = null;
+    try {
+      const stored = sessionStorage.getItem("backtester_panel_state");
+      if (stored) {
+        savedState = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error("Error reading backtester_panel_state:", e);
+    }
 
     // Check if there is prefill in sessionStorage
     let prefill: { strategy_id?: string; dataset_id?: string } | null = null;
@@ -343,11 +384,22 @@ export default function BacktestPanel({
       setDatasets(d);
       if (d.length > 0) {
         const hasPrefillDataset = prefill?.dataset_id && d.some(ds => ds.id === prefill.dataset_id);
-        const selectedId = hasPrefillDataset ? prefill!.dataset_id! : d[0].id;
+        const hasSavedDataset = savedState?.selectedDataset && d.some(ds => ds.id === savedState.selectedDataset);
+        const selectedId = hasPrefillDataset 
+          ? prefill!.dataset_id! 
+          : hasSavedDataset 
+          ? savedState.selectedDataset 
+          : d[0].id;
         setSelectedDataset(selectedId);
-        const selectedDs = d.find(ds => ds.id === selectedId);
-        if (selectedDs?.min_date) setStartDate(selectedDs.min_date);
-        if (selectedDs?.max_date) setEndDate(selectedDs.max_date);
+        
+        if (savedState && savedState.selectedDataset === selectedId) {
+          if (savedState.startDate) setStartDate(savedState.startDate);
+          if (savedState.endDate) setEndDate(savedState.endDate);
+        } else {
+          const selectedDs = d.find(ds => ds.id === selectedId);
+          if (selectedDs?.min_date) setStartDate(selectedDs.min_date);
+          if (selectedDs?.max_date) setEndDate(selectedDs.max_date);
+        }
       }
     } catch (e) {
       console.error("Error loading datasets:", e);
@@ -358,14 +410,39 @@ export default function BacktestPanel({
       setStrategies(s);
       if (s.length > 0) {
         const hasPrefillStrategy = prefill?.strategy_id && s.some(st => st.id === prefill.strategy_id);
-        setSelectedStrategy(hasPrefillStrategy ? prefill!.strategy_id! : s[0].id);
+        const hasSavedStrategy = savedState?.selectedStrategy && s.some(st => st.id === savedState.selectedStrategy);
+        const selectedId = hasPrefillStrategy 
+          ? prefill!.strategy_id! 
+          : hasSavedStrategy 
+          ? savedState.selectedStrategy 
+          : s[0].id;
+        setSelectedStrategy(selectedId);
       }
     } catch (e) {
       console.error("Error loading strategies:", e);
       failed = true;
     }
+
+    if (savedState) {
+      if (savedState.initCash !== undefined) setInitCash(savedState.initCash);
+      if (savedState.riskR !== undefined) setRiskR(savedState.riskR);
+      if (savedState.fees !== undefined) setFees(savedState.fees);
+      if (savedState.slippage !== undefined) setSlippage(savedState.slippage);
+      if (savedState.marketSessions !== undefined) setMarketSessions(savedState.marketSessions);
+      if (savedState.customStartTime !== undefined) setCustomStartTime(savedState.customStartTime);
+      if (savedState.customEndTime !== undefined) setCustomEndTime(savedState.customEndTime);
+      if (savedState.riskType !== undefined) setRiskType(savedState.riskType);
+      if (savedState.feeType !== undefined) setFeeType(savedState.feeType);
+      if (savedState.isPercent !== undefined) setIsPercent(savedState.isPercent);
+    }
+
     setLoadError(failed);
     setLoadingData(false);
+    
+    // Allow selectedDataset change effect to run after mount
+    setTimeout(() => {
+      isInitialMountRef.current = false;
+    }, 100);
   };
 
   useEffect(() => {
@@ -374,6 +451,7 @@ export default function BacktestPanel({
   }, []);
 
   useEffect(() => {
+    if (isInitialMountRef.current) return;
     const ds = datasets.find(d => d.id === selectedDataset);
     if (ds) {
       if (ds.min_date) setStartDate(ds.min_date);
@@ -485,7 +563,7 @@ export default function BacktestPanel({
       risk_r: riskR,
       risk_type: riskType,
       fixed_ratio_delta: fixedRatioDelta,
-      size_by_sl: getStratDef()?.risk_management?.size_by_sl || false,
+      size_by_sl: sizeBySl,
       fees: feeType === "PERCENT" ? fees / 100 : fees,
       fee_type: feeType,
       slippage: slippage / 100,
@@ -505,7 +583,37 @@ export default function BacktestPanel({
     fees, feeType, slippage, startDate, endDate, marketSessions,
     customStartTime, customEndTime, useLocates, locatesCost,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
-    selectedStrategy, activeStrategy, strategies,
+    sizeBySl,
+  ]);
+
+  // Save state to sessionStorage on change
+  useEffect(() => {
+    if (loadingData) return;
+    try {
+      const panelState = {
+        selectedDataset,
+        selectedStrategy,
+        initCash,
+        riskR,
+        fees,
+        slippage,
+        startDate,
+        endDate,
+        marketSessions,
+        customStartTime,
+        customEndTime,
+        riskType,
+        feeType,
+        isPercent,
+      };
+      sessionStorage.setItem("backtester_panel_state", JSON.stringify(panelState));
+    } catch (e) {
+      console.error("Error writing backtester_panel_state:", e);
+    }
+  }, [
+    selectedDataset, selectedStrategy, initCash, riskR, fees, slippage,
+    startDate, endDate, marketSessions, customStartTime, customEndTime,
+    riskType, feeType, isPercent, loadingData
   ]);
 
   const handleRun = () => {
@@ -549,33 +657,7 @@ export default function BacktestPanel({
     );
   };
 
-  const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
-  const selectedDs = datasets.find((d) => d.id === selectedDataset);
-
-  const getStratDef = () => {
-    let rawDef: any = null;
-    if (selectedStrategy === "draft" && activeStrategy) {
-      rawDef = activeStrategy.definition || activeStrategy;
-    } else {
-      const strat = strategies.find((s) => s.id === selectedStrategy);
-      rawDef = strat?.definition || strat;
-    }
-    
-    if (typeof rawDef === "string") {
-      try {
-        return JSON.parse(rawDef);
-      } catch (e) {
-        console.error("Error parsing strategy definition:", e);
-      }
-    }
-    return rawDef;
-  };
-
-  const stratDef = getStratDef() as any;
-  const riskMgmt = stratDef?.risk_management;
-  const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
-  const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
-  const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
+  // getStratDef was moved to the top of the component to avoid rendering loop issues.
 
 
 
@@ -915,8 +997,8 @@ export default function BacktestPanel({
                 cursor: 'pointer',
               }}
             >
-              {selectedStrategy === "draft" && activeStrategy && (
-                <option value="draft">
+              {(selectedStrategy === "draft" || selectedStrategy === "wizard_draft") && activeStrategy && (
+                <option value={selectedStrategy}>
                   [Borrador] {activeStrategy.name}
                 </option>
               )}
@@ -928,7 +1010,7 @@ export default function BacktestPanel({
             </select>
           )}
           {selectedStrategy && (() => {
-            const currentStrat = selectedStrategy === "draft" ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
+            const currentStrat = (selectedStrategy === "draft" || selectedStrategy === "wizard_draft") ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
             if (!currentStrat) return null;
             const cleanDesc = (currentStrat.description || "")
               .replace(/\[What-if:[\s\S]*\]/g, "")

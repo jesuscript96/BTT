@@ -186,7 +186,7 @@ export default function StrategyModeSelector({ onSelectFree, onSelectWizard, onB
                 color: "var(--color-ec-text-muted)",
                 lineHeight: 1.55,
               }}>
-                Un asistente paso a paso que te guía por cada sección de la estrategia. Ideal si prefieres ir con calma.
+                Un asistente paso a paso para configurar condiciones básicas que te guía por cada sección de la estrategia. Ideal si prefieres ir con calma.
               </div>
               <div style={{
                 display: "inline-flex",
@@ -286,7 +286,7 @@ export default function StrategyModeSelector({ onSelectFree, onSelectWizard, onB
                 color: "var(--color-ec-text-muted)",
                 lineHeight: 1.55,
               }}>
-                Acceso total a todos los parámetros. Configura entradas, salidas y riesgo sin restricciones.
+                Acceso total a todos los parámetros básicos y avanzados. Configura entradas, salidas y riesgo sin restricciones.
               </div>
               <div style={{
                 display: "inline-flex",

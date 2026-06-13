@@ -17,7 +17,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def
+from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
 from app.services.portfolio_sim import simulate
 
 logger = logging.getLogger("backtester.engine")
@@ -272,6 +272,38 @@ def run_backtest(
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
 
+        # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays ---
+        if compiled_strategy:
+            entry_candle_delay = compiled_strategy.get("entry_candle_delay")
+            if entry_candle_delay is not None:
+                try:
+                    delay_val = int(entry_candle_delay)
+                    if delay_val > 1:
+                        lowest_tf_mins = get_lowest_timeframe_mins(compiled_strategy.get("entry_logic", {}))
+                        shift_bars = (delay_val - 1) * lowest_tf_mins
+                        if shift_bars > 0 and len(entries_arr) > 0:
+                            if len(entries_arr) > shift_bars:
+                                entries_arr = np.concatenate([np.zeros(shift_bars, dtype=bool), entries_arr[:-shift_bars]])
+                            else:
+                                entries_arr = np.zeros_like(entries_arr)
+                except (ValueError, TypeError):
+                    pass
+
+            exit_candle_delay = compiled_strategy.get("exit_candle_delay")
+            if exit_candle_delay is not None:
+                try:
+                    delay_val = int(exit_candle_delay)
+                    if delay_val > 1:
+                        lowest_tf_mins = get_lowest_timeframe_mins(compiled_strategy.get("exit_logic", {}))
+                        shift_bars = (delay_val - 1) * lowest_tf_mins
+                        if shift_bars > 0 and len(exits_arr) > 0:
+                            if len(exits_arr) > shift_bars:
+                                exits_arr = np.concatenate([np.zeros(shift_bars, dtype=bool), exits_arr[:-shift_bars]])
+                            else:
+                                exits_arr = np.zeros_like(exits_arr)
+                except (ValueError, TypeError):
+                    pass
+
         # --- TEMPORARY PATCH FOR MISPRINTS ---
         # 8:00 to 8:45 restriction to ignore misprints
         ts_series = mini_df["timestamp"]
@@ -438,8 +470,8 @@ def run_backtest(
 # ---------------------------------------------------------------------------
 
 
-def _build_qualifying_lookup(qualifying_df: pd.DataFrame) -> dict:
-    if qualifying_df.empty:
+def _build_qualifying_lookup(qualifying_df: pd.DataFrame | None) -> dict:
+    if qualifying_df is None or qualifying_df.empty:
         return {}
     # Vectorized: avoid slow iterrows() — convert entire DataFrame at once
     records = qualifying_df.to_dict(orient="records")

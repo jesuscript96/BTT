@@ -424,6 +424,39 @@ export default function Home() {
     }
   }, [result, selectedDay, loadCandles]);
 
+  // Load results state from sessionStorage on mount
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem("backtester_results_state");
+      if (stored) {
+        const saved = JSON.parse(stored);
+        if (saved.result) setResult(saved.result);
+        if (saved.activeStrategy) setActiveStrategy(saved.activeStrategy);
+        if (saved.selectedDay !== undefined) setSelectedDay(saved.selectedDay);
+        if (saved.mode) setMode(saved.mode);
+        if (saved.builderDraft) setBuilderDraft(saved.builderDraft);
+      }
+    } catch (e) {
+      console.error("Error loading backtester_results_state:", e);
+    }
+  }, []);
+
+  // Save results state to sessionStorage on change
+  useEffect(() => {
+    try {
+      const resultsState = {
+        result,
+        activeStrategy,
+        selectedDay,
+        mode,
+        builderDraft
+      };
+      sessionStorage.setItem("backtester_results_state", JSON.stringify(resultsState));
+    } catch (e) {
+      console.error("Error writing backtester_results_state:", e);
+    }
+  }, [result, activeStrategy, selectedDay, mode, builderDraft]);
+
   // Dark Mode side-effect
   useEffect(() => {
     const saved = localStorage.getItem("theme");
@@ -1072,6 +1105,7 @@ export default function Home() {
                   marketSessions={activeSessions}
                   customStartTime={activeCustomStartTime}
                   customEndTime={activeCustomEndTime}
+                  initialStrategy={builderDraft || activeStrategy || undefined}
                 />
               </div>
               <div style={{ display: mode === 'builder' ? 'block' : 'none', height: '100%' }}>
@@ -1086,6 +1120,7 @@ export default function Home() {
                   customStartTime={activeCustomStartTime}
                   customEndTime={activeCustomEndTime}
                   onDraftChange={handleDraftChange}
+                  initialStrategy={builderDraft || activeStrategy || undefined}
                 />
               </div>
             </div>
