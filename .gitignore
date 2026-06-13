@@ -60,6 +60,7 @@ Thumbs.db
 # Secrets and Keys
 *.json
 !package.json
+!package-lock.json
 !tsconfig.json
 !composer.json
 backend/*.json
