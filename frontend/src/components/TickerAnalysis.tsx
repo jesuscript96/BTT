@@ -424,7 +424,7 @@ const DailyStockChart = ({
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 580,
+            height: 470,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -658,7 +658,7 @@ const DailyStockChart = ({
             <div style={{ 
                 position: 'relative', 
                 width: '100%', 
-                height: '580px',
+                height: '470px',
                 display: activeTab === 'chart' ? 'block' : 'none'
             }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -670,7 +670,7 @@ const DailyStockChart = ({
                 <div style={{ 
                     overflowY: 'auto', 
                     width: '100%', 
-                    height: '580px',
+                    height: '470px',
                     border: '1px solid var(--color-ec-border)',
                     borderRadius: 6,
                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -2274,7 +2274,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <div
                                     className="animate-pulse"
                                     style={{
-                                        height: '580px',
+                                        height: '470px',
                                         backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                                         borderRadius: '8px'
                                     }}
@@ -2283,7 +2283,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
                             )}
                         </div>
-                        <div className="lg:col-span-1 flex flex-col lg:min-h-[580px] h-auto gap-6 justify-start">
+                        <div className="lg:col-span-1 flex flex-col h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
                                 <div
                                     className="animate-pulse"
