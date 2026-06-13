@@ -1,5 +1,8 @@
 import { SignUp } from "@clerk/nextjs";
 
+// See sign-in page: opt out of static prerendering for Clerk's catch-all route.
+export const dynamic = "force-dynamic";
+
 export default function SignUpPage() {
   return (
     <div

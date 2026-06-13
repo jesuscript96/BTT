@@ -1,5 +1,10 @@
 import { SignIn } from "@clerk/nextjs";
 
+// Clerk's catch-all uses runtime virtual routing (SignIn_clerk_catchall_check_*).
+// Opt out of static prerendering so Next 16 / Turbopack doesn't crash trying to
+// generate static paths for it.
+export const dynamic = "force-dynamic";
+
 export default function SignInPage() {
   return (
     <div
