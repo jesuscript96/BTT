@@ -4470,7 +4470,7 @@ export default function WizardStrategyBuilder({
       }}>
         <div style={{
           height: "100%",
-          width: `${((completedSteps.size) / STEPS.length) * 100}%`,
+           width: `${((currentStep) / (STEPS.length - 1)) * 100}%`,
           background: "linear-gradient(90deg, var(--color-ec-copper), rgba(216, 122, 61, 0.6))",
           transition: "width 400ms cubic-bezier(0.22, 1, 0.36, 1)",
           borderRadius: "0 2px 2px 0",
@@ -4508,8 +4508,8 @@ export default function WizardStrategyBuilder({
           }}>
             {STEPS.map((step, idx) => {
               const isActive = idx === currentStep;
-              const isCompleted = completedSteps.has(idx);
-              const isFuture = idx > currentStep && !isCompleted;
+              const isCompleted = completedSteps.has(idx) && idx < currentStep;
+              const isFuture = idx > currentStep;
 
               return (
                 <div key={step.key} style={{ position: "relative" }}>
@@ -4596,7 +4596,7 @@ export default function WizardStrategyBuilder({
                       top: 28,
                       width: 1,
                       height: 10,
-                      backgroundColor: completedSteps.has(idx)
+                      backgroundColor: isCompleted
                         ? "var(--color-ec-copper)"
                         : "var(--color-ec-border)",
                       transition: "background-color 300ms ease",
