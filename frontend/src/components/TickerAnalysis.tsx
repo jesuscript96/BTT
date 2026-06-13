@@ -424,7 +424,7 @@ const DailyStockChart = ({
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 480,
+            height: 540,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -658,7 +658,7 @@ const DailyStockChart = ({
             <div style={{ 
                 position: 'relative', 
                 width: '100%', 
-                height: '480px',
+                height: '540px',
                 display: activeTab === 'chart' ? 'block' : 'none'
             }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -670,7 +670,7 @@ const DailyStockChart = ({
                 <div style={{ 
                     overflowY: 'auto', 
                     width: '100%', 
-                    height: '480px',
+                    height: '540px',
                     border: '1px solid var(--color-ec-border)',
                     borderRadius: 6,
                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -908,7 +908,7 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
     const paddingLeft = 48;
     const paddingRight = 10;
     const paddingTop = 8;
-    const paddingBottom = 28;
+    const paddingBottom = 20;
 
     const W = viewBoxW - paddingLeft - paddingRight;
     const H = viewBoxH - paddingTop - paddingBottom;
@@ -1084,7 +1084,7 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                         />
                         <text
                             x={tick.x}
-                            y={paddingTop + H + 16}
+                            y={paddingTop + H + 13}
                             textAnchor="middle"
                             fill="var(--color-ec-text-secondary)"
                             style={{ fontSize: 11, fontWeight: 600 }}
@@ -1240,7 +1240,7 @@ const GapStatsSection = ({
                     </div>
 
                     {/* Frequencies and Progress Bars */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 4, marginTop: -4 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 3, marginTop: -24 }}>
                         {/* Negative Close Frequency (Bidirectional Bar) */}
                         {(() => {
                             const negClose = currentStats.neg_close_freq ?? 0;
@@ -2274,7 +2274,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <div
                                     className="animate-pulse"
                                     style={{
-                                        height: '480px',
+                                        height: '540px',
                                         backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                                         borderRadius: '8px'
                                     }}
@@ -2283,7 +2283,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
                             )}
                         </div>
-                        <div className="lg:col-span-1 flex flex-col lg:min-h-[480px] h-auto gap-6 justify-start">
+                        <div className="lg:col-span-1 flex flex-col lg:min-h-[540px] h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
                                 <div
                                     className="animate-pulse"
