@@ -196,7 +196,7 @@ async def add_cors_headers_to_all_responses(request, call_next):
     return response
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
-from app.routers import optimization
+from app.routers import optimization, users
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -211,6 +211,7 @@ app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)
 app.include_router(market.router)
+app.include_router(users.router, prefix="/api/users", tags=["Users"])
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Optional
 from pydantic import BaseModel
 from uuid import uuid4
@@ -8,6 +8,7 @@ import threading
 import time
 import pandas as pd
 from app.database import get_user_db_connection, get_user_db_lock
+from app.auth import get_current_user_id, scope_clause
 
 router = APIRouter()
 
@@ -219,7 +220,7 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
 
 
 @router.post("/", response_model=SavedQuery)
-def create_saved_query(query: SavedQuery):
+def create_saved_query(query: SavedQuery, user_id: Optional[str] = Depends(get_current_user_id)):
     query_id = str(uuid4())
 
     # Phase A — synchronous and fast: register the dataset so it is listable
@@ -231,12 +232,12 @@ def create_saved_query(query: SavedQuery):
         con = get_user_db_connection()
         try:
             con.execute(
-                "INSERT INTO saved_queries (id, name, filters) VALUES (?, ?, ?)",
-                (query_id, query.name, json.dumps(query.filters))
+                "INSERT INTO saved_queries (id, name, filters, user_id) VALUES (?, ?, ?, ?)",
+                (query_id, query.name, json.dumps(query.filters), user_id)
             )
             con.execute(
-                "INSERT INTO datasets (id, name) VALUES (?, ?)",
-                (query_id, query.name)
+                "INSERT INTO datasets (id, name, user_id) VALUES (?, ?, ?)",
+                (query_id, query.name, user_id)
             )
         finally:
             con.close()
@@ -281,21 +282,27 @@ def _parse_filters(raw):
 
 
 @router.get("/", response_model=List[SavedQuery])
-def list_saved_queries():
+def list_saved_queries(user_id: Optional[str] = Depends(get_current_user_id)):
     con = get_user_db_connection()
+    scope_sql, scope_params = scope_clause(user_id)
     try:
         try:
             # massive.* is never attached on get_user_db_connection() connections,
             # so the old UNION with massive.main.saved_queries always threw a
             # Catalog Error and forced the fallback. users.duckdb is the only source.
-            rows = con.execute("""
-                SELECT id, name, filters, created_at, updated_at FROM users.saved_queries
-                ORDER BY created_at DESC
-            """).fetchall()
+            rows = con.execute(
+                f"SELECT id, name, filters, created_at, updated_at FROM users.saved_queries "
+                f"WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+                scope_params,
+            ).fetchall()
         except Exception as e:
             print(f"list_saved_queries error: {e}")
             try:
-                rows = con.execute("SELECT id, name, filters, created_at, updated_at FROM saved_queries ORDER BY created_at DESC").fetchall()
+                rows = con.execute(
+                    f"SELECT id, name, filters, created_at, updated_at FROM saved_queries "
+                    f"WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+                    scope_params,
+                ).fetchall()
             except Exception as e2:
                 print(f"fallback list_saved_queries error: {e2}")
                 return []
@@ -312,10 +319,14 @@ def list_saved_queries():
         con.close()
 
 @router.get("/{query_id}", response_model=SavedQuery)
-def get_saved_query(query_id: str):
+def get_saved_query(query_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     con = get_user_db_connection()
+    scope_sql, scope_params = scope_clause(user_id)
     try:
-        row = con.execute("SELECT id, name, filters, created_at, updated_at FROM saved_queries WHERE id = ?", (query_id,)).fetchone()
+        row = con.execute(
+            f"SELECT id, name, filters, created_at, updated_at FROM saved_queries WHERE id = ?{scope_sql}",
+            [query_id, *scope_params],
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Query not found")
         return {
@@ -329,11 +340,19 @@ def get_saved_query(query_id: str):
         con.close()
 
 @router.delete("/{query_id}")
-def delete_saved_query(query_id: str):
+def delete_saved_query(query_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
     with lock:
         con = get_user_db_connection()
         try:
+            # Only cascade-delete the child rows if the caller owns the dataset.
+            owned = con.execute(
+                f"SELECT id FROM saved_queries WHERE id = ?{scope_sql}",
+                [query_id, *scope_params],
+            ).fetchone()
+            if not owned:
+                raise HTTPException(status_code=404, detail="Query not found")
             con.execute("DELETE FROM saved_queries WHERE id = ?", (query_id,))
             con.execute("DELETE FROM datasets WHERE id = ?", (query_id,))
             con.execute("DELETE FROM dataset_pairs WHERE dataset_id = ?", (query_id,))

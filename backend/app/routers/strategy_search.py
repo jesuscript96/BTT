@@ -1,7 +1,7 @@
 """
 Strategy Search API Endpoints - Database View
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
@@ -9,6 +9,7 @@ import json
 import uuid
 
 from app.database import get_db_connection, get_user_db_connection, get_user_db_lock
+from app.auth import get_current_user_id, scope_clause
 
 router = APIRouter()
 
@@ -49,7 +50,7 @@ class SavedStrategyResponse(BaseModel):
 
 
 @router.post("/", response_model=dict)
-def save_backtest_result(data: dict):
+def save_backtest_result(data: dict, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Persist a backtest run into backtest_results so it shows up in the Baul
     linked to the corresponding strategy via strategy_ids.
@@ -83,8 +84,8 @@ def save_backtest_result(data: dict):
                     total_trades, win_rate, profit_factor,
                     avg_r_multiple, total_return_r, total_return_pct,
                     max_drawdown_pct, sharpe_ratio, executed_at,
-                    search_mode, search_space
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    search_mode, search_space, user_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [
                 new_id,
                 json.dumps(strategy_ids),
@@ -100,6 +101,7 @@ def save_backtest_result(data: dict):
                 now,
                 "manual",
                 "user_save",
+                user_id,
             ])
         finally:
             con.close()
@@ -115,16 +117,16 @@ def save_backtest_result(data: dict):
 
 
 @router.post("/filter")
-def filter_strategies(filters: StrategySearchFilters):
+def filter_strategies(filters: StrategySearchFilters, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Filter saved strategies using Pass Criteria
     """
     try:
         con = get_db_connection(read_only=True)
-        
+
         # Build dynamic query
         query = """
-            SELECT 
+            SELECT
                 id, strategy_ids, results_json,
                 total_trades, win_rate, profit_factor,
                 avg_r_multiple, total_return_r, total_return_pct,
@@ -133,6 +135,11 @@ def filter_strategies(filters: StrategySearchFilters):
             WHERE 1=1
         """
         params = []
+
+        # Restrict to the caller's own results (plus legacy NULL-owner rows).
+        scope_sql, scope_params = scope_clause(user_id)
+        query += scope_sql
+        params.extend(scope_params)
         
         # Apply Pass Criteria filters
         if filters.pass_criteria:
@@ -215,26 +222,29 @@ def filter_strategies(filters: StrategySearchFilters):
 @router.get("/list")
 def list_all_strategies(
     limit: int = Query(100, le=500),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
+    user_id: Optional[str] = Depends(get_current_user_id),
 ):
     """
     Get all saved strategies with pagination
     """
     try:
         con = get_db_connection(read_only=True)
-        
+
+        scope_sql, scope_params = scope_clause(user_id)
         rows = con.execute(
-            """
-            SELECT 
+            f"""
+            SELECT
                 id, strategy_ids, results_json,
                 total_trades, win_rate, profit_factor,
                 avg_r_multiple, total_return_r, total_return_pct,
                 max_drawdown_pct, sharpe_ratio, executed_at
             FROM backtest_results
+            WHERE 1=1{scope_sql}
             ORDER BY executed_at DESC
             LIMIT ? OFFSET ?
             """,
-            (limit, offset)
+            [*scope_params, limit, offset],
         ).fetchall()
         
         strategies = []
@@ -261,7 +271,10 @@ def list_all_strategies(
             })
         
         # Get total count
-        total = con.execute("SELECT COUNT(*) FROM backtest_results").fetchone()[0]
+        total = con.execute(
+            f"SELECT COUNT(*) FROM backtest_results WHERE 1=1{scope_sql}",
+            scope_params,
+        ).fetchone()[0]
         
         return {
             "strategies": strategies,
@@ -276,19 +289,20 @@ def list_all_strategies(
 
 
 @router.post("/{backtest_id}/toggle-validation")
-def toggle_validation(backtest_id: str):
+def toggle_validation(backtest_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Toggle the is_validated flag inside results_json for a backtest result.
     """
     lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
     with lock:
         con = get_user_db_connection()
         try:
             row = con.execute(
-                "SELECT results_json FROM backtest_results WHERE id = ?",
-                (backtest_id,)
+                f"SELECT results_json FROM backtest_results WHERE id = ?{scope_sql}",
+                [backtest_id, *scope_params],
             ).fetchone()
-            
+
             if not row:
                 raise HTTPException(status_code=404, detail="Backtest result not found")
             
@@ -328,23 +342,27 @@ def toggle_validation(backtest_id: str):
 
 
 @router.delete("/{strategy_id}")
-def delete_strategy(strategy_id: str):
+def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Delete a saved strategy
     """
     try:
         con = get_db_connection()
-        
+
+        scope_sql, scope_params = scope_clause(user_id)
         row = con.execute(
-            "SELECT id FROM backtest_results WHERE id = ?",
-            (strategy_id,)
+            f"SELECT id FROM backtest_results WHERE id = ?{scope_sql}",
+            [strategy_id, *scope_params],
         ).fetchone()
-        
+
         if not row:
             raise HTTPException(status_code=404, detail="Strategy not found")
-        
-        con.execute("DELETE FROM backtest_results WHERE id = ?", (strategy_id,))
-        
+
+        con.execute(
+            f"DELETE FROM backtest_results WHERE id = ?{scope_sql}",
+            [strategy_id, *scope_params],
+        )
+
         return {"status": "success", "message": "Strategy deleted"}
         
     except HTTPException:
@@ -355,24 +373,25 @@ def delete_strategy(strategy_id: str):
 
 
 @router.post("/export")
-def export_strategies(strategy_ids: List[str]):
+def export_strategies(strategy_ids: List[str], user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Export selected strategies to CSV format
     """
     try:
         con = get_db_connection(read_only=True)
-        
+
         placeholders = ",".join(["?" for _ in strategy_ids])
+        scope_sql, scope_params = scope_clause(user_id)
         query = f"""
-            SELECT 
+            SELECT
                 id, strategy_ids, total_trades, win_rate,
                 profit_factor, avg_r_multiple, total_return_pct,
                 max_drawdown_pct, sharpe_ratio, executed_at
             FROM backtest_results
-            WHERE id IN ({placeholders})
+            WHERE id IN ({placeholders}){scope_sql}
         """
-        
-        rows = con.execute(query, strategy_ids).fetchall()
+
+        rows = con.execute(query, [*strategy_ids, *scope_params]).fetchall()
         
         csv_data = []
         csv_data.append([
