@@ -888,12 +888,12 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
     if (!data || data.length === 0) {
         return (
             <div style={{
-                height: '100px',
+                height: '140px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: 'var(--color-ec-text-muted)',
-                fontSize: '9px',
+                fontSize: '11px',
                 border: '1px dashed rgba(255, 255, 255, 0.1)',
                 borderRadius: '4px',
                 width: '100%'
@@ -903,12 +903,12 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
         );
     }
 
-    const viewBoxW = 320;
-    const viewBoxH = 120;
-    const paddingLeft = 26;
+    const viewBoxW = 340;
+    const viewBoxH = 140;
+    const paddingLeft = 38;
     const paddingRight = 10;
-    const paddingTop = 8;
-    const paddingBottom = 22;
+    const paddingTop = 12;
+    const paddingBottom = 26;
 
     const W = viewBoxW - paddingLeft - paddingRight;
     const H = viewBoxH - paddingTop - paddingBottom;
@@ -1010,19 +1010,19 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                         />
                         <text
                             x={paddingLeft + preWidth / 2}
-                            y={paddingTop + 10}
+                            y={paddingTop + 11}
                             textAnchor="middle"
                             fill="var(--color-ec-text-muted)"
-                            style={{ fontSize: 6, fontWeight: 700, letterSpacing: '0.5px' }}
+                            style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px' }}
                         >
                             PRE
                         </text>
                         <text
                             x={paddingLeft + preWidth + (W - preWidth) / 2}
-                            y={paddingTop + 10}
+                            y={paddingTop + 11}
                             textAnchor="middle"
                             fill="var(--color-ec-text-muted)"
-                            style={{ fontSize: 6, fontWeight: 700, letterSpacing: '0.5px' }}
+                            style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.5px' }}
                         >
                             RTH
                         </text>
@@ -1046,11 +1046,11 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                                 strokeDasharray={isZero ? undefined : "2,4"}
                             />
                             <text
-                                x={paddingLeft - 4}
-                                y={y + 2}
+                                x={paddingLeft - 6}
+                                y={y + 3}
                                 textAnchor="end"
                                 fill="var(--color-ec-text-muted)"
-                                style={{ fontSize: 6, fontFamily: 'monospace' }}
+                                style={{ fontSize: 8, fontFamily: 'monospace', fontWeight: 600 }}
                             >
                                 {tickVal >= 0 ? '+' : ''}{tickVal.toFixed(1)}%
                             </text>
@@ -1084,10 +1084,10 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                         />
                         <text
                             x={tick.x}
-                            y={paddingTop + H + 12}
+                            y={paddingTop + H + 13}
                             textAnchor="middle"
                             fill="var(--color-ec-text-secondary)"
-                            style={{ fontSize: 7, fontWeight: 500 }}
+                            style={{ fontSize: 8, fontWeight: 600 }}
                         >
                             {tick.label}
                         </text>
@@ -1208,7 +1208,7 @@ const GapStatsSection = ({
             ) : (
                 <>
                     {/* Split metrics on left, Avg Price Change Chart on right */}
-                    <div style={{ display: 'flex', gap: 16, alignItems: 'center', width: '100%' }}>
+                    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', width: '100%' }}>
                         {/* Metrics Column (Left side, width ~38%) */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '38%', flexShrink: 0 }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -1233,7 +1233,7 @@ const GapStatsSection = ({
                         {/* Chart Area (Right side, width ~62%) */}
                         <div style={{ width: '62%', flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
                             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Precio medio desde el Open</span>
-                            <div style={{ height: '100px', width: '100%' }}>
+                            <div style={{ height: '140px', width: '100%' }}>
                                 <AvgPriceChangeChart data={currentStats.price_change_chart} />
                             </div>
                         </div>
