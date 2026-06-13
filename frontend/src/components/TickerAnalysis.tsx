@@ -424,7 +424,7 @@ const DailyStockChart = ({
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 420,
+            height: 480,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -658,7 +658,7 @@ const DailyStockChart = ({
             <div style={{ 
                 position: 'relative', 
                 width: '100%', 
-                height: '420px',
+                height: '480px',
                 display: activeTab === 'chart' ? 'block' : 'none'
             }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -670,7 +670,7 @@ const DailyStockChart = ({
                 <div style={{ 
                     overflowY: 'auto', 
                     width: '100%', 
-                    height: '420px',
+                    height: '480px',
                     border: '1px solid var(--color-ec-border)',
                     borderRadius: 6,
                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -907,7 +907,7 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
     const viewBoxH = 150;
     const paddingLeft = 48;
     const paddingRight = 10;
-    const paddingTop = 15;
+    const paddingTop = 8;
     const paddingBottom = 28;
 
     const W = viewBoxW - paddingLeft - paddingRight;
@@ -1010,19 +1010,19 @@ const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
                         />
                         <text
                             x={paddingLeft + preWidth / 2}
-                            y={paddingTop + 14}
+                            y={paddingTop + 10}
                             textAnchor="middle"
                             fill="var(--color-ec-text-muted)"
-                            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}
+                            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px' }}
                         >
                             PRE
                         </text>
                         <text
                             x={paddingLeft + preWidth + (W - preWidth) / 2}
-                            y={paddingTop + 14}
+                            y={paddingTop + 10}
                             textAnchor="middle"
                             fill="var(--color-ec-text-muted)"
-                            style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.5px' }}
+                            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px' }}
                         >
                             RTH
                         </text>
@@ -1231,7 +1231,7 @@ const GapStatsSection = ({
                         </div>
 
                         {/* Chart Area (Right side, width ~62%) */}
-                        <div style={{ width: '62%', flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ width: '62%', flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
                             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Precio medio desde el Open</span>
                             <div style={{ height: '170px', width: '100%' }}>
                                 <AvgPriceChangeChart data={currentStats.price_change_chart} />
@@ -1240,7 +1240,7 @@ const GapStatsSection = ({
                     </div>
 
                     {/* Frequencies and Progress Bars */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 8 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 4, marginTop: -4 }}>
                         {/* Negative Close Frequency (Bidirectional Bar) */}
                         {(() => {
                             const negClose = currentStats.neg_close_freq ?? 0;
@@ -1251,7 +1251,7 @@ const GapStatsSection = ({
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
                                     </div>
                                     <div style={{
-                                        height: 10,
+                                        height: 14,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
@@ -1306,7 +1306,7 @@ const GapStatsSection = ({
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
                                     </div>
                                     <div style={{
-                                        height: 10,
+                                        height: 14,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
@@ -1361,7 +1361,7 @@ const GapStatsSection = ({
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
                                     </div>
                                     <div style={{
-                                        height: 10,
+                                        height: 14,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
@@ -2274,7 +2274,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <div
                                     className="animate-pulse"
                                     style={{
-                                        height: '419px',
+                                        height: '480px',
                                         backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                                         borderRadius: '8px'
                                     }}
@@ -2283,7 +2283,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
                             )}
                         </div>
-                        <div className="lg:col-span-1 flex flex-col lg:min-h-[419px] h-auto gap-6 justify-start">
+                        <div className="lg:col-span-1 flex flex-col lg:min-h-[480px] h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
                                 <div
                                     className="animate-pulse"
