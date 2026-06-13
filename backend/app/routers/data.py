@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from pydantic import BaseModel
 from app.database import get_db_connection
+from app.auth import get_current_user_id, scope_clause
 # Lazy imports for memory optimization
 # from app.ingestion import ingest_history
 # from app.processor import get_dashboard_stats, get_aggregate_time_series
@@ -358,18 +359,21 @@ from app.db.gcs_cache import get_strategies_df, get_saved_queries_df
 
 
 @router.get("/datasets")
-def list_datasets():
+def list_datasets(user_id: Optional[str] = Depends(get_current_user_id)):
     results = []
-    
+
     # Primero: leer de users.duckdb local
     try:
         from app.database import get_user_db_connection, get_user_db_lock
         import json as _json
+        scope_sql, scope_params = scope_clause(user_id)
         with get_user_db_lock():
             con = get_user_db_connection()
             try:
                 rows = con.execute(
-                    "SELECT id, name, filters, created_at, updated_at FROM saved_queries ORDER BY created_at DESC"
+                    f"SELECT id, name, filters, created_at, updated_at FROM saved_queries "
+                    f"WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+                    scope_params,
                 ).fetchall()
                 for row in rows:
                     filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
@@ -443,16 +447,17 @@ def list_datasets():
 
 
 @router.get("/datasets/{dataset_id}")
-def get_dataset(dataset_id: str):
+def get_dataset(dataset_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     # Primero: buscar en local DB
     try:
         from app.database import get_user_db_connection
         import json as _json
+        scope_sql, scope_params = scope_clause(user_id)
         con = get_user_db_connection()
         try:
             row = con.execute(
-                "SELECT id, name, filters, created_at, updated_at FROM saved_queries WHERE id = ?",
-                (dataset_id,)
+                f"SELECT id, name, filters, created_at, updated_at FROM saved_queries WHERE id = ?{scope_sql}",
+                [dataset_id, *scope_params],
             ).fetchone()
             if row:
                 filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
@@ -496,18 +501,21 @@ def get_dataset(dataset_id: str):
 
 
 @router.get("/strategies")
-def list_strategies_backtester():
+def list_strategies_backtester(user_id: Optional[str] = Depends(get_current_user_id)):
     results = []
-    
+
     # Primero: leer de users.duckdb local
     try:
         from app.database import get_user_db_connection, get_user_db_lock
         import json as _json
+        scope_sql, scope_params = scope_clause(user_id)
         with get_user_db_lock():
             con = get_user_db_connection()
             try:
                 rows = con.execute(
-                    "SELECT id, name, description, definition FROM strategies ORDER BY created_at DESC"
+                    f"SELECT id, name, description, definition FROM strategies "
+                    f"WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+                    scope_params,
                 ).fetchall()
                 for row in rows:
                     results.append({
@@ -542,16 +550,17 @@ def list_strategies_backtester():
 
 
 @router.get("/strategies/{strategy_id}")
-def get_strategy_backtester(strategy_id: str):
+def get_strategy_backtester(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     # Primero: buscar en local DB
     try:
         from app.database import get_user_db_connection
         import json as _json
+        scope_sql, scope_params = scope_clause(user_id)
         con = get_user_db_connection()
         try:
             row = con.execute(
-                "SELECT id, name, description, definition FROM strategies WHERE id = ?",
-                (strategy_id,)
+                f"SELECT id, name, description, definition FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
             ).fetchone()
             if row:
                 return {

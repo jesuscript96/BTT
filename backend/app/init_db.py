@@ -239,6 +239,15 @@ def init_db():
             )
         """)
 
+        # Clerk Phase 2 migration: add nullable user_id to user-owned tables.
+        # Nullable so legacy rows (and the read-only GCS parquet fallback) keep
+        # working — reads use NULL-tolerant scoping (see app.auth.scope_clause).
+        for table_name in ("strategies", "saved_queries", "datasets", "backtest_results"):
+            try:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS user_id VARCHAR")
+            except Exception as e:
+                print(f"[WARN] Could not add user_id to {table_name}: {e}")
+
     print("[INFO] Local database tables initialized across connections")
     
     tables = cur.execute("SHOW TABLES").fetchall()

@@ -20,11 +20,38 @@ const api = axios.create({
 // Diagnostic logging for Production Network Error
 console.log("[API] Base URL configured as:", apiBaseUrl());
 
+// Inject the active Clerk session token on every request. Reads the global
+// Clerk instance (set by ClerkProvider); no-op on the server / before load.
+api.interceptors.request.use(async (config) => {
+  if (typeof window !== "undefined") {
+    try {
+      const clerk = (window as unknown as {
+        Clerk?: { session?: { getToken: () => Promise<string | null> } };
+      }).Clerk;
+      const token = await clerk?.session?.getToken?.();
+      if (token) {
+        config.headers = config.headers ?? {};
+        (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+      }
+    } catch {
+      // No token available — let the request go out unauthenticated.
+    }
+  }
+  return config;
+});
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    const isCancelled = error.response?.status === 400 && 
-                        (error.response?.data?.detail === "Backtest cancelado" || 
+    // 401 → session expired or missing; bounce to sign-in.
+    if (error.response?.status === 401 && typeof window !== "undefined") {
+      if (!window.location.pathname.startsWith("/sign-in")) {
+        window.location.href = "/sign-in";
+      }
+      return Promise.reject(error);
+    }
+    const isCancelled = error.response?.status === 400 &&
+                        (error.response?.data?.detail === "Backtest cancelado" ||
                          error.response?.data?.message === "Backtest cancelado");
     if (!isCancelled) {
       console.error(

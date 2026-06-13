@@ -15,10 +15,27 @@ const API_BASE = (() => {
 })();
 
 // ─── Auth headers (Clerk) ───────────────────────────────────
-// Phase 1: client-side helper, token injection wired in Phase 2 once backend verifies JWT.
+// Reads the active Clerk session token from the global Clerk instance (set by
+// ClerkProvider) and returns it as a Bearer header. Safe on the server / before
+// Clerk loads: returns no Authorization header so public calls still work.
+export async function getClerkToken(): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  try {
+    const clerk = (window as unknown as {
+      Clerk?: { session?: { getToken: () => Promise<string | null> } };
+    }).Clerk;
+    const token = await clerk?.session?.getToken?.();
+    return token ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getAuthHeaders(): Promise<HeadersInit> {
+  const token = await getClerkToken();
   return {
     'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 
@@ -77,6 +94,7 @@ async function apiRequest<T>(
   const timeoutMs = options?.timeoutMs ?? 20_000; // Default 20s timeout
 
   const hasBody = !!options?.body;
+  const token = await getClerkToken();
   let response: Response;
   try {
     // Wire up AbortController for timeout (skip if caller already provided a signal)
@@ -95,6 +113,7 @@ async function apiRequest<T>(
         signal: controller.signal,
         headers: {
           ...(hasBody ? { "Content-Type": "application/json" } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(options?.headers as Record<string, string> || {}),
         },
       });
@@ -106,6 +125,14 @@ async function apiRequest<T>(
       throw new ApiError(0, `Request timed out after ${timeoutMs / 1000}s: ${path}`);
     }
     throw new ApiError(0, "No se pudo conectar con el backend", error);
+  }
+
+  // 401 Unauthorized → session expired or missing; bounce to sign-in.
+  if (response.status === 401 && typeof window !== "undefined") {
+    if (!window.location.pathname.startsWith("/sign-in")) {
+      window.location.href = "/sign-in";
+    }
+    throw new ApiError(401, "Sesión expirada. Inicia sesión de nuevo.");
   }
 
   // 204 No Content → return null-ish

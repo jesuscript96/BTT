@@ -1,16 +1,17 @@
-from fastapi import APIRouter, HTTPException
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List, Optional
 import json
 from uuid import uuid4
 from datetime import datetime
 
 from app.database import get_user_db_connection, get_user_db_lock
+from app.auth import get_current_user_id, scope_clause
 from app.schemas.strategy import Strategy, StrategyCreate
 
 router = APIRouter()
 
 @router.post("/", response_model=Strategy)
-def create_strategy(strategy: StrategyCreate):
+def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(get_current_user_id)):
     lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
@@ -36,8 +37,8 @@ def create_strategy(strategy: StrategyCreate):
 
             con.execute(
                 """
-                INSERT INTO strategies (id, name, description, created_at, updated_at, definition)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO strategies (id, name, description, created_at, updated_at, definition, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_id,
@@ -46,6 +47,7 @@ def create_strategy(strategy: StrategyCreate):
                     now,
                     now,
                     definition_json,
+                    user_id,
                 )
             )
         finally:
@@ -61,10 +63,15 @@ def create_strategy(strategy: StrategyCreate):
     return full_strategy
 
 @router.get("/")
-def list_strategies():
+def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
     con = get_user_db_connection()
+    scope_sql, scope_params = scope_clause(user_id)
     try:
-        rows = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies ORDER BY created_at DESC").fetchall()
+        rows = con.execute(
+            f"SELECT id, name, description, created_at, updated_at, definition "
+            f"FROM strategies WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+            scope_params,
+        ).fetchall()
     except Exception as e:
         print(f"list_strategies DB error: {e}")
         return []
@@ -122,10 +129,15 @@ def list_strategies():
     return out
 
 @router.get("/{strategy_id}")
-def get_strategy(strategy_id: str):
+def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     con = get_user_db_connection()
+    scope_sql, scope_params = scope_clause(user_id)
     try:
-        row = con.execute("SELECT id, name, description, created_at, updated_at, definition FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        row = con.execute(
+            f"SELECT id, name, description, created_at, updated_at, definition "
+            f"FROM strategies WHERE id = ?{scope_sql}",
+            [strategy_id, *scope_params],
+        ).fetchone()
         if row:
             strategy_dict = json.loads(row[5]) if isinstance(row[5], str) else (row[5] or {})
             strategy_dict["id"] = row[0]
@@ -164,18 +176,25 @@ def get_strategy(strategy_id: str):
     raise HTTPException(status_code=404, detail="Strategy not found")
 
 @router.delete("/{strategy_id}")
-def delete_strategy(strategy_id: str):
+def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     # NOTE: DELETE only works for local strategies.
     # Strategies that only exist in GCS parquet cannot be deleted from here.
     # GCS parquet is read-only from the backend.
     lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
     with lock:
         con = get_user_db_connection()
         try:
-            row = con.execute("SELECT id FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+            row = con.execute(
+                f"SELECT id FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Strategy not found")
-            con.execute("DELETE FROM strategies WHERE id = ?", (strategy_id,))
+            con.execute(
+                f"DELETE FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            )
         finally:
             con.close()
 
