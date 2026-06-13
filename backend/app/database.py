@@ -9,8 +9,10 @@ _local = threading.local()
 _user_db_lock = threading.RLock()
 
 def get_user_db_connection(read_only=False):
-    """Nueva conexion a users.duckdb por cada operacion."""
-    return duckdb.connect('users.duckdb', read_only=read_only)
+    """Nueva conexion a users.duckdb por cada operacion.
+    Forzamos read_only=False para evitar conflictos de configuracion de DuckDB en el mismo proceso.
+    """
+    return duckdb.connect('users.duckdb', read_only=False)
 
 def get_user_db_lock():
     return _user_db_lock
