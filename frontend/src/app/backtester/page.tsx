@@ -443,17 +443,42 @@ export default function Home() {
 
   // Save results state to sessionStorage on change
   useEffect(() => {
+    const resultsState = {
+      result,
+      activeStrategy,
+      selectedDay,
+      mode,
+      builderDraft
+    };
     try {
-      const resultsState = {
-        result,
-        activeStrategy,
-        selectedDay,
-        mode,
-        builderDraft
-      };
       sessionStorage.setItem("backtester_results_state", JSON.stringify(resultsState));
     } catch (e) {
-      console.error("Error writing backtester_results_state:", e);
+      console.warn("Storage quota exceeded for backtester_results_state. Trying lighter state...");
+      try {
+        // Fallback 1: Save result metadata and summary stats, but exclude heavy list datasets
+        const lightState = {
+          result: result ? { ...result, trades: [], day_results: [] } : null,
+          activeStrategy,
+          selectedDay,
+          mode,
+          builderDraft
+        };
+        sessionStorage.setItem("backtester_results_state", JSON.stringify(lightState));
+      } catch (innerEx) {
+        // Fallback 2: Save only active builder configuration, mode, and builder draft
+        try {
+          const configOnlyState = {
+            result: null,
+            activeStrategy,
+            selectedDay,
+            mode,
+            builderDraft
+          };
+          sessionStorage.setItem("backtester_results_state", JSON.stringify(configOnlyState));
+        } catch (configEx) {
+          console.warn("Could not save backtester results state to sessionStorage:", configEx);
+        }
+      }
     }
   }, [result, activeStrategy, selectedDay, mode, builderDraft]);
 
