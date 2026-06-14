@@ -116,10 +116,59 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
                 threading.Thread(target=_refresh, daemon=True).start()
         return _json.loads(payload) if isinstance(payload, str) else payload
 
-    # Never seen: fetch synchronously, persist, return
-    payload = fetch_fn()
-    _store(payload)
-    return payload
+    # Never seen
+    if endpoint == "gap_stats":
+        key = (ticker, endpoint)
+        with _swr_inflight_lock:
+            already = key in _swr_inflight
+            if not already:
+                _swr_inflight.add(key)
+                
+        if not already:
+            placeholder = {
+                "status": "calculating",
+                "know_the_float": None,
+                "gap_stats": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
+                "gap_stats_plus_1": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
+                "gap_stats_plus_2": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"}
+            }
+            _store(placeholder)
+            
+            def _fetch_bg():
+                try:
+                    res = fetch_fn()
+                    _store(res)
+                    print(f"[SWR] first-time fetch complete for {ticker}/{endpoint}")
+                except Exception as e:
+                    print(f"[SWR] first-time fetch failed for {ticker}/{endpoint}: {e}")
+                    try:
+                        with get_user_db_lock():
+                            con = get_user_db_connection()
+                            try:
+                                con.execute("DELETE FROM ticker_analysis_cache WHERE ticker = ? AND endpoint = ?", [ticker, endpoint])
+                            finally:
+                                con.close()
+                    except Exception as db_err:
+                        print(f"[SWR] failed cleaning placeholder for {ticker}/{endpoint}: {db_err}")
+                finally:
+                    with _swr_inflight_lock:
+                        _swr_inflight.discard(key)
+                        
+            threading.Thread(target=_fetch_bg, daemon=True).start()
+            return placeholder
+        else:
+            return {
+                "status": "calculating",
+                "know_the_float": None,
+                "gap_stats": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
+                "gap_stats_plus_1": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
+                "gap_stats_plus_2": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"}
+            }
+    else:
+        # Fetch synchronously for fast endpoints like balance_sheet
+        payload = fetch_fn()
+        _store(payload)
+        return payload
 
 def safe_float(val):
     try:
@@ -469,12 +518,12 @@ def get_gap_stats_all_days(ticker: str) -> dict:
     offset_data = {}
     all_target_dates = set()
     
-    # LIMIT CHART CALCULATIONS: Max 5 recent gap days to avoid GCS HTTP timeouts
-    recent_gap_indices = gap_indices[-5:] if len(gap_indices) > 5 else gap_indices
+    # Use ALL gap indices as requested by the user, ensuring stats and chart are fully aligned on the whole history
+    recent_gap_indices = gap_indices
     recent_target_dates_map = {}
     
     for offset in [0, 1, 2]:
-        target_indices = [idx + offset for idx in gap_indices if idx + offset < len(df)]
+        target_indices = [idx + offset for idx in recent_gap_indices if idx + offset < len(df)]
         if not target_indices:
             offset_data[offset] = {
                 "sub_df": pd.DataFrame()
@@ -486,9 +535,7 @@ def get_gap_stats_all_days(ticker: str) -> dict:
             "sub_df": sub_df
         }
         
-        recent_target_indices = [idx + offset for idx in recent_gap_indices if idx + offset < len(df)]
-        recent_sub_df = df.loc[recent_target_indices]
-        recent_target_dates = pd.to_datetime(recent_sub_df['timestamp']).dt.strftime('%Y-%m-%d').tolist()
+        recent_target_dates = pd.to_datetime(sub_df['timestamp']).dt.strftime('%Y-%m-%d').tolist()
         all_target_dates.update(recent_target_dates)
         recent_target_dates_map[offset] = recent_target_dates
         
@@ -510,32 +557,22 @@ def get_gap_stats_all_days(ticker: str) -> dict:
         intra_filter = " OR ".join(intra_clauses)
         
         if provider == "gcs":
-            bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
-            raw_paths = [f"gs://{bucket}/cold_storage/intraday_1m/year={y}/month={m}/*.parquet" for y, m in ym_dates.keys()]
-            
-            # GCS Path Verification via glob: DuckDB glob does not raise exception on 0 matches
-            valid_paths = []
-            for path in raw_paths:
-                try:
-                    res_glob = con.execute("SELECT file FROM glob(?)", [path]).fetchall()
-                    if res_glob:
-                        valid_paths.append(path)
-                except Exception as e:
-                    print(f"[WARN] Error glob checking path {path}: {e}")
-                    
-            if valid_paths:
-                query = f"""
-                    SELECT timestamp, open, close, high, low, volume, CAST(date AS VARCHAR) as date_str
-                    FROM read_parquet(?, hive_partitioning=true)
-                    WHERE ticker = ? AND ({intra_filter})
-                    ORDER BY timestamp ASC
-                """
-                try:
-                    intraday_df = con.execute(query, [valid_paths, ticker]).fetchdf()
-                except Exception as e:
-                    print(f"Error fetching GCS intraday for gap stats: {e}")
-            else:
-                print(f"[INFO] No valid GCS intraday parquet paths existed for target dates: {all_target_dates}")
+            try:
+                from app.db.gcs_cache import iter_intraday_groups_streamed
+                pairs = pd.DataFrame([{"ticker": ticker, "date": d} for d in all_target_dates])
+                t_dates_sorted = sorted(list(all_target_dates))
+                d_from = t_dates_sorted[0]
+                d_to = t_dates_sorted[-1]
+                
+                intraday_dfs = []
+                for (date_val, tkr), day_df in iter_intraday_groups_streamed(pairs, d_from, d_to):
+                    intraday_dfs.append(day_df)
+                if intraday_dfs:
+                    intraday_df = pd.concat(intraday_dfs, ignore_index=True)
+                    if not intraday_df.empty and 'date' in intraday_df.columns:
+                        intraday_df = intraday_df.rename(columns={'date': 'date_str'})
+            except Exception as e:
+                print(f"Error fetching GCS cached intraday for gap stats: {e}")
         else:
             query = f"""
                 SELECT timestamp, open, close, high, low, volume, CAST(date AS VARCHAR) as date_str
@@ -1047,8 +1084,9 @@ def get_ticker_balance_sheet(ticker: str):
 
     try:
         res = _swr_cache(ticker, "balance_sheet", BALANCE_SHEET_CACHE_TTL, _compute)
-        with _balance_sheet_cache_lock:
-            _balance_sheet_cache[ticker] = (res, now + BALANCE_SHEET_CACHE_TTL)
+        if isinstance(res, dict) and res.get("status") != "calculating":
+            with _balance_sheet_cache_lock:
+                _balance_sheet_cache[ticker] = (res, now + BALANCE_SHEET_CACHE_TTL)
         return res
     except Exception as e:
         print(f"Error fetching balance sheet for {ticker}: {e}")
@@ -1066,18 +1104,21 @@ def get_ticker_gap_stats(ticker: str):
             if now < expiry:
                 return cached_data
 
-    try:
+    def _compute():
         know_the_float = scrape_knowthefloat(ticker)
         all_stats = get_gap_stats_all_days(ticker)
-
-        res = {
+        return {
             "know_the_float": know_the_float,
             "gap_stats": all_stats["gap_stats"],
             "gap_stats_plus_1": all_stats["gap_stats_plus_1"],
             "gap_stats_plus_2": all_stats["gap_stats_plus_2"]
         }
-        with _gap_stats_cache_lock:
-            _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
+
+    try:
+        res = _swr_cache(ticker, "gap_stats", GAP_STATS_CACHE_TTL, _compute)
+        if isinstance(res, dict) and res.get("status") != "calculating":
+            with _gap_stats_cache_lock:
+                _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
         return res
     except Exception as e:
         print(f"Error fetching gap stats for {ticker}: {e}")

@@ -658,7 +658,7 @@ const DailyStockChart = ({
             <div style={{ 
                 position: 'relative', 
                 width: '100%', 
-                height: '470px',
+                height: '350px',
                 display: activeTab === 'chart' ? 'block' : 'none'
             }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -670,7 +670,7 @@ const DailyStockChart = ({
                 <div style={{ 
                     overflowY: 'auto', 
                     width: '100%', 
-                    height: '470px',
+                    height: '350px',
                     border: '1px solid var(--color-ec-border)',
                     borderRadius: 6,
                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -1868,10 +1868,26 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             })
             .catch(e => console.error("Error fetching balance sheet:", e));
 
-        getTickerGapStats(selectedTicker)
-            .then(v => merge(v as object))
-            .catch(e => console.error("Error fetching gap stats:", e))
-            .finally(() => { if (!cancelled) setLoadingGap(false); });
+        let pollTimer: NodeJS.Timeout;
+        const fetchGapStats = () => {
+            getTickerGapStats(selectedTicker)
+                .then(v => {
+                    if (cancelled) return;
+                    const res = v as any;
+                    if (res && res.status === "calculating") {
+                        setLoadingGap(true);
+                        pollTimer = setTimeout(fetchGapStats, 4000);
+                    } else {
+                        merge(res);
+                        setLoadingGap(false);
+                    }
+                })
+                .catch(e => {
+                    console.error("Error fetching gap stats:", e);
+                    if (!cancelled) setLoadingGap(false);
+                });
+        };
+        fetchGapStats();
 
         getTickerSecFilings(selectedTicker)
             .then(v => { if (!cancelled) setFilings(v as FilingsData); })
@@ -1886,7 +1902,10 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             })
             .catch(e => { console.error("Error fetching Finviz news:", e); if (!cancelled) setFinvizNews([]); });
 
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
     }, [selectedTicker]);
 
     // Empty state - Clean, centered search box
@@ -2215,73 +2234,80 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     </div>
                     )}
 
-                    {/* Latest News Banner */}
-                    {latestNews && (
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '8px 12px',
-                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                            borderLeft: '2px solid var(--color-ec-copper)',
-                            borderBottom: '1px solid var(--color-ec-border)',
-                            borderRadius: '0 4px 4px 0',
-                            fontSize: 11,
-                            fontFamily: "'General Sans', sans-serif",
-                            margin: '0 0 -8px 0'
-                        }}>
-                            <span style={{ 
-                                fontSize: 8, 
-                                fontWeight: 700, 
-                                color: 'var(--color-ec-copper)', 
-                                textTransform: 'uppercase', 
-                                letterSpacing: '1px',
-                                flexShrink: 0
-                            }}>
-                                Latest News ({latestNews.date}):
-                            </span>
-                            {latestNews.source && (
-                                <span style={{ color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, flexShrink: 0 }}>
-                                    [{latestNews.source}]
-                                </span>
-                            )}
-                            <SentimentBadge sentiment={latestNews.sentiment} />
-                            <a
-                                href={latestNews.link}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                    color: 'var(--color-ec-text-primary)',
-                                    textDecoration: 'none',
-                                    fontWeight: 600,
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    width: '100%'
-                                }}
-                                className="hover:text-[var(--color-ec-copper-bright)] transition-colors"
-                            >
-                                {latestNews.title}
-                            </a>
-                            <ExternalLink size={10} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
-                        </div>
-                    )}
-
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-0 pt-4" style={{ borderColor: 'var(--color-ec-border)', paddingBottom: '32px' }}>
-                        <div className="lg:col-span-2">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-0 pt-4" style={{ borderColor: 'var(--color-ec-border)', paddingBottom: '40px' }}>
+                        <div className="lg:col-span-2 flex flex-col">
                             {loadingChart && !data?.daily_history?.length ? (
                                 <div
                                     className="animate-pulse"
                                     style={{
-                                        height: '470px',
+                                        height: '425px',
                                         backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                                         borderRadius: '8px'
                                     }}
                                 />
                             ) : (
-                                <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
-                            )}
+                                <>
+                                    <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
+                                    
+                                    {/* Latest News Banner rendered below the chart component */}
+                                    {latestNews && (
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 8,
+                                            padding: '6px 10px',
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '1px solid var(--color-ec-border)',
+                                            borderLeft: '2px solid var(--color-ec-copper)',
+                                            borderRadius: '4px',
+                                            fontSize: 11,
+                                            fontFamily: "'General Sans', sans-serif",
+                                            marginTop: '12px',
+                                            marginBottom: '12px',
+                                            width: '100%',
+                                            boxSizing: 'border-box',
+                                            flexShrink: 0
+                                        }}>
+                                            <span style={{ 
+                                                fontSize: 8, 
+                                                fontWeight: 700, 
+                                                color: 'var(--color-ec-copper)', 
+                                                textTransform: 'uppercase', 
+                                                letterSpacing: '1px',
+                                                flexShrink: 0
+                                            }}>
+                                                Latest News ({latestNews.date}):
+                                            </span>
+                                            {latestNews.source && (
+                                                <span style={{ color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, flexShrink: 0 }}>
+                                                    [{latestNews.source}]
+                                                </span>
+                                            )}
+                                            <SentimentBadge sentiment={latestNews.sentiment} />
+                                            <a
+                                                href={latestNews.link}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    textDecoration: 'none',
+                                                    fontWeight: 600,
+                                                    whiteSpace: 'nowrap',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    width: '100%'
+                                                }}
+                                                className="hover:text-[var(--color-ec-copper-bright)] transition-colors"
+                                            >
+                                                {latestNews.title}
+                                            </a>
+                                            <ExternalLink size={10} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
+                                        </div>
+                                    )}
+                                </>
+                            )
+                            }
                         </div>
                         <div className="lg:col-span-1 flex flex-col h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
