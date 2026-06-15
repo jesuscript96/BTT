@@ -20,7 +20,7 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
     { label: "Sharpe", value: (metrics.avg_sharpe ?? 0).toFixed(3), tooltip: "Ratio de Sharpe. Muestra el rendimiento en relación al riesgo asumido (volatilidad). Cuanto más alto, más estable y seguro es el retorno. Sharpe > 1.0 es bueno, > 1.5 es excelente." },
     { label: "Sortino", value: (metrics.sortino_ratio ?? 0).toFixed(3), tooltip: "Ratio de Sortino. Similar al Sharpe, pero solo penaliza la volatilidad de los rendimientos negativos (las pérdidas reales), ignorando la volatilidad de las ganancias." },
     { label: "Calmar", value: (metrics.calmar_ratio ?? 0).toFixed(3), tooltip: "Ratio de Calmar. Relación entre la rentabilidad anualizada y el drawdown máximo (peor caída). Mide la eficiencia retorno/riesgo de caída histórica. Calmar alto = más ganancias con menos sustos." },
-    { label: "Avg Y/U.index", value: (metrics.avg_r_ui ?? 0).toFixed(2), tooltip: "Rendimiento promedio ajustado por el Ulcer Index (profundidad y duración de las caídas de la cuenta)." },
+    { label: "Avg Y/U.index", value: (metrics.avg_r_ui ?? 0).toFixed(2), tooltip: "Rendimiento promedio en relación al Ulcer Index (profundidad y duración de las caídas). Cuanto más alto sea este valor, menor es el tiempo de sufrimiento (duración y severidad del drawdown) que experimenta la estrategia." },
     { label: "DD/Ret", value: (metrics.dd_return_ratio ?? 0).toFixed(3), tooltip: "Relación Drawdown vs Retorno. Cuanto menor sea, mejor es el sistema generando beneficios con bajas caídas temporales." },
     { label: "Max DD", value: `${(metrics.max_drawdown_pct ?? 0).toFixed(2)}%`, tooltip: "Drawdown Máximo. La mayor caída porcentual desde el punto más alto del capital hasta el más bajo antes de recuperarse. Representa la peor racha de pérdida temporal." },
     { label: "Max W Streak", value: String(metrics.max_consecutive_wins ?? 0), tooltip: "Número máximo de operaciones ganadoras consecutivas (racha de victorias)." },
@@ -67,18 +67,20 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
                 alignItems: 'center',
               }}>
                 {row.label}
-                <span
-                  title={row.tooltip}
-                  style={{
-                    cursor: 'help',
-                    marginLeft: '4px',
-                    opacity: 0.6,
-                    fontSize: '8px',
-                    color: 'var(--color-ec-text-secondary)',
-                    userSelect: 'none',
-                  }}
-                >
-                  (?)
+                <span className={`ec-tooltip-container ${idx % 2 === 0 ? "ec-tooltip-left" : "ec-tooltip-right"}`}>
+                  <span
+                    style={{
+                      cursor: 'help',
+                      marginLeft: '4px',
+                      opacity: 0.6,
+                      fontSize: '8px',
+                      color: 'var(--color-ec-text-secondary)',
+                      userSelect: 'none',
+                    }}
+                  >
+                    (?)
+                  </span>
+                  <span className="ec-tooltip-text">{row.tooltip}</span>
                 </span>
               </span>
               <span style={{
@@ -138,18 +140,20 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
               alignItems: 'center',
             }}>
               {row.label}
-              <span
-                title={row.tooltip}
-                style={{
-                  cursor: 'help',
-                  marginLeft: '4px',
-                  opacity: 0.6,
-                  fontSize: '8px',
-                  color: 'var(--color-ec-text-secondary)',
-                  userSelect: 'none',
-                }}
-              >
-                (?)
+              <span className={`ec-tooltip-container ${idx % 4 < 2 ? "ec-tooltip-left" : "ec-tooltip-right"}`}>
+                <span
+                  style={{
+                    cursor: 'help',
+                    marginLeft: '4px',
+                    opacity: 0.6,
+                    fontSize: '8px',
+                    color: 'var(--color-ec-text-secondary)',
+                    userSelect: 'none',
+                  }}
+                >
+                  (?)
+                </span>
+                <span className="ec-tooltip-text">{row.tooltip}</span>
               </span>
             </span>
             <span style={{

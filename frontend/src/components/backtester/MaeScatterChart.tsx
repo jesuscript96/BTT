@@ -176,11 +176,15 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
             <div className="px-1 py-2 flex items-center justify-between">
                 <span className="text-[10px] font-semibold text-[#ffffff] uppercase tracking-[0.12em] inline-flex items-center gap-1">
                     MAE/MFE vs Rets
-                    <span
-                        title="MAE (Maximum Adverse Excursion): Máxima pérdida flotante temporal que sufrió cada operación durante su vida. MFE (Maximum Favorable Excursion): Máxima ganancia flotante temporal alcanzada. Este gráfico cruza el MAE/MFE contra el Retorno final (%) de cada trade. Ayuda a ver si cortamos las ganancias muy rápido (MFE alto y retorno bajo) o si dejamos correr demasiado las pérdidas (MAE alto)."
-                        style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
-                    >
-                        (?)
+                    <span className="ec-tooltip-container ec-tooltip-left">
+                        <span
+                            style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
+                        >
+                            (?)
+                        </span>
+                        <span className="ec-tooltip-text">
+                            MAE (Maximum Adverse Excursion): Máxima pérdida flotante temporal que sufrió cada operación durante su vida. MFE (Maximum Favorable Excursion): Máxima ganancia flotante temporal alcanzada. Este gráfico cruza el MAE/MFE contra el Retorno final (%) de cada trade. Ayuda a ver si cortamos las ganancias muy rápido (MFE alto y retorno bajo) o si dejamos correr demasiado las pérdidas (MAE alto).
+                        </span>
                     </span>
                 </span>
                 <div className="flex items-center gap-4 text-[10px] text-[#ffffff] font-mono">
