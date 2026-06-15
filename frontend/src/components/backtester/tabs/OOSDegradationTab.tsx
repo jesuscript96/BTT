@@ -746,7 +746,7 @@ export default function OOSDegradationTab({
                     } else {
                       if (isGood) {
                         ratioColor = "var(--color-ec-loss)";
-                        ratioLabel = "Overfit";
+                        ratioLabel = "Overfit/No Edge";
                       } else {
                         ratioColor = "var(--color-ec-loss)";
                         ratioLabel = "Sin Edge";
