@@ -6,9 +6,10 @@ import { PlusCircle, Trash2, Info, HelpCircle } from 'lucide-react';
 interface Props {
     risk: RiskManagement;
     onChange: (risk: RiskManagement) => void;
+    applyDay?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
 }
 
-const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
+const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDay = 'gap_day' }) => {
 
     const updateRiskSetting = (key: 'hard_stop' | 'take_profit', field: keyof RiskSettings, value: any) => {
         onChange({
@@ -112,7 +113,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 letterSpacing: '0.08em',
                                 color: 'var(--color-ec-text-high)',
                                 margin: 0,
-                            }}>Hard Stop Loss</h2>
+                            }}>Stop Loss Fijo</h2>
                         </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
@@ -120,7 +121,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Define maximum loss tolerance per trade</span>
+                        }}>Define la tolerancia máxima de pérdida por trade</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -384,7 +385,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Define target profit and exit scaling</span>
+                        }}>Define el objetivo de ganancia y el escalado de salida</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -756,7 +757,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Adjust stop loss dynamically as price hits targets</span>
+                        }}>Ajusta el stop loss dinámicamente a medida que el precio alcanza objetivos</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -837,7 +838,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 letterSpacing: '0.08em',
                                 color: 'var(--color-ec-text-high)',
                                 margin: 0,
-                            }}>Accept Re-entries</h2>
+                            }}>Aceptar Reentradas</h2>
                         </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
@@ -845,7 +846,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Allow entering trade again if closed on stop/target</span>
+                        }}>Permitir entrar de nuevo al trade si se cerró por stop o target</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -863,6 +864,163 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                     </div>
                 </div>
             </div>
+
+            {/* Swing Option Card */}
+            {applyDay !== 'gap_2_day' && (
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                    padding: '20px 0',
+                    backgroundColor: 'transparent',
+                    borderBottom: '0.5px solid var(--color-ec-border)',
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingBottom: (risk.swing_option?.active) ? 12 : 0,
+                        borderBottom: (risk.swing_option?.active) ? '0.5px solid var(--color-ec-border)' : 'none',
+                    }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{
+                                    width: 3,
+                                    height: 14,
+                                    borderRadius: 1,
+                                    backgroundColor: 'var(--color-ec-copper)',
+                                }} />
+                                <h2 style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 13,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.08em',
+                                    color: 'var(--color-ec-text-high)',
+                                    margin: 0,
+                                }}>Opción Swing</h2>
+                            </div>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 400,
+                                color: 'var(--color-ec-text-muted)',
+                                marginTop: 2,
+                            }}>Configura esta opción si quieres que el trade se mantenga más allá del día en el que se opera</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-text-muted)',
+                            }}>{risk.swing_option?.active ? 'YES' : 'NO'}</span>
+                            <div
+                                className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.swing_option?.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                                onClick={() => {
+                                    const nextActive = !risk.swing_option?.active;
+                                    const defaultTarget = applyDay === 'gap_1_day' ? 'gap_2_day' : 'gap_1_day';
+                                    onChange({
+                                        ...risk,
+                                        swing_option: {
+                                            active: nextActive,
+                                            target_day: risk.swing_option?.target_day || defaultTarget
+                                        }
+                                    });
+                                }}
+                            >
+                                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.swing_option?.active ? 'left-4.5' : 'left-0.5'}`}></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Conditional sub-options */}
+                    {risk.swing_option?.active && (
+                        <div className="animate-in fade-in duration-200" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-text-secondary)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em'
+                            }}>
+                                Mantener trade abierto hasta:
+                            </span>
+                            
+                            {applyDay === 'gap_day' ? (
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => onChange({
+                                            ...risk,
+                                            swing_option: { ...risk.swing_option!, target_day: 'gap_1_day' }
+                                        })}
+                                        style={{
+                                            flex: 1,
+                                            padding: '8px 12px',
+                                            borderRadius: 5,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            cursor: 'pointer',
+                                            transition: 'all 150ms ease',
+                                            backgroundColor: risk.swing_option?.target_day === 'gap_1_day' ? 'rgba(216, 122, 61, 0.15)' : 'var(--color-ec-bg-surface)',
+                                            border: risk.swing_option?.target_day === 'gap_1_day' ? '1px solid var(--color-ec-copper)' : '0.5px solid var(--color-ec-border)',
+                                            color: risk.swing_option?.target_day === 'gap_1_day' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+                                        }}
+                                    >
+                                        Gap +1 Day
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => onChange({
+                                            ...risk,
+                                            swing_option: { ...risk.swing_option!, target_day: 'gap_2_day' }
+                                        })}
+                                        style={{
+                                            flex: 1,
+                                            padding: '8px 12px',
+                                            borderRadius: 5,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            cursor: 'pointer',
+                                            transition: 'all 150ms ease',
+                                            backgroundColor: risk.swing_option?.target_day === 'gap_2_day' ? 'rgba(216, 122, 61, 0.15)' : 'var(--color-ec-bg-surface)',
+                                            border: risk.swing_option?.target_day === 'gap_2_day' ? '1px solid var(--color-ec-copper)' : '0.5px solid var(--color-ec-border)',
+                                            color: risk.swing_option?.target_day === 'gap_2_day' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+                                        }}
+                                    >
+                                        Gap +2 Day
+                                    </button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                        type="button"
+                                        disabled
+                                        style={{
+                                            flex: 1,
+                                            padding: '8px 12px',
+                                            borderRadius: 5,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            backgroundColor: 'rgba(216, 122, 61, 0.15)',
+                                            border: '1px solid var(--color-ec-copper)',
+                                            color: 'var(--color-ec-text-high)',
+                                            cursor: 'not-allowed'
+                                        }}
+                                    >
+                                        Gap +2 Day
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
 
         </div>
     );

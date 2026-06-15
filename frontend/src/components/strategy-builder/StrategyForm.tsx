@@ -94,6 +94,25 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             if (tempSource === 'candle_range_ratio_gap_1_vs_gap') {
                 setTempSource('cierre');
             }
+            setRiskManagement(prev => {
+                if (prev.swing_option?.active && prev.swing_option?.target_day === 'gap_1_day') {
+                    return {
+                        ...prev,
+                        swing_option: { ...prev.swing_option!, target_day: 'gap_2_day' }
+                    };
+                }
+                return prev;
+            });
+        } else if (applyDay === 'gap_2_day') {
+            setRiskManagement(prev => {
+                if (prev.swing_option?.active) {
+                    return {
+                        ...prev,
+                        swing_option: { ...prev.swing_option!, active: false }
+                    };
+                }
+                return prev;
+            });
         }
     }, [applyDay]);
 
@@ -933,7 +952,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
                             <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
-                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Entry Logic</h2>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Entrada Lógica</h2>
                         </div>
                         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic} />
                     </section>
@@ -947,7 +966,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
                             <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
-                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Exit Logic</h2>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Salida Lógica</h2>
                         </div>
                         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
                     </section>
@@ -961,9 +980,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                     }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
                             <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
-                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Risk Management</h2>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Gestión de Riesgo</h2>
                         </div>
-                        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
+                        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
                     </section>
 
                 </div>
@@ -973,8 +992,8 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             {showJson && (
                 <div className="w-[360px] border-l border-[var(--color-ec-border)] bg-ec-bg-base overflow-y-auto font-mono text-xs p-4 transition-all animate-in slide-in-from-right-10">
                     <div className="flex items-center justify-between mb-3 sticky top-0 bg-ec-bg-base pb-2 border-b border-border/20">
-                        <h3 className="text-[var(--color-ec-text-muted)] font-bold uppercase tracking-wider text-[10px]">Live JSON Preview</h3>
-                        <span className="px-2 py-0.5 rounded bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-muted)] text-[9px] font-bold">READ ONLY</span>
+                        <h3 className="text-[var(--color-ec-text-muted)] font-bold uppercase tracking-wider text-[10px]">Previsualización JSON en tiempo real</h3>
+                        <span className="px-2 py-0.5 rounded bg-[var(--color-ec-bg-elevated)] text-[var(--color-ec-text-muted)] text-[9px] font-bold">SOLO LECTURA</span>
                     </div>
                     <pre className="text-ec-text-secondary whitespace-pre-wrap break-all text-[11px]">
                         {JSON.stringify(constructStrategyPayload(), null, 2)}

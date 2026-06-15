@@ -12,7 +12,7 @@ interface Props {
 export const EntryLogicBuilder = React.memo(({ logic, onChange, children }: Props) => {
     return (
         <LogicBuilder
-            title="Entry Logic"
+            title="Entrada Lógica"
             timeframe={logic.timeframe}
             onTimeframeChange={(tf) => onChange({ ...logic, timeframe: tf })}
             rootCondition={logic.root_condition}

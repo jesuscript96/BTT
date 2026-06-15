@@ -131,13 +131,50 @@ def run_backtest(
         if progress_callback is not None:
             progress_callback(scanned, n_groups)
 
-        day_df = day_df.sort_values("timestamp").reset_index(drop=True)
+        ticker = str(ticker_raw)
+        date = str(date_raw)[:10]
+        daily_stats = qual_lookup.get((ticker, date), {})
+
+        # Check swing option to fetch and concatenate subsequent days
+        rm = strategy_def.get("risk_management", {}) if strategy_def else {}
+        swing_opt = rm.get("swing_option", {}) if isinstance(rm, dict) else {}
+        swing_active = swing_opt.get("active", False) if isinstance(swing_opt, dict) else False
+        
+        if swing_active:
+            swing_target = swing_opt.get("target_day", "gap_1_day")
+            apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
+            
+            dates_to_fetch = []
+            if apply_day == 'gap_day':
+                if swing_target == 'gap_1_day':
+                    t1_date = daily_stats.get('lead_timestamp_1')
+                    if t1_date:
+                        dates_to_fetch.append(t1_date)
+                elif swing_target == 'gap_2_day':
+                    t1_date = daily_stats.get('lead_timestamp_1')
+                    t2_date = daily_stats.get('lead_timestamp_2')
+                    if t1_date:
+                        dates_to_fetch.append(t1_date)
+                    if t2_date:
+                        dates_to_fetch.append(t2_date)
+            elif apply_day == 'gap_1_day':
+                if swing_target == 'gap_2_day':
+                    t2_date = daily_stats.get('lead_timestamp_2')
+                    if t2_date:
+                        dates_to_fetch.append(t2_date)
+            
+            # Fetch and concat
+            for d_val in dates_to_fetch:
+                d_str = format_date_str(d_val)
+                if d_str:
+                    sub_df = fetch_ticker_intraday_for_date(ticker, d_str)
+                    if not sub_df.empty:
+                        day_df = pd.concat([day_df, sub_df], ignore_index=True)
+
+        day_df = day_df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
         if len(day_df) < 5:
             continue
 
-        ticker = str(ticker_raw)
-        date = str(date_raw)[:10]
-        
         # When moving to a new day, add the previous day's PnL to the global pool
         if current_date is None:
             current_date = date
@@ -182,8 +219,6 @@ def run_backtest(
             "prev_high": prev_highs_vals,
             "prev_low": prev_lows_vals,
         }
-        # Invert lookup from (ticker, date) to match original format
-        daily_stats = qual_lookup.get((str(ticker_raw), str(date_raw)[:10]), {})
         del day_df
 
         mini_df = pd.DataFrame(arrays)
@@ -468,6 +503,30 @@ def run_backtest(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def format_date_str(val):
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, str):
+        return val[:10]
+    try:
+        return pd.to_datetime(val).strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
+def fetch_ticker_intraday_for_date(ticker: str, date_str: str) -> pd.DataFrame:
+    try:
+        y = int(date_str[:4])
+        m = int(date_str[5:7])
+        from app.db.gcs_cache import fetch_intraday_batch
+        df = fetch_intraday_batch(y, m, [ticker], date_str, date_str)
+        if not df.empty:
+            df = df[df["date"].astype(str) == date_str].copy()
+            return df
+    except Exception as e:
+        logger.warning(f"Failed to fetch intraday for {ticker} on {date_str}: {e}")
+    return pd.DataFrame()
 
 
 def _build_qualifying_lookup(qualifying_df: pd.DataFrame | None) -> dict:

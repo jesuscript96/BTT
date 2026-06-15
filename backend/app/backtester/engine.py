@@ -121,7 +121,8 @@ def _core_backtest_jit(
     
     # Pre-calculated time components
     row_hours,       # int64 array
-    row_minutes      # int64 array
+    row_minutes,     # int64 array
+    eod_exit_allowed  # bool array (n_rows, n_strats)
 ):
     n_rows = len(closes)
     n_strats = len(strat_weights)
@@ -237,7 +238,7 @@ def _core_backtest_jit(
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
                         reason_code = 2 # TIME
-                    elif row_hours[i] >= 15 and row_minutes[i] >= 59:
+                    elif eod_exit_allowed[i, strat_idx] and row_hours[i] >= 15 and row_minutes[i] >= 59:
                          exit_signal_triggered = True
                          exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
                          reason_code = 3 # EOD
@@ -1205,6 +1206,45 @@ class BacktestEngine:
             
         # 3. Call JIT Function
         print(f"JIT Warmup/Execution for {len(df)} rows...")
+        
+        # Build eod_exit_allowed array
+        n_rows = len(df)
+        n_strats = len(self.strategies)
+        eod_exit_allowed = np.ones((n_rows, n_strats), dtype=np.bool_)
+        
+        # Check swing option for each strategy
+        for s_idx, s in enumerate(self.strategies):
+            rm = getattr(s, 'risk_management', None) or {}
+            def _get(obj, key, default=None):
+                if isinstance(obj, dict):
+                    return obj.get(key, default)
+                return getattr(obj, key, default)
+            swing_opt = _get(rm, 'swing_option') or {}
+            swing_active = _get(swing_opt, 'active', False)
+            
+            if swing_active:
+                swing_target = _get(swing_opt, 'target_day', 'gap_1_day')
+                apply_day = getattr(s, 'apply_day', 'gap_day')
+                
+                # Get unique dates in chronological order
+                unique_dates = df['timestamp'].dt.strftime('%Y-%m-%d').unique()
+                if len(unique_dates) > 0:
+                    if apply_day == 'gap_day':
+                        if swing_target == 'gap_1_day':
+                            target_date = unique_dates[1] if len(unique_dates) > 1 else unique_dates[0]
+                        else: # gap_2_day
+                            target_date = unique_dates[2] if len(unique_dates) > 2 else unique_dates[-1]
+                    elif apply_day == 'gap_1_day':
+                        if swing_target == 'gap_2_day':
+                            target_date = unique_dates[1] if len(unique_dates) > 1 else unique_dates[0]
+                        else:
+                            target_date = unique_dates[-1]
+                    else:
+                        target_date = unique_dates[-1]
+                    
+                    target_date_ts = pd.to_datetime(target_date).date()
+                    eod_exit_allowed[:, s_idx] = (df['timestamp'].dt.date.values == target_date_ts)
+
         output = _core_backtest_jit(
             timestamps, opens, highs, lows, closes, ticker_ids,
             entry_signals,
@@ -1231,7 +1271,7 @@ class BacktestEngine:
             float(self.max_holding_minutes * 60.0),
             atrs, pm_highs, pm_lows, vwaps,
             hods, lods, prev_highs, prev_lows,
-            row_hours, row_minutes
+            row_hours, row_minutes, eod_exit_allowed
         )
         
         # 4. Unpack Results

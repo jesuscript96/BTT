@@ -192,6 +192,25 @@ export default function InlineStrategyBuilder({
       if (tempSource === 'candle_range_ratio_gap_1_vs_gap') {
         setTempSource('cierre');
       }
+      setRiskManagement(prev => {
+        if (prev.swing_option?.active && prev.swing_option?.target_day === 'gap_1_day') {
+          return {
+            ...prev,
+            swing_option: { ...prev.swing_option!, target_day: 'gap_2_day' }
+          };
+        }
+        return prev;
+      });
+    } else if (applyDay === 'gap_2_day') {
+      setRiskManagement(prev => {
+        if (prev.swing_option?.active) {
+          return {
+            ...prev,
+            swing_option: { ...prev.swing_option!, active: false }
+          };
+        }
+        return prev;
+      });
     }
   }, [applyDay]);
 
@@ -1072,7 +1091,7 @@ export default function InlineStrategyBuilder({
         </EntryLogicBuilder>
 
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
-        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
+        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
       </div>
 
       {/* Strategy Summary Panel */}

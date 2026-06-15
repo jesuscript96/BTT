@@ -217,6 +217,10 @@ export interface RiskManagement {
     trailing_stop: TrailingStopSettings;
     max_drawdown_daily?: number;
     size_by_sl?: boolean;
+    swing_option?: {
+        active: boolean;
+        target_day: 'gap_1_day' | 'gap_2_day';
+    };
 }
 
 export interface PostGapPrecondition {
@@ -271,7 +275,8 @@ export const initialRiskManagement: RiskManagement = {
         { distance_pct: 6.0, capital_pct: 50.0 }
     ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
-    size_by_sl: false
+    size_by_sl: false,
+    swing_option: { active: false, target_day: 'gap_1_day' }
 };
 
 export const initialExitLogic: ExitLogic = {

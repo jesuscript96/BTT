@@ -283,10 +283,12 @@ export async function fetchMultiDayCandles(
   dataset_id: string,
   ticker: string,
   date: string,
-  apply_day: string
+  apply_day: string,
+  swing_active?: boolean,
+  swing_target_day?: string
 ): Promise<MultiDayCandles> {
   const { data } = await api.get("/candles/multi", {
-    params: { dataset_id, ticker, date, apply_day },
+    params: { dataset_id, ticker, date, apply_day, swing_active, swing_target_day },
   });
   return data;
 }

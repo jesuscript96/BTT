@@ -383,11 +383,16 @@ export default function Home() {
           applyDay = activeStrategy.definition.apply_day as string;
         }
 
+        const swingActive = activeStrategy?.definition?.risk_management?.swing_option?.active || activeStrategy?.risk_management?.swing_option?.active || false;
+        const swingTargetDay = activeStrategy?.definition?.risk_management?.swing_option?.target_day || activeStrategy?.risk_management?.swing_option?.target_day || "gap_1_day";
+
         const data = await fetchMultiDayCandles(
           datasetIdRef.current,
           day.ticker,
           day.date,
-          applyDay
+          applyDay,
+          swingActive,
+          swingTargetDay
         );
         setMultiDayCandles(data);
 

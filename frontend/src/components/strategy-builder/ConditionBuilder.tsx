@@ -890,7 +890,6 @@ export const SourceIndicatorInput = ({
                         onChange({ name, ...defaultParams });
                     }}
                 />
-                <TooltipIcon indicatorName={value.name} />
             </div>
             <IndicatorParams value={value} onChange={onChange} hideOffset={hideOffset} />
         </div>
@@ -991,7 +990,6 @@ export const TargetInput = ({
                         }
                     }}
                 />
-                {!isFixed && <TooltipIcon indicatorName={selectedKey as IndicatorType} />}
             </div>
 
             {!isFixed && (
@@ -2421,7 +2419,7 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Define logic conditions and timeframe execution</span>
+                        }}>Define las condiciones lógicas y el timeframe de ejecución</span>
                     </div>
                 </div>
 
