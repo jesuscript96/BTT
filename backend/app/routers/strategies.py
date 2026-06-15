@@ -64,7 +64,7 @@ def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(g
 
 @router.get("/")
 def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     scope_sql, scope_params = scope_clause(user_id)
     try:
         rows = con.execute(
@@ -130,7 +130,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
 
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
-    con = get_user_db_connection()
+    con = get_user_db_connection(read_only=True)
     scope_sql, scope_params = scope_clause(user_id)
     try:
         row = con.execute(

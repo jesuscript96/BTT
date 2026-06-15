@@ -159,12 +159,29 @@ export default function Chart({
         return def.apply_day as string;
       }
     }
+    if (activeStrategy && typeof activeStrategy === 'object') {
+      const s = activeStrategy as any;
+      if (s.apply_day) {
+        return s.apply_day as string;
+      }
+    }
     return "gap_day";
   }, [activeStrategy]);
 
+  const swingActive = useMemo(() => {
+    const rm = (activeStrategy?.definition?.risk_management || activeStrategy?.risk_management) as any;
+    return rm?.swing_option?.active || false;
+  }, [activeStrategy]);
+
+  const swingTargetDay = useMemo(() => {
+    const rm = (activeStrategy?.definition?.risk_management || activeStrategy?.risk_management) as any;
+    return rm?.swing_option?.target_day || "gap_1_day";
+  }, [activeStrategy]);
+
   const isMultiView = useMemo(() => {
-    return multiDayEnabled && !!multiDayCandles && (applyDay === "gap_1_day" || applyDay === "gap_2_day");
-  }, [multiDayEnabled, multiDayCandles, applyDay]);
+    const isMultiEnabled = applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive;
+    return multiDayEnabled && !!multiDayCandles && isMultiEnabled;
+  }, [multiDayEnabled, multiDayCandles, applyDay, swingActive]);
 
   const chartRef = useRef<IChartApi | null>(null);
   const subChartsRef = useRef<IChartApi[]>([]);
@@ -269,7 +286,8 @@ export default function Chart({
       dayCandlesList: CandleData[],
       dayTrades: TradeRecord[],
       dayEquity: EquityPoint[],
-      showTrades: boolean
+      showTrades: boolean,
+      dayDateStr?: string
     ) => {
       if (!container || dayCandlesList.length === 0) return null;
 
@@ -329,29 +347,65 @@ export default function Chart({
 
         const rawMarkers: RawMarker[] = [];
         for (const t of dayTrades) {
-          const entrySnap = snapToCandle(t.entry_time_epoch, candleTimes);
-          const exitSnap = snapToCandle(t.exit_time_epoch, candleTimes);
+          const entryDate = t.entry_time.split(" ")[0];
+          const exitDate = t.exit_time.split(" ")[0];
 
-          if (entrySnap && candleTimeSet.has(entrySnap)) {
-            const isLong = t.direction.toLowerCase().includes("long");
-            rawMarkers.push({
-              time: entrySnap,
-              position: isLong ? "belowBar" : "aboveBar",
-              color: isLong ? "#10b981" : "#ef4444",
-              shape: isLong ? "arrowUp" : "arrowDown",
-              text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
-              isEntry: true,
-            });
-          }
-          if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed") {
-            rawMarkers.push({
-              time: exitSnap,
-              position: "aboveBar",
-              color: t.pnl >= 0 ? "#10b981" : "#ef4444",
-              shape: "circle",
-              text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
-              isEntry: false,
-            });
+          if (dayDateStr) {
+            // Only add entry marker if entryDate matches dayDateStr
+            if (entryDate === dayDateStr) {
+              const entrySnap = snapToCandle(t.entry_time_epoch, candleTimes);
+              if (entrySnap && candleTimeSet.has(entrySnap)) {
+                const isLong = t.direction.toLowerCase().includes("long");
+                rawMarkers.push({
+                  time: entrySnap,
+                  position: isLong ? "belowBar" : "aboveBar",
+                  color: isLong ? "#10b981" : "#ef4444",
+                  shape: isLong ? "arrowUp" : "arrowDown",
+                  text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
+                  isEntry: true,
+                });
+              }
+            }
+
+            // Only add exit marker if exitDate matches dayDateStr
+            if (exitDate === dayDateStr && t.status === "Closed") {
+              const exitSnap = snapToCandle(t.exit_time_epoch, candleTimes);
+              if (exitSnap && candleTimeSet.has(exitSnap)) {
+                rawMarkers.push({
+                  time: exitSnap,
+                  position: "aboveBar",
+                  color: t.pnl >= 0 ? "#10b981" : "#ef4444",
+                  shape: "circle",
+                  text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
+                  isEntry: false,
+                });
+              }
+            }
+          } else {
+            const entrySnap = snapToCandle(t.entry_time_epoch, candleTimes);
+            const exitSnap = snapToCandle(t.exit_time_epoch, candleTimes);
+
+            if (entrySnap && candleTimeSet.has(entrySnap) && Math.abs(t.entry_time_epoch - entrySnap) < 43200) {
+              const isLong = t.direction.toLowerCase().includes("long");
+              rawMarkers.push({
+                time: entrySnap,
+                position: isLong ? "belowBar" : "aboveBar",
+                color: isLong ? "#10b981" : "#ef4444",
+                shape: isLong ? "arrowUp" : "arrowDown",
+                text: `${isLong ? "L" : "S"} $${t.entry_price.toFixed(2)}`,
+                isEntry: true,
+              });
+            }
+            if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed" && Math.abs(t.exit_time_epoch - exitSnap) < 43200) {
+              rawMarkers.push({
+                time: exitSnap,
+                position: "aboveBar",
+                color: t.pnl >= 0 ? "#10b981" : "#ef4444",
+                shape: "circle",
+                text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
+                isEntry: false,
+              });
+            }
           }
         }
 
@@ -777,44 +831,37 @@ export default function Chart({
           chartContainerRef1.current,
           panelContainerRef1.current,
           multiDayCandles.gap_day.candles,
-          [],
-          [],
-          false
+          trades,
+          equity,
+          true,
+          multiDayCandles.gap_day.date
         );
       }
 
-      if (applyDay === "gap_1_day") {
-        if (multiDayCandles.gap_1_day?.candles) {
-          renderChartInstance(
-            chartContainerRef2.current,
-            panelContainerRef2.current,
-            multiDayCandles.gap_1_day.candles,
-            trades,
-            equity,
-            true
-          );
-        }
-      } else if (applyDay === "gap_2_day") {
-        if (multiDayCandles.gap_1_day?.candles) {
-          renderChartInstance(
-            chartContainerRef2.current,
-            panelContainerRef2.current,
-            multiDayCandles.gap_1_day.candles,
-            [],
-            [],
-            false
-          );
-        }
-        if (multiDayCandles.gap_2_day?.candles) {
-          renderChartInstance(
-            chartContainerRef3.current,
-            panelContainerRef3.current,
-            multiDayCandles.gap_2_day.candles,
-            trades,
-            equity,
-            true
-          );
-        }
+      const showPanel2 = applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive;
+      if (showPanel2 && multiDayCandles.gap_1_day?.candles) {
+        renderChartInstance(
+          chartContainerRef2.current,
+          panelContainerRef2.current,
+          multiDayCandles.gap_1_day.candles,
+          trades,
+          equity,
+          true,
+          multiDayCandles.gap_1_day.date
+        );
+      }
+
+      const showPanel3 = applyDay === "gap_2_day" || (swingActive && swingTargetDay === "gap_2_day");
+      if (showPanel3 && multiDayCandles.gap_2_day?.candles) {
+        renderChartInstance(
+          chartContainerRef3.current,
+          panelContainerRef3.current,
+          multiDayCandles.gap_2_day.candles,
+          trades,
+          equity,
+          true,
+          multiDayCandles.gap_2_day.date
+        );
       }
     } else {
       if (candles && candles.length > 0) {
@@ -824,7 +871,8 @@ export default function Chart({
           candles,
           trades,
           equity,
-          true
+          true,
+          date
         );
         if (mainChart) chartRef.current = mainChart;
       }
@@ -857,7 +905,7 @@ export default function Chart({
       for (const c of activeCharts) { try { c.remove(); } catch {} }
       chartRef.current = null;
     };
-  }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date]);
+  }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
 
   return (
     <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] overflow-hidden" style={{ marginTop: 24 }}>
@@ -931,7 +979,7 @@ export default function Chart({
               </button>
             ))}
           </div>
-          {(applyDay === "gap_1_day" || applyDay === "gap_2_day") && (
+          {(applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive) && (
             <button
               onClick={() => setMultiDayEnabled(!multiDayEnabled)}
               style={{
@@ -958,7 +1006,7 @@ export default function Chart({
                 if (!multiDayEnabled) e.currentTarget.style.borderColor = 'var(--color-ec-border)';
               }}
             >
-              <span>{multiDayEnabled ? "Vista Simple" : "Comparar GAPs"}</span>
+              <span>{multiDayEnabled ? "Vista Simple" : (swingActive ? "Ver Días Swing" : "Comparar GAPs")}</span>
             </button>
           )}
         </div>
@@ -990,16 +1038,18 @@ export default function Chart({
           </div>
 
           {/* Panel 2: GAP +1 Day */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid var(--color-ec-border)' }}>
-            <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              {applyDay === "gap_2_day" ? "Día GAP + 1" : "Día del Trade (GAP + 1)"} ({multiDayCandles?.gap_1_day?.date || ""})
+          {(applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive) && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid var(--color-ec-border)' }}>
+              <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                {applyDay === "gap_2_day" ? "Día GAP + 1" : "Día del Trade (GAP + 1)"} ({multiDayCandles?.gap_1_day?.date || ""})
+              </div>
+              <div ref={chartContainerRef2} style={{ width: "100%", height: "400px" }} />
+              <div ref={panelContainerRef2} />
             </div>
-            <div ref={chartContainerRef2} style={{ width: "100%", height: "400px" }} />
-            <div ref={panelContainerRef2} />
-          </div>
+          )}
 
           {/* Panel 3: GAP +2 Day */}
-          {applyDay === "gap_2_day" && (
+          {(applyDay === "gap_2_day" || (swingActive && swingTargetDay === "gap_2_day")) && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid var(--color-ec-border)' }}>
               <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                 Día del Trade (GAP + 2) ({multiDayCandles?.gap_2_day?.date || ""})

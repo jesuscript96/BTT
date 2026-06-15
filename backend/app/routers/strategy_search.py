@@ -122,7 +122,7 @@ def filter_strategies(filters: StrategySearchFilters, user_id: Optional[str] = D
     Filter saved strategies using Pass Criteria
     """
     try:
-        con = get_db_connection(read_only=True)
+        con = get_user_db_connection(read_only=True)
 
         # Build dynamic query
         query = """
@@ -229,7 +229,7 @@ def list_all_strategies(
     Get all saved strategies with pagination
     """
     try:
-        con = get_db_connection(read_only=True)
+        con = get_user_db_connection(read_only=True)
 
         scope_sql, scope_params = scope_clause(user_id)
         rows = con.execute(
@@ -346,30 +346,33 @@ def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_curre
     """
     Delete a saved strategy
     """
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            scope_sql, scope_params = scope_clause(user_id)
+            row = con.execute(
+                f"SELECT id FROM backtest_results WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+
+            con.execute(
+                f"DELETE FROM backtest_results WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            )
+        finally:
+            con.close()
+            
     try:
-        con = get_db_connection()
-
-        scope_sql, scope_params = scope_clause(user_id)
-        row = con.execute(
-            f"SELECT id FROM backtest_results WHERE id = ?{scope_sql}",
-            [strategy_id, *scope_params],
-        ).fetchone()
-
-        if not row:
-            raise HTTPException(status_code=404, detail="Strategy not found")
-
-        con.execute(
-            f"DELETE FROM backtest_results WHERE id = ?{scope_sql}",
-            [strategy_id, *scope_params],
-        )
-
-        return {"status": "success", "message": "Strategy deleted"}
-        
-    except HTTPException:
-        raise
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
     except Exception as e:
-        print(f"Error deleting strategy: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[WARN] GCS upload failed after delete_strategy: {e}")
+        
+    return {"status": "success", "message": "Strategy deleted"}
 
 
 @router.post("/export")
@@ -378,7 +381,7 @@ def export_strategies(strategy_ids: List[str], user_id: Optional[str] = Depends(
     Export selected strategies to CSV format
     """
     try:
-        con = get_db_connection(read_only=True)
+        con = get_user_db_connection(read_only=True)
 
         placeholders = ",".join(["?" for _ in strategy_ids])
         scope_sql, scope_params = scope_clause(user_id)

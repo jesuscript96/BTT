@@ -6,9 +6,10 @@ import { PlusCircle, Trash2, Info, HelpCircle } from 'lucide-react';
 interface Props {
     risk: RiskManagement;
     onChange: (risk: RiskManagement) => void;
+    applyDay?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
 }
 
-const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
+const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDay = 'gap_day' }) => {
 
     const updateRiskSetting = (key: 'hard_stop' | 'take_profit', field: keyof RiskSettings, value: any) => {
         onChange({
@@ -23,7 +24,11 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
     const addPartial = () => {
         const currentPartials = risk.partial_take_profits || [];
         // Default to a reasonable new partial: next 2% distance, remaining capital or 25%
-        const lastDist = currentPartials.length > 0 ? currentPartials[currentPartials.length - 1].distance_pct : 3.0;
+        const lastPartial = currentPartials.length > 0 ? currentPartials[currentPartials.length - 1] : null;
+        let lastDist = 3.0;
+        if (lastPartial && typeof lastPartial.distance_pct === 'number') {
+            lastDist = lastPartial.distance_pct;
+        }
         const currentTotal = currentPartials.reduce((sum, p) => sum + p.capital_pct, 0);
         const remaining = Math.max(0, 100 - currentTotal);
         
@@ -43,7 +48,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
         });
     };
 
-    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: number) => {
+    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: number | 'EOD') => {
         onChange({
             ...risk,
             partial_take_profits: risk.partial_take_profits.map((p, i) =>
@@ -108,7 +113,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 letterSpacing: '0.08em',
                                 color: 'var(--color-ec-text-high)',
                                 margin: 0,
-                            }}>Hard Stop Loss</h2>
+                            }}>Stop Loss Fijo</h2>
                         </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
@@ -116,7 +121,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Define maximum loss tolerance per trade</span>
+                        }}>Define la tolerancia máxima de pérdida por trade</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -137,7 +142,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                 {/* Body */}
                 {(risk.use_hard_stop !== false) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
-                        <div className="flex gap-2">
+                        <div className={`flex gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
                             <select
                                 value={risk.hard_stop.type}
                                 onChange={(e) => {
@@ -163,6 +168,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     fontFamily: 'var(--color-ec-sans)',
                                     outline: 'none',
                                     cursor: 'pointer',
+                                    height: '36px',
+                                    width: risk.hard_stop.type === RiskType.PERCENTAGE ? '52px' : 'auto',
                                 }}
                             >
                                 <option value={RiskType.PERCENTAGE}>%</option>
@@ -185,6 +192,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                             outline: 'none',
                                             cursor: 'pointer',
                                             flex: 2,
+                                            height: '36px',
                                         }}
                                     >
                                         <option value="HOD">HOD (High of Day)</option>
@@ -210,6 +218,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                             outline: 'none',
                                             cursor: 'pointer',
                                             width: '60px',
+                                            height: '36px',
                                         }}
                                     >
                                         <option value=">">&gt;</option>
@@ -235,6 +244,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                                 fontFamily: 'var(--color-ec-sans)',
                                                 outline: 'none',
                                                 width: '100%',
+                                                height: '36px',
                                             }}
                                         />
                                         <span style={{
@@ -252,23 +262,28 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                     </div>
                                 </>
                             ) : (
-                                <input
-                                    type="number"
-                                    value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
-                                    onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
-                                    style={{
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '7px 10px',
-                                        fontSize: 13,
-                                        fontWeight: 600,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        flex: 1,
-                                    }}
-                                />
+                                <div className="relative" style={{ width: '120px' }}>
+                                    <input
+                                        type="number"
+                                        value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 24px 7px 10px',
+                                            fontSize: 13,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
+                                        }}
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                </div>
                             )}
                         </div>
 
@@ -370,7 +385,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Define target profit and exit scaling</span>
+                        }}>Define el objetivo de ganancia y el escalado de salida</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -468,25 +483,25 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                         {risk.take_profit_mode === TakeProfitMode.FULL ? (
                             <div className="flex gap-2 items-center justify-center animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
-                                <select
-                                    value={risk.take_profit.type}
-                                    onChange={(e) => updateRiskSetting('take_profit', 'type', e.target.value)}
+                                <div
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 5,
-                                        padding: '7px 10px',
+                                        padding: '7px 14px',
                                         fontSize: 12,
-                                        fontWeight: 500,
+                                        fontWeight: 600,
                                         color: 'var(--color-ec-text-primary)',
                                         fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        cursor: 'pointer',
                                         height: '36px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        userSelect: 'none',
                                     }}
                                 >
-                                    <option value={RiskType.PERCENTAGE}>%</option>
-                                </select>
+                                    %
+                                </div>
                                 <div className="relative" style={{ width: '120px' }}>
                                     <input
                                         type="number"
@@ -539,28 +554,69 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
 
                                             {/* Distance Input */}
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                                <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Dist.</span>
-                                                <div className="relative" style={{ width: 65 }}>
-                                                    <input
-                                                        type="number"
-                                                        step="0.1"
-                                                        value={partial.distance_pct}
-                                                        onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                                        style={{
-                                                            width: '100%',
-                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                            border: '0.5px solid var(--color-ec-border)',
-                                                            borderRadius: 4,
-                                                            padding: '4px 16px 4px 6px',
-                                                            fontSize: 11,
-                                                            fontWeight: 700,
-                                                            color: 'var(--color-ec-text-primary)',
-                                                            outline: 'none',
-                                                            textAlign: 'right',
-                                                        }}
-                                                    />
-                                                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">%</span>
-                                                </div>
+                                                <select
+                                                    value={partial.distance_pct === 'EOD' ? 'EOD' : 'PCT'}
+                                                    onChange={(e) => {
+                                                        if (e.target.value === 'EOD') {
+                                                            updatePartial(idx, 'distance_pct', 'EOD');
+                                                        } else {
+                                                            updatePartial(idx, 'distance_pct', 3.0);
+                                                        }
+                                                    }}
+                                                    style={{
+                                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        borderRadius: 4,
+                                                        padding: '4px 6px',
+                                                        fontSize: 10,
+                                                        fontWeight: 600,
+                                                        color: 'var(--color-ec-text-primary)',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                        outline: 'none',
+                                                        cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    <option value="PCT">% Distancia</option>
+                                                    <option value="EOD">Fin del Día (EOD)</option>
+                                                </select>
+                                                
+                                                {partial.distance_pct !== 'EOD' ? (
+                                                    <div className="relative" style={{ width: 65 }}>
+                                                        <input
+                                                            type="number"
+                                                            step="0.1"
+                                                            value={partial.distance_pct}
+                                                            onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
+                                                            style={{
+                                                                width: '100%',
+                                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                border: '0.5px solid var(--color-ec-border)',
+                                                                borderRadius: 4,
+                                                                padding: '4px 16px 4px 6px',
+                                                                fontSize: 11,
+                                                                fontWeight: 700,
+                                                                color: 'var(--color-ec-text-primary)',
+                                                                outline: 'none',
+                                                                textAlign: 'right',
+                                                            }}
+                                                        />
+                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">%</span>
+                                                    </div>
+                                                ) : (
+                                                    <div style={{
+                                                        width: 65,
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        borderRadius: 4,
+                                                        padding: '4px 6px',
+                                                        fontSize: 11,
+                                                        fontWeight: 700,
+                                                        color: 'var(--color-ec-text-muted)',
+                                                        textAlign: 'center',
+                                                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                                    }}>
+                                                        EOD
+                                                    </div>
+                                                )}
                                             </div>
 
                                             {/* Capital Slider */}
@@ -701,7 +757,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Adjust stop loss dynamically as price hits targets</span>
+                        }}>Ajusta el stop loss dinámicamente a medida que el precio alcanza objetivos</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -782,7 +838,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                                 letterSpacing: '0.08em',
                                 color: 'var(--color-ec-text-high)',
                                 margin: 0,
-                            }}>Accept Re-entries</h2>
+                            }}>Aceptar Reentradas</h2>
                         </div>
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
@@ -790,7 +846,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                             fontWeight: 400,
                             color: 'var(--color-ec-text-muted)',
                             marginTop: 2,
-                        }}>Allow entering trade again if closed on stop/target</span>
+                        }}>Permitir entrar de nuevo al trade si se cerró por stop o target</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -808,6 +864,163 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange }) => {
                     </div>
                 </div>
             </div>
+
+            {/* Swing Option Card */}
+            {applyDay !== 'gap_2_day' && (
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 16,
+                    padding: '20px 0',
+                    backgroundColor: 'transparent',
+                    borderBottom: '0.5px solid var(--color-ec-border)',
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingBottom: (risk.swing_option?.active) ? 12 : 0,
+                        borderBottom: (risk.swing_option?.active) ? '0.5px solid var(--color-ec-border)' : 'none',
+                    }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{
+                                    width: 3,
+                                    height: 14,
+                                    borderRadius: 1,
+                                    backgroundColor: 'var(--color-ec-copper)',
+                                }} />
+                                <h2 style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 13,
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.08em',
+                                    color: 'var(--color-ec-text-high)',
+                                    margin: 0,
+                                }}>Opción Swing</h2>
+                            </div>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 400,
+                                color: 'var(--color-ec-text-muted)',
+                                marginTop: 2,
+                            }}>Configura esta opción si quieres que el trade se mantenga más allá del día en el que se opera</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-text-muted)',
+                            }}>{risk.swing_option?.active ? 'YES' : 'NO'}</span>
+                            <div
+                                className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.swing_option?.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                                onClick={() => {
+                                    const nextActive = !risk.swing_option?.active;
+                                    const defaultTarget = applyDay === 'gap_1_day' ? 'gap_2_day' : 'gap_1_day';
+                                    onChange({
+                                        ...risk,
+                                        swing_option: {
+                                            active: nextActive,
+                                            target_day: risk.swing_option?.target_day || defaultTarget
+                                        }
+                                    });
+                                }}
+                            >
+                                <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.swing_option?.active ? 'left-4.5' : 'left-0.5'}`}></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Conditional sub-options */}
+                    {risk.swing_option?.active && (
+                        <div className="animate-in fade-in duration-200" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-text-secondary)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em'
+                            }}>
+                                Mantener trade abierto hasta:
+                            </span>
+                            
+                            {applyDay === 'gap_day' ? (
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => onChange({
+                                            ...risk,
+                                            swing_option: { ...risk.swing_option!, target_day: 'gap_1_day' }
+                                        })}
+                                        style={{
+                                            flex: 1,
+                                            padding: '8px 12px',
+                                            borderRadius: 5,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            cursor: 'pointer',
+                                            transition: 'all 150ms ease',
+                                            backgroundColor: risk.swing_option?.target_day === 'gap_1_day' ? 'rgba(216, 122, 61, 0.15)' : 'var(--color-ec-bg-surface)',
+                                            border: risk.swing_option?.target_day === 'gap_1_day' ? '1px solid var(--color-ec-copper)' : '0.5px solid var(--color-ec-border)',
+                                            color: risk.swing_option?.target_day === 'gap_1_day' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+                                        }}
+                                    >
+                                        Gap +1 Day
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => onChange({
+                                            ...risk,
+                                            swing_option: { ...risk.swing_option!, target_day: 'gap_2_day' }
+                                        })}
+                                        style={{
+                                            flex: 1,
+                                            padding: '8px 12px',
+                                            borderRadius: 5,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            cursor: 'pointer',
+                                            transition: 'all 150ms ease',
+                                            backgroundColor: risk.swing_option?.target_day === 'gap_2_day' ? 'rgba(216, 122, 61, 0.15)' : 'var(--color-ec-bg-surface)',
+                                            border: risk.swing_option?.target_day === 'gap_2_day' ? '1px solid var(--color-ec-copper)' : '0.5px solid var(--color-ec-border)',
+                                            color: risk.swing_option?.target_day === 'gap_2_day' ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+                                        }}
+                                    >
+                                        Gap +2 Day
+                                    </button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button
+                                        type="button"
+                                        disabled
+                                        style={{
+                                            flex: 1,
+                                            padding: '8px 12px',
+                                            borderRadius: 5,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            backgroundColor: 'rgba(216, 122, 61, 0.15)',
+                                            border: '1px solid var(--color-ec-copper)',
+                                            color: 'var(--color-ec-text-high)',
+                                            cursor: 'not-allowed'
+                                        }}
+                                    >
+                                        Gap +2 Day
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
 
         </div>
     );

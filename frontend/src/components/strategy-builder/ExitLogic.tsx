@@ -11,12 +11,14 @@ interface Props {
 export const ExitLogicBuilder = React.memo(({ logic, onChange }: Props) => {
     return (
         <LogicBuilder
-            title="Exit Logic"
+            title="Salida Lógica"
             timeframe={logic.timeframe}
             onTimeframeChange={(tf) => onChange({ ...logic, timeframe: tf })}
             rootCondition={logic.root_condition}
             onConditionChange={(g) => onChange({ ...logic, root_condition: g })}
             accentColor="rose"
+            candleDelay={logic.candle_delay}
+            onCandleDelayChange={(delay) => onChange({ ...logic, candle_delay: delay })}
         />
     );
 });
