@@ -721,7 +721,7 @@ export default function OOSDegradationTab({
                     const isLevel = getQualityLevel(row.key, displayIsVal);
                     const oosLevel = getQualityLevel(row.key, displayOosVal);
 
-                    const optThreshold = row.key === "sharpe" ? 0.70 : 0.80;
+                    const optThreshold = row.key === "sharpe" ? 0.70 : 0.90;
                     const carefulThreshold = row.key === "sharpe" ? 0.50 : 0.65;
 
                     const isGood = (isLevel === "good" || isLevel === "very_good");
