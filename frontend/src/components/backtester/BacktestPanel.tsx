@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import type { Dataset, Strategy, PrecacheStatus } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies, fetchPrecacheStatus } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
+import InfoTooltip from "@/components/backtester/InfoTooltip";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -1454,16 +1455,12 @@ export default function BacktestPanel({
           alignItems: 'center',
         }}>
           Rango de fechas IS-OOS
-          <span className="ec-tooltip-container ec-tooltip-left" style={{ marginLeft: '6px' }}>
-            <span
-              style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-            >
-              (?)
-            </span>
-            <span className="ec-tooltip-text" style={{ textTransform: 'none', letterSpacing: 'normal', fontWeight: 500 }}>
-              In-Sample / Out-of-Sample. Divide el dataset en dos partes: IS (datos sobre los que diseñas/optimizas la estrategia) y OOS (datos limpios nunca vistos para simular la realidad). Ayuda a comprobar si la estrategia tiene sobreajuste (overfitting). Si en IS ganas y en OOS se desploma, está sobreoptimizada.
-            </span>
-          </span>
+          <InfoTooltip
+            position="top-left"
+            width={200}
+            text="In-Sample / Out-of-Sample. Divide el dataset en dos partes: IS (datos sobre los que diseñas/optimizas la estrategia) y OOS (datos limpios nunca vistos para simular la realidad). Ayuda a comprobar si la estrategia tiene sobreajuste (overfitting). Si en IS ganas y en OOS se desploma, está sobreoptimizada."
+            style={{ marginLeft: '6px' }}
+          />
         </h2>
 
         {/* IS % SLIDER */}

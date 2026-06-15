@@ -182,9 +182,6 @@ export function isStandalone(indicator: IndicatorType): boolean {
 }
 
 const ONLY_TARGET_INDICATORS = new Set([
-    IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
-    IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
-
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
 ]);
 
