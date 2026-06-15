@@ -484,10 +484,11 @@ export default function BacktestPanel({
   }, [datasets, pendingDatasetSelect, onClearPendingDataset]);
 
   useEffect(() => {
-    if (activeStrategy?.id && activeStrategy.id !== selectedStrategy) {
+    if (activeStrategy?.id && activeStrategy.id !== lastActiveStrategyRef.current) {
       setSelectedStrategy(activeStrategy.id);
+      lastActiveStrategyRef.current = activeStrategy.id;
     }
-  }, [activeStrategy, selectedStrategy]);
+  }, [activeStrategy]);
 
   useEffect(() => {
     if (!selectedDataset) {
