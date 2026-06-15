@@ -742,6 +742,45 @@ def fetch_qualifying_data(
                 if rules:
                     result = _evaluate_rules_on_df(result, rules)
 
+                # Compute LEAD/LAG columns if they don't exist in the hot cache
+                # The hot_cache_daily_gaps.parquet doesn't have these columns pre-computed,
+                # but they are needed for gap_1_day/gap_2_day apply_day and for the swing option.
+                if 'lead_timestamp_1' not in result.columns and not result.empty:
+                    result = result.sort_values(['ticker', 'timestamp']).copy()
+                    grp = result.groupby('ticker')
+                    # LEAD 1
+                    result['lead_timestamp_1'] = grp['timestamp'].shift(-1)
+                    result['lead_rth_open_1'] = grp['rth_open'].shift(-1)
+                    result['lead_rth_close_1'] = grp['rth_close'].shift(-1)
+                    result['lead_rth_high_1'] = grp['rth_high'].shift(-1)
+                    result['lead_rth_low_1'] = grp['rth_low'].shift(-1)
+                    result['lead_rth_volume_1'] = grp['rth_volume'].shift(-1) if 'rth_volume' in result.columns else np.nan
+                    result['lead_pm_high_1'] = grp['pm_high'].shift(-1) if 'pm_high' in result.columns else np.nan
+                    result['lead_pm_low_1'] = grp['pm_low'].shift(-1) if 'pm_low' in result.columns else np.nan
+                    result['lead_gap_pct_1'] = grp['gap_pct'].shift(-1) if 'gap_pct' in result.columns else np.nan
+                    result['lead_pm_volume_1'] = grp['pm_volume'].shift(-1) if 'pm_volume' in result.columns else np.nan
+                    result['lead_open_1'] = grp['open'].shift(-1) if 'open' in result.columns else np.nan
+                    # LEAD 2
+                    result['lead_timestamp_2'] = grp['timestamp'].shift(-2)
+                    result['lead_rth_open_2'] = grp['rth_open'].shift(-2)
+                    result['lead_rth_close_2'] = grp['rth_close'].shift(-2)
+                    result['lead_rth_high_2'] = grp['rth_high'].shift(-2)
+                    result['lead_rth_low_2'] = grp['rth_low'].shift(-2)
+                    result['lead_rth_volume_2'] = grp['rth_volume'].shift(-2) if 'rth_volume' in result.columns else np.nan
+                    result['lead_pm_high_2'] = grp['pm_high'].shift(-2) if 'pm_high' in result.columns else np.nan
+                    result['lead_pm_low_2'] = grp['pm_low'].shift(-2) if 'pm_low' in result.columns else np.nan
+                    result['lead_gap_pct_2'] = grp['gap_pct'].shift(-2) if 'gap_pct' in result.columns else np.nan
+                    result['lead_pm_volume_2'] = grp['pm_volume'].shift(-2) if 'pm_volume' in result.columns else np.nan
+                    result['lead_open_2'] = grp['open'].shift(-2) if 'open' in result.columns else np.nan
+                    # LAG 1
+                    result['lag_rth_open_1'] = grp['rth_open'].shift(1)
+                    result['lag_rth_close_1'] = grp['rth_close'].shift(1)
+                    result['lag_rth_high_1'] = grp['rth_high'].shift(1)
+                    result['lag_rth_low_1'] = grp['rth_low'].shift(1)
+                    result['lag_rth_volume_1'] = grp['rth_volume'].shift(1) if 'rth_volume' in result.columns else np.nan
+                    result['lag_pm_high_1'] = grp['pm_high'].shift(1) if 'pm_high' in result.columns else np.nan
+                    print(f"[HOT CACHE] Computed LEAD/LAG columns via pandas shift")
+
                 # Reanclar al día de trading correcto según apply_day
                 if apply_day == 'gap_1_day':
                     result = result.dropna(subset=['lead_timestamp_1']).copy()
