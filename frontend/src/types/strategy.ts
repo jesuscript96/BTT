@@ -179,11 +179,13 @@ export interface EntryLogic {
     timeframe: Timeframe;
     root_condition: ConditionGroup;
     entry_time_windows?: EntryTimeWindow[];
+    candle_delay?: number;
 }
 
 export interface ExitLogic {
     timeframe: Timeframe;
     root_condition: ConditionGroup;
+    candle_delay?: number;
 }
 
 export interface RiskSettings {
@@ -194,7 +196,7 @@ export interface RiskSettings {
 }
 
 export interface PartialTakeProfit {
-    distance_pct: number;
+    distance_pct: number | 'EOD';
     capital_pct: number;
 }
 
@@ -215,6 +217,10 @@ export interface RiskManagement {
     trailing_stop: TrailingStopSettings;
     max_drawdown_daily?: number;
     size_by_sl?: boolean;
+    swing_option?: {
+        active: boolean;
+        target_day: 'gap_1_day' | 'gap_2_day';
+    };
 }
 
 export interface PostGapPrecondition {
@@ -237,6 +243,10 @@ export interface Strategy {
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;
     risk_management: RiskManagement;
+    // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
+    // and sometimes flat. Components read `strategy.definition?.x ?? strategy.x` to
+    // support both shapes; keep this loose so those accesses type-check everywhere.
+    definition?: any;
     created_at?: string;
     updated_at?: string;
 }
@@ -269,7 +279,8 @@ export const initialRiskManagement: RiskManagement = {
         { distance_pct: 6.0, capital_pct: 50.0 }
     ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
-    size_by_sl: false
+    size_by_sl: false,
+    swing_option: { active: false, target_day: 'gap_1_day' }
 };
 
 export const initialExitLogic: ExitLogic = {

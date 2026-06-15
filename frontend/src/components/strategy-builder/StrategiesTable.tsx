@@ -160,7 +160,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
             risk.partial_take_profits.forEach((pt, i) => {
                 if (pt && pt.capital_pct != null && pt.distance_pct != null) {
-                    tags.push(`Partial TP ${i+1}: ${pt.capital_pct}% cap @ ${pt.distance_pct}% dist`);
+                    tags.push(`Partial TP ${i+1}: ${pt.capital_pct}% cap @ ${pt.distance_pct === 'EOD' ? 'EOD' : pt.distance_pct + '% dist'}`);
                 }
             });
         }

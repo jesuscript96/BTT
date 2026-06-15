@@ -267,13 +267,15 @@ class EntryLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
     entry_time_windows: Optional[List[EntryTimeWindow]] = None
+    candle_delay: Optional[int] = None
 
 class ExitLogic(BaseModel):
     timeframe: Timeframe = Timeframe.M1
     root_condition: ConditionGroup
+    candle_delay: Optional[int] = None
 
 class PartialTakeProfit(BaseModel):
-    distance_pct: float
+    distance_pct: Union[float, str]
     capital_pct: float
 
 class RiskManagement(BaseModel):
@@ -285,6 +287,7 @@ class RiskManagement(BaseModel):
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
     partial_take_profits: Optional[List[PartialTakeProfit]] = Field(default_factory=list)
     trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
+    swing_option: Optional[dict] = Field(default_factory=lambda: {"active": False, "target_day": "gap_1_day"})
     max_drawdown_daily: Optional[float] = None  # Circuit breaker
 
 class PostGapPrecondition(BaseModel):

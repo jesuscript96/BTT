@@ -131,6 +131,12 @@ interface FloatData {
     [source: string]: FloatSourceData;
 }
 
+interface ChartPoint {
+    bin: string;
+    avg_change_pct: number;
+    is_premarket: boolean;
+}
+
 interface GapStats {
     source: string;
     gap_days_count: number;
@@ -141,6 +147,7 @@ interface GapStats {
     neg_close_freq: number | null;
     close_above_pmh_freq: number | null;
     close_below_vwap_freq: number | null;
+    price_change_chart?: ChartPoint[];
 }
 
 interface FinancialHistoryPoint {
@@ -417,7 +424,7 @@ const DailyStockChart = ({
 
         const chart = createChart(chartContainerRef.current, {
             width: chartContainerRef.current.clientWidth,
-            height: 420,
+            height: 470,
             layout: {
                 background: { type: ColorType.Solid, color: '#16181A' },
                 textColor: '#ffffff',
@@ -651,7 +658,7 @@ const DailyStockChart = ({
             <div style={{ 
                 position: 'relative', 
                 width: '100%', 
-                height: '420px',
+                height: '350px',
                 display: activeTab === 'chart' ? 'block' : 'none'
             }}>
                 <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
@@ -663,7 +670,7 @@ const DailyStockChart = ({
                 <div style={{ 
                     overflowY: 'auto', 
                     width: '100%', 
-                    height: '420px',
+                    height: '350px',
                     border: '1px solid var(--color-ec-border)',
                     borderRadius: 6,
                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -823,7 +830,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
-                    Float Comparison (KnowTheFloat)
+                    Float Comparison
                 </span>
                 <div style={{
                     height: '130px',
@@ -846,7 +853,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
-                Float Comparison (KnowTheFloat)
+                Float Comparison
             </span>
             <div style={{ overflowX: 'auto', width: '100%', height: '130px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'General Sans', sans-serif" }}>
@@ -873,6 +880,220 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
                     </tbody>
                 </table>
             </div>
+        </div>
+    );
+};
+
+const AvgPriceChangeChart = ({ data }: { data?: ChartPoint[] }) => {
+    if (!data || data.length === 0) {
+        return (
+            <div style={{
+                height: '170px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--color-ec-text-muted)',
+                fontSize: '13px',
+                border: '1px dashed rgba(255, 255, 255, 0.1)',
+                borderRadius: '4px',
+                width: '100%'
+            }}>
+                No hay datos de intradía
+            </div>
+        );
+    }
+
+    const viewBoxW = 240;
+    const viewBoxH = 150;
+    const paddingLeft = 48;
+    const paddingRight = 10;
+    const paddingTop = 8;
+    const paddingBottom = 20;
+
+    const W = viewBoxW - paddingLeft - paddingRight;
+    const H = viewBoxH - paddingTop - paddingBottom;
+
+    const values = data.map(d => d.avg_change_pct);
+    let minY = Math.min(0, ...values);
+    let maxY = Math.max(0, ...values);
+    
+    if (maxY - minY < 1.0) {
+        const center = (maxY + minY) / 2;
+        minY = center - 0.5;
+        maxY = center + 0.5;
+    } else {
+        const diff = maxY - minY;
+        minY -= diff * 0.15;
+        maxY += diff * 0.15;
+    }
+
+    const points = data.map((d, i) => {
+        const x = paddingLeft + (i / (data.length - 1)) * W;
+        const y_pct = (d.avg_change_pct - minY) / (maxY - minY);
+        const y = paddingTop + H - (y_pct * H);
+        return { x, y, ...d };
+    });
+
+    const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    
+    // Closed path for fill (going down to bottom of plot area)
+    const bottomY = paddingTop + H;
+    const fillPath = `${linePath} L ${points[points.length - 1].x.toFixed(1)} ${bottomY.toFixed(1)} L ${points[0].x.toFixed(1)} ${bottomY.toFixed(1)} Z`;
+
+    // Last premarket index
+    let lastPreIdx = -1;
+    for (let i = data.length - 1; i >= 0; i--) {
+        if (data[i].is_premarket) {
+            lastPreIdx = i;
+            break;
+        }
+    }
+    const preWidth = lastPreIdx >= 0 ? (lastPreIdx / (data.length - 1)) * W : 0;
+
+    // Y-Axis Ticks (3 ticks: min, 0, max)
+    const yTicks = [minY, 0, maxY].filter((v, idx, self) => self.indexOf(v) === idx);
+
+    // X-Axis Ticks (e.g. show 04:00, 09:30, 16:00)
+    const getClosestIndex = (timeStr: string) => {
+        let minDiff = Infinity;
+        let index = -1;
+        data.forEach((d, idx) => {
+            const start = d.bin.split('-')[0];
+            const [h, m] = start.split(':').map(Number);
+            const [th, tm] = timeStr.split(':').map(Number);
+            const diff = Math.abs((h * 60 + m) - (th * 60 + tm));
+            if (diff < minDiff) {
+                minDiff = diff;
+                index = idx;
+            }
+        });
+        return index;
+    };
+
+    const xTickLabels = ["04:00", "09:30", "16:00"];
+    const xTicks = xTickLabels.map(label => {
+        const idx = getClosestIndex(label);
+        return {
+            x: idx >= 0 ? paddingLeft + (idx / (data.length - 1)) * W : 0,
+            label
+        };
+    });
+
+    return (
+        <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+            <svg width="100%" height="100%" viewBox={`0 0 ${viewBoxW} ${viewBoxH}`} style={{ overflow: 'visible' }}>
+                <defs>
+                    <linearGradient id="price-change-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--color-ec-copper)" stopOpacity="0.15" />
+                        <stop offset="100%" stopColor="var(--color-ec-copper)" stopOpacity="0.0" />
+                    </linearGradient>
+                </defs>
+
+                {/* Shaded Premarket Area */}
+                {preWidth > 0 && (
+                    <>
+                        <rect
+                            x={paddingLeft}
+                            y={paddingTop}
+                            width={preWidth}
+                            height={H}
+                            fill="rgba(255, 255, 255, 0.02)"
+                        />
+                        <line
+                            x1={paddingLeft + preWidth}
+                            y1={paddingTop}
+                            x2={paddingLeft + preWidth}
+                            y2={paddingTop + H}
+                            stroke="rgba(255, 255, 255, 0.1)"
+                            strokeWidth="0.8"
+                            strokeDasharray="2,2"
+                        />
+                        <text
+                            x={paddingLeft + preWidth / 2}
+                            y={paddingTop + 10}
+                            textAnchor="middle"
+                            fill="var(--color-ec-text-muted)"
+                            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px' }}
+                        >
+                            PRE
+                        </text>
+                        <text
+                            x={paddingLeft + preWidth + (W - preWidth) / 2}
+                            y={paddingTop + 10}
+                            textAnchor="middle"
+                            fill="var(--color-ec-text-muted)"
+                            style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.5px' }}
+                        >
+                            RTH
+                        </text>
+                    </>
+                )}
+
+                {/* Horizontal grid lines */}
+                {yTicks.map((tickVal, idx) => {
+                    const y_pct = (tickVal - minY) / (maxY - minY);
+                    const y = paddingTop + H - (y_pct * H);
+                    const isZero = Math.abs(tickVal) < 0.0001;
+                    return (
+                        <g key={idx}>
+                            <line
+                                x1={paddingLeft}
+                                y1={y}
+                                x2={paddingLeft + W}
+                                y2={y}
+                                stroke={isZero ? "rgba(255, 255, 255, 0.15)" : "rgba(255, 255, 255, 0.05)"}
+                                strokeWidth={isZero ? 1.0 : 0.5}
+                                strokeDasharray={isZero ? undefined : "2,4"}
+                            />
+                            <text
+                                x={paddingLeft - 8}
+                                y={y + 4}
+                                textAnchor="end"
+                                fill="var(--color-ec-text-muted)"
+                                style={{ fontSize: 11, fontFamily: 'monospace', fontWeight: 600 }}
+                            >
+                                {tickVal >= 0 ? '+' : ''}{tickVal.toFixed(1)}%
+                            </text>
+                        </g>
+                    );
+                })}
+
+                {/* Closed Area Fill */}
+                <path d={fillPath} fill="url(#price-change-grad)" />
+
+                {/* Line Path */}
+                <path
+                    d={linePath}
+                    fill="none"
+                    stroke="var(--color-ec-copper)"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+
+                {/* X-Axis Labels */}
+                {xTicks.map((tick, idx) => (
+                    <g key={idx}>
+                        <line
+                            x1={tick.x}
+                            y1={paddingTop + H}
+                            x2={tick.x}
+                            y2={paddingTop + H + 3}
+                            stroke="rgba(255, 255, 255, 0.2)"
+                            strokeWidth="0.8"
+                        />
+                        <text
+                            x={tick.x}
+                            y={paddingTop + H + 13}
+                            textAnchor="middle"
+                            fill="var(--color-ec-text-secondary)"
+                            style={{ fontSize: 11, fontWeight: 600 }}
+                        >
+                            {tick.label}
+                        </text>
+                    </g>
+                ))}
+            </svg>
         </div>
     );
 };
@@ -986,46 +1207,58 @@ const GapStatsSection = ({
                 </div>
             ) : (
                 <>
-                    {/* 2x2 Numeric Metrics Grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>High RTH Spike</span>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.high_rth_spike_avg)}</span>
+                    {/* Split metrics on left, Avg Price Change Chart on right */}
+                    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', width: '100%' }}>
+                        {/* Metrics Column (Left side, width ~38%) */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '38%', flexShrink: 0 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>High RTH Spike</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.high_rth_spike_avg)}</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% PM Fade</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.pm_fade_avg)}</span>
+                            </div>
+                            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low RTH Spike</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.low_rth_spike_avg)}</span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% RTHH Fade</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.rthh_fade_avg)}</span>
+                            </div>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low RTH Spike</span>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.low_rth_spike_avg)}</span>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% PM Fade</span>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.pm_fade_avg)}</span>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% RTHH Fade</span>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.rthh_fade_avg)}</span>
+
+                        {/* Chart Area (Right side, width ~62%) */}
+                        <div style={{ width: '62%', flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Precio medio desde el Open</span>
+                            <div style={{ height: '170px', width: '100%' }}>
+                                <AvgPriceChangeChart data={currentStats.price_change_chart} />
+                            </div>
                         </div>
                     </div>
 
                     {/* Frequencies and Progress Bars */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, borderTop: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)', paddingTop: 10 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 2, marginTop: -16 }}>
                         {/* Negative Close Frequency (Bidirectional Bar) */}
                         {(() => {
                             const negClose = currentStats.neg_close_freq ?? 0;
                             const posClose = 100 - negClose;
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
                                     </div>
                                     <div style={{
-                                        height: 18,
+                                        height: 16,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
                                         overflow: 'hidden',
                                         display: 'flex',
                                         fontFamily: "'General Sans', sans-serif",
-                                        fontSize: 9,
+                                        fontSize: 8.5,
                                         fontWeight: 700
                                     }}>
                                         {negClose > 0 && (
@@ -1068,19 +1301,19 @@ const GapStatsSection = ({
                             const val = currentStats.close_above_pmh_freq ?? 0;
                             const restVal = 100 - val;
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close above PMH</span>
                                     </div>
                                     <div style={{
-                                        height: 18,
+                                        height: 16,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
                                         overflow: 'hidden',
                                         display: 'flex',
                                         fontFamily: "'General Sans', sans-serif",
-                                        fontSize: 9,
+                                        fontSize: 8.5,
                                         fontWeight: 700
                                     }}>
                                         {restVal > 0 && (
@@ -1123,19 +1356,19 @@ const GapStatsSection = ({
                             const val = currentStats.close_below_vwap_freq ?? 0;
                             const restVal = 100 - val;
                             return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Close Below VWAP</span>
                                     </div>
                                     <div style={{
-                                        height: 18,
+                                        height: 16,
                                         width: '100%',
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         borderRadius: 4,
                                         overflow: 'hidden',
                                         display: 'flex',
                                         fontFamily: "'General Sans', sans-serif",
-                                        fontSize: 9,
+                                        fontSize: 8.5,
                                         fontWeight: 700
                                     }}>
                                         {val > 0 && (
@@ -1635,10 +1868,26 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             })
             .catch(e => console.error("Error fetching balance sheet:", e));
 
-        getTickerGapStats(selectedTicker)
-            .then(v => merge(v as object))
-            .catch(e => console.error("Error fetching gap stats:", e))
-            .finally(() => { if (!cancelled) setLoadingGap(false); });
+        let pollTimer: NodeJS.Timeout;
+        const fetchGapStats = () => {
+            getTickerGapStats(selectedTicker)
+                .then(v => {
+                    if (cancelled) return;
+                    const res = v as any;
+                    if (res && res.status === "calculating") {
+                        setLoadingGap(true);
+                        pollTimer = setTimeout(fetchGapStats, 4000);
+                    } else {
+                        merge(res);
+                        setLoadingGap(false);
+                    }
+                })
+                .catch(e => {
+                    console.error("Error fetching gap stats:", e);
+                    if (!cancelled) setLoadingGap(false);
+                });
+        };
+        fetchGapStats();
 
         getTickerSecFilings(selectedTicker)
             .then(v => { if (!cancelled) setFilings(v as FilingsData); })
@@ -1653,7 +1902,10 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             })
             .catch(e => { console.error("Error fetching Finviz news:", e); if (!cancelled) setFinvizNews([]); });
 
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
     }, [selectedTicker]);
 
     // Empty state - Clean, centered search box
@@ -1982,75 +2234,82 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     </div>
                     )}
 
-                    {/* Latest News Banner */}
-                    {latestNews && (
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '8px 12px',
-                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                            borderLeft: '2px solid var(--color-ec-copper)',
-                            borderBottom: '1px solid var(--color-ec-border)',
-                            borderRadius: '0 4px 4px 0',
-                            fontSize: 11,
-                            fontFamily: "'General Sans', sans-serif",
-                            margin: '0 0 -8px 0'
-                        }}>
-                            <span style={{ 
-                                fontSize: 8, 
-                                fontWeight: 700, 
-                                color: 'var(--color-ec-copper)', 
-                                textTransform: 'uppercase', 
-                                letterSpacing: '1px',
-                                flexShrink: 0
-                            }}>
-                                Latest News ({latestNews.date}):
-                            </span>
-                            {latestNews.source && (
-                                <span style={{ color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, flexShrink: 0 }}>
-                                    [{latestNews.source}]
-                                </span>
-                            )}
-                            <SentimentBadge sentiment={latestNews.sentiment} />
-                            <a
-                                href={latestNews.link}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                    color: 'var(--color-ec-text-primary)',
-                                    textDecoration: 'none',
-                                    fontWeight: 600,
-                                    whiteSpace: 'nowrap',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    width: '100%'
-                                }}
-                                className="hover:text-[var(--color-ec-copper-bright)] transition-colors"
-                            >
-                                {latestNews.title}
-                            </a>
-                            <ExternalLink size={10} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
-                        </div>
-                    )}
-
                     {/* Middle Row: Daily Stock Chart & Know The Float Table */}
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-6 pt-4" style={{ borderColor: 'var(--color-ec-border)' }}>
-                        <div className="lg:col-span-2">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 border-b border-ec-border pb-0 pt-4" style={{ borderColor: 'var(--color-ec-border)', paddingBottom: '40px' }}>
+                        <div className="lg:col-span-2 flex flex-col">
                             {loadingChart && !data?.daily_history?.length ? (
                                 <div
                                     className="animate-pulse"
                                     style={{
-                                        height: '419px',
+                                        height: '425px',
                                         backgroundColor: 'color-mix(in srgb, var(--color-ec-border) 20%, transparent)',
                                         borderRadius: '8px'
                                     }}
                                 />
                             ) : (
-                                <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
-                            )}
+                                <>
+                                    <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
+                                    
+                                    {/* Latest News Banner rendered below the chart component */}
+                                    {latestNews && (
+                                        <div style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 8,
+                                            padding: '6px 10px',
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '1px solid var(--color-ec-border)',
+                                            borderLeft: '2px solid var(--color-ec-copper)',
+                                            borderRadius: '4px',
+                                            fontSize: 11,
+                                            fontFamily: "'General Sans', sans-serif",
+                                            marginTop: '12px',
+                                            marginBottom: '12px',
+                                            width: '100%',
+                                            boxSizing: 'border-box',
+                                            flexShrink: 0
+                                        }}>
+                                            <span style={{ 
+                                                fontSize: 8, 
+                                                fontWeight: 700, 
+                                                color: 'var(--color-ec-copper)', 
+                                                textTransform: 'uppercase', 
+                                                letterSpacing: '1px',
+                                                flexShrink: 0
+                                            }}>
+                                                Latest News ({latestNews.date}):
+                                            </span>
+                                            {latestNews.source && (
+                                                <span style={{ color: 'var(--color-ec-text-secondary)', fontSize: 9, fontWeight: 600, flexShrink: 0 }}>
+                                                    [{latestNews.source}]
+                                                </span>
+                                            )}
+                                            <SentimentBadge sentiment={latestNews.sentiment} />
+                                            <a
+                                                href={latestNews.link}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    textDecoration: 'none',
+                                                    fontWeight: 600,
+                                                    whiteSpace: 'nowrap',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    width: '100%'
+                                                }}
+                                                className="hover:text-[var(--color-ec-copper-bright)] transition-colors"
+                                            >
+                                                {latestNews.title}
+                                            </a>
+                                            <ExternalLink size={10} style={{ color: 'var(--color-ec-text-muted)', flexShrink: 0 }} />
+                                        </div>
+                                    )}
+                                </>
+                            )
+                            }
                         </div>
-                        <div className="lg:col-span-1 flex flex-col justify-between lg:h-[419px] h-auto lg:gap-0 gap-6">
+                        <div className="lg:col-span-1 flex flex-col h-auto gap-6 justify-start">
                             {loadingGap && !data?.know_the_float ? (
                                 <div
                                     className="animate-pulse"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
@@ -75,6 +75,7 @@ interface Props {
   customStartTime?: string;
   customEndTime?: string;
   onDraftChange?: (draft: Draft) => void;
+  initialStrategy?: any;
 }
 
 export default function InlineStrategyBuilder({
@@ -84,8 +85,43 @@ export default function InlineStrategyBuilder({
   customStartTime = "09:30",
   customEndTime = "16:00",
   onDraftChange,
+  initialStrategy,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
+  const createdAtRef = useRef(new Date().toISOString());
+  const lastLoadedStrategyRef = useRef<string>("");
+
+  // Load strategy from prop when initialStrategy is provided
+  useEffect(() => {
+    if (!initialStrategy) return;
+    if ((initialStrategy.id === "draft" || initialStrategy.id === "wizard_draft") && lastLoadedStrategyRef.current !== "") return;
+
+    const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+    const str = JSON.stringify({
+      name: stratObj.name || initialStrategy.name,
+      bias: stratObj.bias,
+      apply_day: stratObj.apply_day,
+      postgap_preconditions: stratObj.postgap_preconditions,
+      entry_logic: stratObj.entry_logic,
+      exit_logic: stratObj.exit_logic,
+      risk_management: stratObj.risk_management,
+    });
+    if (str === lastLoadedStrategyRef.current) return;
+    lastLoadedStrategyRef.current = str;
+
+    const finalName = stratObj.name || initialStrategy.name;
+    if (finalName) setName(finalName);
+    if (stratObj.bias) setBias(stratObj.bias);
+    if (stratObj.apply_day) setApplyDay(stratObj.apply_day);
+    if (stratObj.postgap_preconditions) {
+      setPostgapPreconditions(stratObj.postgap_preconditions);
+    } else {
+      setPostgapPreconditions([]);
+    }
+    if (stratObj.entry_logic) setEntryLogic(stratObj.entry_logic);
+    if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
+    if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
+  }, [initialStrategy]);
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
   const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
@@ -156,6 +192,25 @@ export default function InlineStrategyBuilder({
       if (tempSource === 'candle_range_ratio_gap_1_vs_gap') {
         setTempSource('cierre');
       }
+      setRiskManagement(prev => {
+        if (prev.swing_option?.active && prev.swing_option?.target_day === 'gap_1_day') {
+          return {
+            ...prev,
+            swing_option: { ...prev.swing_option!, target_day: 'gap_2_day' }
+          };
+        }
+        return prev;
+      });
+    } else if (applyDay === 'gap_2_day') {
+      setRiskManagement(prev => {
+        if (prev.swing_option?.active) {
+          return {
+            ...prev,
+            swing_option: { ...prev.swing_option!, active: false }
+          };
+        }
+        return prev;
+      });
     }
   }, [applyDay]);
 
@@ -169,7 +224,7 @@ export default function InlineStrategyBuilder({
       entry_logic: entryLogic,
       exit_logic: exitLogic,
       risk_management: riskManagement,
-      created_at: new Date().toISOString(),
+      created_at: createdAtRef.current,
     });
   }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
 
@@ -1036,7 +1091,7 @@ export default function InlineStrategyBuilder({
         </EntryLogicBuilder>
 
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
-        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} />
+        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
       </div>
 
       {/* Strategy Summary Panel */}

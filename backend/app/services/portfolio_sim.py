@@ -193,7 +193,56 @@ def simulate(
                         continue  # Already hit
                     dist_frac = pt["distance_pct"]
                     cap_frac = pt["capital_pct"]
-                    if is_long:
+                    
+                    if dist_frac == "EOD":
+                        if i == n - 1:
+                            # It is the end of the day, trigger this EOD partial TP!
+                            partial_tp_hits[pt_idx] = True
+                            pt_exit_price = close[i]
+                            
+                            slip = pt_exit_price * slippage
+                            net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
+                            pt_size = original_size * cap_frac
+                            pt_size = min(pt_size, size)
+                            if pt_size > 0:
+                                if is_long:
+                                    gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                else:
+                                    gross_pnl = (entry_price - net_pt_exit) * pt_size
+                                
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * 2
+                                else:
+                                    fee_amount = abs(gross_pnl) * fees
+                                pnl = gross_pnl - fee_amount
+                                realized_pnl += pnl
+                                capital_at_risk = entry_price * pt_size
+                                ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                                trades.append({
+                                    "entry_idx": entry_idx,
+                                    "exit_idx": i,
+                                    "entry_price": round(entry_price, 6),
+                                    "exit_price": round(net_pt_exit, 6),
+                                    "pnl": round(pnl, 4),
+                                    "return_pct": round(ret_pct, 4),
+                                    "direction": "Long" if is_long else "Short",
+                                    "status": "Closed",
+                                    "size": round(pt_size, 6),
+                                    "exit_reason": "Partial TP (EOD)",
+                                    "mae": round(mae, 4),
+                                    "mfe": round(mfe, 4),
+                                    "stop_loss": round(trade_sl_price, 6),
+                                })
+                                size -= pt_size
+                                if size <= 0.0001:
+                                    in_position = False
+                                    size = 0.0
+                                    break
+                        else:
+                            # Not EOD yet, skip
+                            continue
+                    
+                    elif is_long:
                         pt_level = entry_price * (1 + dist_frac)
                         if price_for_tp >= pt_level:
                             # Partial exit

@@ -83,7 +83,15 @@ export interface Strategy {
   id: string;
   name: string;
   description: string;
-  definition: Record<string, unknown>;
+  definition: any;
+  // Some components also read these directly off the strategy (strategy.x),
+  // falling back from strategy.definition?.x — the API returns both the wrapped
+  // ({ definition: {...} }) and flat shapes. Keep optional+loose for both.
+  risk_management?: any;
+  bias?: any;
+  apply_day?: any;
+  entry_logic?: any;
+  exit_logic?: any;
 }
 
 export interface TradeRecord {
@@ -310,10 +318,12 @@ export async function fetchMultiDayCandles(
   dataset_id: string,
   ticker: string,
   date: string,
-  apply_day: string
+  apply_day: string,
+  swing_active?: boolean,
+  swing_target_day?: string
 ): Promise<MultiDayCandles> {
   const { data } = await api.get("/candles/multi", {
-    params: { dataset_id, ticker, date, apply_day },
+    params: { dataset_id, ticker, date, apply_day, swing_active, swing_target_day },
   });
   return data;
 }

@@ -121,7 +121,8 @@ def _core_backtest_jit(
     
     # Pre-calculated time components
     row_hours,       # int64 array
-    row_minutes      # int64 array
+    row_minutes,     # int64 array
+    eod_exit_allowed  # bool array (n_rows, n_strats)
 ):
     n_rows = len(closes)
     n_strats = len(strat_weights)
@@ -237,7 +238,7 @@ def _core_backtest_jit(
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
                         reason_code = 2 # TIME
-                    elif row_hours[i] >= 15 and row_minutes[i] >= 59:
+                    elif eod_exit_allowed[i, strat_idx] and row_hours[i] >= 15 and row_minutes[i] >= 59:
                          exit_signal_triggered = True
                          exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
                          reason_code = 3 # EOD
@@ -1051,17 +1052,72 @@ class BacktestEngine:
         entry_signals = self.generate_boolean_signals("entry")
         exit_signals = self.generate_boolean_signals("exit")
         
-        # Look-ahead prevention: shift signals by 1 bar per ticker
-        if self.lookahead_prevention and len(df) > 0:
+        # Look-ahead prevention and candle delay: shift signals per ticker/strategy
+        if len(df) > 0:
             n_strats = entry_signals.shape[1]
             entry_shifted = np.zeros_like(entry_signals)
             exit_shifted = np.zeros_like(exit_signals)
-            for ticker in unique_tickers:
-                mask = df['ticker'].values == ticker
-                idx = np.where(mask)[0]
-                if len(idx) > 1:
-                    entry_shifted[idx[1:], :] = entry_signals[idx[:-1], :]
-                    exit_shifted[idx[1:], :] = exit_signals[idx[:-1], :]
+            
+            from app.services.strategy_engine import get_lowest_timeframe_mins
+
+            for s_idx, s in enumerate(self.strategies):
+                entry_logic = getattr(s, 'entry_logic', None)
+                exit_logic = getattr(s, 'exit_logic', None)
+                
+                entry_logic_dict = {}
+                if entry_logic:
+                    if hasattr(entry_logic, 'model_dump'):
+                        entry_logic_dict = entry_logic.model_dump()
+                    elif hasattr(entry_logic, 'dict'):
+                        entry_logic_dict = entry_logic.dict()
+                    else:
+                        entry_logic_dict = dict(entry_logic)
+                
+                exit_logic_dict = {}
+                if exit_logic:
+                    if hasattr(exit_logic, 'model_dump'):
+                        exit_logic_dict = exit_logic.model_dump()
+                    elif hasattr(exit_logic, 'dict'):
+                        exit_logic_dict = exit_logic.dict()
+                    else:
+                        exit_logic_dict = dict(exit_logic)
+                
+                lowest_entry_tf_mins = get_lowest_timeframe_mins(entry_logic_dict)
+                lowest_exit_tf_mins = get_lowest_timeframe_mins(exit_logic_dict)
+
+                entry_delay = 1
+                if entry_logic_dict and entry_logic_dict.get("candle_delay") is not None:
+                    try:
+                        entry_delay = int(entry_logic_dict["candle_delay"])
+                    except (ValueError, TypeError):
+                        entry_delay = 1
+
+                exit_delay = 1
+                if exit_logic_dict and exit_logic_dict.get("candle_delay") is not None:
+                    try:
+                        exit_delay = int(exit_logic_dict["candle_delay"])
+                    except (ValueError, TypeError):
+                        exit_delay = 1
+
+                shift_entry = (1 if self.lookahead_prevention else 0) + (max(1, entry_delay) - 1) * lowest_entry_tf_mins
+                shift_exit = (1 if self.lookahead_prevention else 0) + (max(1, exit_delay) - 1) * lowest_exit_tf_mins
+
+                for ticker in unique_tickers:
+                    mask = df['ticker'].values == ticker
+                    idx = np.where(mask)[0]
+                    
+                    if shift_entry > 0:
+                        if len(idx) > shift_entry:
+                            entry_shifted[idx[shift_entry:], s_idx] = entry_signals[idx[:-shift_entry], s_idx]
+                    else:
+                        entry_shifted[idx, s_idx] = entry_signals[idx, s_idx]
+
+                    if shift_exit > 0:
+                        if len(idx) > shift_exit:
+                            exit_shifted[idx[shift_exit:], s_idx] = exit_signals[idx[:-shift_exit], s_idx]
+                    else:
+                        exit_shifted[idx, s_idx] = exit_signals[idx, s_idx]
+            
             entry_signals = entry_shifted
             exit_signals = exit_shifted
         
@@ -1150,6 +1206,45 @@ class BacktestEngine:
             
         # 3. Call JIT Function
         print(f"JIT Warmup/Execution for {len(df)} rows...")
+        
+        # Build eod_exit_allowed array
+        n_rows = len(df)
+        n_strats = len(self.strategies)
+        eod_exit_allowed = np.ones((n_rows, n_strats), dtype=np.bool_)
+        
+        # Check swing option for each strategy
+        for s_idx, s in enumerate(self.strategies):
+            rm = getattr(s, 'risk_management', None) or {}
+            def _get(obj, key, default=None):
+                if isinstance(obj, dict):
+                    return obj.get(key, default)
+                return getattr(obj, key, default)
+            swing_opt = _get(rm, 'swing_option') or {}
+            swing_active = _get(swing_opt, 'active', False)
+            
+            if swing_active:
+                swing_target = _get(swing_opt, 'target_day', 'gap_1_day')
+                apply_day = getattr(s, 'apply_day', 'gap_day')
+                
+                # Get unique dates in chronological order
+                unique_dates = df['timestamp'].dt.strftime('%Y-%m-%d').unique()
+                if len(unique_dates) > 0:
+                    if apply_day == 'gap_day':
+                        if swing_target == 'gap_1_day':
+                            target_date = unique_dates[1] if len(unique_dates) > 1 else unique_dates[0]
+                        else: # gap_2_day
+                            target_date = unique_dates[2] if len(unique_dates) > 2 else unique_dates[-1]
+                    elif apply_day == 'gap_1_day':
+                        if swing_target == 'gap_2_day':
+                            target_date = unique_dates[1] if len(unique_dates) > 1 else unique_dates[0]
+                        else:
+                            target_date = unique_dates[-1]
+                    else:
+                        target_date = unique_dates[-1]
+                    
+                    target_date_ts = pd.to_datetime(target_date).date()
+                    eod_exit_allowed[:, s_idx] = (df['timestamp'].dt.date.values == target_date_ts)
+
         output = _core_backtest_jit(
             timestamps, opens, highs, lows, closes, ticker_ids,
             entry_signals,
@@ -1176,7 +1271,7 @@ class BacktestEngine:
             float(self.max_holding_minutes * 60.0),
             atrs, pm_highs, pm_lows, vwaps,
             hods, lods, prev_highs, prev_lows,
-            row_hours, row_minutes
+            row_hours, row_minutes, eod_exit_allowed
         )
         
         # 4. Unpack Results

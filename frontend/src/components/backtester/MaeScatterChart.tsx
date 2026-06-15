@@ -92,12 +92,18 @@ const CustomTooltip = ({ active, payload, isDarkMode }: { active?: boolean, payl
     return null;
 };
 
-const CustomDot = (props: { cx?: number, cy?: number, dotColor?: string }) => {
-    const { cx, cy, dotColor } = props;
+const CustomDot = (props: { cx?: number; cy?: number }) => {
+    const { cx, cy } = props;
     if (!cx || !cy) return null;
-    const finalColor = dotColor || "#D87A3D";
-    return <circle cx={cx} cy={cy} r={2} stroke={finalColor} fill={finalColor} />;
+    return <circle cx={cx} cy={cy} r={2} stroke="#D87A3D" fill="#D87A3D" />;
 };
+
+const formatTick = (v: number) => `${v.toFixed(0)}`;
+const renderNullShape = () => null;
+
+const TICK_STYLE = { fontSize: 9, fill: "#8A8D92", fontFamily: 'monospace' };
+const CHART_MARGIN = { top: 10, right: 10, bottom: 0, left: -20 };
+const TOOLTIP_CURSOR = { strokeDasharray: '3 3' };
 
 export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartProps) {
     const processed = useMemo(() => {
@@ -148,19 +154,38 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
         };
     }, [trades]);
 
+    const tooltipContent = useMemo(() => {
+        return <CustomTooltip isDarkMode={isDarkMode} />;
+    }, [isDarkMode]);
+
+    const lineStyle = useMemo(() => ({
+        stroke: isDarkMode ? "#94a3b8" : "#44403c",
+        strokeDasharray: "4 4",
+        strokeWidth: 1.5
+    }), [isDarkMode]);
+
     if (!trades.length) {
         return <div className="p-4 text-center text-[var(--muted)] text-[11px] font-mono">Sin datos</div>;
     }
 
     const dotColor = "#D87A3D"; // Color ec-copper de la app
     const gridColor = "#2C2F33"; // Color ec-border
-    const tickColor = "#8A8D92"; // Color ec-text-secondary
 
     return (
         <div className="flex flex-col h-full transition-colors relative">
             <div className="px-1 py-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-[#ffffff] uppercase tracking-[0.12em]">
+                <span className="text-[10px] font-semibold text-[#ffffff] uppercase tracking-[0.12em] inline-flex items-center gap-1">
                     MAE/MFE vs Rets
+                    <span className="ec-tooltip-container ec-tooltip-left">
+                        <span
+                            style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
+                        >
+                            (?)
+                        </span>
+                        <span className="ec-tooltip-text">
+                            MAE (Maximum Adverse Excursion): Máxima pérdida flotante temporal que sufrió cada operación durante su vida. MFE (Maximum Favorable Excursion): Máxima ganancia flotante temporal alcanzada. Este gráfico cruza el MAE/MFE contra el Retorno final (%) de cada trade. Ayuda a ver si cortamos las ganancias muy rápido (MFE alto y retorno bajo) o si dejamos correr demasiado las pérdidas (MAE alto).
+                        </span>
+                    </span>
                 </span>
                 <div className="flex items-center gap-4 text-[10px] text-[#ffffff] font-mono">
                     <div className="flex items-center gap-3 mr-2">
@@ -185,15 +210,15 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                     {processed.lossR2 !== undefined && <span>L R² = {(processed.lossR2 * 100).toFixed(1)}%</span>}
                 </div>
                 <ResponsiveContainer width="100%" height="100%">
-                    <ScatterChart margin={{ top: 10, right: 10, bottom: 0, left: -20 }}>
+                    <ScatterChart margin={CHART_MARGIN}>
                         <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
                         <XAxis
                             type="number"
                             dataKey="x"
                             name="Retorno"
                             unit="%"
-                            tick={{ fontSize: 9, fill: tickColor, fontFamily: 'monospace' }}
-                            tickFormatter={(v: number) => `${v.toFixed(0)}`}
+                            tick={TICK_STYLE}
+                            tickFormatter={formatTick}
                             axisLine={false}
                             tickLine={false}
                             height={25}
@@ -203,28 +228,24 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                             dataKey="y"
                             name="MAE"
                             unit="%"
-                            tick={{ fontSize: 9, fill: tickColor, fontFamily: 'monospace' }}
-                            tickFormatter={(v: number) => `${v.toFixed(0)}`}
+                            tick={TICK_STYLE}
+                            tickFormatter={formatTick}
                             axisLine={false}
                             tickLine={false}
                         />
-                        <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<CustomTooltip isDarkMode={isDarkMode} />} />
+                        <Tooltip cursor={TOOLTIP_CURSOR} content={tooltipContent} />
 
                         <ReferenceLine y={0} stroke={gridColor} strokeWidth={1} />
                         <ReferenceLine x={0} stroke={isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"} strokeWidth={1} />
 
-                        <Scatter name="Perdedoras" data={processed.losers} shape={<CustomDot dotColor={dotColor} />} isAnimationActive={false} />
-                        <Scatter name="Ganadoras" data={processed.winners} shape={<CustomDot dotColor={dotColor} />} isAnimationActive={false} />
+                        <Scatter name="Perdedoras" data={processed.losers} shape={CustomDot} isAnimationActive={false} />
+                        <Scatter name="Ganadoras" data={processed.winners} shape={CustomDot} isAnimationActive={false} />
 
                         {processed.lossLineData && (
                             <Scatter
                                 data={processed.lossLineData}
-                                shape={() => null}
-                                line={{
-                                    stroke: isDarkMode ? "#94a3b8" : "#44403c",
-                                    strokeDasharray: "4 4",
-                                    strokeWidth: 1.5
-                                }}
+                                shape={renderNullShape}
+                                line={lineStyle}
                                 tooltipType="none"
                                 isAnimationActive={false}
                             />
@@ -232,12 +253,8 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                         {processed.winLineData && (
                             <Scatter
                                 data={processed.winLineData}
-                                shape={() => null}
-                                line={{
-                                    stroke: isDarkMode ? "#94a3b8" : "#44403c",
-                                    strokeDasharray: "4 4",
-                                    strokeWidth: 1.5
-                                }}
+                                shape={renderNullShape}
+                                line={lineStyle}
                                 tooltipType="none"
                                 isAnimationActive={false}
                             />

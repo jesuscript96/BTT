@@ -5,6 +5,7 @@ import {
     LayoutDashboard,
     Play,
     Briefcase,
+    Radar,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -146,6 +147,18 @@ export const Sidebar = () => {
                         MENU
                     </div>
                 )}
+
+                {/* Screener */}
+                <Link
+                    href="/screener"
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/screener"),
+                    }}
+                >
+                    <Radar style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Screener</span>
+                </Link>
 
                 {/* Market Analysis */}
                 <Link

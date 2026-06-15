@@ -6,11 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _local = threading.local()
-_user_db_lock = threading.Lock()
+_user_db_lock = threading.RLock()
 
-def get_user_db_connection():
-    """Nueva conexion a users.duckdb por cada operacion."""
-    return duckdb.connect('users.duckdb')
+def get_user_db_connection(read_only=False):
+    """Nueva conexion a users.duckdb por cada operacion.
+    Forzamos read_only=False para evitar conflictos de configuracion de DuckDB en el mismo proceso.
+    """
+    return duckdb.connect('users.duckdb', read_only=False)
 
 def get_user_db_lock():
     return _user_db_lock
@@ -55,9 +57,9 @@ def _establish_connection():
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
     try:
         if provider == "gcs":
-            con = duckdb.connect('users.duckdb')
+            con = duckdb.connect()
             con.execute("SET enable_progress_bar = false;")
-            print("[INFO] Connected to local users.duckdb (GCS data mode)")
+            print("[INFO] Connected to in-memory database (GCS data mode)")
             access_key = os.getenv("GCS_HMAC_KEY")
             secret = os.getenv("GCS_HMAC_SECRET")
             con.execute("INSTALL httpfs; LOAD httpfs;")

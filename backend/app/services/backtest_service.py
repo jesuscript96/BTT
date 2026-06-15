@@ -17,7 +17,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def
+from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
 from app.services.portfolio_sim import simulate
 
 logger = logging.getLogger("backtester.engine")
@@ -87,6 +87,125 @@ def run_backtest(
         except Exception as e:
             logger.warning(f"Failed to prefetch daily metrics from intraday_df: {e}")
 
+    # Pre-fetch swing days: collect the set of (ticker, date) pairs we'll need
+    # so we can populate the cache from the streaming data as it arrives.
+    # This avoids the expensive separate GCS download that was causing timeouts.
+    swing_intraday_cache = {}
+    swing_needed_dates = set()  # set of (ticker, date_str) pairs needed for swing
+    swing_active_global = False
+    if strategy_def:
+        rm = strategy_def.get("risk_management", {}) if isinstance(strategy_def, dict) else {}
+        swing_opt = rm.get("swing_option", {}) if isinstance(rm, dict) else {}
+        swing_active_global = swing_opt.get("active", False) if isinstance(swing_opt, dict) else False
+        
+        if swing_active_global and qualifying_df is not None and not qualifying_df.empty:
+            swing_target = swing_opt.get("target_day", "gap_1_day")
+            apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
+            
+            has_lead_1 = "lead_timestamp_1" in qualifying_df.columns
+            has_lead_2 = "lead_timestamp_2" in qualifying_df.columns
+            print(f"[SWING] swing_active=True, target={swing_target}, apply_day={apply_day}, has_leads=({has_lead_1},{has_lead_2})")
+            
+            if has_lead_1 or has_lead_2:
+                for _, row in qualifying_df.iterrows():
+                    ticker = row["ticker"]
+                    t1_val = row.get("lead_timestamp_1") if has_lead_1 else None
+                    t2_val = row.get("lead_timestamp_2") if has_lead_2 else None
+                    
+                    if apply_day == 'gap_day':
+                        if swing_target in ('gap_1_day', 'gap_2_day'):
+                            if t1_val is not None and pd.notna(t1_val):
+                                d = format_date_str(t1_val)
+                                if d: swing_needed_dates.add((ticker, d))
+                        if swing_target == 'gap_2_day':
+                            if t2_val is not None and pd.notna(t2_val):
+                                d = format_date_str(t2_val)
+                                if d: swing_needed_dates.add((ticker, d))
+                    elif apply_day == 'gap_1_day':
+                        if swing_target == 'gap_2_day':
+                            if t2_val is not None and pd.notna(t2_val):
+                                d = format_date_str(t2_val)
+                                if d: swing_needed_dates.add((ticker, d))
+                
+                print(f"[SWING] Identified {len(swing_needed_dates)} unique swing days needed")
+                
+                if swing_needed_dates:
+                    by_ym = {}
+                    for ticker, d_str in swing_needed_dates:
+                        try:
+                            y = int(d_str[:4])
+                            m = int(d_str[5:7])
+                            by_ym.setdefault((y, m), []).append((ticker, d_str))
+                        except Exception:
+                            continue
+                    
+                    from app.db.gcs_cache import CACHE_DIR, _fetch_and_cache_month, _select_intraday_glob_for_month, get_connection
+                    import os
+                    
+                    conn = get_connection()
+                    for (y, m), pairs in by_ym.items():
+                        # First, check if we have any cached file for this month on disk
+                        found_cache = False
+                        if os.path.exists(CACHE_DIR):
+                            for filename in os.listdir(CACHE_DIR):
+                                if filename.startswith(f"month_{y}_{m:02d}_") and filename.endswith(".parquet"):
+                                    file_path = os.path.join(CACHE_DIR, filename)
+                                    print(f"[SWING] Found existing cache file for {y}-{m:02d}: {filename}. Loading...")
+                                    try:
+                                        df_cached = pd.read_parquet(file_path)
+                                        if not df_cached.empty and "ticker" in df_cached.columns and "date" in df_cached.columns:
+                                            vp_df = pd.DataFrame(pairs, columns=["ticker", "date"])
+                                            vp_df["date"] = pd.to_datetime(vp_df["date"]).dt.strftime("%Y-%m-%d")
+                                            df_cached["date"] = pd.to_datetime(df_cached["date"]).dt.strftime("%Y-%m-%d")
+                                            df_filtered = df_cached.merge(vp_df, on=["ticker", "date"], how="inner")
+                                            if not df_filtered.empty:
+                                                grouped = df_filtered.groupby(["ticker", "date"])
+                                                for (t, d), group in grouped:
+                                                    swing_intraday_cache[(t, str(d)[:10])] = group.copy()
+                                                print(f"[SWING] Loaded {len(df_filtered)} rows from disk cache for {y}-{m:02d}")
+                                            found_cache = True
+                                            break
+                                    except Exception as cache_err:
+                                        print(f"[SWING] Error loading cache file {filename}: {cache_err}")
+                        
+                        if found_cache:
+                            continue
+
+                        path = _select_intraday_glob_for_month(conn, y, m)
+                        if not path:
+                            print(f"[SWING] No glob path resolved for month {y}-{m:02d}; skipping prefetch.")
+                            continue
+                        
+                        # Pad the swing tickers list with all qualifying tickers for this month
+                        # to ensure the hash matches the one from the streaming iterator
+                        q_dates = pd.to_datetime(qualifying_df["date"])
+                        month_mask = (q_dates.dt.year == y) & (q_dates.dt.month == m)
+                        all_tickers_in_month = qualifying_df.loc[month_mask, "ticker"].unique().tolist()
+                        
+                        valid_pairs_month = pd.DataFrame(pairs, columns=["ticker", "date"])
+                        missing_tickers = set(all_tickers_in_month) - set(valid_pairs_month["ticker"])
+                        if missing_tickers:
+                            dummy_rows = pd.DataFrame([{"ticker": t, "date": "1970-01-01"} for t in missing_tickers])
+                            valid_pairs_month = pd.concat([valid_pairs_month, dummy_rows], ignore_index=True)
+                        
+                        print(f"[SWING] Cache miss. Prefetching batch for {y}-{m:02d} using _fetch_and_cache_month ({len(valid_pairs_month)} pairs, padded)")
+                        try:
+                            batch_df = _fetch_and_cache_month(
+                                y, m, path, valid_pairs_month, batch_size=500, mi=1, n_months=1
+                            )
+                            if batch_df is not None and not batch_df.empty:
+                                # We only want to cache the actual swing pairs we need
+                                vp_only = pd.DataFrame(pairs, columns=["ticker", "date"])
+                                vp_only["date"] = pd.to_datetime(vp_only["date"]).dt.strftime("%Y-%m-%d")
+                                batch_df["date"] = pd.to_datetime(batch_df["date"]).dt.strftime("%Y-%m-%d")
+                                batch_filtered = batch_df.merge(vp_only, on=["ticker", "date"], how="inner")
+                                if not batch_filtered.empty:
+                                    grouped = batch_filtered.groupby(["ticker", "date"])
+                                    for (t, d), group in grouped:
+                                        swing_intraday_cache[(t, str(d)[:10])] = group.copy()
+                        except Exception as e:
+                            print(f"[SWING] Error prefetching batch for {y}-{m:02d}: {e}")
+
     qual_lookup = _build_qualifying_lookup(qualifying_df)
     del qualifying_df
 
@@ -131,13 +250,53 @@ def run_backtest(
         if progress_callback is not None:
             progress_callback(scanned, n_groups)
 
-        day_df = day_df.sort_values("timestamp").reset_index(drop=True)
+        ticker = str(ticker_raw)
+        date = str(date_raw)[:10]
+        daily_stats = qual_lookup.get((ticker, date), {})
+
+        # Check swing option to fetch and concatenate subsequent days
+        rm = strategy_def.get("risk_management", {}) if strategy_def else {}
+        swing_opt = rm.get("swing_option", {}) if isinstance(rm, dict) else {}
+        swing_active = swing_opt.get("active", False) if isinstance(swing_opt, dict) else False
+        
+        if swing_active:
+            swing_target = swing_opt.get("target_day", "gap_1_day")
+            apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
+            
+            dates_to_fetch = []
+            if apply_day == 'gap_day':
+                if swing_target == 'gap_1_day':
+                    t1_date = daily_stats.get('lead_timestamp_1')
+                    if t1_date:
+                        dates_to_fetch.append(t1_date)
+                elif swing_target == 'gap_2_day':
+                    t1_date = daily_stats.get('lead_timestamp_1')
+                    t2_date = daily_stats.get('lead_timestamp_2')
+                    if t1_date:
+                        dates_to_fetch.append(t1_date)
+                    if t2_date:
+                        dates_to_fetch.append(t2_date)
+            elif apply_day == 'gap_1_day':
+                if swing_target == 'gap_2_day':
+                    t2_date = daily_stats.get('lead_timestamp_2')
+                    if t2_date:
+                        dates_to_fetch.append(t2_date)
+            
+            # Fetch and concat
+            for d_val in dates_to_fetch:
+                d_str = format_date_str(d_val)
+                if d_str:
+                    # Look in pre-fetched cache first
+                    sub_df = swing_intraday_cache.get((ticker, d_str))
+                    if sub_df is None or sub_df.empty:
+                        sub_df = fetch_ticker_intraday_for_date(ticker, d_str)
+                    if sub_df is not None and not sub_df.empty:
+                        day_df = pd.concat([day_df, sub_df], ignore_index=True)
+
+        day_df = day_df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
         if len(day_df) < 5:
             continue
 
-        ticker = str(ticker_raw)
-        date = str(date_raw)[:10]
-        
         # When moving to a new day, add the previous day's PnL to the global pool
         if current_date is None:
             current_date = date
@@ -182,8 +341,6 @@ def run_backtest(
             "prev_high": prev_highs_vals,
             "prev_low": prev_lows_vals,
         }
-        # Invert lookup from (ticker, date) to match original format
-        daily_stats = qual_lookup.get((str(ticker_raw), str(date_raw)[:10]), {})
         del day_df
 
         mini_df = pd.DataFrame(arrays)
@@ -236,7 +393,14 @@ def run_backtest(
                     "accept_reentries": sig_accept_reentries,
                 }
 
-            del signals
+        # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
+        # to prevent new position entries on subsequent swing days.
+        if swing_active:
+            is_subsequent = pd.to_datetime(mini_df["timestamp"]).dt.strftime("%Y-%m-%d") != date
+            is_subsequent_np = is_subsequent.values if hasattr(is_subsequent, "values") else np.asarray(is_subsequent)
+            if len(entries_arr) == len(is_subsequent_np):
+                entries_arr = entries_arr.copy()
+                entries_arr[is_subsequent_np] = False
 
         # --- Trim DataFrame and signals to the selected market session window ---
         # This is done AFTER signal translation so indicators have full-day context.
@@ -271,6 +435,38 @@ def run_backtest(
             session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
+
+        # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays ---
+        if compiled_strategy:
+            entry_candle_delay = compiled_strategy.get("entry_candle_delay")
+            if entry_candle_delay is not None:
+                try:
+                    delay_val = int(entry_candle_delay)
+                    if delay_val > 1:
+                        lowest_tf_mins = get_lowest_timeframe_mins(compiled_strategy.get("entry_logic", {}))
+                        shift_bars = (delay_val - 1) * lowest_tf_mins
+                        if shift_bars > 0 and len(entries_arr) > 0:
+                            if len(entries_arr) > shift_bars:
+                                entries_arr = np.concatenate([np.zeros(shift_bars, dtype=bool), entries_arr[:-shift_bars]])
+                            else:
+                                entries_arr = np.zeros_like(entries_arr)
+                except (ValueError, TypeError):
+                    pass
+
+            exit_candle_delay = compiled_strategy.get("exit_candle_delay")
+            if exit_candle_delay is not None:
+                try:
+                    delay_val = int(exit_candle_delay)
+                    if delay_val > 1:
+                        lowest_tf_mins = get_lowest_timeframe_mins(compiled_strategy.get("exit_logic", {}))
+                        shift_bars = (delay_val - 1) * lowest_tf_mins
+                        if shift_bars > 0 and len(exits_arr) > 0:
+                            if len(exits_arr) > shift_bars:
+                                exits_arr = np.concatenate([np.zeros(shift_bars, dtype=bool), exits_arr[:-shift_bars]])
+                            else:
+                                exits_arr = np.zeros_like(exits_arr)
+                except (ValueError, TypeError):
+                    pass
 
         # --- TEMPORARY PATCH FOR MISPRINTS ---
         # 8:00 to 8:45 restriction to ignore misprints
@@ -438,8 +634,67 @@ def run_backtest(
 # ---------------------------------------------------------------------------
 
 
-def _build_qualifying_lookup(qualifying_df: pd.DataFrame) -> dict:
-    if qualifying_df.empty:
+def format_date_str(val):
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, str):
+        return val[:10]
+    try:
+        return pd.to_datetime(val).strftime('%Y-%m-%d')
+    except Exception:
+        return None
+
+_month_file_cache = {}
+
+def _read_cached_month_df(file_path: str) -> pd.DataFrame:
+    if file_path in _month_file_cache:
+        return _month_file_cache[file_path]
+    if len(_month_file_cache) >= 3:
+        # Remove oldest key
+        _month_file_cache.pop(next(iter(_month_file_cache)))
+    try:
+        df = pd.read_parquet(file_path)
+        _month_file_cache[file_path] = df
+        return df
+    except Exception as e:
+        logger.warning(f"Failed to read cache file {file_path}: {e}")
+        return pd.DataFrame()
+
+def fetch_ticker_intraday_for_date(ticker: str, date_str: str) -> pd.DataFrame:
+    try:
+        import os
+        y = int(date_str[:4])
+        m = int(date_str[5:7])
+        
+        # Check if we have any cached parquet file for this month on disk
+        from app.db.gcs_cache import CACHE_DIR, ALLOW_MOCK_DATA
+        if os.path.exists(CACHE_DIR):
+            for filename in os.listdir(CACHE_DIR):
+                if filename.startswith(f"month_{y}_{m:02d}_") and filename.endswith(".parquet"):
+                    file_path = os.path.join(CACHE_DIR, filename)
+                    df = _read_cached_month_df(file_path)
+                    if not df.empty and "ticker" in df.columns:
+                        df_filtered = df[(df["ticker"] == ticker) & (df["date"].astype(str) == date_str)]
+                        if not df_filtered.empty:
+                            logger.info(f"[SWING] Found swing data for {ticker} on {date_str} in local cache file {filename}")
+                            return df_filtered.copy()
+        
+        # Avoid GCS glob query which hangs the execution
+        if ALLOW_MOCK_DATA:
+            from app.db.gcs_cache import fetch_intraday_batch
+            df = fetch_intraday_batch(y, m, [ticker], date_str, date_str)
+            if not df.empty:
+                df = df[df["date"].astype(str) == date_str].copy()
+                return df
+        else:
+            logger.warning(f"[SWING] Cache miss for {ticker} on {date_str} and ALLOW_MOCK_DATA is False. Skipping to prevent timeout/hang.")
+    except Exception as e:
+        logger.warning(f"Failed to fetch intraday for {ticker} on {date_str}: {e}")
+    return pd.DataFrame()
+
+
+def _build_qualifying_lookup(qualifying_df: pd.DataFrame | None) -> dict:
+    if qualifying_df is None or qualifying_df.empty:
         return {}
     # Vectorized: avoid slow iterrows() — convert entire DataFrame at once
     records = qualifying_df.to_dict(orient="records")

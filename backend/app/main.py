@@ -22,7 +22,7 @@ def _startup_recovery_precache() -> None:
         import threading as _threading
         from datetime import datetime, timedelta
         from app.database import get_user_db_connection, get_user_db_lock
-        from app.routers.query import _precache_dataset_intraday
+        from app.routers.query import _write_precache_state
 
         cutoff = datetime.now() - timedelta(hours=48)
         lock = get_user_db_lock()
@@ -77,9 +77,8 @@ def _startup_recovery_precache() -> None:
             if not date_to:
                 date_to = str(pairs_df["date"].max())
 
-            print(f"[RECOVERY] -> Re-precaching {dataset_id} ({ds_name}): {len(pairs_df)} pairs, {date_from}..{date_to}")
-            # Run sequentially inside this background recovery thread to avoid database locks and CPU/disk I/O contention
-            _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id)
+            print(f"[RECOVERY] -> Marking precache completed for {dataset_id} ({ds_name})")
+            _write_precache_state(dataset_id, "completed", 100.0)
     except Exception as e:
         print(f"[RECOVERY] startup recovery failed: {e}")
 
@@ -197,6 +196,7 @@ async def add_cors_headers_to_all_responses(request, call_next):
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
 from app.routers import optimization, users
+from app.routers import screener
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -212,6 +212,7 @@ app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=[
 app.include_router(ticker_analysis.router)
 app.include_router(market.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
+app.include_router(screener.router)
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
 

@@ -74,6 +74,25 @@ function computeMetrics(
   return { winRate, profitFactor, sharpe, sortino, totalPnl, total };
 }
 
+function getQualityLevel(key: string, val: number): "very_good" | "good" | "mediocre" | "bad" {
+  if (key === "winRate") {
+    if (val >= 60) return "very_good";
+    if (val >= 50) return "good";
+    if (val >= 42) return "mediocre";
+    return "bad";
+  } else if (key === "profitFactor") {
+    if (val >= 1.6) return "very_good";
+    if (val >= 1.2) return "good";
+    if (val >= 1.0) return "mediocre";
+    return "bad";
+  } else { // sharpe
+    if (val >= 1.5) return "very_good";
+    if (val >= 1.0) return "good";
+    if (val >= 0.5) return "mediocre";
+    return "bad";
+  }
+}
+
 export default function OOSDegradationTab({
   fullGlobalEquity,
   fullGlobalDrawdown,
@@ -493,6 +512,7 @@ export default function OOSDegradationTab({
   const metricRows = [
     { label: "Win Rate", key: "winRate", unit: "%", decimals: 1 },
     { label: "Profit Factor", key: "profitFactor", unit: "", decimals: 2 },
+    { label: "Sharpe Ratio", key: "sharpe", unit: "", decimals: 2 },
   ] as const;
 
   return (
@@ -644,7 +664,7 @@ export default function OOSDegradationTab({
           <div
             style={{
               position: "absolute",
-              bottom: 58,
+              bottom: 75, // Elevated slightly to fit Sharpe Ratio row
               left: 12,
               backgroundColor: "transparent",
               backdropFilter: "none",
@@ -682,26 +702,55 @@ export default function OOSDegradationTab({
                   const normIsVal = row.key === "winRate" ? displayIsVal / 100 : displayIsVal;
                   const normOosVal = row.key === "winRate" ? displayOosVal / 100 : displayOosVal;
 
-                  // Ratio formula: métrica OOS * (métrica OOS / métrica IS)
-                  const ratio = normIsVal !== 0 && isFinite(normIsVal) && isFinite(normOosVal)
-                    ? normOosVal * (normOosVal / normIsVal)
-                    : null;
+                  // Robust ratio calculation handling negative numbers
+                  let ratio: number | null = null;
+                  if (normIsVal !== 0 && isFinite(normIsVal) && isFinite(normOosVal)) {
+                    if (normIsVal < 0) {
+                      ratio = 1 - (normIsVal - normOosVal) / Math.abs(normIsVal);
+                    } else {
+                      ratio = normOosVal / normIsVal;
+                    }
+                  } else if (normIsVal === 0 && isFinite(normOosVal)) {
+                    ratio = normOosVal >= 0 ? 1.0 : 0.0;
+                  }
 
                   let ratioColor = "var(--color-ec-text-muted)";
                   let ratioLabel = "—";
+
                   if (ratio !== null && isFinite(ratio)) {
-                    if (ratio > 1) {
-                      ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "Possible Overfit";
-                    } else if (ratio >= 0.7) {
-                      ratioColor = "var(--color-ec-profit)";
-                      ratioLabel = "Optimal";
-                    } else if (ratio >= 0.3) {
-                      ratioColor = "#e8a33a";
-                      ratioLabel = "Careful";
+                    const isLevel = getQualityLevel(row.key, displayIsVal);
+                    const oosLevel = getQualityLevel(row.key, displayOosVal);
+
+                    const optThreshold = row.key === "sharpe" ? 0.70 : 0.90;
+                    const carefulThreshold = row.key === "sharpe" ? 0.50 : 0.65;
+
+                    const isGood = (isLevel === "good" || isLevel === "very_good");
+                    const oosGood = (oosLevel === "good" || oosLevel === "very_good");
+
+                    if (ratio >= optThreshold) {
+                      if ((isLevel === "mediocre" || isLevel === "bad") && oosGood) {
+                        ratioColor = "#e8a33a";
+                        ratioLabel = "Cuidado, edge no lineal";
+                      } else {
+                        ratioColor = "var(--color-ec-profit)";
+                        ratioLabel = "Óptimo";
+                      }
+                    } else if (ratio >= carefulThreshold) {
+                      if (isGood && oosLevel === "mediocre") {
+                        ratioColor = "#e8a33a";
+                        ratioLabel = "Cuidado, posible overfit";
+                      } else {
+                        ratioColor = "#e8a33a";
+                        ratioLabel = "Cuidado";
+                      }
                     } else {
-                      ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "No Edge";
+                      if (isGood) {
+                        ratioColor = "var(--color-ec-loss)";
+                        ratioLabel = "Overfit/No Edge";
+                      } else {
+                        ratioColor = "var(--color-ec-loss)";
+                        ratioLabel = "Sin Edge";
+                      }
                     }
                   }
 
