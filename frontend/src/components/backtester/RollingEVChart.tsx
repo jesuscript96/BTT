@@ -181,8 +181,14 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     return (
         <div className="flex flex-col h-full transition-colors">
             <div className="px-3 py-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
+                <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
                     Rolling EV
+                    <span
+                        title="Esperanza Matemática (EV) móvil. Promedio continuo de la rentabilidad esperada por operación. Un EV positivo significa que el sistema genera beneficios a largo plazo."
+                        style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+                    >
+                        (?)
+                    </span>
                 </span>
                 <div className="flex items-center gap-3">
                     <div className="flex text-[9px] font-mono">

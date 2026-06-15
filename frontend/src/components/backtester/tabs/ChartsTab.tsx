@@ -285,7 +285,15 @@ export default function ChartsTab({
         {/* EV por Tiempo (30m) */}
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8">EV por Tiempo (30m)</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8 inline-flex items-center gap-1">
+              EV por Tiempo (30m)
+              <span
+                title="Esperanza Matemática (EV) promedio agrupada por la hora de entrada del trade (intervalos de 30 minutos). Sirve para identificar en qué franjas horarias las operaciones son rentables (barras verdes) o perdedoras (barras rojas) en promedio."
+                style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+              >
+                (?)
+              </span>
+            </span>
           </div>
           <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
@@ -318,7 +326,15 @@ export default function ChartsTab({
         {/* EV por Día */}
         <div className="flex flex-col h-full">
           <div className="px-3 py-2 flex items-center">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">EV por Dia</span>
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
+              EV por Dia
+              <span
+                title="Esperanza Matemática (EV) promedio por día de la semana de entrada. Ayuda a detectar si hay días específicos (como los lunes o viernes) en los que la estrategia rinde peor y convendría evitar operar."
+                style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+              >
+                (?)
+              </span>
+            </span>
           </div>
           <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
@@ -348,8 +364,14 @@ export default function ChartsTab({
         {/* PnL Distribution */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] inline-flex items-center gap-1">
               Distribucion de Retornos (PnL %)
+              <span
+                title="Histograma de frecuencias que agrupa los trades según su rentabilidad porcentual final. Ideal para ver la simetría del sistema (ej: si tienes muchos trades con ganancias moderadas o si hay pérdidas extremas anormales)."
+                style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+              >
+                (?)
+              </span>
             </span>
           </div>
           <div className="flex-1 pl-1 pr-4 pb-4">
@@ -389,8 +411,14 @@ export default function ChartsTab({
         {/* Consecutive Runs */}
         <div className="flex flex-col h-[280px]" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 pt-4 pb-1 flex items-center justify-between">
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
               Consecutive Runs
+              <span
+                title="Rachas Consecutivas. Muestra cuántas veces ocurrieron rachas seguidas de ganancias (verde) o pérdidas (rojo) de determinada longitud (1, 2, 3, etc. operaciones seguidas)."
+                style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+              >
+                (?)
+              </span>
             </span>
             <div className="flex gap-3 text-[8px] font-mono text-[var(--color-ec-text-secondary)]">
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-emerald-500 rounded-sm"></span>W</span>
@@ -428,8 +456,14 @@ export default function ChartsTab({
         {/* Descriptive Statistics Table */}
         <div className="flex flex-col h-[280px]">
           <div className="py-2" style={{ paddingLeft: '40px' }}>
-            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em]">
+            <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] inline-flex items-center gap-1">
               Descriptive Statistics
+              <span
+                title="Estadísticas descriptivas detalladas de los retornos (PnL %) y rachas de victorias/pérdidas. Incluye medias, desviación estándar (volatilidad), asimetría (skewness) y curtosis (apuntamiento para detectar riesgo de black swan)."
+                style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+              >
+                (?)
+              </span>
             </span>
           </div>
           <div className="flex-1 pr-6 pb-4 overflow-y-auto custom-scrollbar" style={{ paddingLeft: '40px', scrollbarWidth: 'none' }}>

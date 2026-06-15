@@ -1450,8 +1450,16 @@ export default function BacktestPanel({
           letterSpacing: '0.15em',
           color: 'var(--color-ec-text-muted)',
           marginBottom: 4,
+          display: 'flex',
+          alignItems: 'center',
         }}>
           Rango de fechas IS-OOS
+          <span
+            title="In-Sample / Out-of-Sample. Divide el dataset en dos partes: IS (datos sobre los que diseñas/optimizas la estrategia) y OOS (datos limpios nunca vistos para simular la realidad). Ayuda a comprobar si la estrategia tiene sobreajuste (overfitting). Si en IS ganas y en OOS se desploma, está sobreoptimizada."
+            style={{ cursor: 'help', marginLeft: '6px', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal' }}
+          >
+            (?)
+          </span>
         </h2>
 
         {/* IS % SLIDER */}
