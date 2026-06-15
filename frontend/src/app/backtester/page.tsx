@@ -1123,36 +1123,40 @@ export default function Home() {
               opacity: (mode === 'builder' || mode === 'wizard') ? 1 : 0,
               transition: 'opacity 280ms ease-out',
             }}>
-              <div style={{ display: mode === 'wizard' ? 'block' : 'none', height: '100%' }}>
-                <WizardStrategyBuilder
-                  onBack={() => setMode('builder_choice')}
-                  onTest={async (draft) => {
-                    setDraftStrategy(draft as Draft);
-                    setMode('config');
-                    await handleRunWithDraft(draft as Draft);
-                  }}
-                  onDraftChange={handleDraftChange}
-                  marketSessions={activeSessions}
-                  customStartTime={activeCustomStartTime}
-                  customEndTime={activeCustomEndTime}
-                  initialStrategy={builderDraft || activeStrategy || undefined}
-                />
-              </div>
-              <div style={{ display: mode === 'builder' ? 'block' : 'none', height: '100%' }}>
-                <InlineStrategyBuilder
-                  onBack={() => setMode('builder_choice')}
-                  onTest={async (draft) => {
-                    setDraftStrategy(draft);
-                    setMode('config');
-                    await handleRunWithDraft(draft);
-                  }}
-                  marketSessions={activeSessions}
-                  customStartTime={activeCustomStartTime}
-                  customEndTime={activeCustomEndTime}
-                  onDraftChange={handleDraftChange}
-                  initialStrategy={builderDraft || activeStrategy || undefined}
-                />
-              </div>
+              {mode === 'wizard' && (
+                <div style={{ height: '100%' }}>
+                  <WizardStrategyBuilder
+                    onBack={() => setMode('builder_choice')}
+                    onTest={async (draft) => {
+                      setDraftStrategy(draft as Draft);
+                      setMode('config');
+                      await handleRunWithDraft(draft as Draft);
+                    }}
+                    onDraftChange={handleDraftChange}
+                    marketSessions={activeSessions}
+                    customStartTime={activeCustomStartTime}
+                    customEndTime={activeCustomEndTime}
+                    initialStrategy={builderDraft || activeStrategy || undefined}
+                  />
+                </div>
+              )}
+              {mode === 'builder' && (
+                <div style={{ height: '100%' }}>
+                  <InlineStrategyBuilder
+                    onBack={() => setMode('builder_choice')}
+                    onTest={async (draft) => {
+                      setDraftStrategy(draft);
+                      setMode('config');
+                      await handleRunWithDraft(draft);
+                    }}
+                    marketSessions={activeSessions}
+                    customStartTime={activeCustomStartTime}
+                    customEndTime={activeCustomEndTime}
+                    onDraftChange={handleDraftChange}
+                    initialStrategy={builderDraft || activeStrategy || undefined}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>

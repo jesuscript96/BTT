@@ -94,7 +94,7 @@ export default function InlineStrategyBuilder({
   // Load strategy from prop when initialStrategy is provided
   useEffect(() => {
     if (!initialStrategy) return;
-    if (initialStrategy.id === "draft" && lastLoadedStrategyRef.current !== "") return;
+    if ((initialStrategy.id === "draft" || initialStrategy.id === "wizard_draft") && lastLoadedStrategyRef.current !== "") return;
 
     const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
     const str = JSON.stringify({
