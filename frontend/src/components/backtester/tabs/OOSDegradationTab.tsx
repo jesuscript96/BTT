@@ -751,10 +751,10 @@ export default function OOSDegradationTab({
                       ratioColor = "#e8a33a";
                       ratioLabel = "Cuidado, edge no lineal";
                     } else if (isLevel === "bad" && oosLevel === "mediocre") {
-                      ratioColor = "var(--color-ec-text-muted)";
+                      ratioColor = "var(--color-ec-loss)";
                       ratioLabel = "Sin Edge";
                     } else if (isLevel === "bad" && oosLevel === "bad") {
-                      ratioColor = "var(--color-ec-text-muted)";
+                      ratioColor = "var(--color-ec-loss)";
                       ratioLabel = "Sin Edge";
                     } else if (isLevel === "mediocre" && oosLevel === "mediocre") {
                       if (ratio >= optThreshold) {
@@ -778,7 +778,7 @@ export default function OOSDegradationTab({
                           ratioColor = "var(--color-ec-loss)";
                           ratioLabel = "Overfit";
                         } else {
-                          ratioColor = "var(--color-ec-text-muted)";
+                          ratioColor = "var(--color-ec-loss)";
                           ratioLabel = "Sin Edge";
                         }
                       }
