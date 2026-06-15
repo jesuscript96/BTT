@@ -727,60 +727,29 @@ export default function OOSDegradationTab({
                     const isGood = (isLevel === "good" || isLevel === "very_good");
                     const oosGood = (oosLevel === "good" || oosLevel === "very_good");
 
-                    if (isGood && oosGood) {
-                      ratioColor = "var(--color-ec-profit)";
-                      ratioLabel = "Óptimo";
-                    } else if (isGood && oosLevel === "mediocre") {
-                      if (ratio >= optThreshold) {
+                    if (ratio >= optThreshold) {
+                      if ((isLevel === "mediocre" || isLevel === "bad") && oosGood) {
+                        ratioColor = "#e8a33a";
+                        ratioLabel = "Cuidado, edge no lineal";
+                      } else {
                         ratioColor = "var(--color-ec-profit)";
                         ratioLabel = "Óptimo";
-                      } else {
+                      }
+                    } else if (ratio >= carefulThreshold) {
+                      if (isGood && oosLevel === "mediocre") {
                         ratioColor = "#e8a33a";
                         ratioLabel = "Cuidado, posible overfit";
-                      }
-                    } else if (isLevel === "mediocre" && oosGood) {
-                      ratioColor = "#e8a33a";
-                      ratioLabel = "Cuidado, edge no lineal";
-                    } else if (isGood && oosLevel === "bad") {
-                      ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "Overfit";
-                    } else if (isLevel === "mediocre" && oosLevel === "bad") {
-                      ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "Sin Edge";
-                    } else if (isLevel === "bad" && oosGood) {
-                      ratioColor = "#e8a33a";
-                      ratioLabel = "Cuidado, edge no lineal";
-                    } else if (isLevel === "bad" && oosLevel === "mediocre") {
-                      ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "Sin Edge";
-                    } else if (isLevel === "bad" && oosLevel === "bad") {
-                      ratioColor = "var(--color-ec-loss)";
-                      ratioLabel = "Sin Edge";
-                    } else if (isLevel === "mediocre" && oosLevel === "mediocre") {
-                      if (ratio >= optThreshold) {
-                        ratioColor = "var(--color-ec-profit)";
-                        ratioLabel = "Óptimo";
                       } else {
                         ratioColor = "#e8a33a";
                         ratioLabel = "Cuidado";
                       }
                     } else {
-                      // Fallback ratio-based checks
-                      if (ratio >= optThreshold) {
-                        ratioColor = "var(--color-ec-profit)";
-                        ratioLabel = "Óptimo";
-                      } else if (ratio >= carefulThreshold) {
-                        ratioColor = "#e8a33a";
-                        ratioLabel = "Cuidado";
+                      if (isGood) {
+                        ratioColor = "var(--color-ec-loss)";
+                        ratioLabel = "Overfit";
                       } else {
-                        const isGoodIS = row.key === "winRate" ? displayIsVal >= 50 : displayIsVal > 1.0;
-                        if (isGoodIS) {
-                          ratioColor = "var(--color-ec-loss)";
-                          ratioLabel = "Overfit";
-                        } else {
-                          ratioColor = "var(--color-ec-loss)";
-                          ratioLabel = "Sin Edge";
-                        }
+                        ratioColor = "var(--color-ec-loss)";
+                        ratioLabel = "Sin Edge";
                       }
                     }
                   }
