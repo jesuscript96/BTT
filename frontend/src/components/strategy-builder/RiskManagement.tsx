@@ -857,12 +857,89 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                         }}>{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
                         <div
                             className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
-                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
+                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false, max_reentries: risk.accept_reentries === false ? -1 : 0 })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
                         </div>
                     </div>
                 </div>
+                {risk.accept_reentries !== false && (
+                    <div 
+                        className="flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-200"
+                        style={{
+                            borderTop: '0.5px dotted var(--color-ec-border)',
+                            marginTop: '14px',
+                            paddingTop: '14px',
+                        }}
+                    >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-high)',
+                            }}>Tipo de Reentradas</span>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 9,
+                                color: 'var(--color-ec-text-muted)',
+                            }}>Límite de reentradas adicionales permitidas</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={risk.max_reentries === undefined || risk.max_reentries === -1 ? 'infinite' : 'limited'}
+                                onChange={(e) => {
+                                    if (e.target.value === 'infinite') {
+                                        onChange({ ...risk, max_reentries: -1 });
+                                    } else {
+                                        onChange({ ...risk, max_reentries: 2 });
+                                    }
+                                }}
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 8px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    height: '30px',
+                                }}
+                            >
+                                <option value="infinite">Infinitas</option>
+                                <option value="limited">Limitadas</option>
+                            </select>
+                            {risk.max_reentries !== undefined && risk.max_reentries >= 0 && (
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={risk.max_reentries}
+                                    onChange={(e) => {
+                                        const val = Math.max(0, parseInt(e.target.value) || 0);
+                                        onChange({ ...risk, max_reentries: val });
+                                    }}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 8px',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '60px',
+                                        height: '30px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Swing Option Card */}

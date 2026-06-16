@@ -345,7 +345,8 @@ function getConditionStrings(group: ConditionGroup, timeframe: string): string[]
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
-        list.push(`${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%`);
+        const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
+        list.push(`${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%${posStr}`);
       }
     }
   });
@@ -388,7 +389,8 @@ function getConditionTags(
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
-        label = `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%`;
+        const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
+        label = `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%${posStr}`;
       }
       
       if (label) {
@@ -562,6 +564,17 @@ export default function WizardStrategyBuilder({
   const [wizardDistanceLevelSession, setWizardDistanceLevelSession] = useState<"ap.PM" | "ap.RTH" | "ap.AM">("ap.RTH");
   const [wizardRiskStep, setWizardRiskStep] = useState<number>(0);
 
+  // Triangle Pattern States
+  const [wizardSourcePivotWindow, setWizardSourcePivotWindow] = useState<number>(5);
+  const [wizardSourceMinPivots, setWizardSourceMinPivots] = useState<number>(2);
+  const [wizardSourceTriLookback, setWizardSourceTriLookback] = useState<number>(35);
+  const [wizardSourceSlopeTolerance, setWizardSourceSlopeTolerance] = useState<number>(1.5);
+  const [wizardSourceMinRSquared, setWizardSourceMinRSquared] = useState<number>(0.65);
+
+  // Price Level Distance Position
+  const [wizardDistancePosition, setWizardDistancePosition] = useState<'above' | 'below' | 'any'>('any');
+
+
   // Check market session overlaps for time windows
   const getSessionOverlapWarning = (fromTime: string, toTime: string) => {
     if (!marketSessions || marketSessions.length === 0 || marketSessions.includes("all")) {
@@ -678,6 +691,12 @@ export default function WizardStrategyBuilder({
     setWizardTargetSession("ap.RTH");
     setWizardDistanceLevelSession("ap.RTH");
     setWizardRiskStep(0);
+    setWizardSourcePivotWindow(5);
+    setWizardSourceMinPivots(2);
+    setWizardSourceTriLookback(35);
+    setWizardSourceSlopeTolerance(1.5);
+    setWizardSourceMinRSquared(0.65);
+    setWizardDistancePosition('any');
   }, [currentStep]);
 
   // Update parent with latest draft strategy
@@ -1536,6 +1555,11 @@ export default function WizardStrategyBuilder({
           if (paramName === "days_lookback") return wizardSourceDays;
           if (paramName === "orb_minutes") return wizardSourceOrb;
           if (paramName === "ap_session") return wizardSourceSession;
+          if (paramName === "pivot_window") return wizardSourcePivotWindow;
+          if (paramName === "min_pivots") return wizardSourceMinPivots;
+          if (paramName === "tri_lookback") return wizardSourceTriLookback;
+          if (paramName === "slope_tolerance") return wizardSourceSlopeTolerance;
+          if (paramName === "min_r_squared") return wizardSourceMinRSquared;
         } else if (role === "target") {
           if (paramName === "period") return wizardTargetPeriod;
           if (paramName === "stdDev") return wizardTargetDev;
@@ -1572,6 +1596,16 @@ export default function WizardStrategyBuilder({
         case IndicatorType.OPENING_RANGE_AM_PLUS:
         case IndicatorType.OPENING_RANGE_AM_MINUS:
           return { orb_minutes: getVal("orb_minutes", 30) };
+        case IndicatorType.TRIANGLE_ASCENDING:
+        case IndicatorType.TRIANGLE_DESCENDING:
+        case IndicatorType.TRIANGLE_SYMMETRIC:
+          return {
+            pivot_window: getVal("pivot_window", 5),
+            min_pivots: getVal("min_pivots", 2),
+            tri_lookback: getVal("tri_lookback", 35),
+            slope_tolerance: getVal("slope_tolerance", 1.5),
+            min_r_squared: getVal("min_r_squared", 0.65)
+          };
         default:
           return {};
       }
@@ -1682,6 +1716,7 @@ export default function WizardStrategyBuilder({
           },
           comparator: wizardComparator as "DISTANCE_GT" | "DISTANCE_LT",
           value_pct: wizardDistanceValue,
+          position: wizardDistancePosition,
           timeframe: wizardTf
         };
       }
@@ -1709,6 +1744,12 @@ export default function WizardStrategyBuilder({
       setWizardSourceSession("ap.RTH");
       setWizardTargetSession("ap.RTH");
       setWizardDistanceLevelSession("ap.RTH");
+      setWizardSourcePivotWindow(5);
+      setWizardSourceMinPivots(2);
+      setWizardSourceTriLookback(35);
+      setWizardSourceSlopeTolerance(1.5);
+      setWizardSourceMinRSquared(0.65);
+      setWizardDistancePosition('any');
     };
 
     const renderLivePreviewTags = () => {
@@ -1791,6 +1832,11 @@ export default function WizardStrategyBuilder({
           if (paramName === "days_lookback") return wizardSourceDays;
           if (paramName === "orb_minutes") return wizardSourceOrb;
           if (paramName === "ap_session") return wizardSourceSession;
+          if (paramName === "pivot_window") return wizardSourcePivotWindow;
+          if (paramName === "min_pivots") return wizardSourceMinPivots;
+          if (paramName === "tri_lookback") return wizardSourceTriLookback;
+          if (paramName === "slope_tolerance") return wizardSourceSlopeTolerance;
+          if (paramName === "min_r_squared") return wizardSourceMinRSquared;
         } else if (role === "target") {
           if (paramName === "period") return wizardTargetPeriod;
           if (paramName === "stdDev") return wizardTargetDev;
@@ -1812,6 +1858,11 @@ export default function WizardStrategyBuilder({
           if (paramName === "days_lookback") setWizardSourceDays(val);
           if (paramName === "orb_minutes") setWizardSourceOrb(val);
           if (paramName === "ap_session") setWizardSourceSession(val);
+          if (paramName === "pivot_window") setWizardSourcePivotWindow(val);
+          if (paramName === "min_pivots") setWizardSourceMinPivots(val);
+          if (paramName === "tri_lookback") setWizardSourceTriLookback(val);
+          if (paramName === "slope_tolerance") setWizardSourceSlopeTolerance(val);
+          if (paramName === "min_r_squared") setWizardSourceMinRSquared(val);
         } else if (role === "target") {
           if (paramName === "period") setWizardTargetPeriod(val);
           if (paramName === "stdDev") setWizardTargetDev(val);
@@ -1927,6 +1978,130 @@ export default function WizardStrategyBuilder({
                 onChange={(e) => setVal("orb_minutes", parseInt(e.target.value) || 30)}
                 style={{ width: 60, background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 10, padding: "3px 6px", borderRadius: 4 }}
               />
+            </div>
+          );
+        case IndicatorType.TRIANGLE_ASCENDING:
+        case IndicatorType.TRIANGLE_DESCENDING:
+        case IndicatorType.TRIANGLE_SYMMETRIC:
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 6, width: "100%", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 60px", minWidth: "60px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Pivot Win.</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={20}
+                    value={getVal("pivot_window")}
+                    onChange={(e) => setVal("pivot_window", Math.max(2, parseInt(e.target.value) || 5))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Pivot Window: candles to left and right required to confirm a Swing High/Low"
+                  />
+                </div>
+                <div style={{ flex: "1 1 60px", minWidth: "60px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Min Pivots</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={50}
+                    value={getVal("min_pivots")}
+                    onChange={(e) => setVal("min_pivots", Math.max(2, parseInt(e.target.value) || 2))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Min Pivots: minimum swing highs and lows required to fit trend lines (min 2)"
+                  />
+                </div>
+                <div style={{ flex: "1 1 60px", minWidth: "60px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Lookback</span>
+                  <input
+                    type="number"
+                    min={10}
+                    max={200}
+                    value={getVal("tri_lookback")}
+                    onChange={(e) => setVal("tri_lookback", Math.max(10, parseInt(e.target.value) || 35))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Lookback: how many bars back to search for pivots"
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, width: "100%", flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ flex: "1 1 90px", minWidth: "90px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Slope Tol. (%)</span>
+                  <input
+                    type="number"
+                    min={0.01}
+                    max={10.0}
+                    step={0.1}
+                    value={getVal("slope_tolerance")}
+                    onChange={(e) => setVal("slope_tolerance", Math.max(0.01, parseFloat(e.target.value) || 1.5))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Slope Tolerance (%): max total price change over the lookback window to consider a trend line 'flat'"
+                  />
+                </div>
+                <div style={{ flex: "1 2 110px", minWidth: "110px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)" }}>Min R²</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)" }}>{Number(getVal("min_r_squared") ?? 0.65).toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={getVal("min_r_squared")}
+                    onChange={(e) => setVal("min_r_squared", parseFloat(e.target.value) || 0.65)}
+                    style={{
+                      width: "100%",
+                      accentColor: "var(--color-ec-copper)",
+                      cursor: "pointer",
+                    }}
+                    title="Minimum R-squared quality for trend lines (0 = no requirement, 1 = perfect fit)"
+                  />
+                </div>
+              </div>
             </div>
           );
         default:
@@ -2074,7 +2249,9 @@ export default function WizardStrategyBuilder({
               </select>
             </div>
           );
-        case 4:
+        case 4: {
+          const allowedCompTargets = getAllowedTargets(wizardSource, "indicator_comparison");
+          const showToggle = allowedCompTargets.length > 0;
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 5: Objetivo / Cruce</span>
@@ -2085,65 +2262,210 @@ export default function WizardStrategyBuilder({
               </span>
               {wizardMode === "comparison" ? (
                 <>
-                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                    <button
-                      type="button"
-                      onClick={() => setWizardTargetType("fixed")}
-                      style={{
-                        flex: 1,
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        transition: "all 150ms ease",
-                        backgroundColor: wizardTargetType === "fixed" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
-                        border: wizardTargetType === "fixed" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
-                        color: wizardTargetType === "fixed" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
-                      }}
-                    >
-                      Valor Fijo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setWizardTargetType("indicator")}
-                      style={{
-                        flex: 1,
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        transition: "all 150ms ease",
-                        backgroundColor: wizardTargetType === "indicator" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
-                        border: wizardTargetType === "indicator" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
-                        color: wizardTargetType === "indicator" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
-                      }}
-                    >
-                      Otro Indicador
-                    </button>
-                  </div>
-                  {wizardTargetType === "fixed" ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
-                      <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor Numérico (en USD):</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={wizardTargetValue}
-                        onChange={(e) => setWizardTargetValue(parseFloat(e.target.value) || 0)}
-                        style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 8px", borderRadius: 4 }}
-                      />
+                  {showToggle && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => setWizardTargetType("fixed")}
+                        style={{
+                          flex: 1,
+                          padding: "6px 12px",
+                          borderRadius: 4,
+                          fontFamily: "var(--color-ec-sans)",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          transition: "all 150ms ease",
+                          backgroundColor: wizardTargetType === "fixed" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
+                          border: wizardTargetType === "fixed" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
+                          color: wizardTargetType === "fixed" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
+                        }}
+                      >
+                        Valor Fijo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWizardTargetType("indicator")}
+                        style={{
+                          flex: 1,
+                          padding: "6px 12px",
+                          borderRadius: 4,
+                          fontFamily: "var(--color-ec-sans)",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          transition: "all 150ms ease",
+                          backgroundColor: wizardTargetType === "indicator" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
+                          border: wizardTargetType === "indicator" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
+                          color: wizardTargetType === "indicator" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
+                        }}
+                      >
+                        Otro Indicador
+                      </button>
                     </div>
+                  )}
+                  {wizardTargetType === "fixed" ? (
+                    isVolumeIndicator(wizardSource) ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Volumen (en millones de acciones, ej. 1.5 para 1.5M):</span>
+                        <div style={{ position: "relative", width: "100%" }}>
+                          <input
+                            type="text"
+                            value={wizardTargetValueText}
+                            onChange={(e) => {
+                              const txt = e.target.value;
+                              setWizardTargetValueText(txt);
+                              const clean = txt.trim().toLowerCase();
+                              const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
+                              const num = parseFloat(numericStr);
+                              if (!isNaN(num)) {
+                                setWizardTargetValue(num * 1000000);
+                              }
+                            }}
+                            placeholder="e.g. 1.5"
+                            style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 24px 5px 8px", borderRadius: 4, boxSizing: "border-box" }}
+                          />
+                          <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            pointerEvents: 'none'
+                          }}>M</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor Numérico (en USD):</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wizardTargetValue}
+                          onChange={(e) => setWizardTargetValue(parseFloat(e.target.value) || 0)}
+                          style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 8px", borderRadius: 4 }}
+                        />
+                      </div>
+                    )
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
                       <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Selecciona Indicador Objetivo:</span>
                       <WizardIndicatorSelector
                         value={wizardTargetIndicator}
                         onChange={(val) => setWizardTargetIndicator(val)}
+                        allowedTargets={allowedCompTargets}
                       />
                       {renderParameterInputs(wizardTargetIndicator, "target")}
+
+                      {/* Offset Checkbox and Input for Comparison Target */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            id="wizard-target-offset-checkbox"
+                            checked={wizardTargetOffset > 0}
+                            onChange={(e) => {
+                              setWizardTargetOffset(e.target.checked ? 1 : 0);
+                            }}
+                            style={{
+                              width: 14,
+                              height: 14,
+                              accentColor: 'var(--color-ec-copper)',
+                              cursor: 'pointer'
+                            }}
+                          />
+                          <label
+                            htmlFor="wizard-target-offset-checkbox"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: 'var(--color-ec-text-primary)',
+                              cursor: 'pointer',
+                              userSelect: 'none'
+                            }}
+                          >
+                            ¿Offset a Variable de cruce?
+                          </label>
+                          <span
+                            onMouseEnter={() => setShowOffsetComparisonTooltip(true)}
+                            onMouseLeave={() => setShowOffsetComparisonTooltip(false)}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 12,
+                              height: 12,
+                              borderRadius: "50%",
+                              border: "0.5px solid var(--color-ec-border)",
+                              color: "var(--color-ec-text-muted)",
+                              fontSize: 8,
+                              fontWeight: "bold",
+                              cursor: "help"
+                            }}
+                          >
+                            ?
+                          </span>
+                        </div>
+
+                        {showOffsetComparisonTooltip && (
+                          <div style={{
+                            backgroundColor: "var(--color-ec-bg-elevated)",
+                            border: "0.5px solid var(--color-ec-border)",
+                            borderRadius: 6,
+                            padding: 8,
+                            fontSize: 8,
+                            color: "var(--color-ec-text-muted)",
+                            lineHeight: 1.3,
+                            marginTop: 2
+                          }}>
+                            Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual.
+                          </div>
+                        )}
+
+                        {wizardTargetOffset > 0 && (
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 8, 
+                            paddingLeft: 20,
+                            marginTop: 2
+                          }}>
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: 'var(--color-ec-text-secondary)',
+                              fontFamily: 'var(--color-ec-sans)',
+                            }}>Velas atrás:</span>
+                            <select
+                              value={wizardTargetOffset}
+                              onChange={(e) => setWizardTargetOffset(Number(e.target.value))}
+                              style={{
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 4,
+                                padding: '2px 8px 2px 6px',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                outline: 'none',
+                                cursor: 'pointer',
+                                width: 55,
+                                textAlign: 'center'
+                              }}
+                            >
+                              {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                  {val}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </>
@@ -2157,6 +2479,113 @@ export default function WizardStrategyBuilder({
                       allowedTargets={getAllowedTargets(wizardSource, 'price_level_distance')}
                     />
                     {renderParameterInputs(wizardDistanceLevel, "distance_level")}
+
+                    {/* Offset Checkbox and Input for Distance Level */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          type="checkbox"
+                          id="wizard-distance-offset-checkbox"
+                          checked={wizardDistanceLevelOffset > 0}
+                          onChange={(e) => {
+                            setWizardDistanceLevelOffset(e.target.checked ? 1 : 0);
+                          }}
+                          style={{
+                            width: 14,
+                            height: 14,
+                            accentColor: 'var(--color-ec-copper)',
+                            cursor: 'pointer'
+                          }}
+                        />
+                        <label
+                          htmlFor="wizard-distance-offset-checkbox"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-primary)',
+                            cursor: 'pointer',
+                            userSelect: 'none'
+                          }}
+                        >
+                          ¿Offset a Variable de cruce?
+                        </label>
+                        <span
+                          onMouseEnter={() => setShowOffsetDistanceTooltip(true)}
+                          onMouseLeave={() => setShowOffsetDistanceTooltip(false)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            border: "0.5px solid var(--color-ec-border)",
+                            color: "var(--color-ec-text-muted)",
+                            fontSize: 8,
+                            fontWeight: "bold",
+                            cursor: "help"
+                          }}
+                        >
+                          ?
+                        </span>
+                      </div>
+
+                      {showOffsetDistanceTooltip && (
+                        <div style={{
+                          backgroundColor: "var(--color-ec-bg-elevated)",
+                          border: "0.5px solid var(--color-ec-border)",
+                          borderRadius: 6,
+                          padding: 8,
+                          fontSize: 8,
+                          color: "var(--color-ec-text-muted)",
+                          lineHeight: 1.3,
+                          marginTop: 2
+                        }}>
+                          Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual.
+                        </div>
+                      )}
+
+                      {wizardDistanceLevelOffset > 0 && (
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 8, 
+                          paddingLeft: 20,
+                          marginTop: 2
+                        }}>
+                          <span style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-secondary)',
+                            fontFamily: 'var(--color-ec-sans)',
+                          }}>Velas atrás:</span>
+                          <select
+                            value={wizardDistanceLevelOffset}
+                            onChange={(e) => setWizardDistanceLevelOffset(Number(e.target.value))}
+                            style={{
+                              backgroundColor: 'var(--color-ec-bg-sidebar)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              borderRadius: 4,
+                              padding: '2px 8px 2px 6px',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: 'var(--color-ec-copper)',
+                              fontFamily: 'var(--color-ec-sans)',
+                              outline: 'none',
+                              cursor: 'pointer',
+                              width: 55,
+                              textAlign: 'center'
+                            }}
+                          >
+                            {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                              <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                {val}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Distancia requerida (%):</span>
@@ -2169,10 +2598,35 @@ export default function WizardStrategyBuilder({
                       style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 8px", borderRadius: 4 }}
                     />
                   </div>
+                  {/* Distance Position Selector */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Posición:</span>
+                    <select
+                      value={wizardDistancePosition}
+                      onChange={(e) => setWizardDistancePosition(e.target.value as 'above' | 'below' | 'any')}
+                      style={{
+                        width: "100%",
+                        background: "var(--color-ec-bg-surface)",
+                        border: "0.5px solid var(--color-ec-border)",
+                        color: "var(--color-ec-text-primary)",
+                        fontSize: 11,
+                        padding: "6px 8px",
+                        borderRadius: 5,
+                        outline: "none",
+                        cursor: "pointer",
+                        marginTop: 2
+                      }}
+                    >
+                      <option value="any">Cualquiera (Any)</option>
+                      <option value="above">Por encima del nivel</option>
+                      <option value="below">Por debajo del nivel</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
           );
+        }
         default:
           return null;
       }
@@ -3830,13 +4284,88 @@ export default function WizardStrategyBuilder({
               className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${isReentriesAllowed ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
               onClick={() => setRiskManagement({
                 ...riskManagement,
-                accept_reentries: !isReentriesAllowed
+                accept_reentries: !isReentriesAllowed,
+                max_reentries: !isReentriesAllowed ? -1 : 0
               })}
             >
               <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${isReentriesAllowed ? 'left-4.5' : 'left-0.5'}`}></div>
             </div>
           </div>
         </div>
+
+        {/* Sutil selector de cantidad de reentradas si están activas */}
+        {isReentriesAllowed && (
+          <div 
+            className="flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-200"
+            style={{
+              borderTop: "0.5px dotted var(--color-ec-border)",
+              marginTop: "14px",
+              paddingTop: "14px",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+                Tipo de Reentradas
+              </span>
+              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 9, color: "var(--color-ec-text-muted)" }}>
+                Límite de reentradas adicionales permitidas
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? 'infinite' : 'limited'}
+                onChange={(e) => {
+                  if (e.target.value === 'infinite') {
+                    setRiskManagement({ ...riskManagement, max_reentries: -1 });
+                  } else {
+                    setRiskManagement({ ...riskManagement, max_reentries: 2 });
+                  }
+                }}
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-sidebar)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '5px 8px',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  fontFamily: 'var(--color-ec-sans)',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  height: '30px',
+                }}
+              >
+                <option value="infinite">Infinitas</option>
+                <option value="limited">Limitadas</option>
+              </select>
+              {riskManagement.max_reentries !== undefined && riskManagement.max_reentries >= 0 && (
+                <input
+                  type="number"
+                  min="0"
+                  value={riskManagement.max_reentries}
+                  onChange={(e) => {
+                    const val = Math.max(0, parseInt(e.target.value) || 0);
+                    setRiskManagement({ ...riskManagement, max_reentries: val });
+                  }}
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '5px 8px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: 'var(--color-ec-text-primary)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    outline: 'none',
+                    width: '50px',
+                    height: '30px',
+                    textAlign: 'center',
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Informative text box */}
         <div style={{
@@ -3874,7 +4403,10 @@ export default function WizardStrategyBuilder({
             color: isReentriesAllowed ? "var(--color-ec-copper-bright)" : "var(--color-ec-text-muted)",
             border: isReentriesAllowed ? "0.5px solid rgba(216, 122, 61, 0.2)" : "0.5px solid rgba(255, 255, 255, 0.1)"
           }}>
-            {isReentriesAllowed ? "Permitir Reentradas" : "Bloquear Reentradas"}
+            {isReentriesAllowed 
+              ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
+              : "Reentradas: Desactivado"
+            }
           </span>
         </div>
       </div>
@@ -3986,7 +4518,9 @@ export default function WizardStrategyBuilder({
     
     // Reentries
     list.push({
-      label: riskManagement.accept_reentries !== false ? "Reentradas: Permitidas" : "Reentradas: Bloqueadas",
+      label: riskManagement.accept_reentries !== false 
+        ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
+        : "Reentradas: Bloqueadas",
       stepName: "Gestión de Riesgo"
     });
     
@@ -4316,12 +4850,15 @@ export default function WizardStrategyBuilder({
 
     // Re-entries
     list.push({
-      label: riskManagement.accept_reentries !== false ? "Reentradas: Permitidas" : "Reentradas: Bloqueadas",
+      label: riskManagement.accept_reentries !== false 
+        ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
+        : "Reentradas: Bloqueadas",
       color: "#fbbf24",
       onRemove: () => {
         setRiskManagement({
           ...riskManagement,
-          accept_reentries: !riskManagement.accept_reentries
+          accept_reentries: !riskManagement.accept_reentries,
+          max_reentries: !riskManagement.accept_reentries ? -1 : 0
         });
       }
     });

@@ -283,6 +283,7 @@ class RiskManagement(BaseModel):
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL
     accept_reentries: Optional[bool] = True
+    max_reentries: Optional[int] = -1
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
     partial_take_profits: Optional[List[PartialTakeProfit]] = Field(default_factory=list)

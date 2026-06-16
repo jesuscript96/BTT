@@ -904,7 +904,7 @@ export default function Home() {
                       </label>
                     </div>
                   </div>
-                  <div style={{ height: 250, width: '100%', marginTop: 'auto', marginBottom: 38, flexShrink: 0 }}>
+                  <div style={{ height: 288, width: '100%', marginTop: 'auto', marginBottom: 0, flexShrink: 0 }}>
                     <MaeScatterChart trades={isFilteredResult!.trades} isDarkMode={isDarkMode} />
                   </div>
                 </div>

@@ -99,6 +99,7 @@ def _core_backtest_jit(
     strat_trailing_active, # int32 array (0=no, 1=yes)
     strat_trailing_pct,    # float64 array (distance %)
     strat_accept_reentries, # int32 array (0=no, 1=yes)
+    strat_max_reentries,   # int32 array (-1=infinite, >=0 limit)
     n_tickers,             # int64
     
     # Global Config
@@ -153,7 +154,7 @@ def _core_backtest_jit(
     
     # Track open/closed state per strategy and ticker to prevent overlapping trades or re-entries
     has_open = np.zeros((n_strats, n_tickers), dtype=np.bool_)
-    has_closed = np.zeros((n_strats, n_tickers), dtype=np.bool_)
+    trades_count = np.zeros((n_strats, n_tickers), dtype=np.int32)
     
     # Equity curve (sampled)
     eq_times = NumbaList()
@@ -265,7 +266,7 @@ def _core_backtest_jit(
                     res_reason.append(reason_code)
                     
                     has_open[strat_idx, bar_ticker] = False
-                    has_closed[strat_idx, bar_ticker] = True
+                    trades_count[strat_idx, bar_ticker] += 1
                     
                     active_entry_px.pop(j)
                     active_sl.pop(j)
@@ -289,8 +290,12 @@ def _core_backtest_jit(
                     # Check Re-entry constraints
                     if has_open[s, bar_ticker]:
                         continue # Already in a trade for this ticker, skip
-                    if strat_accept_reentries[s] == 0 and has_closed[s, bar_ticker]:
-                        continue # Re-entries completely forbidden for this strategy, and we've already closed a trade
+                    limit = strat_max_reentries[s]
+                    if limit >= 0:
+                        if trades_count[s, bar_ticker] > limit:
+                            continue
+                    elif strat_accept_reentries[s] == 0 and trades_count[s, bar_ticker] > 0:
+                        continue
                         
                     w = strat_weights[s]
                     bias = strat_biases[s]
@@ -1146,6 +1151,7 @@ class BacktestEngine:
         strat_trailing_active = []
         strat_trailing_pct = []
         strat_accept_reentries = []
+        strat_max_reentries = []
         for s in self.strategies:
             strat_weights.append(self.weights.get(s.id, 0.0))
             strat_biases.append(BIAS_LONG if s.bias == 'long' else BIAS_SHORT)
@@ -1157,7 +1163,15 @@ class BacktestEngine:
                 return getattr(obj, key, default)
             strat_use_hard_stop.append(1 if _get(rm, 'use_hard_stop', True) else 0)
             strat_use_take_profit.append(1 if _get(rm, 'use_take_profit', True) else 0)
-            strat_accept_reentries.append(1 if _get(rm, 'accept_reentries', True) else 0)
+            acc_re = _get(rm, 'accept_reentries', True)
+            strat_accept_reentries.append(1 if acc_re else 0)
+            
+            # max_reentries default: -1 if accept_reentries is True else 0
+            default_max = -1 if acc_re else 0
+            max_re_val = _get(rm, 'max_reentries', default_max)
+            if max_re_val is None:
+                max_re_val = default_max
+            strat_max_reentries.append(int(max_re_val))
             ts = _get(rm, 'trailing_stop') or {}
             strat_trailing_active.append(1 if _get(ts, 'active', False) else 0)
             strat_trailing_pct.append(float(_get(ts, 'buffer_pct', 0.5)))
@@ -1262,6 +1276,7 @@ class BacktestEngine:
             np.array(strat_trailing_active, dtype=np.int32),
             np.array(strat_trailing_pct, dtype=np.float64),
             np.array(strat_accept_reentries, dtype=np.int32),
+            np.array(strat_max_reentries, dtype=np.int32),
             len(unique_tickers),
             self.initial_capital,
             self.commission,

@@ -355,6 +355,7 @@ def run_backtest(
             exits_arr = cached["exits"]
             sig_direction = cached["direction"]
             sig_accept_reentries = cached["accept_reentries"]
+            sig_max_reentries = cached.get("max_reentries", -1)
 
             if not np.any(entries_arr):
                 del mini_df
@@ -378,6 +379,7 @@ def run_backtest(
             exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
             sig_direction = signals["direction"]
             sig_accept_reentries = signals.get("accept_reentries", False)
+            sig_max_reentries = signals.get("max_reentries", -1)
             sig_sl_stop = signals["sl_stop"]
             sig_sl_trail = signals["sl_trail"]
             sig_tp_stop = signals["tp_stop"]
@@ -391,6 +393,7 @@ def run_backtest(
                     "exits": exits_arr.copy(),
                     "direction": sig_direction,
                     "accept_reentries": sig_accept_reentries,
+                    "max_reentries": sig_max_reentries,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -516,6 +519,7 @@ def run_backtest(
                 tp_stop=sig_tp_stop,
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
+                max_reentries=sig_max_reentries,
                 patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,

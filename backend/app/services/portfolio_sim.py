@@ -29,6 +29,7 @@ def simulate(
     sl_trail: bool = False,
     tp_stop: float | None = None,
     accumulate: bool = False,
+    max_reentries: int = -1,
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
     look_ahead_prevention: bool = True,
@@ -435,9 +436,11 @@ def simulate(
         
         if not in_position and is_signal_trigger and i < n - 1 and not is_restricted:
             # Re-entry logic:
-            # If accumulate is False, we only allow one trade per ticker per day.
             can_enter = True
-            if not accumulate and total_trades > 0:
+            if max_reentries >= 0:
+                if total_trades > max_reentries:
+                    can_enter = False
+            elif not accumulate and total_trades > 0:
                 can_enter = False
             
             if can_enter:

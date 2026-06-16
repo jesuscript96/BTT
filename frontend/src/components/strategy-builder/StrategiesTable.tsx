@@ -167,8 +167,12 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (risk.trailing_stop?.active && risk.trailing_stop.buffer_pct != null && (risk.trailing_stop.buffer_pct as any) !== "") {
             tags.push(`Trailing: ${risk.trailing_stop.buffer_pct}%`);
         }
-        if (risk.accept_reentries === true) {
-            tags.push("Accept Re-entries");
+        if (risk.accept_reentries !== false) {
+            if (risk.max_reentries === undefined || risk.max_reentries === -1) {
+                tags.push("Reentradas: Infinitas");
+            } else {
+                tags.push(`Reentradas: Máx ${risk.max_reentries}`);
+            }
         }
         if (risk.max_drawdown_daily != null && (risk.max_drawdown_daily as any) !== "") {
             tags.push(`Max Daily DD: ${risk.max_drawdown_daily}%`);
