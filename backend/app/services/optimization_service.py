@@ -510,6 +510,12 @@ def run_optimization_grid(
             opt_end_date = cutoff_date
             logger.info(f"[OPT] In-Sample split filter applied on qualifying dates: kept {len(qualifying_df)} rows up to {cutoff_date} using is_percent={is_percent}%")
 
+    # Convert dates to strings to prevent comparison errors between datetime.date and string
+    if start_date:
+        start_date = str(start_date)
+    if opt_end_date:
+        opt_end_date = str(opt_end_date)
+
     # Apply fallbacks for start_date / end_date
     if start_date:
         qualifying_df = qualifying_df[qualifying_df["date"].astype(str) >= start_date]
