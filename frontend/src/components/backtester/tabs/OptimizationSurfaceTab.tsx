@@ -273,9 +273,9 @@ export default function OptimizationSurfaceTab({
     const cols = shape[1];
 
     const grid: (number | null)[][] = [];
-    for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
       const row: (number | null)[] = [];
-      for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < rows; r++) {
         const idx = r * cols + c;
         const val = details[idx]?.[metric];
         row.push(val !== undefined && val !== null && !isNaN(val) ? val : null);

@@ -173,6 +173,8 @@ def run_surface(req: SurfaceRequest):
         },
     }
 
+    logger.info(f"[OPT_REQUEST] strategy_id={req.strategy_id}, dataset_id={req.dataset_id}, metric={req.metric}, param_configs={req_data['param_configs']}, backtest_params={req_data['backtest_params']}")
+
     # Launch optimization in background thread
     thread = threading.Thread(
         target=_run_optimization_in_background,

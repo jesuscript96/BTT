@@ -464,10 +464,12 @@ def run_optimization_grid(
             if is_int:
                 v_min_int = int(round(v_min))
                 v_max_int = int(round(v_max))
-                # Generate clean integer steps based on matrix dimension (steps)
-                if steps > 0:
-                    step_size = max(1, int(round((v_max_int - v_min_int) / steps)))
-                    values = [v_min_int + (i + 1) * step_size for i in range(steps)]
+                # Generate clean integer steps based on matrix dimension (steps) without overshooting
+                if v_min_int == v_max_int:
+                    values = [v_min_int]
+                elif steps > 0:
+                    raw_vals = np.linspace(v_min_int, v_max_int, steps)
+                    values = sorted(list(set(int(round(x)) for x in raw_vals)))
                 else:
                     values = [v_min_int]
             else:

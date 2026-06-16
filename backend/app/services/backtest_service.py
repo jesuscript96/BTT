@@ -1233,15 +1233,18 @@ def _get_market_sessions_mask(
         elif s == "post":
             # 16:00 - 20:00 (960 - 1200)
             mask |= (total_mins_arr >= 960) & (total_mins_arr < 1200)
-        elif s == "custom" and custom_start and custom_end:
+        elif s == "custom":
+            start_val = custom_start if custom_start else "09:30"
+            end_val = custom_end if custom_end else "16:00"
             try:
-                c_start = datetime.datetime.strptime(custom_start, "%H:%M")
-                c_end = datetime.datetime.strptime(custom_end, "%H:%M")
+                c_start = datetime.datetime.strptime(start_val, "%H:%M")
+                c_end = datetime.datetime.strptime(end_val, "%H:%M")
                 s_mins = c_start.hour * 60 + c_start.minute
                 e_mins = c_end.hour * 60 + c_end.minute
                 mask |= (total_mins_arr >= s_mins) & (total_mins_arr < e_mins)
             except Exception:
-                pass
+                # Fallback to RTH (9:30 - 16:00) if parsing fails
+                mask |= (total_mins_arr >= 570) & (total_mins_arr < 960)
 
     if cache_key is not None:
         _sessions_mask_cache[cache_key] = mask

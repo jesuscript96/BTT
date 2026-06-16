@@ -374,6 +374,11 @@ export async function runOptimizationSurface(params: {
   start_date?: string;
   end_date?: string;
   market_sessions?: string[];
+  custom_start_time?: string;
+  custom_end_time?: string;
+  locates_cost?: number;
+  monthly_expenses?: number;
+  fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;
   is_percent?: number;
   task_id?: string;
