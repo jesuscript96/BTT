@@ -1,0 +1,23 @@
+Strategy Name: None
+[INFO] Connected to in-memory database (GCS data mode)
+[INFO] GCS HMAC Secret configured for DuckDB reads.
+[HOT CACHE] loaded from GCS Parquet: 302,797 rows, 122.2 MB
+[HOT CACHE] qualifying from RAM: 1477 rows
+Qualifying df shape: (1477, 66)
+Intraday rows: 1164109
+Total groups precomputed: 1477
+Using first 5 groups for diagnostic run: [('2024-01-02', 'LBPH'), ('2024-01-02', 'SGN'), ('2024-01-03', 'ABVC'), ('2024-01-03', 'NEXI'), ('2024-01-04', 'MINM')]
+Axes: [[20.0, 60.0], [2, 4]]
+Grid points: [(20.0, 2), (20.0, 4), (60.0, 2), (60.0, 4)]
+
+--- Running grid point 0 ---
+[INFO] Fetching entire daily_metrics table for global cache...
+[INFO] Fetched and prepared 11,427,299 daily metrics in 19.72s
+[TIMING] loop completo (4 días): 20.39s
+Point 0 result: idx=0, metric_val=-5.3749
+Details: {'sharpe': np.float64(-5.3749), 'total_return': -0.1034, 'max_drawdown': -0.4273, 'profit_factor': 0.8277, 'win_rate': 40.0, 'expectancy': -2.07, 'total_trades': 5, 'dd_return': -4.1336, 'avg_r_ui': -84.3737}
+
+--- Running direct backtest on same 5 groups ---
+[TIMING] loop completo (4 días): 0.1s
+Direct trades count: 5
+Direct trades list: [{'ticker': 'LBPH', 'date': '2024-01-02', 'entry_time': '2024-01-02 09:18:00', 'exit_time': '2024-01-02 09:30:00', 'entry_idx': 112, 'exit_idx': 124, 'entry_time_epoch': 1704187080, 'exit_time_epoch': 1704187800, 'entry_price': np.float64(17.440001), 'exit_price': np.float64(20.928001), 'pnl': np.float64(-20.0), 'return_pct': np.float64(-20.0), 'direction': 'Short', 'status': 'Closed', 'size': np.float64(5.733945), 'exit_reason': 'SL', 'mae': np.float64(20.0), 'mfe': np.float64(4.0138), 'r_multiple': np.float64(-0.2), 'entry_hour': 9, 'entry_weekday': 1, 'gap_pct': 206.46766662597656, 'stop_loss': np.float64(20.928001)}, {'ticker': 'ABVC', 'date': '2024-01-03', 'entry_time': '2024-01-03 09:01:00', 'exit_time': '2024-01-03 19:59:00', 'entry_idx': 96, 'exit_idx': 724, 'entry_time_epoch': 1704272460, 'exit_time_epoch': 1704311940, 'entry_price': np.float64(2.24), 'exit_price': np.float64(1.78), 'pnl': np.float64(20.5357), 'return_pct': np.float64(20.5357), 'direction': 'Short', 'status': 'Closed', 'size': np.float64(44.642857), 'exit_reason': 'EOD', 'mae': np.float64(9.375), 'mfe': np.float64(21.875), 'r_multiple': np.float64(0.21), 'entry_hour': 9, 'entry_weekday': 2, 'gap_pct': 80.82499694824219, 'stop_loss': np.float64(2.688)}, {'ticker': 'NEXI', 'date': '2024-01-03', 'entry_time': '2024-01-03 08:54:00', 'exit_time': '2024-01-03 10:14:00', 'entry_idx': 204, 'exit_idx': 284, 'entry_time_epoch': 1704272040, 'exit_time_epoch': 1704276840, 'entry_price': np.float64(6.94), 'exit_price': np.float64(8.328), 'pnl': np.float64(-20.0), 'return_pct': np.float64(-20.0), 'direction': 'Short', 'status': 'Closed', 'size': np.float64(14.409222), 'exit_reason': 'SL', 'mae': np.float64(20.0), 'mfe': np.float64(15.4179), 'r_multiple': np.float64(-0.2), 'entry_hour': 8, 'entry_weekday': 2, 'gap_pct': 209.4736785888672, 'stop_loss': np.float64(8.328)}, {'ticker': 'MINM', 'date': '2024-01-04', 'entry_time': '2024-01-04 07:28:00', 'exit_time': '2024-01-04 08:47:00', 'entry_idx': 30, 'exit_idx': 109, 'entry_time_epoch': 1704353280, 'exit_time_epoch': 1704358020, 'entry_price': np.float64(4.03), 'exit_price': np.float64(4.836), 'pnl': np.float64(-20.0), 'return_pct': np.float64(-20.0), 'direction': 'Short', 'status': 'Closed', 'size': np.float64(24.813894), 'exit_reason': 'SL', 'mae': np.float64(20.0), 'mfe': np.float64(9.9256), 'r_multiple': np.float64(-0.2), 'entry_hour': 7, 'entry_weekday': 3, 'gap_pct': 198.83041381835938, 'stop_loss': np.float64(4.836)}, {'ticker': 'MINM', 'date': '2024-01-04', 'entry_time': '2024-01-04 08:52:00', 'exit_time': '2024-01-04 19:59:00', 'entry_idx': 114, 'exit_idx': 698, 'entry_time_epoch': 1704358320, 'exit_time_epoch': 1704398340, 'entry_price': np.float64(5.05), 'exit_price': np.float64(3.5791), 'pnl': np.float64(29.1267), 'return_pct': np.float64(29.1267), 'direction': 'Short', 'status': 'Closed', 'size': np.float64(19.801979), 'exit_reason': 'EOD', 'mae': np.float64(16.2376), 'mfe': np.float64(31.8812), 'r_multiple': np.float64(0.29), 'entry_hour': 8, 'entry_weekday': 3, 'gap_pct': 198.83041381835938, 'stop_loss': np.float64(6.06)}]

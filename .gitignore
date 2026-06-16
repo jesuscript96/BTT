@@ -70,3 +70,8 @@ backend/gcs-key*.json
 backend/scripts/catchup_checkpoint.json
 backend/scripts/catchup_run.log
 backend/scripts/hotcache_run.log
+
+# Binary data and caches
+*.parquet
+*.parquet.tmp
+

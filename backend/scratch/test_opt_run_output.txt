@@ -1,0 +1,14 @@
+Starting backtest diagnostic run on 24-month dataset...
+Strategy Name: None
+[INFO] Connected to in-memory database (GCS data mode)
+[INFO] GCS HMAC Secret configured for DuckDB reads.
+[HOT CACHE] loaded from GCS Parquet: 302,797 rows, 122.2 MB
+[HOT CACHE] qualifying from RAM: 1477 rows
+Qualifying df shape: (1477, 66)
+Intraday rows: 1164109
+Pre-grouped count: 1477
+[INFO] Fetching entire daily_metrics table for global cache...
+[INFO] Fetched and prepared 11,427,299 daily metrics in 20.12s
+[TIMING] loop completo (553 días): 46.5s
+Trades count: 750
+Example trade: {'ticker': 'LBPH', 'date': '2024-01-02', 'entry_time': '2024-01-02 09:18:00', 'exit_time': '2024-01-02 09:30:00', 'entry_idx': 112, 'exit_idx': 124, 'entry_time_epoch': 1704187080, 'exit_time_epoch': 1704187800, 'entry_price': np.float64(17.440001), 'exit_price': np.float64(20.928001), 'pnl': np.float64(-20.0), 'return_pct': np.float64(-20.0), 'direction': 'Short', 'status': 'Closed', 'size': np.float64(5.733945), 'exit_reason': 'SL', 'mae': np.float64(20.0), 'mfe': np.float64(4.0138), 'r_multiple': np.float64(-0.2), 'entry_hour': 9, 'entry_weekday': 1, 'gap_pct': 206.46766662597656, 'stop_loss': np.float64(20.928001)}

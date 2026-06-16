@@ -1,0 +1,206 @@
+--- Line 1102 ---
+1097:         </div>
+1098:     );
+1099: };
+1100: 
+1101: // Gap day statistics sub-component
+1102: const GapStatsSection = ({ 
+1103:     gapStats, 
+1104:     gapStatsPlus1, 
+1105:     gapStatsPlus2 
+1106: }: { 
+1107:     gapStats?: GapStats; 
+1108:     gapStatsPlus1?: GapStats; 
+1109:     gapStatsPlus2?: GapStats; 
+1110: }) => {
+1111:     const [activeSubTab, setActiveSubTab] = useState<'day0' | 'day1' | 'day2'>('day0');
+1112:     
+1113:     const currentStats = 
+1114:         activeSubTab === 'day0' ? gapStats : 
+1115:         activeSubTab === 'day1' ? gapStatsPlus1 : 
+1116:         gapStatsPlus2;
+1117: 
+1118:     if (!gapStats || gapStats.gap_days_count === 0) {
+1119:         return (
+1120:             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
+1121:                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
+1122:                     Runner Stats (PMH ≥ 20%)
+1123:                 </span>
+1124:                 <div style={{
+1125:                     height: '140px',
+1126:                     display: 'flex',
+1127:                     alignItems: 'center',
+1128:                     justifyContent: 'center',
+1129:                     color: 'var(--color-ec-text-muted)',
+1130:                     fontSize: '11px',
+1131:                     border: '1px dashed var(--color-ec-border)',
+1132:                     borderRadius: '6px'
+1133:                 }}>
+1134:                     No gap stats available for this ticker.
+1135:                 </div>
+1136:             </div>
+1137:         );
+1138:     }
+1139: 
+1140:     const formatVal = (val: number | null | undefined) => {
+1141:         if (val === null || val === undefined) return '-';
+1142:         return `${val.toFixed(2)}%`;
+1143:     };
+1144: 
+1145:     return (
+1146:         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', fontFamily: "'General Sans', sans-serif" }}>
+1147:             <div style={{ 
+1148:                 display: 'flex', 
+1149:                 justifyContent: 'space-between', 
+1150:                 alignItems: 'center', 
+1151:                 borderBottom: '1px solid var(--color-ec-border)', 
+1152:                 paddingBottom: 4 
+1153:             }}>
+1154:                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+1155:                     Runner Stats (PMH ≥ 20%) {currentStats && currentStats.gap_days_count > 0 ? `(${currentStats.gap_days_count} runners)` : ''}
+1156:                 </span>
+1157:                 
+1158:                 {/* Day offset sub-tabs */}
+1159:                 <div style={{ display: 'flex', gap: 4 }}>
+1160:                     {(['day0', 'day1', 'day2'] as const).map(tab => {
+1161:                         const label = tab === 'day0' ? 'Day 0' : tab === 'day1' ? 'Day +1' : 'Day +2';
+1162:                         const isActive = activeSubTab === tab;
+1163:                         return (
+1164:                             <button
+1165:                                 key={tab}
+1166:                                 onClick={() => setActiveSubTab(tab)}
+1167:                                 style={{
+1168:                                     background: isActive ? 'var(--color-ec-copper)' : 'transparent',
+1169:                                     border: 'none',
+1170:                                     borderRadius: 3,
+1171:                                     color: isActive ? '#ffffff' : 'var(--color-ec-text-secondary)',
+1172:                                     fontSize: 8,
+1173:                                     fontWeight: 700,
+1174:                                     padding: '2px 6px',
+1175:                                     cursor: 'pointer',
+1176:                                     textTransform: 'uppercase',
+1177:                                     letterSpacing: '0.5px',
+1178:                                     transition: 'all 150ms ease'
+1179:                                 }}
+1180:                                 onMouseEnter={(e) => {
+1181:                                     if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-high)';
+1182:                                 }}
+1183:                                 onMouseLeave={(e) => {
+1184:                                     if (!isActive) e.currentTarget.style.color = 'var(--color-ec-text-secondary)';
+1185:                                 }}
+1186:                             >
+1187:                                 {label}
+1188:                             </button>
+1189:                         );
+1190:                     })}
+1191:                 </div>
+1192:             </div>
+1193: 
+1194:             {!currentStats || currentStats.gap_days_count === 0 ? (
+1195:                 <div style={{
+1196:                     height: '140px',
+1197:                     display: 'flex',
+1198:                     alignItems: 'center',
+1199:                     justifyContent: 'center',
+1200:                     color: 'var(--color-ec-text-muted)',
+1201:                     fontSize: '11px',
+1202:                     border: '1px dashed var(--color-ec-border)',
+1203:                     borderRadius: '6px',
+1204:                     marginTop: 4
+1205:                 }}>
+1206:                     No stats available for this offset.
+1207:                 </div>
+1208:             ) : (
+1209:                 <>
+1210:                     {/* Split metrics on left, Avg Price Change Chart on right */}
+1211:                     <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', width: '100%' }}>
+1212:                         {/* Metrics Column (Left side, width ~38%) */}
+1213:                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '38%', flexShrink: 0 }}>
+1214:                             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+1215:                                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>High RTH Spike</span>
+1216:                                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.high_rth_spike_avg)}</span>
+1217:                             </div>
+1218:                             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+1219:                                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% PM Fade</span>
+1220:                                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.pm_fade_avg)}</span>
+1221:                             </div>
+1222:                             <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', margin: '2px 0' }} />
+1223:                             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+1224:                                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Low RTH Spike</span>
+1225:                                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.low_rth_spike_avg)}</span>
+1226:                             </div>
+1227:                             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+1228:                                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>% RTHH Fade</span>
+1229:                                 <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-ec-text-high)' }}>{formatVal(currentStats.rthh_fade_avg)}</span>
+1230:                             </div>
+1231:                         </div>
+1232: 
+1233:                         {/* Chart Area (Right side, width ~62%) */}
+1234:                         <div style={{ width: '62%', flexShrink: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+1235:                             <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Precio medio desde el Open</span>
+1236:                             <div style={{ height: '170px', width: '100%' }}>
+1237:                                 <AvgPriceChangeChart data={currentStats.price_change_chart} />
+1238:                             </div>
+1239:                         </div>
+1240:                     </div>
+1241: 
+1242:                     {/* Frequencies and Progress Bars */}
+1243:                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255, 255, 255, 0.05)', paddingTop: 2, marginTop: -16 }}>
+1244:                         {/* Negative Close Frequency (Bidirectional Bar) */}
+1245:                         {(() => {
+1246:                             const negClose = currentStats.neg_close_freq ?? 0;
+1247:                             const posClose = 100 - negClose;
+1248:                             return (
+1249:                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+1250:                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, fontWeight: 700 }}>
+1251:                                         <span style={{ color: 'var(--color-ec-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Avg. close direction</span>
+1252:                                     </div>
+1253:                                     <div style={{
+1254:                                         height: 16,
+1255:                                         width: '100%',
+1256:                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
+1257:                                         borderRadius: 4,
+1258:                                         overflow: 'hidden',
+1259:                                         display: 'flex',
+1260:                                         fontFamily: "'General Sans', sans-serif",
+1261:                                         fontSize: 8.5,
+1262:                                         fontWeight: 700
+1263:                                     }}>
+1264:                                         {negClose > 0 && (
+1265:                                             <div style={{
+1266:                                                 height: '100%',
+1267:                                                 width: `${negClose}%`,
+1268:                                                 backgroundColor: 'var(--color-ec-loss)',
+1269:                                                 color: '#ffffff',
+1270:                                                 display: 'flex',
+1271:                                                 alignItems: 'center',
+1272:                                                 justifyContent: 'center',
+1273:                                                 transition: 'width 0.3s ease',
+1274:                                                 textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+1275:                                             }}>
+1276:                                                 {negClose >= 10 ? `${negClose.toFixed(1)}%` : ''}
+1277:                                             </div>
+1278:                                         )}
+1279:                                         {posClose > 0 && (
+1280:                                             <div style={{
+1281:                                                 height: '100%',
+1282:                                                 width: `${posClose}%`,
+1283:                                                 backgroundColor: 'var(--color-ec-profit)',
+1284:                                                 color: '#ffffff',
+1285:                                                 display: 'flex',
+1286:                                                 alignItems: 'center',
+1287:                                                 justifyContent: 'center',
+1288:                                                 transition: 'width 0.3s ease',
+1289:                                                 textShadow: '0 1px 2px rgba(0,0,0,0.4)'
+1290:                                             }}>
+1291:                                                 {posClose >= 10 ? `${posClose.toFixed(1)}%` : ''}
+1292:                                             </div>
+1293:                                         )}
+1294:                                     </div>
+1295:                                 </div>
+1296:                             );
+1297:                         })()}
+1298: 
+1299:                         {/* Close Above PMH Frequency */}
+1300:                         {currentStats.close_above_pmh_freq !== null && currentStats.close_above_pmh_freq !== undefined && (() => {
+1301:                             const val = currentStats.close_above_pmh_freq ?? 0;

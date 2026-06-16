@@ -1,0 +1,40 @@
+    except Exception as e:
+        print(f"Error fetching balance sheet for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ticker}/gap-stats")
+def get_ticker_gap_stats(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    with _gap_stats_cache_lock:
+        if ticker in _gap_stats_cache:
+            cached_data, expiry = _gap_stats_cache[ticker]
+            if now < expiry:
+                return cached_data
+
+    def _compute():
+        know_the_float = scrape_knowthefloat(ticker)
+        all_stats = get_gap_stats_all_days(ticker)
+        return {
+            "know_the_float": know_the_float,
+            "gap_stats": all_stats["gap_stats"],
+            "gap_stats_plus_1": all_stats["gap_stats_plus_1"],
+            "gap_stats_plus_2": all_stats["gap_stats_plus_2"]
+        }
+
+    try:
+        res = _swr_cache(ticker, "gap_stats", GAP_STATS_CACHE_TTL, _compute)
+        if isinstance(res, dict) and res.get("status") != "calculating":
+            with _gap_stats_cache_lock:
+                _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
+        return res
+    except Exception as e:
+        print(f"Error fetching gap stats for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ticker}/sec-filings")
+def get_sec_filings(ticker: str):
+    """

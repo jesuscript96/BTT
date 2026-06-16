@@ -1,0 +1,146 @@
+@router.get("/{ticker}")
+def get_ticker_analysis(ticker: str):
+    ticker = ticker.upper()
+    now = datetime.now()
+    
+    # Cache lookup
+    with _analysis_cache_lock:
+        if ticker in _analysis_cache:
+            cached_data, expiry = _analysis_cache[ticker]
+            if now < expiry:
+                print(f"[CACHE] Returning cached ticker analysis for {ticker}")
+                return cached_data
+
+    def _compute():
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+        def _fetch_info():
+            session = get_yfinance_session()
+            stock = yf.Ticker(ticker, session=session)
+            return stock.info
+
+        def _fetch_db_profile():
+            from app.database import get_db_connection
+            con = get_db_connection()
+            ticker_df = con.execute(
+                "SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]
+            ).fetchdf()
+            if ticker_df.empty:
+                return {}
+            return {
+                "longName": ticker_df.iloc[0]['name'],
+                "exchange": ticker_df.iloc[0]['primary_exchange'],
+            }
+
+        # yfinance .info, Finviz scrape and DB lookup run in PARALLEL.
+        # yfinance is capped at 4s: Finviz + DB already cover the primary
+        # fields, so a rate-limited Yahoo no longer gates the response.
+        # shutdown(wait=False) so a hung thread doesn't block the return —
+        # the per-request HTTP timeouts (5s adapter) bound it anyway.
+        info = {}
+        finviz_data = {}
+        db_info = {}
+        executor = ThreadPoolExecutor(max_workers=3)
+        try:
+            fut_info = executor.submit(_fetch_info)
+            fut_finviz = executor.submit(scrape_finviz_snapshot, ticker)
+            fut_db = executor.submit(_fetch_db_profile)
+            try:
+                result = fut_info.result(timeout=4)
+                if isinstance(result, dict):
+                    info = result
+            except FuturesTimeoutError:
+                print(f"[TIMEOUT] yfinance info for {ticker} timed out after 4s")
+            except Exception as e:
+                print(f"[WARN] Failed to fetch yfinance info for {ticker}: {e}")
+            try:
+                finviz_data = fut_finviz.result(timeout=6) or {}
+            except Exception as e:
+                print(f"[WARN] Finviz snapshot failed for {ticker}: {e}")
+            try:
+                db_info = fut_db.result(timeout=6) or {}
+            except Exception as e:
+                print(f"Error fetching database tickers info fallback for {ticker}: {e}")
+        finally:
+            executor.shutdown(wait=False)
+
+        # Fallback to database tickers info if yfinance failed or returned empty
+        if not info.get("longName") and db_info:
+            info["longName"] = db_info.get("longName")
+            info["exchange"] = info.get("exchange") or db_info.get("exchange")
+            print(f"[INFO] Loaded profile info from database for {ticker}: name={db_info.get('longName')}, exchange={db_info.get('exchange')}")
+
+        # Try to resolve website domain for Clearbit, fallback to FMP ticker-based logo
+        logo_url = None
+        if info.get("website"):
+            try:
+                domain = info.get("website").replace("https://", "").replace("http://", "").split("/")[0]
+                logo_url = f"https://logo.clearbit.com/{domain}"
+            except:
+                pass
+        if not logo_url:
+            logo_url = f"https://financialmodelingprep.com/image-stock/{ticker}.png"
+
+        # --- Profile ---
+        profile = {
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "website": info.get("website"),
+            "description": info.get("longBusinessSummary"),
+            "employees": info.get("fullTimeEmployees"),
+            "address": info.get("address1"),
+            "city": info.get("city"),
+            "state": info.get("state"),
+            "country": info.get("country"),
+            "exchange": info.get("exchange"),
+            "name": info.get("longName"),
+            "logo_url": logo_url
+        }
+
+        # --- Market --- (Finviz primary, yfinance fallback)
+        market = {
+            "market_cap": finviz_data.get("market_cap"),
+            "shares_outstanding": finviz_data.get("shares_outstanding"),
+            "float_shares": finviz_data.get("float_shares"),
+            "held_percent_institutions": info.get("heldPercentInstitutions"),
+            "held_percent_insiders": info.get("heldPercentInsiders"),
+            "price": info.get("currentPrice") or info.get("previousClose") # Fallback
+        }
+
+        if market["market_cap"] is None or market["shares_outstanding"] is None or market["float_shares"] is None:
+            print(f"[FALLBACK] Missing market data from Finviz for {ticker}. Fetching from yfinance...")
+            if market["market_cap"] is None:
+                market["market_cap"] = info.get("marketCap")
+            if market["shares_outstanding"] is None:
+                market["shares_outstanding"] = info.get("sharesOutstanding")
+            if market["float_shares"] is None:
+                market["float_shares"] = info.get("floatShares")
+            print(f"[FALLBACK] Filled missing market data from yfinance for {ticker}: {market}")
+
+        # --- Financials (Snapshot) ---
+        financials = {
+            "ebitda": info.get("ebitda"),
+            "eps": info.get("trailingEps"),
+            "enterprise_value": info.get("enterpriseValue"),
+            "cash": info.get("totalCash"),
+            "total_debt": info.get("totalDebt"),
+            "working_capital": None # Loaded via balance-sheet endpoint
+        }
+
+        return {
+            "profile": profile,
+            "market": market,
+            "financials": financials
+        }
+
+    try:
+        res = _swr_cache(ticker, "analysis", ANALYSIS_CACHE_TTL, _compute)
+        with _analysis_cache_lock:
+            _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
+        return res
+    except Exception as e:
+        print(f"Error fetching ticker analysis for {ticker}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{ticker}/chart")
