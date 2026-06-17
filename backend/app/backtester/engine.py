@@ -100,6 +100,7 @@ def _core_backtest_jit(
     strat_trailing_pct,    # float64 array (distance %)
     strat_accept_reentries, # int32 array (0=no, 1=yes)
     strat_max_reentries,   # int32 array (-1=infinite, >=0 limit)
+    strat_max_elapsed_minutes, # float64 array (n_strats)
     n_tickers,             # int64
     
     # Global Config
@@ -235,7 +236,11 @@ def _core_backtest_jit(
                 
                 # Time-based exits
                 if not exit_signal_triggered:
-                    if (current_ts - entry_time) / 1e9 >= max_holding_sec:
+                    if strat_max_elapsed_minutes[strat_idx] > 0 and (current_ts - entry_time) / 6e10 >= strat_max_elapsed_minutes[strat_idx]:
+                        exit_signal_triggered = True
+                        exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
+                        reason_code = 2 # TIME
+                    elif (current_ts - entry_time) / 1e9 >= max_holding_sec:
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
                         reason_code = 2 # TIME
@@ -463,6 +468,62 @@ def _core_backtest_jit(
         eq_times, eq_balances, eq_positions,
         current_balance
     )
+
+def find_elapsed_time_minutes(group) -> float:
+    if not group:
+        return -1.0
+    
+    conditions = []
+    if isinstance(group, dict):
+        conditions = group.get("conditions", [])
+    elif hasattr(group, "conditions"):
+        conditions = group.conditions or []
+    else:
+        return -1.0
+        
+    for cond in conditions:
+        cond_type = None
+        if isinstance(cond, dict):
+            cond_type = cond.get("type")
+        elif hasattr(cond, "type"):
+            cond_type = cond.type
+            
+        if cond_type == "group":
+            val = find_elapsed_time_minutes(cond)
+            if val > 0:
+                return val
+        else:
+            source = None
+            if isinstance(cond, dict):
+                source = cond.get("source")
+            elif hasattr(cond, "source"):
+                source = cond.source
+                
+            if source:
+                name = None
+                if isinstance(source, dict):
+                    name = source.get("name")
+                elif hasattr(source, "name"):
+                    name = source.name
+                
+                name_val = name.value if hasattr(name, "value") else name
+                if name_val == "Elapsed Time" or name_val == IndicatorType.ELAPSED_TIME:
+                    target = None
+                    if isinstance(cond, dict):
+                        target = cond.get("target")
+                    elif hasattr(cond, "target"):
+                        target = cond.target
+                        
+                    if target is not None:
+                        try:
+                            return float(target)
+                        except (TypeError, ValueError):
+                            if isinstance(target, dict):
+                                return float(target.get("elapsed_minutes", 60.0))
+                            elif hasattr(target, "elapsed_minutes"):
+                                return float(target.elapsed_minutes or 60.0)
+                            return 60.0
+    return -1.0
 
 
 class BacktestEngine:
@@ -927,6 +988,8 @@ class BacktestEngine:
         return series
 
     def _evaluate_comparison(self, condition: ComparisonCondition, df: pd.DataFrame) -> pd.Series:
+        if condition.source.name == IndicatorType.ELAPSED_TIME:
+            return pd.Series(False, index=df.index)
         s1 = self._resolve_indicator(condition.source, df)
         s2 = self._resolve_indicator(condition.target, df)
         
@@ -1152,6 +1215,7 @@ class BacktestEngine:
         strat_trailing_pct = []
         strat_accept_reentries = []
         strat_max_reentries = []
+        strat_max_elapsed_minutes = []
         for s in self.strategies:
             strat_weights.append(self.weights.get(s.id, 0.0))
             strat_biases.append(BIAS_LONG if s.bias == 'long' else BIAS_SHORT)
@@ -1172,6 +1236,13 @@ class BacktestEngine:
             if max_re_val is None:
                 max_re_val = default_max
             strat_max_reentries.append(int(max_re_val))
+            
+            # Find maximum elapsed minutes from exit logic
+            exit_logic = getattr(s, 'exit_logic', None)
+            exit_group = getattr(exit_logic, 'root_condition', None) if exit_logic else None
+            max_el = find_elapsed_time_minutes(exit_group)
+            strat_max_elapsed_minutes.append(float(max_el))
+
             ts = _get(rm, 'trailing_stop') or {}
             strat_trailing_active.append(1 if _get(ts, 'active', False) else 0)
             strat_trailing_pct.append(float(_get(ts, 'buffer_pct', 0.5)))
@@ -1277,6 +1348,7 @@ class BacktestEngine:
             np.array(strat_trailing_pct, dtype=np.float64),
             np.array(strat_accept_reentries, dtype=np.int32),
             np.array(strat_max_reentries, dtype=np.int32),
+            np.array(strat_max_elapsed_minutes, dtype=np.float64),
             len(unique_tickers),
             self.initial_capital,
             self.commission,

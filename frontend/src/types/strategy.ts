@@ -36,6 +36,7 @@ export enum IndicatorType {
     OPENING_RANGE_AM_PLUS = "Opening range AM +",
     OPENING_RANGE_AM_MINUS = "Opening range AM -",
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High",
+    ELAPSED_TIME = "Elapsed Time",
     TRIANGLE_ASCENDING = "Triangle Ascending",
     TRIANGLE_DESCENDING = "Triangle Descending",
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",

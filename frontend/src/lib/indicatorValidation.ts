@@ -121,6 +121,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.OPENING_RANGE_AM_PLUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.OPENING_RANGE_AM_MINUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.ELAPSED_TIME_LAST_HIGH]: [],
+    [IndicatorType.ELAPSED_TIME]: [],
     [IndicatorType.TRIANGLE_ASCENDING]: [],
     [IndicatorType.TRIANGLE_DESCENDING]: [],
     [IndicatorType.TRIANGLE_SYMMETRIC]: [],

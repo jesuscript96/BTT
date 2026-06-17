@@ -46,6 +46,7 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.PREVIOUS_MAX:
         case IndicatorType.PREVIOUS_MIN:
             return { ap_session: "ap.RTH" };
+        case IndicatorType.ELAPSED_TIME:
         case IndicatorType.ELAPSED_TIME_LAST_HIGH:
             return {};
         case IndicatorType.OPENING_RANGE_PLUS:
@@ -71,6 +72,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.AM_OPEN,
         IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN,
         IndicatorType.ELAPSED_TIME_LAST_HIGH,
+        IndicatorType.ELAPSED_TIME,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
@@ -126,6 +128,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.HIGH_X_DAYS]: "High of last X days",
     [IndicatorType.LOW_X_DAYS]: "Low of last X days",
     [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Elapsed Time Last High",
+    [IndicatorType.ELAPSED_TIME]: "Elapsed Time",
     // Behaviour & Patterns
     [IndicatorType.CONSEC_HIGHER_HIGHS]: "Consec Higher Highs",
     [IndicatorType.CONSEC_LOWER_LOWS]: "Consec Lower Lows",
@@ -176,6 +179,7 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.PREVIOUS_MAX]: "Último Máximo desde la apertura de la sesión de referencia y la vela actual",
     [IndicatorType.PREVIOUS_MIN]: "Último Mínimo desde la apertura de la sesión de referencia y la vela actual",
     [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Minutos transcurridos desde el último máximo de la sesión.",
+    [IndicatorType.ELAPSED_TIME]: "Tiempo transcurrido desde la apertura de la orden (en minutos) para forzar su cierre.",
     [IndicatorType.YESTERDAY_OPEN]: "Precio de apertura de ayer.",
     [IndicatorType.YESTERDAY_CLOSE]: "Precio de cierre de ayer.",
     [IndicatorType.YESTERDAY_HIGH]: "Precio máximo de ayer.",
@@ -1120,7 +1124,7 @@ export const ConditionRow = ({
     const renderInputs = () => {
         switch (condition.type) {
             case 'indicator_comparison': {
-                const isElapsed = condition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH;
+                const isElapsed = condition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH || condition.source.name === IndicatorType.ELAPSED_TIME;
                 const isRangeOfTime = condition.source.name?.toLowerCase() === 'range of time';
                 return (
                     <>
@@ -1377,6 +1381,10 @@ export const formatConditionText = (c: AnyCondition): string => {
         if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
             const mins = typeof c.target === 'number' ? c.target : 20;
             return `${tfStr} Elapsed Time Last High ≥ ${mins} mins`;
+        }
+        if (c.source.name === IndicatorType.ELAPSED_TIME) {
+            const mins = typeof c.target === 'number' ? c.target : 60;
+            return `${tfStr} Elapsed Time ≥ ${mins} mins`;
         }
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
@@ -1700,7 +1708,10 @@ export const GroupDisplay = ({
                                 <span style={labelStyle}>Variable de entrada</span>
                                 <IndicatorSelector
                                     value={formCondition.source.name}
-                                    exclude={Object.values(IndicatorType).filter(isOnlyTarget)}
+                                    exclude={[
+                                        ...Object.values(IndicatorType).filter(isOnlyTarget),
+                                        ...(accentColor !== 'rose' ? [IndicatorType.ELAPSED_TIME] : [])
+                                    ]}
                                     onChange={(nameStr) => {
                                         const name = nameStr as IndicatorType;
                                         const defaultParams = getDefaultParamsForIndicator(name);
@@ -1712,6 +1723,16 @@ export const GroupDisplay = ({
                                                 source: { name, offset: 0 },
                                                 comparator: Comparator.GTE,
                                                 target: 20,
+                                                timeframe
+                                            });
+                                            return;
+                                        }
+                                        if (name === IndicatorType.ELAPSED_TIME) {
+                                            setFormCondition({
+                                                type: 'indicator_comparison',
+                                                source: { name, offset: 0 },
+                                                comparator: Comparator.GTE,
+                                                target: 60,
                                                 timeframe
                                             });
                                             return;

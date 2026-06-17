@@ -45,12 +45,14 @@ interface WizardIndicatorSelectorProps {
   value: IndicatorType;
   onChange: (val: IndicatorType) => void;
   allowedTargets?: IndicatorType[];
+  exclude?: IndicatorType[];
 }
 
 const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
   value,
   onChange,
-  allowedTargets
+  allowedTargets,
+  exclude = []
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [hoveredInd, setHoveredInd] = useState<IndicatorType | null>(null);
@@ -150,9 +152,9 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
             }}
           >
             {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
-              const filtered = allowedTargets 
+              const filtered = (allowedTargets 
                 ? indicators.filter(ind => allowedTargets.includes(ind))
-                : indicators;
+                : indicators).filter(ind => !exclude.includes(ind));
               if (filtered.length === 0) return null;
 
               return (
@@ -1737,7 +1739,7 @@ export default function WizardStrategyBuilder({
       if (isTriangle(wizardSource)) {
         return [0, 1];
       }
-      if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+      if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME) {
         return [0, 1, 4];
       }
       if (wizardSource.toLowerCase() === 'range of time') {
@@ -1870,7 +1872,7 @@ export default function WizardStrategyBuilder({
           target: 0,
           timeframe: wizardTf
         };
-      } else if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+      } else if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME) {
         newCond = {
           type: "indicator_comparison",
           source: {
@@ -2362,7 +2364,15 @@ export default function WizardStrategyBuilder({
                 <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Indica la variable de entrada:</span>
                 <WizardIndicatorSelector
                   value={wizardSource}
-                  onChange={(val) => setWizardSource(val)}
+                  onChange={(val) => {
+                    setWizardSource(val);
+                    if (val === IndicatorType.ELAPSED_TIME) {
+                      setWizardTargetValue(60);
+                    } else if (val === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+                      setWizardTargetValue(20);
+                    }
+                  }}
+                  exclude={mode !== 'exit' ? [IndicatorType.ELAPSED_TIME] : []}
                 />
               </div>
               {renderParameterInputs(wizardSource, "source")}
@@ -2541,6 +2551,30 @@ export default function WizardStrategyBuilder({
                             fontFamily: 'var(--color-ec-sans)',
                             pointerEvents: 'none'
                           }}>M</span>
+                        </div>
+                      </div>
+                    ) : wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Tiempo Transcurrido (en minutos):</span>
+                        <div style={{ position: "relative", width: "100%" }}>
+                          <input
+                            type="number"
+                            min="1"
+                            value={wizardTargetValue || (wizardSource === IndicatorType.ELAPSED_TIME ? 60 : 20)}
+                            onChange={(e) => setWizardTargetValue(Math.max(1, parseInt(e.target.value) || 0))}
+                            style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 40px 5px 8px", borderRadius: 4, boxSizing: "border-box" }}
+                          />
+                          <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            pointerEvents: 'none'
+                          }}>mins</span>
                         </div>
                       </div>
                     ) : (
