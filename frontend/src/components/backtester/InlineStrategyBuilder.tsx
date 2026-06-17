@@ -424,12 +424,15 @@ export default function InlineStrategyBuilder({
         flexDirection: "column",
         gap: "0px"
       }}>
-        {/* DIVIDER 1 */}
-        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
-
         {/* SECTION: PRE-GAP CONDITIONS */}
         {applyDay !== 'gap_day' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 0' }}>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            padding: '20px 0',
+            borderBottom: '0.5px solid var(--color-ec-border)',
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{
                 width: 3,
@@ -870,11 +873,16 @@ export default function InlineStrategyBuilder({
           </div>
         )}
 
-        {/* DIVIDER 2 */}
-        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
-
         {/* SECTION: APPLY DAY SELECTOR */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', fontSize: 11, fontFamily: 'var(--color-ec-sans)' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '20px 0',
+          borderBottom: '0.5px solid var(--color-ec-border)',
+          fontSize: 11,
+          fontFamily: 'var(--color-ec-sans)'
+        }}>
             <span style={{ fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Aplicar en:</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {(['gap_day', 'gap_1_day', 'gap_2_day'] as const).map((day, idx) => {
@@ -924,15 +932,13 @@ export default function InlineStrategyBuilder({
             </div>
         </div>
 
-        {/* DIVIDER 3 */}
-        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '8px 0' }} />
-
         {/* SECTION: SESIÓN DE EJECUCIÓN DE LA ESTRATEGIA */}
         <div style={{
           display: 'flex',
           flexDirection: 'column',
-          gap: 6,
-          padding: '8px 0',
+          gap: 12,
+          padding: '20px 0',
+          borderBottom: '0.5px solid var(--color-ec-border)',
         }}>
           <h2 style={{
             fontFamily: 'var(--color-ec-sans)',
@@ -1054,8 +1060,7 @@ export default function InlineStrategyBuilder({
           </div>
         </div>
 
-        {/* DIVIDER 4 */}
-        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '8px 0' }} />
+
 
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic}>
           {/* Sub-panel de Ventanas de Horario de Entrada */}

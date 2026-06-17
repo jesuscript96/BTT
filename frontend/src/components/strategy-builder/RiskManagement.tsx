@@ -344,6 +344,98 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
+            {/* Trailing Stop Card */}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                borderBottom: '0.5px solid var(--color-ec-border)',
+            }}>
+                {/* Header */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingBottom: (risk.trailing_stop.active) ? 12 : 0,
+                    borderBottom: (risk.trailing_stop.active) ? '0.5px solid var(--color-ec-border)' : 'none',
+                }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-copper)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Trailing Stop</h2>
+                        </div>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Ajusta el stop loss dinámicamente a medida que el precio alcanza objetivos</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                            onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.trailing_stop.active ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Body */}
+                {risk.trailing_stop.active && (
+                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
+                            <div className="relative" style={{ width: '120px' }}>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={risk.trailing_stop.buffer_pct}
+                                    onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 24px 7px 10px',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '100%',
+                                        height: '36px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+
             {/* Take Profit Card */}
             <div style={{
                 display: 'flex',
@@ -712,98 +804,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 </div>
                             </div>
                         )}
-                    </div>
-                )}
-            </div>
-
-            {/* Trailing Stop Card */}
-            <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 16,
-                padding: '20px 0',
-                backgroundColor: 'transparent',
-                borderBottom: '0.5px solid var(--color-ec-border)',
-            }}>
-                {/* Header */}
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingBottom: (risk.trailing_stop.active) ? 12 : 0,
-                    borderBottom: (risk.trailing_stop.active) ? '0.5px solid var(--color-ec-border)' : 'none',
-                }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{
-                                width: 3,
-                                height: 14,
-                                borderRadius: 1,
-                                backgroundColor: 'var(--color-ec-copper)',
-                            }} />
-                            <h2 style={{
-                                fontFamily: 'var(--color-ec-sans)',
-                                fontSize: 13,
-                                fontWeight: 700,
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.08em',
-                                color: 'var(--color-ec-text-high)',
-                                margin: 0,
-                            }}>Trailing Stop</h2>
-                        </div>
-                        <span style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 10,
-                            fontWeight: 400,
-                            color: 'var(--color-ec-text-muted)',
-                            marginTop: 2,
-                        }}>Ajusta el stop loss dinámicamente a medida que el precio alcanza objetivos</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            color: 'var(--color-ec-text-muted)',
-                        }}>{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
-                        <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
-                            onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
-                        >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.trailing_stop.active ? 'left-4.5' : 'left-0.5'}`}></div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Body */}
-                {risk.trailing_stop.active && (
-                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
-                            <div className="relative" style={{ width: '120px' }}>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={risk.trailing_stop.buffer_pct}
-                                    onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
-                                    style={{
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '7px 24px 7px 10px',
-                                        fontSize: 13,
-                                        fontWeight: 600,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        width: '100%',
-                                        height: '36px',
-                                        textAlign: 'center',
-                                    }}
-                                />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
-                            </div>
-                        </div>
                     </div>
                 )}
             </div>
