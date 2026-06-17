@@ -36,6 +36,7 @@ export enum IndicatorType {
     OPENING_RANGE_AM_PLUS = "Opening range AM +",
     OPENING_RANGE_AM_MINUS = "Opening range AM -",
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High",
+    ELAPSED_TIME = "Elapsed Time",
     TRIANGLE_ASCENDING = "Triangle Ascending",
     TRIANGLE_DESCENDING = "Triangle Descending",
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
@@ -211,6 +212,7 @@ export interface RiskManagement {
     use_take_profit?: boolean;
     take_profit_mode: TakeProfitMode;
     accept_reentries?: boolean;
+    max_reentries?: number;
     hard_stop: RiskSettings;
     take_profit: RiskSettings;
     partial_take_profits: PartialTakeProfit[];
@@ -272,6 +274,7 @@ export const initialRiskManagement: RiskManagement = {
     use_take_profit: true,
     take_profit_mode: TakeProfitMode.FULL,
     accept_reentries: true,
+    max_reentries: -1,
     hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
     take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
     partial_take_profits: [

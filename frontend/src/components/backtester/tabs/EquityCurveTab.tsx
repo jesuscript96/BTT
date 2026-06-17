@@ -1136,7 +1136,7 @@ function WhatIfEquityChart({
 
     if (originalEquity.length > 0) {
       const ghostSeries = chart.addSeries(LineSeries, {
-        color: "rgba(138,141,146,0.3)",
+        color: "rgba(255, 255, 255, 0.45)",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         crosshairMarkerVisible: false,

@@ -9,6 +9,7 @@ import {
     type Time,
 } from "lightweight-charts";
 import type { TradeRecord } from "@/lib/api_backtester";
+import InfoTooltip from "@/components/backtester/InfoTooltip";
 
 interface RollingEVChartProps {
     trades: TradeRecord[];
@@ -20,8 +21,13 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const [rollingWindow, setRollingWindow] = useState(50);
+    const [inputValue, setInputValue] = useState("50");
     type RollingBasis = "trades" | "days";
     const [basis, setBasis] = useState<RollingBasis>("days");
+
+    useEffect(() => {
+        setInputValue(String(rollingWindow));
+    }, [rollingWindow]);
 
     const evData = useMemo(() => {
         if (!trades.length) return [];
@@ -183,27 +189,22 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
             <div className="px-3 py-2 flex items-center justify-between">
                 <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
                     Rolling EV
-                    <span className="ec-tooltip-container ec-tooltip-left">
-                        <span
-                            style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-                        >
-                            (?)
-                        </span>
-                        <span className="ec-tooltip-text">
-                            Esperanza Matemática (EV) móvil. Promedio continuo de la rentabilidad esperada por operación. Un EV positivo significa que el sistema genera beneficios a largo plazo.
-                        </span>
-                    </span>
+                    <InfoTooltip
+                        position="left"
+                        text="Esperanza Matemática (EV) móvil. Promedio continuo de la rentabilidad esperada por operación. Un EV positivo significa que el sistema genera beneficios a largo plazo."
+                    />
                 </span>
                 <div className="flex items-center gap-3">
-                    <div className="flex text-[9px] font-mono">
+                    <div className="flex text-[10px] font-mono gap-2.5">
                         {([["trades", "T"], ["days", "D"]] as const).map(([val, label]) => (
                             <button
                                 key={val}
                                 onClick={() => setBasis(val)}
-                                className={`px-1.5 py-0.5 transition-colors ${basis === val
-                                    ? "text-[var(--color-ec-text-primary)] font-bold"
-                                    : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)]"
+                                className={`px-2 py-0.5 rounded transition-colors ${basis === val
+                                    ? "text-[var(--color-ec-text-primary)] font-bold bg-[rgba(216,122,61,0.15)] border border-[rgba(216,122,61,0.3)]"
+                                    : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] border border-transparent"
                                     }`}
+                                style={{ cursor: 'pointer' }}
                             >
                                 {label}
                             </button>
@@ -213,10 +214,28 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                         <span className="text-[8px] text-[var(--color-ec-text-secondary)] font-mono">W</span>
                         <input
                             type="number"
-                            min={5}
-                            max={500}
-                            value={rollingWindow}
-                            onChange={(e) => setRollingWindow(Math.max(5, Math.min(500, parseInt(e.target.value) || 50)))}
+                            value={inputValue}
+                            onChange={(e) => {
+                                const valStr = e.target.value;
+                                setInputValue(valStr);
+                                const parsed = parseInt(valStr);
+                                if (!isNaN(parsed) && parsed >= 5 && parsed <= 500) {
+                                    setRollingWindow(parsed);
+                                }
+                            }}
+                            onBlur={() => {
+                                const parsed = parseInt(inputValue);
+                                if (isNaN(parsed) || parsed < 5) {
+                                    setRollingWindow(5);
+                                    setInputValue("5");
+                                } else if (parsed > 500) {
+                                    setRollingWindow(500);
+                                    setInputValue("500");
+                                } else {
+                                    setRollingWindow(parsed);
+                                    setInputValue(String(parsed));
+                                }
+                            }}
                             className="w-10 text-[10px] border-none bg-transparent text-center font-mono text-[var(--foreground)] outline-none"
                             style={{ borderBottom: '1px solid var(--color-ec-border)' }}
                         />

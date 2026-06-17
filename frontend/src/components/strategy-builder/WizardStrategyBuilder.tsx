@@ -36,18 +36,23 @@ export interface WizardDraft {
   exit_logic: ExitLogicType;
   risk_management: RiskManagementType;
   created_at: string;
+  market_sessions?: string[];
+  custom_start_time?: string;
+  custom_end_time?: string;
 }
 
 interface WizardIndicatorSelectorProps {
   value: IndicatorType;
   onChange: (val: IndicatorType) => void;
   allowedTargets?: IndicatorType[];
+  exclude?: IndicatorType[];
 }
 
 const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
   value,
   onChange,
-  allowedTargets
+  allowedTargets,
+  exclude = []
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [hoveredInd, setHoveredInd] = useState<IndicatorType | null>(null);
@@ -147,9 +152,9 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
             }}
           >
             {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
-              const filtered = allowedTargets 
+              const filtered = (allowedTargets 
                 ? indicators.filter(ind => allowedTargets.includes(ind))
-                : indicators;
+                : indicators).filter(ind => !exclude.includes(ind));
               if (filtered.length === 0) return null;
 
               return (
@@ -310,12 +315,13 @@ interface Props {
 
 /* ── All wizard steps, matching InlineStrategyBuilder sections ── */
 const STEPS = [
-  { key: "bias",       label: "Dirección",          shortLabel: "Bias" },
-  { key: "apply_day",  label: "Día de aplicación",  shortLabel: "Día" },
-  { key: "entry",      label: "Lógica de entrada",  shortLabel: "Entry" },
-  { key: "exit",       label: "Lógica de salida",   shortLabel: "Exit" },
-  { key: "risk",       label: "Gestión de riesgo",  shortLabel: "Riesgo" },
-  { key: "summary",    label: "Resumen de estrategia", shortLabel: "Resumen" },
+  { key: "bias",            label: "Dirección",          shortLabel: "Bias" },
+  { key: "apply_day",       label: "Día de aplicación",  shortLabel: "Día" },
+  { key: "market_sessions", label: "Sesión de aplicación", shortLabel: "Sesión" },
+  { key: "entry",           label: "Lógica de entrada",  shortLabel: "Entry" },
+  { key: "exit",            label: "Lógica de salida",   shortLabel: "Exit" },
+  { key: "risk",            label: "Gestión de riesgo",  shortLabel: "Riesgo" },
+  { key: "summary",         label: "Resumen de estrategia", shortLabel: "Resumen" },
 ] as const;
 
 type StepKey = (typeof STEPS)[number]["key"];
@@ -332,20 +338,27 @@ function getConditionStrings(group: ConditionGroup, timeframe: string): string[]
     } else {
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : `[${timeframe}] `;
       if (c.type === 'indicator_comparison') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
-        const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
-        let targetStr = '';
-        if (typeof c.target === 'number') {
-          targetStr = String(c.target);
+        if (c.source.name === IndicatorType.ELAPSED_TIME) {
+          list.push(`${tfStr}Elapsed Time = ${c.target} mins`);
+        } else if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+          list.push(`${tfStr}Elapsed Time Last High ≥ ${c.target} mins`);
         } else {
-          targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+          const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
+          let targetStr = '';
+          if (typeof c.target === 'number') {
+            targetStr = String(c.target);
+          } else {
+            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          }
+          list.push(`${tfStr}${sourceStr} ${compStr} ${targetStr}`);
         }
-        list.push(`${tfStr}${sourceStr} ${compStr} ${targetStr}`);
       } else if (c.type === 'price_level_distance') {
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
-        list.push(`${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%`);
+        const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
+        list.push(`${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%${posStr}`);
       }
     }
   });
@@ -375,20 +388,27 @@ function getConditionTags(
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : `[${timeframe}] `;
       let label = '';
       if (c.type === 'indicator_comparison') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
-        const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
-        let targetStr = '';
-        if (typeof c.target === 'number') {
-          targetStr = String(c.target);
+        if (c.source.name === IndicatorType.ELAPSED_TIME) {
+          label = `${tfStr}Elapsed Time = ${c.target} mins`;
+        } else if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+          label = `${tfStr}Elapsed Time Last High ≥ ${c.target} mins`;
         } else {
-          targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+          const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
+          let targetStr = '';
+          if (typeof c.target === 'number') {
+            targetStr = String(c.target);
+          } else {
+            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          }
+          label = `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
         }
-        label = `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
       } else if (c.type === 'price_level_distance') {
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
-        label = `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%`;
+        const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
+        label = `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%${posStr}`;
       }
       
       if (label) {
@@ -483,6 +503,9 @@ export default function WizardStrategyBuilder({
       entry_logic: stratObj.entry_logic,
       exit_logic: stratObj.exit_logic,
       risk_management: stratObj.risk_management,
+      market_sessions: stratObj.market_sessions,
+      custom_start_time: stratObj.custom_start_time,
+      custom_end_time: stratObj.custom_end_time,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -497,12 +520,22 @@ export default function WizardStrategyBuilder({
     if (stratObj.entry_logic) setEntryLogic(stratObj.entry_logic);
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
-  }, [initialStrategy]);
+    if (stratObj.market_sessions) {
+      setWizardMarketSessions(stratObj.market_sessions);
+    } else {
+      setWizardMarketSessions(marketSessions || ["rth"]);
+    }
+    if (stratObj.custom_start_time) setWizardCustomStartTime(stratObj.custom_start_time);
+    if (stratObj.custom_end_time) setWizardCustomEndTime(stratObj.custom_end_time);
+  }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
 
   // Strategy Builder States
   const [bias, setBias] = useState<"long" | "short" | null>(null);
   const [hoveredBias, setHoveredBias] = useState<"long" | "short" | null>(null);
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
+  const [wizardMarketSessions, setWizardMarketSessions] = useState<string[]>(initialStrategy?.definition?.market_sessions || initialStrategy?.market_sessions || marketSessions || ["rth"]);
+  const [wizardCustomStartTime, setWizardCustomStartTime] = useState<string>(initialStrategy?.definition?.custom_start_time || initialStrategy?.custom_start_time || customStartTime || "09:30");
+  const [wizardCustomEndTime, setWizardCustomEndTime] = useState<string>(initialStrategy?.definition?.custom_end_time || initialStrategy?.custom_end_time || customEndTime || "16:00");
   const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
@@ -562,6 +595,17 @@ export default function WizardStrategyBuilder({
   const [wizardDistanceLevelSession, setWizardDistanceLevelSession] = useState<"ap.PM" | "ap.RTH" | "ap.AM">("ap.RTH");
   const [wizardRiskStep, setWizardRiskStep] = useState<number>(0);
 
+  // Triangle Pattern States
+  const [wizardSourcePivotWindow, setWizardSourcePivotWindow] = useState<number>(5);
+  const [wizardSourceMinPivots, setWizardSourceMinPivots] = useState<number>(2);
+  const [wizardSourceTriLookback, setWizardSourceTriLookback] = useState<number>(35);
+  const [wizardSourceSlopeTolerance, setWizardSourceSlopeTolerance] = useState<number>(1.5);
+  const [wizardSourceMinRSquared, setWizardSourceMinRSquared] = useState<number>(0.65);
+
+  // Price Level Distance Position
+  const [wizardDistancePosition, setWizardDistancePosition] = useState<'above' | 'below' | 'any'>('any');
+
+
   // Check market session overlaps for time windows
   const getSessionOverlapWarning = (fromTime: string, toTime: string) => {
     if (!marketSessions || marketSessions.length === 0 || marketSessions.includes("all")) {
@@ -595,11 +639,16 @@ export default function WizardStrategyBuilder({
 
     if (intervals.length === 0) return null;
 
-    const hasOverlap = intervals.some(interval => {
-      return windowStart < interval.end && windowEnd > interval.start;
-    });
+    const isFullyCovered = (() => {
+      const endCheck = windowStart === windowEnd ? windowStart : windowEnd - 1;
+      for (let m = windowStart; m <= endCheck; m++) {
+        const isMinuteCovered = intervals.some(interval => m >= interval.start && m <= interval.end);
+        if (!isMinuteCovered) return false;
+      }
+      return true;
+    })();
 
-    if (!hasOverlap) {
+    if (!isFullyCovered) {
       const sessionsStr = intervals.map(i => i.label).join(", ");
       return `Fuera de sesión activa (${sessionsStr})`;
     }
@@ -678,6 +727,12 @@ export default function WizardStrategyBuilder({
     setWizardTargetSession("ap.RTH");
     setWizardDistanceLevelSession("ap.RTH");
     setWizardRiskStep(0);
+    setWizardSourcePivotWindow(5);
+    setWizardSourceMinPivots(2);
+    setWizardSourceTriLookback(35);
+    setWizardSourceSlopeTolerance(1.5);
+    setWizardSourceMinRSquared(0.65);
+    setWizardDistancePosition('any');
   }, [currentStep]);
 
   // Update parent with latest draft strategy
@@ -693,6 +748,9 @@ export default function WizardStrategyBuilder({
       exit_logic: exitLogic,
       risk_management: riskManagement,
       created_at: createdAtRef.current,
+      market_sessions: wizardMarketSessions,
+      custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
+      custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
     };
     
     // Sync lastLoadedStrategyRef to prevent initialStrategy reload loops
@@ -703,10 +761,13 @@ export default function WizardStrategyBuilder({
       entry_logic: entryLogic,
       exit_logic: exitLogic,
       risk_management: riskManagement,
+      market_sessions: wizardMarketSessions,
+      custom_start_time: wizardCustomStartTime,
+      custom_end_time: wizardCustomEndTime,
     });
 
     onDraftChange?.(draft);
-  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
+  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, onDraftChange]);
 
   // Actions handlers
   const handleBiasSelect = (b: "long" | "short") => {
@@ -807,7 +868,7 @@ export default function WizardStrategyBuilder({
       }
     }
 
-    setCompletedSteps((prev) => new Set(prev).add(4));
+    setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
 
     const draft: WizardDraft = {
       id: `wizard_draft_${Date.now()}`,
@@ -819,6 +880,9 @@ export default function WizardStrategyBuilder({
       exit_logic: exitLogic,
       risk_management: riskManagement,
       created_at: new Date().toISOString(),
+      market_sessions: wizardMarketSessions,
+      custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
+      custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
     };
 
     onTest(draft);
@@ -831,6 +895,8 @@ export default function WizardStrategyBuilder({
         return renderBiasStep();
       case "apply_day":
         return renderApplyDayStep();
+      case "market_sessions":
+        return renderMarketSessionsStep();
       case "entry":
         return renderLogicStep('entry');
       case "exit":
@@ -1493,6 +1559,183 @@ export default function WizardStrategyBuilder({
     );
   };
 
+  // Step 3: Sesión de aplicación (Market Sessions)
+  const renderMarketSessionsStep = () => {
+    const sessionCard = (isSelected: boolean): React.CSSProperties => {
+      return {
+        width: "100%",
+        maxWidth: 320,
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        padding: "10px 14px",
+        borderRadius: 8,
+        border: isSelected ? "1.5px solid var(--color-ec-copper)" : "1px solid var(--color-ec-border)",
+        backgroundColor: isSelected ? "rgba(216, 122, 61, 0.07)" : "var(--color-ec-bg-surface)",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+        boxShadow: isSelected ? "0 3px 12px rgba(216, 122, 61, 0.15)" : "0 1px 3px rgba(0, 0, 0, 0.05)",
+      };
+    };
+
+    const toggleSession = (id: string) => {
+      let next: string[];
+      if (wizardMarketSessions.includes(id)) {
+        next = wizardMarketSessions.filter(x => x !== id);
+      } else {
+        next = [...wizardMarketSessions, id];
+      }
+      setWizardMarketSessions(next);
+      setCompletedSteps((prev) => {
+        const nextSet = new Set(prev);
+        const idx = STEPS.findIndex(s => s.key === "market_sessions");
+        if (next.length > 0) {
+          nextSet.add(idx);
+        } else {
+          nextSet.delete(idx);
+        }
+        return nextSet;
+      });
+    };
+
+    const sessions = [
+      {
+        id: "pre",
+        label: "Pre-Market",
+        time: "04:00 - 09:30 ET",
+        desc: "Operativa antes de la apertura oficial. Útil para reaccionar a catalizadores temprano, pero con spreads anchos."
+      },
+      {
+        id: "rth",
+        label: "Regular Hours (RTH)",
+        time: "09:30 - 16:00 ET",
+        desc: "Horario estándar del mercado de EE. UU. Máxima liquidez y volumen. Ideal para la mayoría de estrategias."
+      },
+      {
+        id: "post",
+        label: "After-Market",
+        time: "16:00 - 20:00 ET",
+        desc: "Operativa después del cierre oficial. Frecuentemente activa durante reportes de ganancias y noticias del cierre."
+      },
+      {
+        id: "custom",
+        label: "Horas personalizadas",
+        time: "",
+        desc: "Define un rango horario específico a tu medida para la ejecución de la lógica."
+      }
+    ];
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <h3 style={{
+            fontFamily: "var(--color-ec-serif)",
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--color-ec-text-high)",
+            margin: "0 0 4px 0",
+            letterSpacing: "-0.2px",
+          }}>
+            ¿En qué sesión deseas ejecutar la estrategia?
+          </h3>
+          <p style={{
+            fontFamily: "var(--color-ec-sans)",
+            fontSize: 10,
+            color: "var(--color-ec-text-muted)",
+            margin: "0 0 10px 0",
+            lineHeight: 1.5,
+          }}>
+            Selecciona una o varias sesiones de mercado. Tu estrategia solo ejecutará entradas y gestionará posiciones durante el horario seleccionado.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: "100%" }}>
+          {sessions.map(s => {
+            const isSelected = wizardMarketSessions.includes(s.id);
+            return (
+              <div key={s.id} onClick={() => toggleSession(s.id)} style={sessionCard(isSelected)}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      readOnly
+                      style={{
+                        accentColor: "var(--color-ec-copper)",
+                        cursor: "pointer",
+                      }}
+                    />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-high)" }}>{s.label}</span>
+                  </div>
+                  {s.time && (
+                    <span style={{ fontSize: 9, color: "var(--color-ec-text-muted)", fontWeight: 500 }}>{s.time}</span>
+                  )}
+                </div>
+                <p style={{ margin: "4px 0 0 0", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>{s.desc}</p>
+                {s.id === "custom" && isSelected && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()} 
+                    style={{ 
+                      display: "flex", 
+                      gap: 12, 
+                      marginTop: 8, 
+                      paddingTop: 8, 
+                      borderTop: "0.5px solid var(--color-ec-border)",
+                      width: "100%"
+                    }}
+                  >
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1 }}>
+                      <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", fontWeight: 700, textTransform: "uppercase" }}>Desde (ET)</span>
+                      <input
+                        type="time"
+                        value={wizardCustomStartTime}
+                        onChange={(e) => {
+                          setWizardCustomStartTime(e.target.value);
+                          setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "market_sessions")));
+                        }}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 8px',
+                          fontSize: 10,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1 }}>
+                      <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", fontWeight: 700, textTransform: "uppercase" }}>Hasta (ET)</span>
+                      <input
+                        type="time"
+                        value={wizardCustomEndTime}
+                        onChange={(e) => {
+                          setWizardCustomEndTime(e.target.value);
+                          setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "market_sessions")));
+                        }}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 8px',
+                          fontSize: 10,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // Step 3 & 4: Lógica de entrada/salida (Entry/Exit Logic)
   const renderLogicStep = (mode: 'entry' | 'exit') => {
     const logic = mode === 'entry' ? entryLogic : exitLogic;
@@ -1503,7 +1746,7 @@ export default function WizardStrategyBuilder({
         setExitLogic(newLogic);
       }
     };
-    const stepIdx = mode === 'entry' ? 2 : 3;
+    const stepIdx = mode === 'entry' ? STEPS.findIndex(s => s.key === "entry") : STEPS.findIndex(s => s.key === "exit");
 
     const supportsDistance = (name: IndicatorType): boolean => {
       return getAllowedTargets(name, "price_level_distance").length > 0;
@@ -1513,7 +1756,7 @@ export default function WizardStrategyBuilder({
       if (isTriangle(wizardSource)) {
         return [0, 1];
       }
-      if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+      if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME) {
         return [0, 1, 4];
       }
       if (wizardSource.toLowerCase() === 'range of time') {
@@ -1536,6 +1779,11 @@ export default function WizardStrategyBuilder({
           if (paramName === "days_lookback") return wizardSourceDays;
           if (paramName === "orb_minutes") return wizardSourceOrb;
           if (paramName === "ap_session") return wizardSourceSession;
+          if (paramName === "pivot_window") return wizardSourcePivotWindow;
+          if (paramName === "min_pivots") return wizardSourceMinPivots;
+          if (paramName === "tri_lookback") return wizardSourceTriLookback;
+          if (paramName === "slope_tolerance") return wizardSourceSlopeTolerance;
+          if (paramName === "min_r_squared") return wizardSourceMinRSquared;
         } else if (role === "target") {
           if (paramName === "period") return wizardTargetPeriod;
           if (paramName === "stdDev") return wizardTargetDev;
@@ -1572,6 +1820,16 @@ export default function WizardStrategyBuilder({
         case IndicatorType.OPENING_RANGE_AM_PLUS:
         case IndicatorType.OPENING_RANGE_AM_MINUS:
           return { orb_minutes: getVal("orb_minutes", 30) };
+        case IndicatorType.TRIANGLE_ASCENDING:
+        case IndicatorType.TRIANGLE_DESCENDING:
+        case IndicatorType.TRIANGLE_SYMMETRIC:
+          return {
+            pivot_window: getVal("pivot_window", 5),
+            min_pivots: getVal("min_pivots", 2),
+            tri_lookback: getVal("tri_lookback", 35),
+            slope_tolerance: getVal("slope_tolerance", 1.5),
+            min_r_squared: getVal("min_r_squared", 0.65)
+          };
         default:
           return {};
       }
@@ -1631,7 +1889,7 @@ export default function WizardStrategyBuilder({
           target: 0,
           timeframe: wizardTf
         };
-      } else if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+      } else if (wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME) {
         newCond = {
           type: "indicator_comparison",
           source: {
@@ -1682,6 +1940,7 @@ export default function WizardStrategyBuilder({
           },
           comparator: wizardComparator as "DISTANCE_GT" | "DISTANCE_LT",
           value_pct: wizardDistanceValue,
+          position: wizardDistancePosition,
           timeframe: wizardTf
         };
       }
@@ -1709,6 +1968,12 @@ export default function WizardStrategyBuilder({
       setWizardSourceSession("ap.RTH");
       setWizardTargetSession("ap.RTH");
       setWizardDistanceLevelSession("ap.RTH");
+      setWizardSourcePivotWindow(5);
+      setWizardSourceMinPivots(2);
+      setWizardSourceTriLookback(35);
+      setWizardSourceSlopeTolerance(1.5);
+      setWizardSourceMinRSquared(0.65);
+      setWizardDistancePosition('any');
     };
 
     const renderLivePreviewTags = () => {
@@ -1791,6 +2056,11 @@ export default function WizardStrategyBuilder({
           if (paramName === "days_lookback") return wizardSourceDays;
           if (paramName === "orb_minutes") return wizardSourceOrb;
           if (paramName === "ap_session") return wizardSourceSession;
+          if (paramName === "pivot_window") return wizardSourcePivotWindow;
+          if (paramName === "min_pivots") return wizardSourceMinPivots;
+          if (paramName === "tri_lookback") return wizardSourceTriLookback;
+          if (paramName === "slope_tolerance") return wizardSourceSlopeTolerance;
+          if (paramName === "min_r_squared") return wizardSourceMinRSquared;
         } else if (role === "target") {
           if (paramName === "period") return wizardTargetPeriod;
           if (paramName === "stdDev") return wizardTargetDev;
@@ -1812,6 +2082,11 @@ export default function WizardStrategyBuilder({
           if (paramName === "days_lookback") setWizardSourceDays(val);
           if (paramName === "orb_minutes") setWizardSourceOrb(val);
           if (paramName === "ap_session") setWizardSourceSession(val);
+          if (paramName === "pivot_window") setWizardSourcePivotWindow(val);
+          if (paramName === "min_pivots") setWizardSourceMinPivots(val);
+          if (paramName === "tri_lookback") setWizardSourceTriLookback(val);
+          if (paramName === "slope_tolerance") setWizardSourceSlopeTolerance(val);
+          if (paramName === "min_r_squared") setWizardSourceMinRSquared(val);
         } else if (role === "target") {
           if (paramName === "period") setWizardTargetPeriod(val);
           if (paramName === "stdDev") setWizardTargetDev(val);
@@ -1929,6 +2204,130 @@ export default function WizardStrategyBuilder({
               />
             </div>
           );
+        case IndicatorType.TRIANGLE_ASCENDING:
+        case IndicatorType.TRIANGLE_DESCENDING:
+        case IndicatorType.TRIANGLE_SYMMETRIC:
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 6, width: "100%", flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 60px", minWidth: "60px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Pivot Win.</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={20}
+                    value={getVal("pivot_window")}
+                    onChange={(e) => setVal("pivot_window", Math.max(2, parseInt(e.target.value) || 5))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Pivot Window: candles to left and right required to confirm a Swing High/Low"
+                  />
+                </div>
+                <div style={{ flex: "1 1 60px", minWidth: "60px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Min Pivots</span>
+                  <input
+                    type="number"
+                    min={2}
+                    max={50}
+                    value={getVal("min_pivots")}
+                    onChange={(e) => setVal("min_pivots", Math.max(2, parseInt(e.target.value) || 2))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Min Pivots: minimum swing highs and lows required to fit trend lines (min 2)"
+                  />
+                </div>
+                <div style={{ flex: "1 1 60px", minWidth: "60px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Lookback</span>
+                  <input
+                    type="number"
+                    min={10}
+                    max={200}
+                    value={getVal("tri_lookback")}
+                    onChange={(e) => setVal("tri_lookback", Math.max(10, parseInt(e.target.value) || 35))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Lookback: how many bars back to search for pivots"
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, width: "100%", flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ flex: "1 1 90px", minWidth: "90px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)", display: "block", marginBottom: 2 }}>Slope Tol. (%)</span>
+                  <input
+                    type="number"
+                    min={0.01}
+                    max={10.0}
+                    step={0.1}
+                    value={getVal("slope_tolerance")}
+                    onChange={(e) => setVal("slope_tolerance", Math.max(0.01, parseFloat(e.target.value) || 1.5))}
+                    style={{
+                      width: "100%",
+                      backgroundColor: "var(--color-ec-bg-sidebar)",
+                      border: "0.5px solid var(--color-ec-border)",
+                      borderRadius: 5,
+                      padding: "5px 8px",
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: "var(--color-ec-text-primary)",
+                      fontFamily: "var(--color-ec-sans)",
+                      outline: "none",
+                    }}
+                    title="Slope Tolerance (%): max total price change over the lookback window to consider a trend line 'flat'"
+                  />
+                </div>
+                <div style={{ flex: "1 2 110px", minWidth: "110px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)" }}>Min R²</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)" }}>{Number(getVal("min_r_squared") ?? 0.65).toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={getVal("min_r_squared")}
+                    onChange={(e) => setVal("min_r_squared", parseFloat(e.target.value) || 0.65)}
+                    style={{
+                      width: "100%",
+                      accentColor: "var(--color-ec-copper)",
+                      cursor: "pointer",
+                    }}
+                    title="Minimum R-squared quality for trend lines (0 = no requirement, 1 = perfect fit)"
+                  />
+                </div>
+              </div>
+            </div>
+          );
         default:
           return null;
       }
@@ -1982,7 +2381,15 @@ export default function WizardStrategyBuilder({
                 <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Indica la variable de entrada:</span>
                 <WizardIndicatorSelector
                   value={wizardSource}
-                  onChange={(val) => setWizardSource(val)}
+                  onChange={(val) => {
+                    setWizardSource(val);
+                    if (val === IndicatorType.ELAPSED_TIME) {
+                      setWizardTargetValue(60);
+                    } else if (val === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+                      setWizardTargetValue(20);
+                    }
+                  }}
+                  exclude={mode !== 'exit' ? [IndicatorType.ELAPSED_TIME] : []}
                 />
               </div>
               {renderParameterInputs(wizardSource, "source")}
@@ -2074,7 +2481,9 @@ export default function WizardStrategyBuilder({
               </select>
             </div>
           );
-        case 4:
+        case 4: {
+          const allowedCompTargets = getAllowedTargets(wizardSource, "indicator_comparison");
+          const showToggle = allowedCompTargets.length > 0;
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 5: Objetivo / Cruce</span>
@@ -2085,65 +2494,234 @@ export default function WizardStrategyBuilder({
               </span>
               {wizardMode === "comparison" ? (
                 <>
-                  <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                    <button
-                      type="button"
-                      onClick={() => setWizardTargetType("fixed")}
-                      style={{
-                        flex: 1,
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        transition: "all 150ms ease",
-                        backgroundColor: wizardTargetType === "fixed" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
-                        border: wizardTargetType === "fixed" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
-                        color: wizardTargetType === "fixed" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
-                      }}
-                    >
-                      Valor Fijo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setWizardTargetType("indicator")}
-                      style={{
-                        flex: 1,
-                        padding: "6px 12px",
-                        borderRadius: 4,
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 9,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        transition: "all 150ms ease",
-                        backgroundColor: wizardTargetType === "indicator" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
-                        border: wizardTargetType === "indicator" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
-                        color: wizardTargetType === "indicator" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
-                      }}
-                    >
-                      Otro Indicador
-                    </button>
-                  </div>
-                  {wizardTargetType === "fixed" ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
-                      <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor Numérico (en USD):</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={wizardTargetValue}
-                        onChange={(e) => setWizardTargetValue(parseFloat(e.target.value) || 0)}
-                        style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 8px", borderRadius: 4 }}
-                      />
+                  {showToggle && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                      <button
+                        type="button"
+                        onClick={() => setWizardTargetType("fixed")}
+                        style={{
+                          flex: 1,
+                          padding: "6px 12px",
+                          borderRadius: 4,
+                          fontFamily: "var(--color-ec-sans)",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          transition: "all 150ms ease",
+                          backgroundColor: wizardTargetType === "fixed" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
+                          border: wizardTargetType === "fixed" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
+                          color: wizardTargetType === "fixed" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
+                        }}
+                      >
+                        Valor Fijo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWizardTargetType("indicator")}
+                        style={{
+                          flex: 1,
+                          padding: "6px 12px",
+                          borderRadius: 4,
+                          fontFamily: "var(--color-ec-sans)",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          transition: "all 150ms ease",
+                          backgroundColor: wizardTargetType === "indicator" ? "rgba(216, 122, 61, 0.08)" : "var(--color-ec-bg-surface)",
+                          border: wizardTargetType === "indicator" ? "1px solid var(--color-ec-copper)" : "0.5px solid var(--color-ec-border)",
+                          color: wizardTargetType === "indicator" ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
+                        }}
+                      >
+                        Otro Indicador
+                      </button>
                     </div>
+                  )}
+                  {wizardTargetType === "fixed" ? (
+                    isVolumeIndicator(wizardSource) ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Volumen (en millones de acciones, ej. 1.5 para 1.5M):</span>
+                        <div style={{ position: "relative", width: "100%" }}>
+                          <input
+                            type="text"
+                            value={wizardTargetValueText}
+                            onChange={(e) => {
+                              const txt = e.target.value;
+                              setWizardTargetValueText(txt);
+                              const clean = txt.trim().toLowerCase();
+                              const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
+                              const num = parseFloat(numericStr);
+                              if (!isNaN(num)) {
+                                setWizardTargetValue(num * 1000000);
+                              }
+                            }}
+                            placeholder="e.g. 1.5"
+                            style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 24px 5px 8px", borderRadius: 4, boxSizing: "border-box" }}
+                          />
+                          <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            pointerEvents: 'none'
+                          }}>M</span>
+                        </div>
+                      </div>
+                    ) : wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Tiempo Transcurrido (en minutos):</span>
+                        <div style={{ position: "relative", width: "100%" }}>
+                          <input
+                            type="number"
+                            min="1"
+                            value={wizardTargetValue || (wizardSource === IndicatorType.ELAPSED_TIME ? 60 : 20)}
+                            onChange={(e) => setWizardTargetValue(Math.max(1, parseInt(e.target.value) || 0))}
+                            style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 40px 5px 8px", borderRadius: 4, boxSizing: "border-box" }}
+                          />
+                          <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            pointerEvents: 'none'
+                          }}>mins</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor Numérico (en USD):</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={wizardTargetValue}
+                          onChange={(e) => setWizardTargetValue(parseFloat(e.target.value) || 0)}
+                          style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 8px", borderRadius: 4 }}
+                        />
+                      </div>
+                    )
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
                       <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Selecciona Indicador Objetivo:</span>
                       <WizardIndicatorSelector
                         value={wizardTargetIndicator}
                         onChange={(val) => setWizardTargetIndicator(val)}
+                        allowedTargets={allowedCompTargets}
                       />
                       {renderParameterInputs(wizardTargetIndicator, "target")}
+
+                      {/* Offset Checkbox and Input for Comparison Target */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            id="wizard-target-offset-checkbox"
+                            checked={wizardTargetOffset > 0}
+                            onChange={(e) => {
+                              setWizardTargetOffset(e.target.checked ? 1 : 0);
+                            }}
+                            style={{
+                              width: 14,
+                              height: 14,
+                              accentColor: 'var(--color-ec-copper)',
+                              cursor: 'pointer'
+                            }}
+                          />
+                          <label
+                            htmlFor="wizard-target-offset-checkbox"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: 'var(--color-ec-text-primary)',
+                              cursor: 'pointer',
+                              userSelect: 'none'
+                            }}
+                          >
+                            ¿Offset a Variable de cruce?
+                          </label>
+                          <span
+                            onMouseEnter={() => setShowOffsetComparisonTooltip(true)}
+                            onMouseLeave={() => setShowOffsetComparisonTooltip(false)}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 12,
+                              height: 12,
+                              borderRadius: "50%",
+                              border: "0.5px solid var(--color-ec-border)",
+                              color: "var(--color-ec-text-muted)",
+                              fontSize: 8,
+                              fontWeight: "bold",
+                              cursor: "help"
+                            }}
+                          >
+                            ?
+                          </span>
+                        </div>
+
+                        {showOffsetComparisonTooltip && (
+                          <div style={{
+                            backgroundColor: "var(--color-ec-bg-elevated)",
+                            border: "0.5px solid var(--color-ec-border)",
+                            borderRadius: 6,
+                            padding: 8,
+                            fontSize: 8,
+                            color: "var(--color-ec-text-muted)",
+                            lineHeight: 1.3,
+                            marginTop: 2
+                          }}>
+                            Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual.
+                          </div>
+                        )}
+
+                        {wizardTargetOffset > 0 && (
+                          <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 8, 
+                            paddingLeft: 20,
+                            marginTop: 2
+                          }}>
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: 'var(--color-ec-text-secondary)',
+                              fontFamily: 'var(--color-ec-sans)',
+                            }}>Velas atrás:</span>
+                            <select
+                              value={wizardTargetOffset}
+                              onChange={(e) => setWizardTargetOffset(Number(e.target.value))}
+                              style={{
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 4,
+                                padding: '2px 8px 2px 6px',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                outline: 'none',
+                                cursor: 'pointer',
+                                width: 55,
+                                textAlign: 'center'
+                              }}
+                            >
+                              {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                  {val}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </>
@@ -2157,6 +2735,113 @@ export default function WizardStrategyBuilder({
                       allowedTargets={getAllowedTargets(wizardSource, 'price_level_distance')}
                     />
                     {renderParameterInputs(wizardDistanceLevel, "distance_level")}
+
+                    {/* Offset Checkbox and Input for Distance Level */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          type="checkbox"
+                          id="wizard-distance-offset-checkbox"
+                          checked={wizardDistanceLevelOffset > 0}
+                          onChange={(e) => {
+                            setWizardDistanceLevelOffset(e.target.checked ? 1 : 0);
+                          }}
+                          style={{
+                            width: 14,
+                            height: 14,
+                            accentColor: 'var(--color-ec-copper)',
+                            cursor: 'pointer'
+                          }}
+                        />
+                        <label
+                          htmlFor="wizard-distance-offset-checkbox"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-primary)',
+                            cursor: 'pointer',
+                            userSelect: 'none'
+                          }}
+                        >
+                          ¿Offset a Variable de cruce?
+                        </label>
+                        <span
+                          onMouseEnter={() => setShowOffsetDistanceTooltip(true)}
+                          onMouseLeave={() => setShowOffsetDistanceTooltip(false)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 12,
+                            height: 12,
+                            borderRadius: "50%",
+                            border: "0.5px solid var(--color-ec-border)",
+                            color: "var(--color-ec-text-muted)",
+                            fontSize: 8,
+                            fontWeight: "bold",
+                            cursor: "help"
+                          }}
+                        >
+                          ?
+                        </span>
+                      </div>
+
+                      {showOffsetDistanceTooltip && (
+                        <div style={{
+                          backgroundColor: "var(--color-ec-bg-elevated)",
+                          border: "0.5px solid var(--color-ec-border)",
+                          borderRadius: 6,
+                          padding: 8,
+                          fontSize: 8,
+                          color: "var(--color-ec-text-muted)",
+                          lineHeight: 1.3,
+                          marginTop: 2
+                        }}>
+                          Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual.
+                        </div>
+                      )}
+
+                      {wizardDistanceLevelOffset > 0 && (
+                        <div style={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 8, 
+                          paddingLeft: 20,
+                          marginTop: 2
+                        }}>
+                          <span style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: 'var(--color-ec-text-secondary)',
+                            fontFamily: 'var(--color-ec-sans)',
+                          }}>Velas atrás:</span>
+                          <select
+                            value={wizardDistanceLevelOffset}
+                            onChange={(e) => setWizardDistanceLevelOffset(Number(e.target.value))}
+                            style={{
+                              backgroundColor: 'var(--color-ec-bg-sidebar)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              borderRadius: 4,
+                              padding: '2px 8px 2px 6px',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: 'var(--color-ec-copper)',
+                              fontFamily: 'var(--color-ec-sans)',
+                              outline: 'none',
+                              cursor: 'pointer',
+                              width: 55,
+                              textAlign: 'center'
+                            }}
+                          >
+                            {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                              <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                {val}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Distancia requerida (%):</span>
@@ -2169,10 +2854,35 @@ export default function WizardStrategyBuilder({
                       style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 8px", borderRadius: 4 }}
                     />
                   </div>
+                  {/* Distance Position Selector */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Posición:</span>
+                    <select
+                      value={wizardDistancePosition}
+                      onChange={(e) => setWizardDistancePosition(e.target.value as 'above' | 'below' | 'any')}
+                      style={{
+                        width: "100%",
+                        background: "var(--color-ec-bg-surface)",
+                        border: "0.5px solid var(--color-ec-border)",
+                        color: "var(--color-ec-text-primary)",
+                        fontSize: 11,
+                        padding: "6px 8px",
+                        borderRadius: 5,
+                        outline: "none",
+                        cursor: "pointer",
+                        marginTop: 2
+                      }}
+                    >
+                      <option value="any">Cualquiera (Any)</option>
+                      <option value="above">Por encima del nivel</option>
+                      <option value="below">Por debajo del nivel</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
           );
+        }
         default:
           return null;
       }
@@ -2566,7 +3276,7 @@ export default function WizardStrategyBuilder({
                           ...entryLogic,
                           entry_time_windows: [...windows, { from_time: tempFromTime, to_time: tempToTime }]
                         });
-                        setCompletedSteps((prev) => new Set(prev).add(2));
+                        setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "entry")));
                       }
                     }
                   }}
@@ -3830,13 +4540,88 @@ export default function WizardStrategyBuilder({
               className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${isReentriesAllowed ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
               onClick={() => setRiskManagement({
                 ...riskManagement,
-                accept_reentries: !isReentriesAllowed
+                accept_reentries: !isReentriesAllowed,
+                max_reentries: !isReentriesAllowed ? -1 : 0
               })}
             >
               <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${isReentriesAllowed ? 'left-4.5' : 'left-0.5'}`}></div>
             </div>
           </div>
         </div>
+
+        {/* Sutil selector de cantidad de reentradas si están activas */}
+        {isReentriesAllowed && (
+          <div 
+            className="flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-200"
+            style={{
+              borderTop: "0.5px dotted var(--color-ec-border)",
+              marginTop: "14px",
+              paddingTop: "14px",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+                Tipo de Reentradas
+              </span>
+              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 9, color: "var(--color-ec-text-muted)" }}>
+                Límite de reentradas adicionales permitidas
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? 'infinite' : 'limited'}
+                onChange={(e) => {
+                  if (e.target.value === 'infinite') {
+                    setRiskManagement({ ...riskManagement, max_reentries: -1 });
+                  } else {
+                    setRiskManagement({ ...riskManagement, max_reentries: 2 });
+                  }
+                }}
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-sidebar)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '5px 8px',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  fontFamily: 'var(--color-ec-sans)',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  height: '30px',
+                }}
+              >
+                <option value="infinite">Infinitas</option>
+                <option value="limited">Limitadas</option>
+              </select>
+              {riskManagement.max_reentries !== undefined && riskManagement.max_reentries >= 0 && (
+                <input
+                  type="number"
+                  min="0"
+                  value={riskManagement.max_reentries}
+                  onChange={(e) => {
+                    const val = Math.max(0, parseInt(e.target.value) || 0);
+                    setRiskManagement({ ...riskManagement, max_reentries: val });
+                  }}
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '5px 8px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: 'var(--color-ec-text-primary)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    outline: 'none',
+                    width: '50px',
+                    height: '30px',
+                    textAlign: 'center',
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Informative text box */}
         <div style={{
@@ -3874,7 +4659,10 @@ export default function WizardStrategyBuilder({
             color: isReentriesAllowed ? "var(--color-ec-copper-bright)" : "var(--color-ec-text-muted)",
             border: isReentriesAllowed ? "0.5px solid rgba(216, 122, 61, 0.2)" : "0.5px solid rgba(255, 255, 255, 0.1)"
           }}>
-            {isReentriesAllowed ? "Permitir Reentradas" : "Bloquear Reentradas"}
+            {isReentriesAllowed 
+              ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
+              : "Reentradas: Desactivado"
+            }
           </span>
         </div>
       </div>
@@ -3905,6 +4693,26 @@ export default function WizardStrategyBuilder({
         stepName: "Día de Aplicación"
       });
     });
+
+    // Sesión de Aplicación
+    const sessionNames: Record<string, string> = {
+      pre: "Pre-Market (04:00 - 09:30)",
+      rth: "Regular Hours (09:30 - 16:00)",
+      post: "After-Market (16:00 - 20:00)",
+      custom: `Custom (${wizardCustomStartTime} - ${wizardCustomEndTime})`
+    };
+    if (wizardMarketSessions && wizardMarketSessions.length > 0) {
+      const activeLabels = wizardMarketSessions.map(id => sessionNames[id] || id);
+      list.push({
+        label: `Sesión: ${activeLabels.join(", ")}`,
+        stepName: "Sesión de Aplicación"
+      });
+    } else {
+      list.push({
+        label: "Sesión: Ninguna",
+        stepName: "Sesión de Aplicación"
+      });
+    }
     
     // 3. Lógica de Entrada
     const entryConds = getConditionStrings(entryLogic.root_condition, entryLogic.timeframe);
@@ -3986,7 +4794,9 @@ export default function WizardStrategyBuilder({
     
     // Reentries
     list.push({
-      label: riskManagement.accept_reentries !== false ? "Reentradas: Permitidas" : "Reentradas: Bloqueadas",
+      label: riskManagement.accept_reentries !== false 
+        ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
+        : "Reentradas: Bloqueadas",
       stepName: "Gestión de Riesgo"
     });
     
@@ -4033,6 +4843,7 @@ export default function WizardStrategyBuilder({
             const categories: Record<string, string[]> = {
               "Dirección": [],
               "Día de Aplicación": [],
+              "Sesión de Aplicación": [],
               "Lógica de Entrada": [],
               "Lógica de Salida": [],
               "Gestión de Riesgo": [],
@@ -4124,8 +4935,10 @@ export default function WizardStrategyBuilder({
 
 
   /* ── Dynamic full-text tag generators grouped by category ── */
+  /* ── Dynamic full-text tag generators grouped by category ── */
   const directionTags = useMemo(() => {
-    if (!bias || currentStep === 5) return [];
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (!bias || currentStep === summaryStepIdx) return [];
     return [{
       label: bias === "long" ? "▲ Long" : "▼ Short",
       color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
@@ -4141,7 +4954,8 @@ export default function WizardStrategyBuilder({
   }, [bias, currentStep]);
 
   const applyDayTags = useMemo(() => {
-    if (currentStep === 5) return [];
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (currentStep === summaryStepIdx) return [];
     const list = [];
     const dayLabel = applyDay === "gap_day" ? "Gap Day" : applyDay === "gap_1_day" ? "Gap +1 Day" : "Gap +2 Day";
     list.push({
@@ -4165,8 +4979,48 @@ export default function WizardStrategyBuilder({
     return list;
   }, [applyDay, postgapPreconditions, currentStep]);
 
+  const marketSessionsTags = useMemo(() => {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    const marketSessionsStepIdx = STEPS.findIndex(s => s.key === "market_sessions");
+    if (currentStep === summaryStepIdx || currentStep < marketSessionsStepIdx) return [];
+    
+    const list: { label: string; color: string; onRemove: () => void }[] = [];
+    const sessionNames: Record<string, string> = {
+      pre: "Pre-Market",
+      rth: "Regular Hours",
+      post: "After-Market",
+      custom: `Custom (${wizardCustomStartTime}-${wizardCustomEndTime})`
+    };
+    
+    wizardMarketSessions.forEach((s) => {
+      list.push({
+        label: sessionNames[s] || s,
+        color: "var(--color-ec-copper)",
+        onRemove: () => {
+          setWizardMarketSessions(prev => {
+            const next = prev.filter(x => x !== s);
+            setCompletedSteps((completed) => {
+              const nextSet = new Set(completed);
+              const idx = STEPS.findIndex(st => st.key === "market_sessions");
+              if (next.length > 0) {
+                nextSet.add(idx);
+              } else {
+                nextSet.delete(idx);
+              }
+              return nextSet;
+            });
+            return next;
+          });
+        }
+      });
+    });
+    return list;
+  }, [wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, currentStep]);
+
   const entryTags = useMemo(() => {
-    if (currentStep === 5 || currentStep <= 2) {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    const entryStepIdx = STEPS.findIndex(s => s.key === "entry");
+    if (currentStep === summaryStepIdx || currentStep < entryStepIdx) {
       return [];
     }
     const list: { label: string; color: string; onRemove: () => void }[] = [];
@@ -4199,7 +5053,8 @@ export default function WizardStrategyBuilder({
   }, [entryLogic, currentStep]);
 
   const exitTags = useMemo(() => {
-    if (currentStep === 5) return [];
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (currentStep === summaryStepIdx) return [];
     return getConditionTags(
       exitLogic.root_condition,
       exitLogic.timeframe,
@@ -4208,7 +5063,9 @@ export default function WizardStrategyBuilder({
   }, [exitLogic, currentStep]);
 
   const riskTags = useMemo(() => {
-    if (currentStep === 5 || currentStep < 4 || (wizardRiskStep < 3 && !completedSteps.has(4))) {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    const riskStepIdx = STEPS.findIndex(s => s.key === "risk");
+    if (currentStep === summaryStepIdx || currentStep < riskStepIdx || (wizardRiskStep < 3 && !completedSteps.has(riskStepIdx))) {
       return [];
     }
     const list = [];
@@ -4316,12 +5173,15 @@ export default function WizardStrategyBuilder({
 
     // Re-entries
     list.push({
-      label: riskManagement.accept_reentries !== false ? "Reentradas: Permitidas" : "Reentradas: Bloqueadas",
+      label: riskManagement.accept_reentries !== false 
+        ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
+        : "Reentradas: Bloqueadas",
       color: "#fbbf24",
       onRemove: () => {
         setRiskManagement({
           ...riskManagement,
-          accept_reentries: !riskManagement.accept_reentries
+          accept_reentries: !riskManagement.accept_reentries,
+          max_reentries: !riskManagement.accept_reentries ? -1 : 0
         });
       }
     });
@@ -4653,6 +5513,20 @@ export default function WizardStrategyBuilder({
               </div>
             )}
 
+            {/* Sesión de Aplicación */}
+            {marketSessionsTags.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={sectionHeaderStyle}>Sesión de Aplicación</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {marketSessionsTags.map((tag, idx) => (
+                    <Fragment key={idx}>
+                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Lógica de Entrada */}
             {entryTags.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -4723,9 +5597,9 @@ export default function WizardStrategyBuilder({
             }}>
               <span>
                 Paso {currentStep + 1} de {STEPS.length}
-                {currentStep === 4 && ` (Riesgo: ${wizardRiskStep + 1} de 4)`}
+                {STEPS[currentStep]?.key === "risk" && ` (Riesgo: ${wizardRiskStep + 1} de 4)`}
               </span>
-              {currentStep === 4 && (
+              {STEPS[currentStep]?.key === "risk" && (
                 <div style={{ display: "flex", gap: 4 }}>
                   {Array.from({ length: 4 }).map((_, idx) => (
                     <div
@@ -4746,10 +5620,10 @@ export default function WizardStrategyBuilder({
                 </div>
               )}
             </div>
-
+ 
             {renderStep()}
           </div>
-
+ 
           {/* Navigation Footer */}
           <div style={{
             display: "flex",
@@ -4762,7 +5636,7 @@ export default function WizardStrategyBuilder({
             {currentStep > 0 ? (
               <button
                 onClick={() => {
-                  if (currentStep === 4 && wizardRiskStep > 0) {
+                  if (STEPS[currentStep]?.key === "risk" && wizardRiskStep > 0) {
                     setWizardRiskStep((prev) => prev - 1);
                   } else {
                     setCurrentStep((prev) => prev - 1);
@@ -4795,13 +5669,13 @@ export default function WizardStrategyBuilder({
             ) : (
               <div />
             )}
-
+ 
             {currentStep < STEPS.length - 1 ? (
-              (currentStep === 4 && wizardRiskStep === 3) ? (
+              (STEPS[currentStep]?.key === "risk" && wizardRiskStep === 3) ? (
                 <button
                   onClick={() => {
-                    setCompletedSteps((prev) => new Set(prev).add(4));
-                    setCurrentStep(5);
+                    setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
+                    setCurrentStep(STEPS.findIndex(s => s.key === "summary"));
                   }}
                   style={{
                     backgroundColor: "var(--color-ec-copper)",
@@ -4823,7 +5697,7 @@ export default function WizardStrategyBuilder({
                   <span>Resumen</span>
                   <span>→</span>
                 </button>
-              ) : currentStep === 4 ? (
+              ) : STEPS[currentStep]?.key === "risk" ? (
                 <button
                   onClick={() => {
                     if (wizardRiskStep === 1 && riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === TakeProfitMode.PARTIAL) {

@@ -169,12 +169,12 @@ export default function Chart({
   }, [activeStrategy]);
 
   const swingActive = useMemo(() => {
-    const rm = (activeStrategy?.definition?.risk_management || activeStrategy?.risk_management) as any;
+    const rm = (activeStrategy?.definition?.risk_management || (activeStrategy as any)?.risk_management) as any;
     return rm?.swing_option?.active || false;
   }, [activeStrategy]);
 
   const swingTargetDay = useMemo(() => {
-    const rm = (activeStrategy?.definition?.risk_management || activeStrategy?.risk_management) as any;
+    const rm = (activeStrategy?.definition?.risk_management || (activeStrategy as any)?.risk_management) as any;
     return rm?.swing_option?.target_day || "gap_1_day";
   }, [activeStrategy]);
 

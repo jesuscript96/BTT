@@ -57,6 +57,7 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "entry_root": entry_logic.get("root_condition", {}),
         "exit_root": exit_logic.get("root_condition", {}),
         "accept_reentries": risk.get("accept_reentries", False),
+        "max_reentries": risk.get("max_reentries", -1 if risk.get("accept_reentries", False) else 0),
         "entry_time_windows": entry_logic.get("entry_time_windows", []),
         "entry_candle_delay": entry_logic.get("candle_delay"),
         "exit_candle_delay": exit_logic.get("candle_delay"),
@@ -143,6 +144,7 @@ def translate_strategy(
         "tp_stop": tp_stop,
         "trail_pct": trail_pct,
         "accept_reentries": compiled["accept_reentries"],
+        "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
     }
 

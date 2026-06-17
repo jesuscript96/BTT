@@ -71,3 +71,19 @@ backend/gcs-key*.json
 backend/scripts/catchup_checkpoint.json
 backend/scripts/catchup_run.log
 backend/scripts/hotcache_run.log
+
+# Binary data and caches
+*.parquet
+*.parquet.tmp
+
+# Local debug / scratch scripts (never commit)
+scratch/
+backend/scratch/
+/test_*.py
+backend/test_*.py
+/inspect_*.py
+/check_*.py
+/find_*.py
+/query_api_test.py
+/read_task_logs.py
+

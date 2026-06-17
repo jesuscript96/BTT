@@ -17,27 +17,23 @@ interface ParameterConfig {
 }
 
 const SECTION_PARAMS: ParameterConfig[] = [
-  { key: "rth_close", label: "Min Open price", unit: "$", placeholder: "0.00" },
-  { key: "pm_open", label: "Min Open PM price", unit: "$", placeholder: "0.00" },
-  { key: "pmh_gap_pct_min", label: "PM High Gap min", unit: "%", placeholder: "min 10%", min: 10 },
-  { key: "pmh_gap_pct_max", label: "PM High Gap max", unit: "%", placeholder: "0.0" },
-  { key: "pm_volume", label: "Min Premarket total volume", unit: "M", placeholder: "0.0" },
-  { key: "gap_pct_min", label: "Gap min", unit: "%", placeholder: "min 10%", min: 10 },
-  { key: "gap_pct_max", label: "Gap max", unit: "%", placeholder: "0.0" },
-  { key: "rth_volume", label: "Min RTH Total Volume", unit: "M", placeholder: "0.0" },
+  { key: "rth_close", label: "Open price", unit: "$", placeholder: "0.00" },
+  { key: "pm_open", label: "Open PM price", unit: "$", placeholder: "0.00" },
+  { key: "pmh_gap_pct", label: "PM High Gap", unit: "%", placeholder: "0.0" },
+  { key: "pm_volume", label: "Premarket total volume", unit: "M", placeholder: "0.0" },
+  { key: "gap_pct", label: "Gap", unit: "%", placeholder: "0.0" },
+  { key: "rth_volume", label: "RTH Total volume", unit: "M", placeholder: "0.0" },
   { key: "rth_range_pct", label: "Bar RTH Range", unit: "%", placeholder: "0.0" },
 ];
 
 const PARAM_DESCRIPTIONS: Record<string, string> = {
-  rth_close: "Precio mínimo de la acción en la apertura de mercado",
-  pm_open: "Precio de apertura del Premarket",
-  pmh_gap_pct_min: "Precio mínimo de la sesión de premarket",
-  pmh_gap_pct_max: "Precio máximo de la sesión de premarket",
-  pm_volume: "Volumen mínimo acumulado durante el premarket",
-  gap_pct_min: "% de Gap mínimo",
-  gap_pct_max: "% de Gap máximo",
-  rth_volume: "Volumen mínimo durante la sesión de mercado REGULAR",
-  rth_range_pct: "Rango de la vela en temporalidad diaria, es decir, el % de subida o bajada que ha hecho la vela este día (se permite buscar tanto para +% como para -%)",
+  rth_close: "Precio de la acción en la apertura de mercado regular (Open price)",
+  pm_open: "Precio de la acción en la apertura del Premarket (Open PM price)",
+  pmh_gap_pct: "Porcentaje de cambio entre el precio de cierre de ayer (Previous Close) y el máximo alcanzado en el Premarket (Premarket High)",
+  pm_volume: "Volumen total acumulado durante la sesión de premarket",
+  gap_pct: "El porcentaje de Gap de apertura (Gap)",
+  rth_volume: "Volumen total durante la sesión de mercado regular (RTH Total volume) - Especificado en millones (M)",
+  rth_range_pct: "Rango de la vela en la sesión regular (máximo a mínimo o porcentaje de movimiento)",
 };
 
 type SectionId = "gap_day" | "gap_plus_1_day" | "gap_plus_2_day";
@@ -52,7 +48,9 @@ interface IncludedCondition {
   section: SectionId;
   paramKey: string;
   label: string;
-  value: number;
+  op: string; // '>=', '<=', '>', '<', 'between'
+  val1: number;
+  val2?: number;
   unit: string;
 }
 
@@ -69,7 +67,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [tempName, setTempName] = useState("");
-  const [values, setValues] = useState<Record<SectionId, Record<string, string>>>({
+  const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string }>>>({
     gap_day: {},
     gap_plus_1_day: {},
     gap_plus_2_day: {},
@@ -91,14 +89,47 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleInputChange = (section: SectionId, paramKey: string, val: string) => {
-    setValues((prev) => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        [paramKey]: val,
-      },
-    }));
+  const getParamValueObj = (section: SectionId, paramKey: string) => {
+    return values[section][paramKey] || { op: ">=", val1: "", val2: "" };
+  };
+
+  const handleVal1Change = (section: SectionId, paramKey: string, val1: string) => {
+    setValues((prev) => {
+      const current = prev[section][paramKey] || { op: ">=", val1: "", val2: "" };
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          [paramKey]: { ...current, val1 },
+        },
+      };
+    });
+  };
+
+  const handleVal2Change = (section: SectionId, paramKey: string, val2: string) => {
+    setValues((prev) => {
+      const current = prev[section][paramKey] || { op: ">=", val1: "", val2: "" };
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          [paramKey]: { ...current, val2 },
+        },
+      };
+    });
+  };
+
+  const handleOpChange = (section: SectionId, paramKey: string, op: string) => {
+    setValues((prev) => {
+      const current = prev[section][paramKey] || { op: ">=", val1: "", val2: "" };
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          [paramKey]: { ...current, op },
+        },
+      };
+    });
   };
 
   const toggleSection = (section: SectionId) => {
@@ -108,12 +139,21 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
     }));
   };
 
-  const getValidationError = (param: ParameterConfig, valStr: string): string | null => {
-    if (!valStr) return null;
-    const val = parseFloat(valStr);
-    if (isNaN(val)) return "Valor inválido";
-    if (param.min !== undefined && val < param.min) {
-      return `Mínimo ${param.min}%`;
+  const getValidationError = (param: ParameterConfig, op: string, val1Str: string, val2Str: string): string | null => {
+    if (!val1Str && !val2Str) return null;
+    if (val1Str) {
+      const val1 = parseFloat(val1Str);
+      if (isNaN(val1)) return "Valor 1 inválido";
+      if (param.min !== undefined && val1 < param.min) {
+        return `Mínimo ${param.min}%`;
+      }
+    }
+    if (op === "between") {
+      if (!val1Str || !val2Str) return "Faltan valores";
+      const val1 = parseFloat(val1Str);
+      const val2 = parseFloat(val2Str);
+      if (isNaN(val2)) return "Valor 2 inválido";
+      if (val1 > val2) return "Mín > Máx";
     }
     return null;
   };
@@ -123,13 +163,17 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
   };
 
   const handleIncludeToggle = (section: SectionId, param: ParameterConfig) => {
-    const valStr = values[section][param.key];
-    if (!valStr) return;
+    const obj = getParamValueObj(section, param.key);
+    const { op, val1: val1Str, val2: val2Str } = obj;
 
-    const error = getValidationError(param, valStr);
-    if (error) return; // Don't include if there's a validation error
+    if (!val1Str && op !== "between") return;
+    if (op === "between" && (!val1Str || !val2Str)) return;
 
-    const val = parseFloat(valStr);
+    const error = getValidationError(param, op, val1Str, val2Str);
+    if (error) return;
+
+    const val1 = parseFloat(val1Str);
+    const val2 = op === "between" ? parseFloat(val2Str) : undefined;
     const exists = isConditionIncluded(section, param.key);
 
     if (exists) {
@@ -139,14 +183,15 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
       );
     } else {
       // Add it
-      const labelText = param.label;
       setIncludedConditions((prev) => [
         ...prev,
         {
           section,
           paramKey: param.key,
-          label: labelText,
-          value: val,
+          label: param.label,
+          op,
+          val1,
+          val2,
           unit: param.unit,
         },
       ]);
@@ -169,62 +214,84 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
 
     includedConditions.forEach((c) => {
       let fieldName = "";
-      let operator = "GREATER_THAN_OR_EQUAL";
-      let finalVal = c.value;
 
       // Map to exact DuckDB/Parquet columns
       if (c.section === "gap_day") {
         if (c.paramKey === "rth_close") fieldName = "Close Price";
         else if (c.paramKey === "pm_open") fieldName = "Min Open PM price";
-        else if (c.paramKey === "pmh_gap_pct_min") fieldName = "PMH Gap %";
-        else if (c.paramKey === "pmh_gap_pct_max") {
-          fieldName = "PMH Gap %";
-          operator = "LESS_THAN_OR_EQUAL";
-        } else if (c.paramKey === "pm_volume") {
-          fieldName = "Premarket Volume";
-          finalVal = c.value * 1000000; // in Millions
-          min_pm_volume = finalVal;
-        } else if (c.paramKey === "gap_pct_min") {
-          fieldName = "Open Gap %";
-          min_gap_pct = c.value;
-        } else if (c.paramKey === "gap_pct_max") {
-          fieldName = "Open Gap %";
-          operator = "LESS_THAN_OR_EQUAL";
-          max_gap_pct = c.value;
-        } else if (c.paramKey === "rth_volume") {
-          fieldName = "EOD Volume";
-          finalVal = c.value * 1000000; // in Millions
-          min_rth_volume = finalVal;
-        } else if (c.paramKey === "rth_range_pct") fieldName = "RTH Range %";
+        else if (c.paramKey === "pmh_gap_pct") fieldName = "PMH Gap %";
+        else if (c.paramKey === "pm_volume") fieldName = "Premarket Volume";
+        else if (c.paramKey === "gap_pct") fieldName = "Open Gap %";
+        else if (c.paramKey === "rth_volume") fieldName = "EOD Volume";
+        else if (c.paramKey === "rth_range_pct") fieldName = "RTH Range %";
       } else {
         // GAP+1 or GAP+2
         const lagSuffix = c.section === "gap_plus_1_day" ? "_1" : "_2";
         if (c.paramKey === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
         else if (c.paramKey === "pm_open") fieldName = `lead_open${lagSuffix}`;
-        else if (c.paramKey === "pmh_gap_pct_min") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
-        else if (c.paramKey === "pmh_gap_pct_max") {
-          fieldName = `lead_pmh_gap_pct${lagSuffix}`;
-          operator = "LESS_THAN_OR_EQUAL";
-        } else if (c.paramKey === "pm_volume") {
-          fieldName = `lead_pm_volume${lagSuffix}`;
-          finalVal = c.value * 1000000; // in Millions
-        } else if (c.paramKey === "gap_pct_min") fieldName = `lead_gap_pct${lagSuffix}`;
-        else if (c.paramKey === "gap_pct_max") {
-          fieldName = `lead_gap_pct${lagSuffix}`;
-          operator = "LESS_THAN_OR_EQUAL";
-        } else if (c.paramKey === "rth_volume") {
-          fieldName = `lead_rth_volume${lagSuffix}`;
-          finalVal = c.value * 1000000; // in Millions
-        } else if (c.paramKey === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
+        else if (c.paramKey === "pmh_gap_pct") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
+        else if (c.paramKey === "pm_volume") fieldName = `lead_pm_volume${lagSuffix}`;
+        else if (c.paramKey === "gap_pct") fieldName = `lead_gap_pct${lagSuffix}`;
+        else if (c.paramKey === "rth_volume") fieldName = `lead_rth_volume${lagSuffix}`;
+        else if (c.paramKey === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
       }
 
       if (fieldName) {
-        rules.push({
-          metric: fieldName,
-          operator,
-          valueType: "static",
-          value: finalVal.toString(),
-        });
+        const isVol = c.paramKey === "pm_volume" || c.paramKey === "rth_volume";
+        const val1_mapped = isVol ? c.val1 * 1000000 : c.val1;
+        const val2_mapped = (c.val2 !== undefined && isVol) ? c.val2 * 1000000 : c.val2;
+
+        if (c.op === "between") {
+          rules.push({
+            metric: fieldName,
+            operator: "GREATER_THAN_OR_EQUAL",
+            valueType: "static",
+            value: val1_mapped.toString(),
+          });
+          rules.push({
+            metric: fieldName,
+            operator: "LESS_THAN_OR_EQUAL",
+            valueType: "static",
+            value: val2_mapped!.toString(),
+          });
+
+          // Legacy filters (top-level properties)
+          if (c.section === "gap_day") {
+            if (c.paramKey === "gap_pct") {
+              min_gap_pct = val1_mapped;
+              max_gap_pct = val2_mapped;
+            } else if (c.paramKey === "pm_volume") {
+              min_pm_volume = val1_mapped;
+            } else if (c.paramKey === "rth_volume") {
+              min_rth_volume = val1_mapped;
+            }
+          }
+        } else {
+          let opName = "";
+          if (c.op === ">=") opName = "GREATER_THAN_OR_EQUAL";
+          else if (c.op === "<=") opName = "LESS_THAN_OR_EQUAL";
+          else if (c.op === ">") opName = "GREATER_THAN";
+          else if (c.op === "<") opName = "LESS_THAN";
+
+          rules.push({
+            metric: fieldName,
+            operator: opName,
+            valueType: "static",
+            value: val1_mapped.toString(),
+          });
+
+          // Legacy filters (top-level properties)
+          if (c.section === "gap_day") {
+            if (c.paramKey === "gap_pct") {
+              if (c.op === ">=" || c.op === ">") min_gap_pct = val1_mapped;
+              if (c.op === "<=" || c.op === "<") max_gap_pct = val1_mapped;
+            } else if (c.paramKey === "pm_volume" && (c.op === ">=" || c.op === ">")) {
+              min_pm_volume = val1_mapped;
+            } else if (c.paramKey === "rth_volume" && (c.op === ">=" || c.op === ">")) {
+              min_rth_volume = val1_mapped;
+            }
+          }
+        }
       }
     });
 
@@ -404,8 +471,8 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
               {isExpanded && (
                 <div style={{ padding: "12px 12px 20px 12px", display: "flex", flexDirection: "column", gap: 10, maxHeight: "200px", overflowY: "auto", overscrollBehaviorY: "contain" }}>
                   {SECTION_PARAMS.map((param) => {
-                    const val = values[sectionId][param.key] || "";
-                    const validationErr = getValidationError(param, val);
+                    const obj = getParamValueObj(sectionId, param.key);
+                    const validationErr = getValidationError(param, obj.op, obj.val1, obj.val2);
                     const included = isConditionIncluded(sectionId, param.key);
                     const labelText = param.label;
 
@@ -426,6 +493,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                           borderRadius: 4,
                           transition: "background-color 150ms ease",
                           backgroundColor: isHovered ? "var(--color-ec-bg-elevated)" : "transparent",
+                          position: "relative",
                         }}
                       >
                         {/* Parameter Label */}
@@ -451,11 +519,11 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                               let text = PARAM_DESCRIPTIONS[param.key];
                               if (param.key === "pm_open") {
                                 if (sectionId === "gap_day") {
-                                  text = "mínimo precio en el que comienza el Premarket del día del gap";
+                                  text = "Precio en el que comienza el Premarket del día del gap";
                                 } else if (sectionId === "gap_plus_1_day") {
-                                  text = "mínimo precio en el que comienza el Premarket del día del Gap +1";
+                                  text = "Precio en el que comienza el Premarket del día del Gap +1";
                                 } else if (sectionId === "gap_plus_2_day") {
-                                  text = "mínimo precio en el que comienza el Premarket del día del Gap +2";
+                                  text = "Precio en el que comienza el Premarket del día del Gap +2";
                                 }
                               }
                               // Estimar el ancho del tooltip basado en el largo del texto (entre 100px y 220px)
@@ -515,64 +583,137 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
 
                         {/* Input & Include Button */}
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          {/* Input box with units */}
-                          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                            {param.unit === "$" && (
-                              <span
+                          {/* Operator Selector */}
+                          <select
+                            value={obj.op}
+                            onChange={(e) => handleOpChange(sectionId, param.key, e.target.value)}
+                            disabled={included}
+                            style={{
+                              backgroundColor: "var(--color-ec-bg-elevated)",
+                              border: "0.5px solid var(--color-ec-border)",
+                              borderRadius: 5,
+                              padding: "6px 20px 6px 8px",
+                              fontFamily: "var(--color-ec-sans)",
+                              fontSize: 11,
+                              fontWeight: 500,
+                              color: "var(--color-ec-text-primary)",
+                              outline: "none",
+                              cursor: "pointer",
+                              opacity: included ? 0.6 : 1,
+                              width: obj.op === "between" ? "135px" : "52px",
+                              textAlign: "left",
+                            }}
+                          >
+                            <option value=">=">&gt;=</option>
+                            <option value="<=">&lt;=</option>
+                            <option value=">">&gt;</option>
+                            <option value="<">&lt;</option>
+                            <option value="between">Entre dos valores</option>
+                          </select>
+
+                          {/* Inputs with unit suffix/prefix */}
+                          {obj.op === "between" ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                {param.unit === "$" && (
+                                  <span style={{ position: "absolute", left: 8, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>$</span>
+                                )}
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={obj.val1}
+                                  placeholder="min"
+                                  onChange={(e) => handleVal1Change(sectionId, param.key, e.target.value)}
+                                  disabled={included}
+                                  style={{
+                                    backgroundColor: "var(--color-ec-bg-elevated)",
+                                    border: `0.5px solid ${validationErr ? "var(--color-ec-loss)" : "var(--color-ec-border)"}`,
+                                    borderRadius: 5,
+                                    padding: `6px ${param.unit !== "$" ? "18px" : "8px"} 6px ${param.unit === "$" ? "18px" : "8px"}`,
+                                    fontFamily: "var(--color-ec-sans)",
+                                    fontSize: 11,
+                                    fontWeight: 500,
+                                    color: "var(--color-ec-text-primary)",
+                                    outline: "none",
+                                    width: 60,
+                                    textAlign: "right",
+                                    opacity: included ? 0.6 : 1,
+                                  }}
+                                />
+                                {param.unit !== "$" && (!param.placeholder.includes("%") || obj.val1) && (
+                                  <span style={{ position: "absolute", right: 6, fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>{param.unit}</span>
+                                )}
+                              </div>
+                              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, color: "var(--color-ec-text-secondary)" }}>y</span>
+                              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                {param.unit === "$" && (
+                                  <span style={{ position: "absolute", left: 8, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>$</span>
+                                )}
+                                <input
+                                  type="number"
+                                  step="any"
+                                  value={obj.val2}
+                                  placeholder="max"
+                                  onChange={(e) => handleVal2Change(sectionId, param.key, e.target.value)}
+                                  disabled={included}
+                                  style={{
+                                    backgroundColor: "var(--color-ec-bg-elevated)",
+                                    border: `0.5px solid ${validationErr ? "var(--color-ec-loss)" : "var(--color-ec-border)"}`,
+                                    borderRadius: 5,
+                                    padding: `6px ${param.unit !== "$" ? "18px" : "8px"} 6px ${param.unit === "$" ? "18px" : "8px"}`,
+                                    fontFamily: "var(--color-ec-sans)",
+                                    fontSize: 11,
+                                    fontWeight: 500,
+                                    color: "var(--color-ec-text-primary)",
+                                    outline: "none",
+                                    width: 60,
+                                    textAlign: "right",
+                                    opacity: included ? 0.6 : 1,
+                                  }}
+                                />
+                                {param.unit !== "$" && (!param.placeholder.includes("%") || obj.val2) && (
+                                  <span style={{ position: "absolute", right: 6, fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>{param.unit}</span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                              {param.unit === "$" && (
+                                <span style={{ position: "absolute", left: 8, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>$</span>
+                              )}
+                              <input
+                                type="number"
+                                step="any"
+                                value={obj.val1}
+                                placeholder={param.placeholder}
+                                onChange={(e) => handleVal1Change(sectionId, param.key, e.target.value)}
+                                disabled={included}
                                 style={{
-                                  position: "absolute",
-                                  left: 8,
-                                  fontSize: 11,
-                                  color: "var(--color-ec-text-muted)",
+                                  backgroundColor: "var(--color-ec-bg-elevated)",
+                                  border: `0.5px solid ${validationErr ? "var(--color-ec-loss)" : "var(--color-ec-border)"}`,
+                                  borderRadius: 5,
+                                  padding: `6px ${param.unit !== "$" ? "22px" : "8px"} 6px ${param.unit === "$" ? "18px" : "8px"}`,
                                   fontFamily: "var(--color-ec-sans)",
-                                }}
-                              >
-                                $
-                              </span>
-                            )}
-                            <input
-                              type="number"
-                              step="any"
-                              value={val}
-                              placeholder={param.placeholder}
-                              onChange={(e) => handleInputChange(sectionId, param.key, e.target.value)}
-                              disabled={included}
-                              style={{
-                                backgroundColor: "var(--color-ec-bg-elevated)",
-                                border: `0.5px solid ${validationErr ? "var(--color-ec-loss)" : "var(--color-ec-border)"}`,
-                                borderRadius: 5,
-                                padding: `6px ${param.unit !== "$" ? "22px" : "8px"} 6px ${param.unit === "$" ? "18px" : "8px"}`,
-                                fontFamily: "var(--color-ec-sans)",
-                                fontSize: 11,
-                                fontWeight: 500,
-                                color: "var(--color-ec-text-primary)",
-                                outline: "none",
-                                width: 85,
-                                textAlign: "right",
-                                opacity: included ? 0.6 : 1,
-                              }}
-                            />
-                            {param.unit !== "$" && (!param.placeholder.includes("%") || val) && (
-                              <span
-                                style={{
-                                  position: "absolute",
-                                  right: 8,
                                   fontSize: 11,
-                                  fontWeight: 600,
-                                  color: "var(--color-ec-text-muted)",
-                                  fontFamily: "var(--color-ec-sans)",
+                                  fontWeight: 500,
+                                  color: "var(--color-ec-text-primary)",
+                                  outline: "none",
+                                  width: 85,
+                                  textAlign: "right",
+                                  opacity: included ? 0.6 : 1,
                                 }}
-                              >
-                                {param.unit}
-                              </span>
-                            )}
-                          </div>
+                              />
+                              {param.unit !== "$" && (!param.placeholder.includes("%") || obj.val1) && (
+                                <span style={{ position: "absolute", right: 8, fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>{param.unit}</span>
+                              )}
+                            </div>
+                          )}
 
                           {/* Include Button */}
                           <button
                             type="button"
                             onClick={() => handleIncludeToggle(sectionId, param)}
-                            disabled={!val || !!validationErr}
+                            disabled={(!obj.val1 && obj.op !== "between") || (obj.op === "between" && (!obj.val1 || !obj.val2)) || !!validationErr}
                             style={{
                               padding: "6px 12px",
                               borderRadius: 4,
@@ -591,7 +732,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                               color: included
                                 ? "var(--color-ec-copper-text)"
                                 : "var(--color-ec-copper)",
-                              opacity: !val || !!validationErr ? 0.3 : 1,
+                              opacity: ((!obj.val1 && obj.op !== "between") || (obj.op === "between" && (!obj.val1 || !obj.val2)) || !!validationErr) ? 0.3 : 1,
                             }}
                           >
                             {included ? "✓ Incluido" : "Incluir"}
@@ -687,8 +828,26 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                     }}
                   >
                     <strong style={{ color: "var(--color-ec-copper)" }}>{sectLabel}</strong>:{" "}
-                    {c.label} {c.paramKey.includes("max") ? "≤" : "≥"}{" "}
-                    {c.unit === "$" ? `$${c.value}` : `${c.value}${c.unit}`}
+                    {c.label}{" "}
+                    {c.op === "between" ? (
+                      <>
+                        entre{" "}
+                        <strong style={{ color: "var(--color-ec-text-primary)" }}>
+                          {c.unit === "$" ? `$${c.val1}` : `${c.val1}${c.unit}`}
+                        </strong>{" "}
+                        y{" "}
+                        <strong style={{ color: "var(--color-ec-text-primary)" }}>
+                          {c.unit === "$" ? `$${c.val2}` : `${c.val2}${c.unit}`}
+                        </strong>
+                      </>
+                    ) : (
+                      <>
+                        {c.op}{" "}
+                        <strong style={{ color: "var(--color-ec-text-primary)" }}>
+                          {c.unit === "$" ? `$${c.val1}` : `${c.val1}${c.unit}`}
+                        </strong>
+                      </>
+                    )}
                   </span>
                   <button
                     type="button"

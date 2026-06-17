@@ -19,6 +19,7 @@ import pandas as pd
 
 from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
 from app.services.portfolio_sim import simulate
+from app.backtester.engine import find_elapsed_time_minutes
 
 logger = logging.getLogger("backtester.engine")
 
@@ -212,6 +213,11 @@ def run_backtest(
     # Pre-compile strategy definition once — saves dict lookups per day inside the loop.
     compiled_strategy = compile_strategy_def(strategy_def) if strategy_def else None
 
+    # Extract Elapsed Time exit limit once for the entire backtest
+    exit_logic = strategy_def.get("exit_logic", {}) if strategy_def else {}
+    root_condition = exit_logic.get("root_condition", {}) if exit_logic else {}
+    elapsed_limit = find_elapsed_time_minutes(root_condition)
+
     empty_result = {
         "aggregate_metrics": _aggregate_metrics([], [], [], [], init_cash, risk_r),
         "day_results": [],
@@ -355,6 +361,7 @@ def run_backtest(
             exits_arr = cached["exits"]
             sig_direction = cached["direction"]
             sig_accept_reentries = cached["accept_reentries"]
+            sig_max_reentries = cached.get("max_reentries", -1)
 
             if not np.any(entries_arr):
                 del mini_df
@@ -378,6 +385,7 @@ def run_backtest(
             exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
             sig_direction = signals["direction"]
             sig_accept_reentries = signals.get("accept_reentries", False)
+            sig_max_reentries = signals.get("max_reentries", -1)
             sig_sl_stop = signals["sl_stop"]
             sig_sl_trail = signals["sl_trail"]
             sig_tp_stop = signals["tp_stop"]
@@ -391,6 +399,7 @@ def run_backtest(
                     "exits": exits_arr.copy(),
                     "direction": sig_direction,
                     "accept_reentries": sig_accept_reentries,
+                    "max_reentries": sig_max_reentries,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -492,6 +501,13 @@ def run_backtest(
         hs_operator = hs.get("operator", ">=")
         hs_offset_pct = float(hs.get("offset_pct", 0.0))
 
+        # Prepare timestamps array for elapsed time logic (numpy datetime64[ns] astype np.int64)
+        ts_arr = arrays["timestamp"]
+        if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
+            timestamps_arr = ts_arr.astype("datetime64[ns]").astype(np.int64)
+        else:
+            timestamps_arr = pd.to_datetime(ts_arr).values.astype("datetime64[ns]").astype(np.int64)
+
         try:
             sim_result = simulate(
                 close=arrays["close"],
@@ -516,6 +532,7 @@ def run_backtest(
                 tp_stop=sig_tp_stop,
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
+                max_reentries=sig_max_reentries,
                 patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,
@@ -528,6 +545,8 @@ def run_backtest(
                 pm_lows=arrays.get("pm_low"),
                 prev_highs=arrays.get("prev_high"),
                 prev_lows=arrays.get("prev_low"),
+                timestamps=timestamps_arr,
+                elapsed_limit=elapsed_limit,
             )
         except Exception as exc:
             logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")
@@ -1229,15 +1248,18 @@ def _get_market_sessions_mask(
         elif s == "post":
             # 16:00 - 20:00 (960 - 1200)
             mask |= (total_mins_arr >= 960) & (total_mins_arr < 1200)
-        elif s == "custom" and custom_start and custom_end:
+        elif s == "custom":
+            start_val = custom_start if custom_start else "09:30"
+            end_val = custom_end if custom_end else "16:00"
             try:
-                c_start = datetime.datetime.strptime(custom_start, "%H:%M")
-                c_end = datetime.datetime.strptime(custom_end, "%H:%M")
+                c_start = datetime.datetime.strptime(start_val, "%H:%M")
+                c_end = datetime.datetime.strptime(end_val, "%H:%M")
                 s_mins = c_start.hour * 60 + c_start.minute
                 e_mins = c_end.hour * 60 + c_end.minute
                 mask |= (total_mins_arr >= s_mins) & (total_mins_arr < e_mins)
             except Exception:
-                pass
+                # Fallback to RTH (9:30 - 16:00) if parsing fails
+                mask |= (total_mins_arr >= 570) & (total_mins_arr < 960)
 
     if cache_key is not None:
         _sessions_mask_cache[cache_key] = mask
