@@ -45,6 +45,8 @@ def simulate(
     pm_lows: np.ndarray | None = None,
     prev_highs: np.ndarray | None = None,
     prev_lows: np.ndarray | None = None,
+    timestamps: np.ndarray | None = None,
+    elapsed_limit: float = -1.0,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -56,6 +58,7 @@ def simulate(
     in_position = False
     entry_price = 0.0
     entry_idx = 0
+    entry_time = 0
     entry_fee_amount = 0.0
     size = 0.0
     trade_sl_price = 0.0
@@ -368,6 +371,14 @@ def simulate(
                 if mfe_pct > mfe:
                     mfe = mfe_pct
 
+            # elapsed time exit
+            if not exit_triggered and elapsed_limit > 0 and timestamps is not None:
+                elapsed_mins = (timestamps[i] - entry_time) / 6e10
+                if elapsed_mins >= elapsed_limit:
+                    exit_triggered = True
+                    exit_price = close[i]
+                    exit_reason = "Time Limit"
+
             # signal exit
             if not exit_triggered and exits[i] and not skip_exits:
                 exit_triggered = True
@@ -530,6 +541,7 @@ def simulate(
 
                     in_position = True
                     entry_idx = eff_entry_idx
+                    entry_time = timestamps[entry_idx] if timestamps is not None else 0
                     trade_sl_price = stop_loss_price
                     trail_extreme = entry_price
                     trail_activated = False

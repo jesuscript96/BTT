@@ -19,6 +19,7 @@ import pandas as pd
 
 from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
 from app.services.portfolio_sim import simulate
+from app.backtester.engine import find_elapsed_time_minutes
 
 logger = logging.getLogger("backtester.engine")
 
@@ -211,6 +212,11 @@ def run_backtest(
 
     # Pre-compile strategy definition once — saves dict lookups per day inside the loop.
     compiled_strategy = compile_strategy_def(strategy_def) if strategy_def else None
+
+    # Extract Elapsed Time exit limit once for the entire backtest
+    exit_logic = strategy_def.get("exit_logic", {}) if strategy_def else {}
+    root_condition = exit_logic.get("root_condition", {}) if exit_logic else {}
+    elapsed_limit = find_elapsed_time_minutes(root_condition)
 
     empty_result = {
         "aggregate_metrics": _aggregate_metrics([], [], [], [], init_cash, risk_r),
@@ -495,6 +501,13 @@ def run_backtest(
         hs_operator = hs.get("operator", ">=")
         hs_offset_pct = float(hs.get("offset_pct", 0.0))
 
+        # Prepare timestamps array for elapsed time logic (numpy datetime64[ns] astype np.int64)
+        ts_arr = arrays["timestamp"]
+        if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
+            timestamps_arr = ts_arr.astype("datetime64[ns]").astype(np.int64)
+        else:
+            timestamps_arr = pd.to_datetime(ts_arr).values.astype("datetime64[ns]").astype(np.int64)
+
         try:
             sim_result = simulate(
                 close=arrays["close"],
@@ -532,6 +545,8 @@ def run_backtest(
                 pm_lows=arrays.get("pm_low"),
                 prev_highs=arrays.get("prev_high"),
                 prev_lows=arrays.get("prev_low"),
+                timestamps=timestamps_arr,
+                elapsed_limit=elapsed_limit,
             )
         except Exception as exc:
             logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")
