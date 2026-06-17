@@ -36,6 +36,9 @@ export interface WizardDraft {
   exit_logic: ExitLogicType;
   risk_management: RiskManagementType;
   created_at: string;
+  market_sessions?: string[];
+  custom_start_time?: string;
+  custom_end_time?: string;
 }
 
 interface WizardIndicatorSelectorProps {
@@ -310,12 +313,13 @@ interface Props {
 
 /* ── All wizard steps, matching InlineStrategyBuilder sections ── */
 const STEPS = [
-  { key: "bias",       label: "Dirección",          shortLabel: "Bias" },
-  { key: "apply_day",  label: "Día de aplicación",  shortLabel: "Día" },
-  { key: "entry",      label: "Lógica de entrada",  shortLabel: "Entry" },
-  { key: "exit",       label: "Lógica de salida",   shortLabel: "Exit" },
-  { key: "risk",       label: "Gestión de riesgo",  shortLabel: "Riesgo" },
-  { key: "summary",    label: "Resumen de estrategia", shortLabel: "Resumen" },
+  { key: "bias",            label: "Dirección",          shortLabel: "Bias" },
+  { key: "apply_day",       label: "Día de aplicación",  shortLabel: "Día" },
+  { key: "market_sessions", label: "Sesión de aplicación", shortLabel: "Sesión" },
+  { key: "entry",           label: "Lógica de entrada",  shortLabel: "Entry" },
+  { key: "exit",            label: "Lógica de salida",   shortLabel: "Exit" },
+  { key: "risk",            label: "Gestión de riesgo",  shortLabel: "Riesgo" },
+  { key: "summary",         label: "Resumen de estrategia", shortLabel: "Resumen" },
 ] as const;
 
 type StepKey = (typeof STEPS)[number]["key"];
@@ -485,6 +489,9 @@ export default function WizardStrategyBuilder({
       entry_logic: stratObj.entry_logic,
       exit_logic: stratObj.exit_logic,
       risk_management: stratObj.risk_management,
+      market_sessions: stratObj.market_sessions,
+      custom_start_time: stratObj.custom_start_time,
+      custom_end_time: stratObj.custom_end_time,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -499,12 +506,22 @@ export default function WizardStrategyBuilder({
     if (stratObj.entry_logic) setEntryLogic(stratObj.entry_logic);
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
-  }, [initialStrategy]);
+    if (stratObj.market_sessions) {
+      setWizardMarketSessions(stratObj.market_sessions);
+    } else {
+      setWizardMarketSessions(marketSessions || ["rth"]);
+    }
+    if (stratObj.custom_start_time) setWizardCustomStartTime(stratObj.custom_start_time);
+    if (stratObj.custom_end_time) setWizardCustomEndTime(stratObj.custom_end_time);
+  }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
 
   // Strategy Builder States
   const [bias, setBias] = useState<"long" | "short" | null>(null);
   const [hoveredBias, setHoveredBias] = useState<"long" | "short" | null>(null);
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
+  const [wizardMarketSessions, setWizardMarketSessions] = useState<string[]>(initialStrategy?.definition?.market_sessions || initialStrategy?.market_sessions || marketSessions || ["rth"]);
+  const [wizardCustomStartTime, setWizardCustomStartTime] = useState<string>(initialStrategy?.definition?.custom_start_time || initialStrategy?.custom_start_time || customStartTime || "09:30");
+  const [wizardCustomEndTime, setWizardCustomEndTime] = useState<string>(initialStrategy?.definition?.custom_end_time || initialStrategy?.custom_end_time || customEndTime || "16:00");
   const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
@@ -712,6 +729,9 @@ export default function WizardStrategyBuilder({
       exit_logic: exitLogic,
       risk_management: riskManagement,
       created_at: createdAtRef.current,
+      market_sessions: wizardMarketSessions,
+      custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
+      custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
     };
     
     // Sync lastLoadedStrategyRef to prevent initialStrategy reload loops
@@ -722,10 +742,13 @@ export default function WizardStrategyBuilder({
       entry_logic: entryLogic,
       exit_logic: exitLogic,
       risk_management: riskManagement,
+      market_sessions: wizardMarketSessions,
+      custom_start_time: wizardCustomStartTime,
+      custom_end_time: wizardCustomEndTime,
     });
 
     onDraftChange?.(draft);
-  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
+  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, onDraftChange]);
 
   // Actions handlers
   const handleBiasSelect = (b: "long" | "short") => {
@@ -826,7 +849,7 @@ export default function WizardStrategyBuilder({
       }
     }
 
-    setCompletedSteps((prev) => new Set(prev).add(4));
+    setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
 
     const draft: WizardDraft = {
       id: `wizard_draft_${Date.now()}`,
@@ -838,6 +861,9 @@ export default function WizardStrategyBuilder({
       exit_logic: exitLogic,
       risk_management: riskManagement,
       created_at: new Date().toISOString(),
+      market_sessions: wizardMarketSessions,
+      custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
+      custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
     };
 
     onTest(draft);
@@ -850,6 +876,8 @@ export default function WizardStrategyBuilder({
         return renderBiasStep();
       case "apply_day":
         return renderApplyDayStep();
+      case "market_sessions":
+        return renderMarketSessionsStep();
       case "entry":
         return renderLogicStep('entry');
       case "exit":
@@ -1512,6 +1540,183 @@ export default function WizardStrategyBuilder({
     );
   };
 
+  // Step 3: Sesión de aplicación (Market Sessions)
+  const renderMarketSessionsStep = () => {
+    const sessionCard = (isSelected: boolean): React.CSSProperties => {
+      return {
+        width: "100%",
+        maxWidth: 320,
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        padding: "10px 14px",
+        borderRadius: 8,
+        border: isSelected ? "1.5px solid var(--color-ec-copper)" : "1px solid var(--color-ec-border)",
+        backgroundColor: isSelected ? "rgba(216, 122, 61, 0.07)" : "var(--color-ec-bg-surface)",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+        boxShadow: isSelected ? "0 3px 12px rgba(216, 122, 61, 0.15)" : "0 1px 3px rgba(0, 0, 0, 0.05)",
+      };
+    };
+
+    const toggleSession = (id: string) => {
+      let next: string[];
+      if (wizardMarketSessions.includes(id)) {
+        next = wizardMarketSessions.filter(x => x !== id);
+      } else {
+        next = [...wizardMarketSessions, id];
+      }
+      setWizardMarketSessions(next);
+      setCompletedSteps((prev) => {
+        const nextSet = new Set(prev);
+        const idx = STEPS.findIndex(s => s.key === "market_sessions");
+        if (next.length > 0) {
+          nextSet.add(idx);
+        } else {
+          nextSet.delete(idx);
+        }
+        return nextSet;
+      });
+    };
+
+    const sessions = [
+      {
+        id: "rth",
+        label: "Regular Hours (RTH)",
+        time: "09:30 - 16:00 ET",
+        desc: "Horario estándar del mercado de EE. UU. Máxima liquidez y volumen. Ideal para la mayoría de estrategias."
+      },
+      {
+        id: "pre",
+        label: "Pre-Market",
+        time: "04:00 - 09:30 ET",
+        desc: "Operativa antes de la apertura oficial. Útil para reaccionar a catalizadores temprano, pero con spreads anchos."
+      },
+      {
+        id: "post",
+        label: "After-Market",
+        time: "16:00 - 20:00 ET",
+        desc: "Operativa después del cierre oficial. Frecuentemente activa durante reportes de ganancias y noticias del cierre."
+      },
+      {
+        id: "custom",
+        label: "Horas personalizadas",
+        time: "",
+        desc: "Define un rango horario específico a tu medida para la ejecución de la lógica."
+      }
+    ];
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <h3 style={{
+            fontFamily: "var(--color-ec-serif)",
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--color-ec-text-high)",
+            margin: "0 0 4px 0",
+            letterSpacing: "-0.2px",
+          }}>
+            ¿En qué sesión deseas ejecutar la estrategia?
+          </h3>
+          <p style={{
+            fontFamily: "var(--color-ec-sans)",
+            fontSize: 10,
+            color: "var(--color-ec-text-muted)",
+            margin: "0 0 10px 0",
+            lineHeight: 1.5,
+          }}>
+            Selecciona una o varias sesiones de mercado. Tu estrategia solo ejecutará entradas y gestionará posiciones durante el horario seleccionado.
+          </p>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: "100%" }}>
+          {sessions.map(s => {
+            const isSelected = wizardMarketSessions.includes(s.id);
+            return (
+              <div key={s.id} onClick={() => toggleSession(s.id)} style={sessionCard(isSelected)}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      readOnly
+                      style={{
+                        accentColor: "var(--color-ec-copper)",
+                        cursor: "pointer",
+                      }}
+                    />
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-high)" }}>{s.label}</span>
+                  </div>
+                  {s.time && (
+                    <span style={{ fontSize: 9, color: "var(--color-ec-text-muted)", fontWeight: 500 }}>{s.time}</span>
+                  )}
+                </div>
+                <p style={{ margin: "4px 0 0 0", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>{s.desc}</p>
+                {s.id === "custom" && isSelected && (
+                  <div 
+                    onClick={(e) => e.stopPropagation()} 
+                    style={{ 
+                      display: "flex", 
+                      gap: 12, 
+                      marginTop: 8, 
+                      paddingTop: 8, 
+                      borderTop: "0.5px solid var(--color-ec-border)",
+                      width: "100%"
+                    }}
+                  >
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1 }}>
+                      <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", fontWeight: 700, textTransform: "uppercase" }}>Desde (ET)</span>
+                      <input
+                        type="time"
+                        value={wizardCustomStartTime}
+                        onChange={(e) => {
+                          setWizardCustomStartTime(e.target.value);
+                          setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "market_sessions")));
+                        }}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 8px',
+                          fontSize: 10,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1 }}>
+                      <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", fontWeight: 700, textTransform: "uppercase" }}>Hasta (ET)</span>
+                      <input
+                        type="time"
+                        value={wizardCustomEndTime}
+                        onChange={(e) => {
+                          setWizardCustomEndTime(e.target.value);
+                          setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "market_sessions")));
+                        }}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 8px',
+                          fontSize: 10,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // Step 3 & 4: Lógica de entrada/salida (Entry/Exit Logic)
   const renderLogicStep = (mode: 'entry' | 'exit') => {
     const logic = mode === 'entry' ? entryLogic : exitLogic;
@@ -1522,7 +1727,7 @@ export default function WizardStrategyBuilder({
         setExitLogic(newLogic);
       }
     };
-    const stepIdx = mode === 'entry' ? 2 : 3;
+    const stepIdx = mode === 'entry' ? STEPS.findIndex(s => s.key === "entry") : STEPS.findIndex(s => s.key === "exit");
 
     const supportsDistance = (name: IndicatorType): boolean => {
       return getAllowedTargets(name, "price_level_distance").length > 0;
@@ -3020,7 +3225,7 @@ export default function WizardStrategyBuilder({
                           ...entryLogic,
                           entry_time_windows: [...windows, { from_time: tempFromTime, to_time: tempToTime }]
                         });
-                        setCompletedSteps((prev) => new Set(prev).add(2));
+                        setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "entry")));
                       }
                     }
                   }}
@@ -4437,6 +4642,26 @@ export default function WizardStrategyBuilder({
         stepName: "Día de Aplicación"
       });
     });
+
+    // Sesión de Aplicación
+    const sessionNames: Record<string, string> = {
+      pre: "Pre-Market (04:00 - 09:30)",
+      rth: "Regular Hours (09:30 - 16:00)",
+      post: "After-Market (16:00 - 20:00)",
+      custom: `Custom (${wizardCustomStartTime} - ${wizardCustomEndTime})`
+    };
+    if (wizardMarketSessions && wizardMarketSessions.length > 0) {
+      const activeLabels = wizardMarketSessions.map(id => sessionNames[id] || id);
+      list.push({
+        label: `Sesión: ${activeLabels.join(", ")}`,
+        stepName: "Sesión de Aplicación"
+      });
+    } else {
+      list.push({
+        label: "Sesión: Ninguna",
+        stepName: "Sesión de Aplicación"
+      });
+    }
     
     // 3. Lógica de Entrada
     const entryConds = getConditionStrings(entryLogic.root_condition, entryLogic.timeframe);
@@ -4567,6 +4792,7 @@ export default function WizardStrategyBuilder({
             const categories: Record<string, string[]> = {
               "Dirección": [],
               "Día de Aplicación": [],
+              "Sesión de Aplicación": [],
               "Lógica de Entrada": [],
               "Lógica de Salida": [],
               "Gestión de Riesgo": [],
@@ -4658,8 +4884,10 @@ export default function WizardStrategyBuilder({
 
 
   /* ── Dynamic full-text tag generators grouped by category ── */
+  /* ── Dynamic full-text tag generators grouped by category ── */
   const directionTags = useMemo(() => {
-    if (!bias || currentStep === 5) return [];
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (!bias || currentStep === summaryStepIdx) return [];
     return [{
       label: bias === "long" ? "▲ Long" : "▼ Short",
       color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
@@ -4675,7 +4903,8 @@ export default function WizardStrategyBuilder({
   }, [bias, currentStep]);
 
   const applyDayTags = useMemo(() => {
-    if (currentStep === 5) return [];
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (currentStep === summaryStepIdx) return [];
     const list = [];
     const dayLabel = applyDay === "gap_day" ? "Gap Day" : applyDay === "gap_1_day" ? "Gap +1 Day" : "Gap +2 Day";
     list.push({
@@ -4699,8 +4928,48 @@ export default function WizardStrategyBuilder({
     return list;
   }, [applyDay, postgapPreconditions, currentStep]);
 
+  const marketSessionsTags = useMemo(() => {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    const marketSessionsStepIdx = STEPS.findIndex(s => s.key === "market_sessions");
+    if (currentStep === summaryStepIdx || currentStep < marketSessionsStepIdx) return [];
+    
+    const list: { label: string; color: string; onRemove: () => void }[] = [];
+    const sessionNames: Record<string, string> = {
+      pre: "Pre-Market",
+      rth: "Regular Hours",
+      post: "After-Market",
+      custom: `Custom (${wizardCustomStartTime}-${wizardCustomEndTime})`
+    };
+    
+    wizardMarketSessions.forEach((s) => {
+      list.push({
+        label: sessionNames[s] || s,
+        color: "var(--color-ec-copper)",
+        onRemove: () => {
+          setWizardMarketSessions(prev => {
+            const next = prev.filter(x => x !== s);
+            setCompletedSteps((completed) => {
+              const nextSet = new Set(completed);
+              const idx = STEPS.findIndex(st => st.key === "market_sessions");
+              if (next.length > 0) {
+                nextSet.add(idx);
+              } else {
+                nextSet.delete(idx);
+              }
+              return nextSet;
+            });
+            return next;
+          });
+        }
+      });
+    });
+    return list;
+  }, [wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, currentStep]);
+
   const entryTags = useMemo(() => {
-    if (currentStep === 5 || currentStep <= 2) {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    const entryStepIdx = STEPS.findIndex(s => s.key === "entry");
+    if (currentStep === summaryStepIdx || currentStep < entryStepIdx) {
       return [];
     }
     const list: { label: string; color: string; onRemove: () => void }[] = [];
@@ -4733,7 +5002,8 @@ export default function WizardStrategyBuilder({
   }, [entryLogic, currentStep]);
 
   const exitTags = useMemo(() => {
-    if (currentStep === 5) return [];
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (currentStep === summaryStepIdx) return [];
     return getConditionTags(
       exitLogic.root_condition,
       exitLogic.timeframe,
@@ -4742,7 +5012,9 @@ export default function WizardStrategyBuilder({
   }, [exitLogic, currentStep]);
 
   const riskTags = useMemo(() => {
-    if (currentStep === 5 || currentStep < 4 || (wizardRiskStep < 3 && !completedSteps.has(4))) {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    const riskStepIdx = STEPS.findIndex(s => s.key === "risk");
+    if (currentStep === summaryStepIdx || currentStep < riskStepIdx || (wizardRiskStep < 3 && !completedSteps.has(riskStepIdx))) {
       return [];
     }
     const list = [];
@@ -5190,6 +5462,20 @@ export default function WizardStrategyBuilder({
               </div>
             )}
 
+            {/* Sesión de Aplicación */}
+            {marketSessionsTags.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={sectionHeaderStyle}>Sesión de Aplicación</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {marketSessionsTags.map((tag, idx) => (
+                    <Fragment key={idx}>
+                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Lógica de Entrada */}
             {entryTags.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -5260,9 +5546,9 @@ export default function WizardStrategyBuilder({
             }}>
               <span>
                 Paso {currentStep + 1} de {STEPS.length}
-                {currentStep === 4 && ` (Riesgo: ${wizardRiskStep + 1} de 4)`}
+                {STEPS[currentStep]?.key === "risk" && ` (Riesgo: ${wizardRiskStep + 1} de 4)`}
               </span>
-              {currentStep === 4 && (
+              {STEPS[currentStep]?.key === "risk" && (
                 <div style={{ display: "flex", gap: 4 }}>
                   {Array.from({ length: 4 }).map((_, idx) => (
                     <div
@@ -5283,10 +5569,10 @@ export default function WizardStrategyBuilder({
                 </div>
               )}
             </div>
-
+ 
             {renderStep()}
           </div>
-
+ 
           {/* Navigation Footer */}
           <div style={{
             display: "flex",
@@ -5299,7 +5585,7 @@ export default function WizardStrategyBuilder({
             {currentStep > 0 ? (
               <button
                 onClick={() => {
-                  if (currentStep === 4 && wizardRiskStep > 0) {
+                  if (STEPS[currentStep]?.key === "risk" && wizardRiskStep > 0) {
                     setWizardRiskStep((prev) => prev - 1);
                   } else {
                     setCurrentStep((prev) => prev - 1);
@@ -5332,13 +5618,13 @@ export default function WizardStrategyBuilder({
             ) : (
               <div />
             )}
-
+ 
             {currentStep < STEPS.length - 1 ? (
-              (currentStep === 4 && wizardRiskStep === 3) ? (
+              (STEPS[currentStep]?.key === "risk" && wizardRiskStep === 3) ? (
                 <button
                   onClick={() => {
-                    setCompletedSteps((prev) => new Set(prev).add(4));
-                    setCurrentStep(5);
+                    setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
+                    setCurrentStep(STEPS.findIndex(s => s.key === "summary"));
                   }}
                   style={{
                     backgroundColor: "var(--color-ec-copper)",
@@ -5360,7 +5646,7 @@ export default function WizardStrategyBuilder({
                   <span>Resumen</span>
                   <span>→</span>
                 </button>
-              ) : currentStep === 4 ? (
+              ) : STEPS[currentStep]?.key === "risk" ? (
                 <button
                   onClick={() => {
                     if (wizardRiskStep === 1 && riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === TakeProfitMode.PARTIAL) {

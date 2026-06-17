@@ -492,6 +492,27 @@ export default function BacktestPanel({
   }, [activeStrategy]);
 
   useEffect(() => {
+    if (!selectedStrategy) return;
+    const currentStrat = (selectedStrategy === "draft" || selectedStrategy === "wizard_draft")
+      ? activeStrategy
+      : strategies.find((s) => s.id === selectedStrategy);
+    if (currentStrat) {
+      const stratDef = currentStrat.definition || currentStrat;
+      if (stratDef.market_sessions) {
+        setMarketSessions(stratDef.market_sessions);
+      } else {
+        setMarketSessions(["rth"]);
+      }
+      if (stratDef.custom_start_time) {
+        setCustomStartTime(stratDef.custom_start_time);
+      }
+      if (stratDef.custom_end_time) {
+        setCustomEndTime(stratDef.custom_end_time);
+      }
+    }
+  }, [selectedStrategy, activeStrategy, strategies]);
+
+  useEffect(() => {
     if (!selectedDataset) {
       setPrecacheStatus(null);
       setVisualPercent(0);
@@ -1564,127 +1585,6 @@ export default function BacktestPanel({
         </div>
       </div>
 
-      {/* SESIÓN DE MERCADO */}
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-        paddingTop: 16,
-        borderTop: '0.5px solid var(--color-ec-border)',
-      }}>
-        <h2 style={{
-          fontFamily: 'var(--color-ec-sans)',
-          fontSize: 9,
-          fontWeight: 700,
-          textTransform: 'uppercase',
-          letterSpacing: '0.15em',
-          color: 'var(--color-ec-text-muted)',
-          marginBottom: 4,
-        }}>
-          Sesión de mercado
-        </h2>
-        <div className="space-y-2">
-          {[
-            { id: "pre", label: "Pre-Market", time: "04:00 - 09:30 ET" },
-            { id: "rth", label: "Regular Hours", time: "09:30 - 16:00 ET" },
-            { id: "post", label: "After-Market", time: "16:00 - 20:00 ET" },
-            { id: "custom", label: "Horas personalizadas (ET)", time: "" },
-          ].map((session) => (
-            <div key={session.id} className="space-y-2">
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 8,
-              }}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={marketSessions.includes(session.id)}
-                    onChange={() => toggleSession(session.id)}
-                    className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                  />
-                  <span style={{
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11,
-                    fontWeight: 500,
-                    color: 'var(--color-ec-text-secondary)',
-                  }}>{session.label}</span>
-                </label>
-                {session.time && (
-                  <span style={{
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 10,
-                    fontWeight: 400,
-                    color: 'var(--color-ec-text-muted)',
-                  }}>{session.time}</span>
-                )}
-              </div>
-
-              {session.id === "custom" && marketSessions.includes("custom") && (
-                <div className="grid grid-cols-2 gap-2 mt-3 pl-6">
-                  <div>
-                    <label style={{
-                      display: "block",
-                      fontFamily: "var(--color-ec-sans)",
-                      fontSize: 11,
-                      fontWeight: 500,
-                      color: "var(--color-ec-text-secondary)",
-                      fontStyle: "italic",
-                      marginBottom: 4,
-                    }}>Desde</label>
-                    <input
-                      type="time"
-                      value={customStartTime}
-                      onChange={(e) => setCustomStartTime(e.target.value)}
-                      style={{
-                        backgroundColor: 'var(--color-ec-bg-elevated)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5,
-                        padding: '6px 10px',
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 11,
-                        fontWeight: 500,
-                        color: 'var(--color-ec-text-primary)',
-                        outline: 'none',
-                        width: '100%',
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{
-                      display: "block",
-                      fontFamily: "var(--color-ec-sans)",
-                      fontSize: 11,
-                      fontWeight: 500,
-                      color: "var(--color-ec-text-secondary)",
-                      fontStyle: "italic",
-                      marginBottom: 4,
-                    }}>Hasta</label>
-                    <input
-                      type="time"
-                      value={customEndTime}
-                      onChange={(e) => setCustomEndTime(e.target.value)}
-                      style={{
-                        backgroundColor: 'var(--color-ec-bg-elevated)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5,
-                        padding: '6px 10px',
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 11,
-                        fontWeight: 500,
-                        color: 'var(--color-ec-text-primary)',
-                        outline: 'none',
-                        width: '100%',
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
 
       <button
         onClick={handleRun}

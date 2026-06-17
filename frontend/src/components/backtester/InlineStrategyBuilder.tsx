@@ -33,6 +33,9 @@ export interface Draft {
   exit_logic: ExitLogicType;
   risk_management: RiskManagementType;
   created_at: string;
+  market_sessions?: string[];
+  custom_start_time?: string;
+  custom_end_time?: string;
 }
 
 function getGroupSummaryText(group: ConditionGroup): string {
@@ -105,6 +108,9 @@ export default function InlineStrategyBuilder({
       entry_logic: stratObj.entry_logic,
       exit_logic: stratObj.exit_logic,
       risk_management: stratObj.risk_management,
+      market_sessions: stratObj.market_sessions,
+      custom_start_time: stratObj.custom_start_time,
+      custom_end_time: stratObj.custom_end_time,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -121,9 +127,20 @@ export default function InlineStrategyBuilder({
     if (stratObj.entry_logic) setEntryLogic(stratObj.entry_logic);
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
-  }, [initialStrategy]);
+    if (stratObj.market_sessions) {
+      setLocalMarketSessions(stratObj.market_sessions);
+    } else {
+      setLocalMarketSessions(marketSessions || ["rth"]);
+    }
+    if (stratObj.custom_start_time) setLocalCustomStartTime(stratObj.custom_start_time);
+    if (stratObj.custom_end_time) setLocalCustomEndTime(stratObj.custom_end_time);
+  }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
+
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
+  const [localMarketSessions, setLocalMarketSessions] = useState<string[]>(initialStrategy?.definition?.market_sessions || initialStrategy?.market_sessions || marketSessions || ["rth"]);
+  const [localCustomStartTime, setLocalCustomStartTime] = useState<string>(initialStrategy?.definition?.custom_start_time || initialStrategy?.custom_start_time || customStartTime || "09:30");
+  const [localCustomEndTime, setLocalCustomEndTime] = useState<string>(initialStrategy?.definition?.custom_end_time || initialStrategy?.custom_end_time || customEndTime || "16:00");
   const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
@@ -139,7 +156,7 @@ export default function InlineStrategyBuilder({
   const [tempToTime, setTempToTime] = useState("16:00");
 
   const getSessionOverlapWarning = (fromTime: string, toTime: string) => {
-    if (!marketSessions || marketSessions.length === 0 || marketSessions.includes("all")) {
+    if (!localMarketSessions || localMarketSessions.length === 0 || localMarketSessions.includes("all")) {
       return null;
     }
 
@@ -152,18 +169,18 @@ export default function InlineStrategyBuilder({
     const windowEnd = parseTimeToMins(toTime);
 
     const intervals: { label: string; start: number; end: number }[] = [];
-    marketSessions.forEach(s => {
+    localMarketSessions.forEach(s => {
       if (s === "pre") {
         intervals.push({ label: "Pre-Market", start: 240, end: 570 });
       } else if (s === "rth") {
         intervals.push({ label: "Regular Hours", start: 570, end: 960 });
       } else if (s === "post") {
         intervals.push({ label: "After-Market", start: 960, end: 1200 });
-      } else if (s === "custom" && customStartTime && customEndTime) {
+      } else if (s === "custom" && localCustomStartTime && localCustomEndTime) {
         intervals.push({
-          label: `Custom (${customStartTime}-${customEndTime})`,
-          start: parseTimeToMins(customStartTime),
-          end: parseTimeToMins(customEndTime)
+          label: `Custom (${localCustomStartTime}-${localCustomEndTime})`,
+          start: parseTimeToMins(localCustomStartTime),
+          end: parseTimeToMins(localCustomEndTime)
         });
       }
     });
@@ -225,13 +242,19 @@ export default function InlineStrategyBuilder({
       exit_logic: exitLogic,
       risk_management: riskManagement,
       created_at: createdAtRef.current,
+      market_sessions: localMarketSessions,
+      custom_start_time: localMarketSessions.includes("custom") ? localCustomStartTime : undefined,
+      custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
     });
-  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, onDraftChange]);
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, localMarketSessions, localCustomStartTime, localCustomEndTime, onDraftChange]);
 
   const resetForm = () => {
     setName("Nueva Estrategia");
     setBias("long");
     setApplyDay("gap_day");
+    setLocalMarketSessions(["rth"]);
+    setLocalCustomStartTime("09:30");
+    setLocalCustomEndTime("16:00");
     setPostgapPreconditions([]);
     setEntryLogic(initialEntryLogic);
     setExitLogic(initialExitLogic);
@@ -250,6 +273,9 @@ export default function InlineStrategyBuilder({
     exit_logic: exitLogic,
     risk_management: riskManagement,
     created_at: new Date().toISOString(),
+    market_sessions: localMarketSessions,
+    custom_start_time: localMarketSessions.includes("custom") ? localCustomStartTime : undefined,
+    custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
   });
 
   const handleTest = () => {
@@ -897,6 +923,139 @@ export default function InlineStrategyBuilder({
                 })}
             </div>
         </div>
+
+        {/* DIVIDER 3 */}
+        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+
+        {/* SECTION: SESIÓN DE EJECUCIÓN DE LA ESTRATEGIA */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          padding: '8px 0',
+        }}>
+          <h2 style={{
+            fontFamily: 'var(--color-ec-sans)',
+            fontSize: 9,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.15em',
+            color: 'var(--color-ec-text-muted)',
+            marginBottom: 4,
+          }}>
+            Sesión de ejecución de la estrategia
+          </h2>
+          <div className="space-y-2">
+            {[
+              { id: "pre", label: "Pre-Market", time: "04:00 - 09:30 ET" },
+              { id: "rth", label: "Regular Hours", time: "09:30 - 16:00 ET" },
+              { id: "post", label: "After-Market", time: "16:00 - 20:00 ET" },
+              { id: "custom", label: "Horas personalizadas (ET)", time: "" },
+            ].map((session) => (
+              <div key={session.id} className="space-y-2">
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                }}>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={localMarketSessions.includes(session.id)}
+                      onChange={() => {
+                        setLocalMarketSessions(prev =>
+                          prev.includes(session.id)
+                            ? prev.filter(s => s !== session.id)
+                            : [...prev, session.id]
+                        );
+                      }}
+                      className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                    />
+                    <span style={{
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 11,
+                      fontWeight: 500,
+                      color: 'var(--color-ec-text-secondary)',
+                    }}>{session.label}</span>
+                  </label>
+                  {session.time && (
+                    <span style={{
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 10,
+                      fontWeight: 400,
+                      color: 'var(--color-ec-text-muted)',
+                    }}>{session.time}</span>
+                  )}
+                </div>
+
+                {session.id === "custom" && localMarketSessions.includes("custom") && (
+                  <div className="grid grid-cols-2 gap-2 mt-3 pl-6">
+                    <div>
+                      <label style={{
+                        display: "block",
+                        fontFamily: "var(--color-ec-sans)",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: "var(--color-ec-text-secondary)",
+                        fontStyle: "italic",
+                        marginBottom: 4,
+                      }}>Desde</label>
+                      <input
+                        type="time"
+                        value={localCustomStartTime}
+                        onChange={(e) => setLocalCustomStartTime(e.target.value)}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 5,
+                          padding: '6px 10px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 11,
+                          fontWeight: 500,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                          width: '100%',
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{
+                        display: "block",
+                        fontFamily: "var(--color-ec-sans)",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: "var(--color-ec-text-secondary)",
+                        fontStyle: "italic",
+                        marginBottom: 4,
+                      }}>Hasta</label>
+                      <input
+                        type="time"
+                        value={localCustomEndTime}
+                        onChange={(e) => setLocalCustomEndTime(e.target.value)}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-elevated)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 5,
+                          padding: '6px 10px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 11,
+                          fontWeight: 500,
+                          color: 'var(--color-ec-text-primary)',
+                          outline: 'none',
+                          width: '100%',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* DIVIDER 4 */}
+        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
 
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic}>
           {/* Sub-panel de Ventanas de Horario de Entrada */}
