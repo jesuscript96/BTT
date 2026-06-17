@@ -639,11 +639,16 @@ export default function WizardStrategyBuilder({
 
     if (intervals.length === 0) return null;
 
-    const hasOverlap = intervals.some(interval => {
-      return windowStart < interval.end && windowEnd > interval.start;
-    });
+    const isFullyCovered = (() => {
+      const endCheck = windowStart === windowEnd ? windowStart : windowEnd - 1;
+      for (let m = windowStart; m <= endCheck; m++) {
+        const isMinuteCovered = intervals.some(interval => m >= interval.start && m <= interval.end);
+        if (!isMinuteCovered) return false;
+      }
+      return true;
+    })();
 
-    if (!hasOverlap) {
+    if (!isFullyCovered) {
       const sessionsStr = intervals.map(i => i.label).join(", ");
       return `Fuera de sesión activa (${sessionsStr})`;
     }
