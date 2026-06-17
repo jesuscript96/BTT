@@ -1384,7 +1384,7 @@ export const formatConditionText = (c: AnyCondition): string => {
         }
         if (c.source.name === IndicatorType.ELAPSED_TIME) {
             const mins = typeof c.target === 'number' ? c.target : 60;
-            return `${tfStr} Elapsed Time ≥ ${mins} mins`;
+            return `${tfStr} Elapsed Time = ${mins} mins`;
         }
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
