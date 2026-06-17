@@ -338,15 +338,21 @@ function getConditionStrings(group: ConditionGroup, timeframe: string): string[]
     } else {
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : `[${timeframe}] `;
       if (c.type === 'indicator_comparison') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
-        const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
-        let targetStr = '';
-        if (typeof c.target === 'number') {
-          targetStr = String(c.target);
+        if (c.source.name === IndicatorType.ELAPSED_TIME) {
+          list.push(`${tfStr}Elapsed Time = ${c.target} mins`);
+        } else if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+          list.push(`${tfStr}Elapsed Time Last High ≥ ${c.target} mins`);
         } else {
-          targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+          const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
+          let targetStr = '';
+          if (typeof c.target === 'number') {
+            targetStr = String(c.target);
+          } else {
+            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          }
+          list.push(`${tfStr}${sourceStr} ${compStr} ${targetStr}`);
         }
-        list.push(`${tfStr}${sourceStr} ${compStr} ${targetStr}`);
       } else if (c.type === 'price_level_distance') {
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
@@ -382,15 +388,21 @@ function getConditionTags(
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : `[${timeframe}] `;
       let label = '';
       if (c.type === 'indicator_comparison') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
-        const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
-        let targetStr = '';
-        if (typeof c.target === 'number') {
-          targetStr = String(c.target);
+        if (c.source.name === IndicatorType.ELAPSED_TIME) {
+          label = `${tfStr}Elapsed Time = ${c.target} mins`;
+        } else if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+          label = `${tfStr}Elapsed Time Last High ≥ ${c.target} mins`;
         } else {
-          targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+          const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
+          let targetStr = '';
+          if (typeof c.target === 'number') {
+            targetStr = String(c.target);
+          } else {
+            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          }
+          label = `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
         }
-        label = `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
       } else if (c.type === 'price_level_distance') {
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
