@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AggregateMetrics } from "@/lib/api_backtester";
 
 interface MetricsCardProps {
@@ -8,6 +9,7 @@ interface MetricsCardProps {
 }
 
 export default function MetricsCard({ metrics, vertical = false }: MetricsCardProps) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const rows = [
     { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Número total de días que abarca el período del backtest." },
     { label: "Trades", value: String(metrics.total_trades ?? 0), tooltip: "Cantidad total de operaciones ejecutadas." },
@@ -67,7 +69,11 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
                 alignItems: 'center',
               }}>
                 {row.label}
-                <span className={`ec-tooltip-container ${idx % 2 === 0 ? "ec-tooltip-left" : "ec-tooltip-right"}`}>
+                <span
+                  onMouseEnter={() => setHoveredIdx(idx)}
+                  onMouseLeave={() => setHoveredIdx(null)}
+                  style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+                >
                   <span
                     style={{
                       cursor: 'help',
@@ -80,7 +86,34 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
                   >
                     (?)
                   </span>
-                  <span className="ec-tooltip-text">{row.tooltip}</span>
+                  {hoveredIdx === idx && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        bottom: '140%',
+                        left: idx % 2 === 0 ? 0 : 'auto',
+                        right: idx % 2 === 1 ? 0 : 'auto',
+                        width: '240px',
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        color: 'var(--color-ec-text-primary)',
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        borderRadius: '6px',
+                        fontFamily: 'var(--font-sans), sans-serif',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        lineHeight: '1.4',
+                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.45)',
+                        zIndex: 100,
+                        pointerEvents: 'none',
+                        textTransform: 'none',
+                        letterSpacing: 'normal',
+                      }}
+                    >
+                      {row.tooltip}
+                    </span>
+                  )}
                 </span>
               </span>
               <span style={{
@@ -140,7 +173,11 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
               alignItems: 'center',
             }}>
               {row.label}
-              <span className={`ec-tooltip-container ${idx % 4 < 2 ? "ec-tooltip-left" : "ec-tooltip-right"}`}>
+              <span
+                onMouseEnter={() => setHoveredIdx(idx)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+              >
                 <span
                   style={{
                     cursor: 'help',
@@ -153,7 +190,34 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
                 >
                   (?)
                 </span>
-                <span className="ec-tooltip-text">{row.tooltip}</span>
+                {hoveredIdx === idx && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      bottom: '140%',
+                      left: idx % 4 < 2 ? 0 : 'auto',
+                      right: idx % 4 >= 2 ? 0 : 'auto',
+                      width: '240px',
+                      backgroundColor: 'var(--color-ec-bg-elevated)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-primary)',
+                      textAlign: 'left',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      fontFamily: 'var(--font-sans), sans-serif',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      lineHeight: '1.4',
+                      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.45)',
+                      zIndex: 100,
+                      pointerEvents: 'none',
+                      textTransform: 'none',
+                      letterSpacing: 'normal',
+                    }}
+                  >
+                    {row.tooltip}
+                  </span>
+                )}
               </span>
             </span>
             <span style={{

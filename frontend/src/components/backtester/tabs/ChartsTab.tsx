@@ -16,6 +16,7 @@ import {
 } from "recharts";
 import type { TradeRecord, DayResult } from "@/lib/api_backtester";
 import RollingEVChart from "@/components/backtester/RollingEVChart";
+import InfoTooltip from "@/components/backtester/InfoTooltip";
 
 interface ChartsTabProps {
   trades: TradeRecord[];
@@ -287,16 +288,10 @@ export default function ChartsTab({
           <div className="px-3 py-2 flex items-center">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8 inline-flex items-center gap-1">
               EV por Tiempo (30m)
-              <span className="ec-tooltip-container ec-tooltip-left">
-                <span
-                  style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-                >
-                  (?)
-                </span>
-                <span className="ec-tooltip-text">
-                  Esperanza Matemática (EV) promedio agrupada por la hora de entrada del trade (intervalos de 30 minutos). Sirve para identificar en qué franjas horarias las operaciones son rentables (barras verdes) o perdedoras (barras rojas) en promedio.
-                </span>
-              </span>
+              <InfoTooltip
+                position="left"
+                text="Esperanza Matemática (EV) promedio agrupada por la hora de entrada del trade (intervalos de 30 minutos). Sirve para identificar en qué franjas horarias las operaciones son rentables (barras verdes) o perdedoras (barras rojas) en promedio."
+              />
             </span>
           </div>
           <div className="flex-1 px-4 pb-4 min-h-0">
@@ -332,16 +327,10 @@ export default function ChartsTab({
           <div className="px-3 py-2 flex items-center">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
               EV por Dia
-              <span className="ec-tooltip-container ec-tooltip-left">
-                <span
-                  style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-                >
-                  (?)
-                </span>
-                <span className="ec-tooltip-text">
-                  Esperanza Matemática (EV) promedio por día de la semana de entrada. Ayuda a detectar si hay días específicos (como los lunes o viernes) en los que la estrategia rinde peor y convendría evitar operar.
-                </span>
-              </span>
+              <InfoTooltip
+                position="left"
+                text="Esperanza Matemática (EV) promedio por día de la semana de entrada. Ayuda a detectar si hay días específicos (como los lunes o viernes) en los que la estrategia rinde peor y convendría evitar operar."
+              />
             </span>
           </div>
           <div className="flex-1 px-4 pb-4 min-h-0">
@@ -374,16 +363,10 @@ export default function ChartsTab({
           <div className="px-3 py-2">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] inline-flex items-center gap-1">
               Distribucion de Retornos (PnL %)
-              <span className="ec-tooltip-container ec-tooltip-left">
-                <span
-                  style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-                >
-                  (?)
-                </span>
-                <span className="ec-tooltip-text">
-                  Histograma de frecuencias que agrupa los trades según su rentabilidad porcentual final. Ideal para ver la simetría del sistema (ej: si tienes muchos trades con ganancias moderadas o si hay pérdidas extremas anormales).
-                </span>
-              </span>
+              <InfoTooltip
+                position="left"
+                text="Histograma de frecuencias que agrupa los trades según su rentabilidad porcentual final. Ideal para ver la simetría del sistema (ej: si tienes muchos trades con ganancias moderadas o si hay pérdidas extremas anormales)."
+              />
             </span>
           </div>
           <div className="flex-1 pl-1 pr-4 pb-4">
@@ -425,16 +408,10 @@ export default function ChartsTab({
           <div className="px-3 pt-4 pb-1 flex items-center justify-between">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
               Consecutive Runs
-              <span className="ec-tooltip-container ec-tooltip-left">
-                <span
-                  style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-                >
-                  (?)
-                </span>
-                <span className="ec-tooltip-text">
-                  Rachas Consecutivas. Muestra cuántas veces ocurrieron rachas seguidas de ganancias (verde) o pérdidas (rojo) de determinada longitud (1, 2, 3, etc. operaciones seguidas).
-                </span>
-              </span>
+              <InfoTooltip
+                position="left"
+                text="Rachas Consecutivas. Muestra cuántas veces ocurrieron rachas seguidas de ganancias (verde) o pérdidas (rojo) de determinada longitud (1, 2, 3, etc. operaciones seguidas)."
+              />
             </span>
             <div className="flex gap-3 text-[8px] font-mono text-[var(--color-ec-text-secondary)]">
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-[3px] bg-emerald-500 rounded-sm"></span>W</span>
@@ -474,16 +451,10 @@ export default function ChartsTab({
           <div className="py-2" style={{ paddingLeft: '40px' }}>
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] inline-flex items-center gap-1">
               Descriptive Statistics
-              <span className="ec-tooltip-container ec-tooltip-right">
-                <span
-                  style={{ cursor: 'help', opacity: 0.6, fontSize: '8px', textTransform: 'none', letterSpacing: 'normal', userSelect: 'none' }}
-                >
-                  (?)
-                </span>
-                <span className="ec-tooltip-text">
-                  Estadísticas descriptivas detalladas de los retornos (PnL %) y rachas de victorias/pérdidas. Incluye medias, desviación estándar (volatilidad), asimetría (skewness) y curtosis (apuntamiento para detectar riesgo de black swan).
-                </span>
-              </span>
+              <InfoTooltip
+                position="right"
+                text="Estadísticas descriptivas detalladas de los retornos (PnL %) y rachas de victorias/pérdidas. Incluye medias, desviación estándar (volatilidad), asimetría (skewness) y curtosis (apuntamiento para detectar riesgo de black swan)."
+              />
             </span>
           </div>
           <div className="flex-1 pr-6 pb-4 overflow-y-auto custom-scrollbar" style={{ paddingLeft: '40px', scrollbarWidth: 'none' }}>

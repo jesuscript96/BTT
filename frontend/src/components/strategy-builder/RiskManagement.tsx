@@ -344,6 +344,98 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
+            {/* Trailing Stop Card */}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                borderBottom: '0.5px solid var(--color-ec-border)',
+            }}>
+                {/* Header */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingBottom: (risk.trailing_stop.active) ? 12 : 0,
+                    borderBottom: (risk.trailing_stop.active) ? '0.5px solid var(--color-ec-border)' : 'none',
+                }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-loss)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Trailing Stop</h2>
+                        </div>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Ajusta el stop loss dinámicamente a medida que el precio alcanza objetivos</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                            onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.trailing_stop.active ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Body */}
+                {risk.trailing_stop.active && (
+                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
+                            <div className="relative" style={{ width: '120px' }}>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={risk.trailing_stop.buffer_pct}
+                                    onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 24px 7px 10px',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '100%',
+                                        height: '36px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+
             {/* Take Profit Card */}
             <div style={{
                 display: 'flex',
@@ -716,98 +808,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
-            {/* Trailing Stop Card */}
-            <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 16,
-                padding: '20px 0',
-                backgroundColor: 'transparent',
-                borderBottom: '0.5px solid var(--color-ec-border)',
-            }}>
-                {/* Header */}
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingBottom: (risk.trailing_stop.active) ? 12 : 0,
-                    borderBottom: (risk.trailing_stop.active) ? '0.5px solid var(--color-ec-border)' : 'none',
-                }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{
-                                width: 3,
-                                height: 14,
-                                borderRadius: 1,
-                                backgroundColor: 'var(--color-ec-copper)',
-                            }} />
-                            <h2 style={{
-                                fontFamily: 'var(--color-ec-sans)',
-                                fontSize: 13,
-                                fontWeight: 700,
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.08em',
-                                color: 'var(--color-ec-text-high)',
-                                margin: 0,
-                            }}>Trailing Stop</h2>
-                        </div>
-                        <span style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 10,
-                            fontWeight: 400,
-                            color: 'var(--color-ec-text-muted)',
-                            marginTop: 2,
-                        }}>Ajusta el stop loss dinámicamente a medida que el precio alcanza objetivos</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 10,
-                            fontWeight: 700,
-                            color: 'var(--color-ec-text-muted)',
-                        }}>{risk.trailing_stop.active ? 'ACTIVE' : 'OFF'}</span>
-                        <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.trailing_stop.active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
-                            onClick={() => setTrailingField('active', !risk.trailing_stop.active)}
-                        >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.trailing_stop.active ? 'left-4.5' : 'left-0.5'}`}></div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Body */}
-                {risk.trailing_stop.active && (
-                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
-                            <div className="relative" style={{ width: '120px' }}>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={risk.trailing_stop.buffer_pct}
-                                    onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
-                                    style={{
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '7px 24px 7px 10px',
-                                        fontSize: 13,
-                                        fontWeight: 600,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        width: '100%',
-                                        height: '36px',
-                                        textAlign: 'center',
-                                    }}
-                                />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-
             {/* Re-entries Card */}
             <div style={{
                 display: 'flex',
@@ -857,12 +857,89 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                         }}>{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
                         <div
                             className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
-                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false })}
+                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false, max_reentries: risk.accept_reentries === false ? -1 : 0 })}
                         >
                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
                         </div>
                     </div>
                 </div>
+                {risk.accept_reentries !== false && (
+                    <div 
+                        className="flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-200"
+                        style={{
+                            borderTop: '0.5px dotted var(--color-ec-border)',
+                            marginTop: '14px',
+                            paddingTop: '14px',
+                        }}
+                    >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-high)',
+                            }}>Tipo de Reentradas</span>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 9,
+                                color: 'var(--color-ec-text-muted)',
+                            }}>Límite de reentradas adicionales permitidas</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={risk.max_reentries === undefined || risk.max_reentries === -1 ? 'infinite' : 'limited'}
+                                onChange={(e) => {
+                                    if (e.target.value === 'infinite') {
+                                        onChange({ ...risk, max_reentries: -1 });
+                                    } else {
+                                        onChange({ ...risk, max_reentries: 2 });
+                                    }
+                                }}
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 8px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    height: '30px',
+                                }}
+                            >
+                                <option value="infinite">Infinitas</option>
+                                <option value="limited">Limitadas</option>
+                            </select>
+                            {risk.max_reentries !== undefined && risk.max_reentries >= 0 && (
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={risk.max_reentries}
+                                    onChange={(e) => {
+                                        const val = Math.max(0, parseInt(e.target.value) || 0);
+                                        onChange({ ...risk, max_reentries: val });
+                                    }}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 8px',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '60px',
+                                        height: '30px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Swing Option Card */}

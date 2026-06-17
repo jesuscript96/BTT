@@ -464,10 +464,12 @@ def run_optimization_grid(
             if is_int:
                 v_min_int = int(round(v_min))
                 v_max_int = int(round(v_max))
-                # Generate clean integer steps based on matrix dimension (steps)
-                if steps > 0:
-                    step_size = max(1, int(round((v_max_int - v_min_int) / steps)))
-                    values = [v_min_int + (i + 1) * step_size for i in range(steps)]
+                # Generate clean integer steps based on matrix dimension (steps) without overshooting
+                if v_min_int == v_max_int:
+                    values = [v_min_int]
+                elif steps > 0:
+                    raw_vals = np.linspace(v_min_int, v_max_int, steps)
+                    values = sorted(list(set(int(round(x)) for x in raw_vals)))
                 else:
                     values = [v_min_int]
             else:
@@ -509,6 +511,12 @@ def run_optimization_grid(
             qualifying_df = qualifying_df[qualifying_df["date"] <= cutoff_date]
             opt_end_date = cutoff_date
             logger.info(f"[OPT] In-Sample split filter applied on qualifying dates: kept {len(qualifying_df)} rows up to {cutoff_date} using is_percent={is_percent}%")
+
+    # Convert dates to strings to prevent comparison errors between datetime.date and string
+    if start_date:
+        start_date = str(start_date)
+    if opt_end_date:
+        opt_end_date = str(opt_end_date)
 
     # Apply fallbacks for start_date / end_date
     if start_date:

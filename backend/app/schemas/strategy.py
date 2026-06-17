@@ -97,6 +97,7 @@ class IndicatorType(str, Enum):
     RET_PCT_AM = "Ret % AM"
     CANDLE_RANGE_PCT = "Candle Range %"
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High"
+    ELAPSED_TIME = "Elapsed Time"
     TRIANGLE_ASCENDING = "Triangle Ascending"
     TRIANGLE_DESCENDING = "Triangle Descending"
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
@@ -221,6 +222,7 @@ class IndicatorConfig(BaseModel):
     min_af: Optional[float] = None               # Parabolic SAR min acceleration factor
     max_af: Optional[float] = None               # Parabolic SAR max acceleration factor
     ap_session: Optional[Literal["ap.PM", "ap.RTH", "ap.AM"]] = None
+    elapsed_minutes: Optional[int] = None
     pivot_window: Optional[int] = None
     tri_lookback: Optional[int] = None
     slope_tolerance: Optional[float] = None
@@ -283,6 +285,7 @@ class RiskManagement(BaseModel):
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL
     accept_reentries: Optional[bool] = True
+    max_reentries: Optional[int] = -1
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
     partial_take_profits: Optional[List[PartialTakeProfit]] = Field(default_factory=list)

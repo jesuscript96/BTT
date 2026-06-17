@@ -169,6 +169,9 @@ export default function Home() {
         entry_logic: draft.entry_logic,
         exit_logic: draft.exit_logic,
         risk_management: draft.risk_management,
+        market_sessions: draft.market_sessions,
+        custom_start_time: draft.custom_start_time,
+        custom_end_time: draft.custom_end_time,
       }
     });
 
@@ -183,10 +186,17 @@ export default function Home() {
       slippage: p.slippage,
       start_date: p.start_date,
       end_date: p.end_date,
-      market_sessions: p.market_sessions,
+      market_sessions: draft.market_sessions || p.market_sessions,
+      custom_start_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_start_time || p.custom_start_time) : undefined,
+      custom_end_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_end_time || p.custom_end_time) : undefined,
       monthly_expenses: p.monthly_expenses,
       locates_cost: p.locates_cost,
       is_percent: p.is_percent,
+      risk_type: p.risk_type,
+      fixed_ratio_delta: p.fixed_ratio_delta,
+      size_by_sl: draft.risk_management.size_by_sl || p.size_by_sl || false,
+      fee_type: p.fee_type,
+      look_ahead_prevention: p.look_ahead_prevention,
     };
 
     try {
@@ -200,6 +210,9 @@ export default function Home() {
           entry_logic: draft.entry_logic,
           exit_logic: draft.exit_logic,
           risk_management: draft.risk_management,
+          market_sessions: draft.market_sessions,
+          custom_start_time: draft.custom_start_time,
+          custom_end_time: draft.custom_end_time,
         },
         init_cash: p.init_cash,
         risk_r: p.risk_r,
@@ -211,9 +224,9 @@ export default function Home() {
         slippage: p.slippage,
         start_date: p.start_date || undefined,
         end_date: p.end_date || undefined,
-        market_sessions: p.market_sessions,
-        custom_start_time: p.custom_start_time || undefined,
-        custom_end_time: p.custom_end_time || undefined,
+        market_sessions: draft.market_sessions || p.market_sessions,
+        custom_start_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_start_time || p.custom_start_time || undefined) : undefined,
+        custom_end_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_end_time || p.custom_end_time || undefined) : undefined,
         locates_cost: p.locates_cost,
         monthly_expenses: p.monthly_expenses,
         look_ahead_prevention: p.look_ahead_prevention,
@@ -317,9 +330,16 @@ export default function Home() {
       start_date: params.start_date,
       end_date: params.end_date,
       market_sessions: params.market_sessions,
+      custom_start_time: params.custom_start_time,
+      custom_end_time: params.custom_end_time,
       monthly_expenses: params.monthly_expenses,
       locates_cost: (params as any).locates_cost,
       is_percent: params.is_percent,
+      risk_type: (params as any).risk_type,
+      fixed_ratio_delta: (params as any).fixed_ratio_delta,
+      size_by_sl: (params as any).size_by_sl,
+      fee_type: (params as any).fee_type,
+      look_ahead_prevention: (params as any).look_ahead_prevention,
     };
 
     try {
@@ -904,7 +924,7 @@ export default function Home() {
                       </label>
                     </div>
                   </div>
-                  <div style={{ height: 250, width: '100%', marginTop: 'auto', marginBottom: 38, flexShrink: 0 }}>
+                  <div style={{ height: 288, width: '100%', marginTop: 'auto', marginBottom: 0, flexShrink: 0 }}>
                     <MaeScatterChart trades={isFilteredResult!.trades} isDarkMode={isDarkMode} />
                   </div>
                 </div>
