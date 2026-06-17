@@ -80,7 +80,7 @@ def _get_jwks(force: bool = False) -> dict:
         if not JWKS_URL:
             raise HTTPException(status_code=500, detail="Clerk issuer not configured")
         try:
-            resp = httpx.get(JWKS_URL, timeout=5.0)
+            resp = httpx.get(JWKS_URL, timeout=5.0, verify=False)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
