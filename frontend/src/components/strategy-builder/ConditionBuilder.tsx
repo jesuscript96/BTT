@@ -1869,7 +1869,7 @@ export const GroupDisplay = ({
 
 
                             {/* relación */}
-                            {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && (
+                            {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name !== IndicatorType.ELAPSED_TIME && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     <span style={labelStyle}>Relación</span>
                                     {formCondition.source.name?.toLowerCase() === 'range of time' ? (
@@ -1928,24 +1928,34 @@ export const GroupDisplay = ({
                             )}
 
                             {/* Variables de cruce */}
-                            {formCondition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH ? (
+                            {formCondition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH || formCondition.source.name === IndicatorType.ELAPSED_TIME ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <span style={labelStyle}>Minutos transcurridos</span>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : 20}
-                                        onChange={(e) => {
-                                            if (compCondition) {
-                                                setFormCondition({
-                                                    ...compCondition,
-                                                    type: 'indicator_comparison',
-                                                    target: Math.max(1, Number(e.target.value))
-                                                });
-                                            }
-                                        }}
-                                        style={inputStyle}
-                                    />
+                                    <span style={labelStyle}>Tiempo Transcurrido</span>
+                                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : (formCondition.source.name === IndicatorType.ELAPSED_TIME ? 60 : 20)}
+                                            onChange={(e) => {
+                                                if (compCondition) {
+                                                    setFormCondition({
+                                                        ...compCondition,
+                                                        type: 'indicator_comparison',
+                                                        target: Math.max(1, Number(e.target.value))
+                                                    });
+                                                }
+                                            }}
+                                            style={{ ...inputStyle, width: '100%', paddingRight: 40 }}
+                                        />
+                                        <span style={{
+                                            position: 'absolute',
+                                            right: 8,
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-muted)',
+                                            pointerEvents: 'none'
+                                        }}>mins</span>
+                                    </div>
                                 </div>
                             ) : formCondition.source.name?.toLowerCase() === 'range of time' ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

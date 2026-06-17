@@ -367,7 +367,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 width: 3,
                                 height: 14,
                                 borderRadius: 1,
-                                backgroundColor: 'var(--color-ec-copper)',
+                                backgroundColor: 'var(--color-ec-loss)',
                             }} />
                             <h2 style={{
                                 fontFamily: 'var(--color-ec-sans)',
