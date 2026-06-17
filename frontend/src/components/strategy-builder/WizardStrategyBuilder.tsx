@@ -1583,16 +1583,16 @@ export default function WizardStrategyBuilder({
 
     const sessions = [
       {
-        id: "rth",
-        label: "Regular Hours (RTH)",
-        time: "09:30 - 16:00 ET",
-        desc: "Horario estándar del mercado de EE. UU. Máxima liquidez y volumen. Ideal para la mayoría de estrategias."
-      },
-      {
         id: "pre",
         label: "Pre-Market",
         time: "04:00 - 09:30 ET",
         desc: "Operativa antes de la apertura oficial. Útil para reaccionar a catalizadores temprano, pero con spreads anchos."
+      },
+      {
+        id: "rth",
+        label: "Regular Hours (RTH)",
+        time: "09:30 - 16:00 ET",
+        desc: "Horario estándar del mercado de EE. UU. Máxima liquidez y volumen. Ideal para la mayoría de estrategias."
       },
       {
         id: "post",

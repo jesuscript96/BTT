@@ -925,7 +925,7 @@ export default function InlineStrategyBuilder({
         </div>
 
         {/* DIVIDER 3 */}
-        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '8px 0' }} />
 
         {/* SECTION: SESIÓN DE EJECUCIÓN DE LA ESTRATEGIA */}
         <div style={{
@@ -936,10 +936,10 @@ export default function InlineStrategyBuilder({
         }}>
           <h2 style={{
             fontFamily: 'var(--color-ec-sans)',
-            fontSize: 9,
+            fontSize: 11,
             fontWeight: 700,
             textTransform: 'uppercase',
-            letterSpacing: '0.15em',
+            letterSpacing: '0.05em',
             color: 'var(--color-ec-text-muted)',
             marginBottom: 4,
           }}>
@@ -1055,7 +1055,7 @@ export default function InlineStrategyBuilder({
         </div>
 
         {/* DIVIDER 4 */}
-        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '4px 0' }} />
+        <div style={{ height: '0.5px', backgroundColor: 'var(--color-ec-border)', width: '100%', margin: '8px 0' }} />
 
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic}>
           {/* Sub-panel de Ventanas de Horario de Entrada */}
