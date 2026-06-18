@@ -339,6 +339,12 @@ def run_backtest(
             prev_close_val = day_df["close"].iloc[0] if len(day_df) > 0 else np.nan
         prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
 
+        # Yesterday's Open from daily_stats (from qualifying_df)
+        yest_open_val = daily_stats.get("yesterday_open", daily_stats.get("lag_rth_open_1"))
+        if yest_open_val is None or pd.isna(yest_open_val):
+            yest_open_val = day_df["open"].iloc[0] if len(day_df) > 0 else np.nan
+        yest_opens_vals = np.full(len(day_df), yest_open_val, dtype=np.float64)
+
         arrays = {
             "ticker": np.full(len(day_df), ticker, dtype=object),
             "open": day_df["open"].values.astype(np.float64),
@@ -354,6 +360,7 @@ def run_backtest(
             "prev_high": prev_highs_vals,
             "prev_low": prev_lows_vals,
             "prev_close": prev_closes_vals,
+            "yesterday_open": yest_opens_vals,
         }
         del day_df
 

@@ -922,10 +922,11 @@ def _compute_raw(
         pm_high_val = ds.get("pm_high") if ds else None
         if pm_high_val is None or pd.isna(pm_high_val):
             pm_high_val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
-        pm_open_series = df.loc[pm_mask, "open"]
-        pm_open_val = pm_open_series.iloc[0] if not pm_open_series.empty else np.nan
-        if not pd.isna(pm_high_val) and not pd.isna(pm_open_val) and pm_open_val != 0:
-            gap_pct_val = (pm_high_val - pm_open_val) / pm_open_val * 100
+        yest_open_val = ds.get("yesterday_open", ds.get("lag_rth_open_1", np.nan)) if ds else np.nan
+        if yest_open_val is None or pd.isna(yest_open_val):
+            yest_open_val = df["open"].iloc[0] if len(df) > 0 else np.nan
+        if not pd.isna(pm_high_val) and not pd.isna(yest_open_val) and yest_open_val != 0:
+            gap_pct_val = (pm_high_val - yest_open_val) / yest_open_val * 100
         else:
             gap_pct_val = np.nan
         return pd.Series(float(gap_pct_val), index=close.index)

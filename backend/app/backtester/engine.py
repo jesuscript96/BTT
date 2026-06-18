@@ -746,10 +746,8 @@ class BacktestEngine:
                     pm_high = df.groupby(['ticker', timestamps.dt.date])['high'].transform(
                         lambda x: x.where(pm_mask).max()
                     )
-                pm_open = df.groupby(['ticker', timestamps.dt.date])['open'].transform(
-                    lambda x: x.where(pm_mask).dropna().iloc[0] if not x.where(pm_mask).dropna().empty else np.nan
-                )
-                series = (pm_high - pm_open) / pm_open * 100
+                yest_open = df['yesterday_open'] if 'yesterday_open' in df.columns else df['open']
+                series = (pm_high - yest_open) / yest_open * 100
         elif name == IndicatorType.PML:
             if 'pm_low' in df.columns:
                 series = df['pm_low']
