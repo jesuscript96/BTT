@@ -426,8 +426,10 @@ export default function OOSDegradationTab({
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         chart.applyOptions({ width: entry.contentRect.width });
+        chart.timeScale().fitContent();
         if (ddChart) {
           ddChart.applyOptions({ width: entry.contentRect.width });
+          ddChart.timeScale().fitContent();
         }
         updateDelimiterPos();
       }

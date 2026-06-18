@@ -408,9 +408,11 @@ export default function EquityCurveTab({
     const handleResize = () => {
       if (equityContainer) {
         chart.applyOptions({ width: equityContainer.clientWidth });
+        chart.timeScale().fitContent();
       }
       if (ddContainer && ddChart) {
         ddChart.applyOptions({ width: ddContainer.clientWidth });
+        ddChart.timeScale().fitContent();
       }
     };
     window.addEventListener("resize", handleResize);
@@ -1295,7 +1297,9 @@ function WhatIfEquityChart({
     const handleResize = () => {
       if (container && ddContainer) {
         chart.applyOptions({ width: container.clientWidth });
+        chart.timeScale().fitContent();
         ddChart.applyOptions({ width: ddContainer.clientWidth });
+        ddChart.timeScale().fitContent();
       }
     };
     window.addEventListener("resize", handleResize);

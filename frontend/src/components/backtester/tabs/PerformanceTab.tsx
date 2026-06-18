@@ -336,6 +336,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
     const handleResize = () => {
       if (chartContainerRef.current) {
         chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+        chart.timeScale().fitContent();
       }
     };
     window.addEventListener("resize", handleResize);
