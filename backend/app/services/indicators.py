@@ -915,6 +915,20 @@ def _compute_raw(
             pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
             val = df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
         return pd.Series(_safe_float(val), index=close.index)
+
+    if name == "PM High Gap (%)":
+        timestamps = pd.to_datetime(df["timestamp"])
+        pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
+        pm_high_val = ds.get("pm_high") if ds else None
+        if pm_high_val is None or pd.isna(pm_high_val):
+            pm_high_val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
+        pm_open_series = df.loc[pm_mask, "open"]
+        pm_open_val = pm_open_series.iloc[0] if not pm_open_series.empty else np.nan
+        if not pd.isna(pm_high_val) and not pd.isna(pm_open_val) and pm_open_val != 0:
+            gap_pct_val = (pm_high_val - pm_open_val) / pm_open_val * 100
+        else:
+            gap_pct_val = np.nan
+        return pd.Series(float(gap_pct_val), index=close.index)
     if name in ("RTH Open", "rth_open"):
         val = ds.get("rth_open") if ds else None
         if val is None or pd.isna(val):

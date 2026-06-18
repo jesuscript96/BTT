@@ -340,6 +340,7 @@ def run_backtest(
         prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
 
         arrays = {
+            "ticker": np.full(len(day_df), ticker, dtype=object),
             "open": day_df["open"].values.astype(np.float64),
             "high": day_df["high"].values.astype(np.float64),
             "low": day_df["low"].values.astype(np.float64),
