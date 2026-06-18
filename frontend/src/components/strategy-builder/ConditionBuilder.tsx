@@ -205,7 +205,7 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_ASCENDING]: "Patrón de triángulo ascendente.",
     [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
-    [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
+    [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre la apertura del premarket y el máximo del premarket high.",
     
     // Technical Indicators
     [IndicatorType.SMA]: "Media Móvil Simple.",
