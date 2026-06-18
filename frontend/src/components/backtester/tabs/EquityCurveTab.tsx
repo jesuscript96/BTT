@@ -190,8 +190,21 @@ export default function EquityCurveTab({
     const chart = createChart(equityContainer, {
       width: equityContainer.clientWidth,
       height: 370,
-      handleScroll: false,
-      handleScale: false,
+      handleScale: {
+        mouseWheel: false,
+        pinch: false,
+        axisPressedMouseMove: {
+          time: false,
+          price: false,
+        },
+        axisDoubleClickReset: false,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
       layout: {
         background: { type: ColorType.Solid, color: "#16181A" },
         textColor: "#8A8D92",
@@ -272,8 +285,21 @@ export default function EquityCurveTab({
       ddChart = createChart(ddContainer, {
         width: ddContainer.clientWidth,
         height: 120,
-        handleScroll: false,
-        handleScale: false,
+        handleScale: {
+          mouseWheel: false,
+          pinch: false,
+          axisPressedMouseMove: {
+            time: false,
+            price: false,
+          },
+          axisDoubleClickReset: false,
+        },
+        handleScroll: {
+          mouseWheel: false,
+          pressedMouseMove: false,
+          horzTouchDrag: false,
+          vertTouchDrag: false,
+        },
         layout: {
           background: { type: ColorType.Solid, color: "#16181A" },
           textColor: "#8A8D92",
@@ -1119,8 +1145,21 @@ function WhatIfEquityChart({
     const chart = createChart(container, {
       width: container.clientWidth,
       height: 180,
-      handleScroll: false,
-      handleScale: false,
+      handleScale: {
+        mouseWheel: false,
+        pinch: false,
+        axisPressedMouseMove: {
+          time: false,
+          price: false,
+        },
+        axisDoubleClickReset: false,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
       layout: {
         background: { type: ColorType.Solid, color: "#16181A" },
         textColor: "#8A8D92",
@@ -1181,8 +1220,21 @@ function WhatIfEquityChart({
     const ddChart = createChart(ddContainer, {
       width: ddContainer.clientWidth,
       height: 80,
-      handleScroll: false,
-      handleScale: false,
+      handleScale: {
+        mouseWheel: false,
+        pinch: false,
+        axisPressedMouseMove: {
+          time: false,
+          price: false,
+        },
+        axisDoubleClickReset: false,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
       layout: {
         background: { type: ColorType.Solid, color: "#16181A" },
         textColor: "#8A8D92",

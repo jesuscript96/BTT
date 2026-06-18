@@ -159,6 +159,21 @@ export default function OOSDegradationTab({
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 370,
+      handleScale: {
+        mouseWheel: false,
+        pinch: false,
+        axisPressedMouseMove: {
+          time: false,
+          price: false,
+        },
+        axisDoubleClickReset: false,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
       layout: {
         background: { type: ColorType.Solid, color: "#16181A" },
         textColor: "#8A8D92",
@@ -276,6 +291,21 @@ export default function OOSDegradationTab({
       ddChart = createChart(ddContainerRef.current, {
         width: ddContainerRef.current.clientWidth,
         height: 120,
+        handleScale: {
+          mouseWheel: false,
+          pinch: false,
+          axisPressedMouseMove: {
+            time: false,
+            price: false,
+          },
+          axisDoubleClickReset: false,
+        },
+        handleScroll: {
+          mouseWheel: false,
+          pressedMouseMove: false,
+          horzTouchDrag: false,
+          vertTouchDrag: false,
+        },
         layout: {
           background: { type: ColorType.Solid, color: "#16181A" },
           textColor: "#8A8D92",

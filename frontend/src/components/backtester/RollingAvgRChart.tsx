@@ -86,8 +86,21 @@ export default function RollingAvgRChart({ trades, isDarkMode = false }: Rolling
         const chart = createChart(containerRef.current, {
             width: containerRef.current.clientWidth,
             height: containerRef.current.clientHeight || 120,
-            handleScroll: false,
-            handleScale: false,
+            handleScale: {
+                mouseWheel: false,
+                pinch: false,
+                axisPressedMouseMove: {
+                    time: false,
+                    price: false,
+                },
+                axisDoubleClickReset: false,
+            },
+            handleScroll: {
+                mouseWheel: false,
+                pressedMouseMove: false,
+                horzTouchDrag: false,
+                vertTouchDrag: false,
+            },
             layout: {
                 background: { type: ColorType.Solid, color: "#16181A" },
                 textColor: "#8A8D92"
