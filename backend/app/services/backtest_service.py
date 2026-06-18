@@ -333,6 +333,12 @@ def run_backtest(
         prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)
         prev_lows_vals = pd.Series(lod_vals).shift(1).fillna(low_series.iloc[0] if len(low_series) > 0 else 0.0).values.astype(np.float64)
 
+        # Yesterday's Close from daily_stats (from qualifying_df)
+        prev_close_val = daily_stats.get("prev_close")
+        if prev_close_val is None or pd.isna(prev_close_val):
+            prev_close_val = day_df["close"].iloc[0] if len(day_df) > 0 else np.nan
+        prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
+
         arrays = {
             "open": day_df["open"].values.astype(np.float64),
             "high": day_df["high"].values.astype(np.float64),
@@ -346,6 +352,7 @@ def run_backtest(
             "pm_low": pm_lows_vals,
             "prev_high": prev_highs_vals,
             "prev_low": prev_lows_vals,
+            "prev_close": prev_closes_vals,
         }
         del day_df
 
