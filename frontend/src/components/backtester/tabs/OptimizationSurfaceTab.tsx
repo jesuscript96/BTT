@@ -28,6 +28,7 @@ const Plot = dynamic(
 const METRIC_OPTIONS = [
   { value: "sharpe", label: "Sharpe Ratio" },
   { value: "total_return", label: "Total Return %" },
+  { value: "expectancy", label: "Esperanza Matemática (EV)" },
   { value: "dd_return", label: "DD / Return" },
   { value: "avg_r_ui", label: "AVG Y/U.Index" },
 ];
