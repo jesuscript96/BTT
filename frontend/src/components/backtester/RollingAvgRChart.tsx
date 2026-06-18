@@ -86,6 +86,8 @@ export default function RollingAvgRChart({ trades, isDarkMode = false }: Rolling
         const chart = createChart(containerRef.current, {
             width: containerRef.current.clientWidth,
             height: containerRef.current.clientHeight || 120,
+            handleScroll: false,
+            handleScale: false,
             layout: {
                 background: { type: ColorType.Solid, color: "#16181A" },
                 textColor: "#8A8D92"

@@ -107,6 +107,8 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         const chart = createChart(containerRef.current, {
             width: containerRef.current.clientWidth,
             height: containerRef.current.clientHeight || 120,
+            handleScroll: false,
+            handleScale: false,
             layout: {
                 background: { type: ColorType.Solid, color: bgColor },
                 textColor: textColor,
