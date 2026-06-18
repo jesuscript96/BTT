@@ -30,6 +30,7 @@ from app.db.gcs_cache import (
     INTRADAY_BATCH_SIZE,
 )
 from app.services.backtest_service import run_backtest
+from app.redis_client import get_redis
 
 logger = logging.getLogger("backtester.optimization")
 
@@ -38,6 +39,107 @@ OPTIMIZATION_PROGRESS = {}
 
 # Global dict to store completed optimization results (in-memory for local use)
 OPTIMIZATION_RESULTS = {}
+
+
+# ─── Redis-backed accessors for progress / results ──────────────────────────
+# Redis lets progress and results survive restarts/redeploys and be shared
+# across API workers. When get_redis() returns None (Redis unavailable) every
+# accessor falls back to the in-memory dicts above, so behavior is identical to
+# the original single-process implementation.
+_OPT_REDIS_TTL = 3600  # 1h — longer than any realistic sweep
+
+
+def _json_default(o):
+    """Encoder fallback so optimization results (which may carry numpy scalars
+    or arrays inside `details`) serialize cleanly to JSON for Redis."""
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.bool_):
+        return bool(o)
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+
+
+def set_progress(task_id: str, value: float) -> None:
+    """Store optimization progress (float 0.0-100.0). Redis when available,
+    in-memory dict as fallback."""
+    r = get_redis()
+    if r:
+        try:
+            r.setex(f"opt:progress:{task_id}", _OPT_REDIS_TTL, json.dumps(value))
+            return
+        except Exception as e:
+            logger.warning(f"[REDIS] set progress failed for {task_id}: {e}")
+    OPTIMIZATION_PROGRESS[task_id] = value
+
+
+def get_progress(task_id: str, default: float = 0.0):
+    """Read optimization progress. Checks Redis first, then the in-memory dict
+    (which also catches a value that fell back on a Redis write error)."""
+    r = get_redis()
+    if r:
+        try:
+            raw = r.get(f"opt:progress:{task_id}")
+            if raw is not None:
+                return json.loads(raw)
+        except Exception as e:
+            logger.warning(f"[REDIS] get progress failed for {task_id}: {e}")
+    return OPTIMIZATION_PROGRESS.get(task_id, default)
+
+
+def store_result(task_id: str, result) -> None:
+    """Store a completed optimization result. An Exception is serialized to
+    {"error": str(e)} — NEVER pickled. Successful results (dicts) are
+    JSON-serialized. Redis when available, in-memory dict as fallback."""
+    r = get_redis()
+    if r:
+        if isinstance(result, Exception):
+            payload = {"__opt_error__": True, "error": str(result)}
+        else:
+            payload = {"__opt_error__": False, "result": result}
+        try:
+            r.setex(
+                f"opt:result:{task_id}",
+                _OPT_REDIS_TTL,
+                json.dumps(payload, default=_json_default),
+            )
+            return
+        except Exception as e:
+            logger.warning(f"[REDIS] set result failed for {task_id}: {e}")
+    # In-memory fallback keeps the original semantics (stores dict or Exception)
+    OPTIMIZATION_RESULTS[task_id] = result
+
+
+def pop_result(task_id: str):
+    """Pop a completed result and clear its progress entry.
+
+    Returns a 3-tuple (found: bool, is_error: bool, payload). payload is the
+    result dict on success or the error message string on failure.
+    """
+    r = get_redis()
+    if r:
+        try:
+            raw = r.get(f"opt:result:{task_id}")
+            if raw is not None:
+                r.delete(f"opt:result:{task_id}")
+                r.delete(f"opt:progress:{task_id}")
+                env = json.loads(raw)
+                if env.get("__opt_error__"):
+                    return True, True, env.get("error", "Unknown error")
+                return True, False, env.get("result")
+        except Exception as e:
+            logger.warning(f"[REDIS] pop result failed for {task_id}: {e}")
+    # In-memory fallback (also catches a result that fell back on a Redis error)
+    if task_id in OPTIMIZATION_RESULTS:
+        result = OPTIMIZATION_RESULTS.pop(task_id)
+        OPTIMIZATION_PROGRESS.pop(task_id, None)
+        if isinstance(result, Exception):
+            return True, True, str(result)
+        return True, False, result
+    return False, False, None
 
 # Dataset context for forked grid workers. Populated by run_optimization_grid
 # right before the pool forks so children inherit it via copy-on-write instead
@@ -487,7 +589,7 @@ def run_optimization_grid(
     is_percent = backtest_params.get("is_percent", 100.0)
 
     if task_id:
-        OPTIMIZATION_PROGRESS[task_id] = 1.0
+        set_progress(task_id, 1.0)
 
     # 1. Fetch daily qualifying data first to find unique dates and apply IS split
     qualifying_df = fetch_qualifying_data(
@@ -525,7 +627,7 @@ def run_optimization_grid(
         qualifying_df = qualifying_df[qualifying_df["date"].astype(str) <= opt_end_date]
 
     if task_id:
-        OPTIMIZATION_PROGRESS[task_id] = 2.0
+        set_progress(task_id, 2.0)
 
     # 2. Fetch intraday data only for the resolved In-Sample dates.
     # Uses the SAME per-month disk cache layer as the streaming backtest path
@@ -563,7 +665,7 @@ def run_optimization_grid(
         if task_id:
             # Load progress goes smoothly from 2.0% to 5.0%
             prog_val = round(2.0 + ((i + 1) / n_chunks) * 3.0, 2)
-            OPTIMIZATION_PROGRESS[task_id] = prog_val
+            set_progress(task_id, prog_val)
 
     if not chunks:
         intraday_df = pd.DataFrame()
@@ -582,7 +684,7 @@ def run_optimization_grid(
         intraday_df = intraday_df[intraday_df["date"].astype(str) <= opt_end_date]
 
     if task_id:
-        OPTIMIZATION_PROGRESS[task_id] = 5.0
+        set_progress(task_id, 5.0)
 
     if qualifying_df.empty or intraday_df.empty:
         raise ValueError("No data for selected period/preconditions")
@@ -667,7 +769,7 @@ def run_optimization_grid(
                     completed += len(chunk)
                     if task_id:
                         prog = round(5.0 + (completed / n_points) * 95.0, 2)
-                        OPTIMIZATION_PROGRESS[task_id] = prog
+                        set_progress(task_id, prog)
                     elapsed = round(time.time() - t0, 1)
                     logger.info(f"[OPT] Progress: {completed}/{n_points} ({elapsed}s)")
         finally:
@@ -681,7 +783,7 @@ def run_optimization_grid(
 
             if task_id:
                 prog = round(5.0 + ((idx + 1) / n_points) * 95.0, 2)
-                OPTIMIZATION_PROGRESS[task_id] = prog
+                set_progress(task_id, prog)
                 if (idx + 1) % 5 == 0:
                     logger.info(f"[PROGRESS] {task_id}: {prog}%")
 
