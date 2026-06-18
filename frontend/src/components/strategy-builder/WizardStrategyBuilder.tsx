@@ -41,6 +41,24 @@ export interface WizardDraft {
   custom_end_time?: string;
 }
 
+const MARKET_LEVEL_LABELS: Record<string, string> = {
+  "HOD": "HOD",
+  "LOD": "LOD",
+  "PMH": "PMH",
+  "PML": "PML",
+  "Previous Max": "Prev. Max",
+  "Previous Min": "Prev. Min"
+};
+
+const MARKET_LEVEL_DESCRIPTIONS: Record<string, string> = {
+  "HOD": "Máximo Diario (High of Day). El precio más alto alcanzado durante la sesión regular de hoy.",
+  "LOD": "Mínimo Diario (Low of Day). El precio más bajo alcanzado durante la sesión regular de hoy.",
+  "PMH": "Máximo Pre-market (PM High). El precio más alto registrado en el pre-market de hoy.",
+  "PML": "Mínimo Pre-market (PM Low). El precio más bajo registrado en el pre-market de hoy.",
+  "Previous Max": "Máximo Día Anterior (Previous Day High). El precio más alto de la sesión de ayer.",
+  "Previous Min": "Mínimo Día Anterior (Previous Day Low). El precio más bajo de la sesión de ayer."
+};
+
 interface WizardIndicatorSelectorProps {
   value: IndicatorType;
   onChange: (val: IndicatorType) => void;
@@ -587,6 +605,22 @@ export default function WizardStrategyBuilder({
   const [showSLPercentTooltip, setShowSLPercentTooltip] = useState(false);
   const [showSLRefTooltip, setShowSLRefTooltip] = useState(false);
   const [showSLOffsetTooltip, setShowSLOffsetTooltip] = useState(false);
+  const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
+  const [hoveredLevel, setHoveredLevel] = useState<string | null>(null);
+  const [hoveredActiveLevel, setHoveredActiveLevel] = useState<string | null>(null);
+  const [hoveredLevelTop, setHoveredLevelTop] = useState<number>(0);
+  const slLevelDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (slLevelDropdownRef.current && !slLevelDropdownRef.current.contains(e.target as Node)) {
+        setIsLevelDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
   const [showTPPercentTooltip, setShowTPPercentTooltip] = useState(false);
   const [showTPPartialsTooltip, setShowTPPartialsTooltip] = useState(false);
   const [showTSBufferTooltip, setShowTSBufferTooltip] = useState(false);
@@ -3613,22 +3647,27 @@ export default function WizardStrategyBuilder({
                       bottom: "125%",
                       left: "50%",
                       transform: "translateX(-50%)",
-                      width: 200,
+                      width: 230,
                       backgroundColor: "var(--color-ec-bg-elevated)",
                       border: "0.5px solid var(--color-ec-border)",
                       borderRadius: 6,
-                      padding: "8px 10px",
-                      boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                      fontSize: 8.5,
+                      padding: "10px 12px",
+                      boxShadow: "0 -4px 16px rgba(0,0,0,0.3)",
+                      fontSize: 9,
                       color: "var(--color-ec-text-high)",
-                      lineHeight: 1.35,
+                      lineHeight: 1.4,
                       zIndex: 100,
                       pointerEvents: "none",
                       textAlign: "left",
                     }}>
                       <strong>Referencia de Estructura</strong>
                       <div style={{ marginTop: 4 }}>
-                        Utiliza precios clave del mercado para situar tu Stop Loss. Por ejemplo: <strong>LOD</strong> (mínimo del día) para compras, o <strong>HOD</strong> (máximo del día) para ventas.
+                        Sitúa tu Stop Loss en base a precios clave (LOD, HOD, etc.) más un % de margen (offset).
+                      </div>
+                      <div style={{ marginTop: 6, borderTop: '0.5px solid var(--color-ec-border)', paddingTop: 6, fontSize: 8.5, color: 'var(--color-ec-text-secondary)' }}>
+                        <strong>Ejemplo de Dirección:</strong><br />
+                        • Si compras (Largo) y usas el <strong>LOD</strong> (mínimo), pon el Stop <strong>Por debajo</strong> (resta el % al LOD, ej: LOD - 1%).<br />
+                        • Si vendes corto y usas el <strong>HOD</strong> (máximo), pon el Stop <strong>Por encima</strong> (suma el % al HOD, ej: HOD + 1%).
                       </div>
                     </div>
                   )}
@@ -3637,35 +3676,215 @@ export default function WizardStrategyBuilder({
                   Establece el Stop Loss en base a referencias clave del mercado (como el mínimo/máximo diario LOD/HOD) más un margen de holgura (offset).
                 </span>
                 
-                <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center", flexWrap: "nowrap" }}>
-                  <select
-                    value={riskManagement.hard_stop.value || 'LOD'}
-                    onChange={(e) => setRiskManagement({
-                      ...riskManagement,
-                      hard_stop: { ...riskManagement.hard_stop, value: e.target.value }
-                    })}
-                    style={{
-                      backgroundColor: 'var(--color-ec-bg-sidebar)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      borderRadius: 5,
-                      padding: '6px 8px',
-                      fontSize: 11,
-                      fontWeight: 500,
-                      color: 'var(--color-ec-text-primary)',
-                      fontFamily: 'var(--color-ec-sans)',
-                      outline: 'none',
-                      cursor: 'pointer',
-                      height: '32px',
-                      width: '90px',
-                    }}
-                  >
-                    <option value="HOD">HOD</option>
-                    <option value="LOD">LOD</option>
-                    <option value="PMH">PMH</option>
-                    <option value="PML">PML</option>
-                    <option value="Previous Max">Prev. Max</option>
-                    <option value="Previous Min">Prev. Min</option>
-                  </select>
+                <div style={{ display: "flex", gap: 5, alignItems: "center", justifyContent: "center", flexWrap: "nowrap" }}>
+                  {/* Custom Dropdown for Level selection with explanations and ? symbols */}
+                  <div ref={slLevelDropdownRef} style={{ position: "relative", width: "90px" }}>
+                    <div
+                      onClick={() => {
+                        setIsLevelDropdownOpen(!isLevelDropdownOpen);
+                        setHoveredLevel(null);
+                      }}
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '6px 8px',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: 'var(--color-ec-text-primary)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        cursor: 'pointer',
+                        height: '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        boxSizing: 'border-box',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, overflow: "hidden", flex: 1 }}>
+                        <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
+                          {(() => {
+                            const val = riskManagement.hard_stop.value || 'LOD';
+                            if (val === 'Previous Max') return 'Prev. Max';
+                            if (val === 'Previous Min') return 'Prev. Min';
+                            return val;
+                          })()}
+                        </span>
+                        <span
+                          onMouseEnter={(e) => {
+                            e.stopPropagation();
+                            setHoveredActiveLevel(riskManagement.hard_stop.value || 'LOD');
+                          }}
+                          onMouseLeave={() => setHoveredActiveLevel(null)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 11,
+                            height: 11,
+                            borderRadius: "50%",
+                            backgroundColor: "rgba(216, 122, 61, 0.12)",
+                            border: "0.5px solid rgba(216, 122, 61, 0.35)",
+                            color: "var(--color-ec-copper)",
+                            fontSize: 7.5,
+                            fontWeight: "bold",
+                            cursor: "help",
+                            flexShrink: 0
+                          }}
+                        >
+                          ?
+                        </span>
+                      </div>
+                      <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", marginLeft: 4 }}>
+                        {isLevelDropdownOpen ? "▲" : "▼"}
+                      </span>
+                    </div>
+
+                    {isLevelDropdownOpen && (
+                      <div style={{
+                        position: "absolute",
+                        bottom: "110%", // open upwards
+                        left: 0,
+                        width: "120px",
+                        backgroundColor: "var(--color-ec-bg-elevated)",
+                        border: "0.5px solid var(--color-ec-border)",
+                        borderRadius: 6,
+                        boxShadow: "0 -4px 16px rgba(0,0,0,0.4)",
+                        zIndex: 110,
+                        padding: "4px 0",
+                      }}>
+                        {[
+                          { val: "HOD", label: "HOD" },
+                          { val: "LOD", label: "LOD" },
+                          { val: "PMH", label: "PMH" },
+                          { val: "PML", label: "PML" },
+                          { val: "Previous Max", label: "Prev. Max" },
+                          { val: "Previous Min", label: "Prev. Min" },
+                        ].map((opt) => {
+                          const isSelected = (riskManagement.hard_stop.value || 'LOD') === opt.val;
+                          return (
+                            <div
+                              key={opt.val}
+                              onClick={() => {
+                                setRiskManagement({
+                                  ...riskManagement,
+                                  hard_stop: { ...riskManagement.hard_stop, value: opt.val }
+                                });
+                                setIsLevelDropdownOpen(false);
+                                setHoveredLevel(null);
+                              }}
+                              style={{
+                                padding: "6px 8px",
+                                fontSize: 10,
+                                color: isSelected ? "var(--color-ec-copper)" : "var(--color-ec-text-primary)",
+                                fontWeight: isSelected ? 700 : 500,
+                                cursor: "pointer",
+                                display: "flex",
+                                justifyContent: "flex-start",
+                                alignItems: "center",
+                                gap: 5,
+                                backgroundColor: isSelected ? "rgba(216, 122, 61, 0.06)" : "transparent",
+                                borderLeft: isSelected ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                                transition: "all 100ms ease",
+                              }}
+                              onMouseEnter={(e) => {
+                                setHoveredLevel(opt.val);
+                                if (!isSelected) {
+                                  e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
+                                }
+                                const listContainer = e.currentTarget.parentElement;
+                                if (listContainer) {
+                                  const offsetTop = e.currentTarget.offsetTop;
+                                  const scrollTop = listContainer.scrollTop;
+                                  setHoveredLevelTop(offsetTop - scrollTop);
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                setHoveredLevel(null);
+                                if (!isSelected) {
+                                  e.currentTarget.style.backgroundColor = "transparent";
+                                }
+                              }}
+                            >
+                              <span>{opt.label}</span>
+                              <span style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                width: 12,
+                                height: 12,
+                                borderRadius: "50%",
+                                border: "0.5px solid var(--color-ec-border)",
+                                color: "var(--color-ec-text-muted)",
+                                fontSize: 8,
+                                fontWeight: "bold",
+                                cursor: "help"
+                              }}>
+                                ?
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {/* Hovered Option Tooltip */}
+                        {hoveredLevel && MARKET_LEVEL_DESCRIPTIONS[hoveredLevel] && (
+                          <div style={{
+                            position: "absolute",
+                            top: hoveredLevelTop - 45, // sits above or aligned to the hovered option row
+                            left: "105%", // sits to the right of the dropdown list
+                            width: 180,
+                            backgroundColor: "var(--color-ec-bg-elevated)",
+                            border: "0.5px solid var(--color-ec-border)",
+                            borderRadius: 6,
+                            padding: "10px",
+                            boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                            zIndex: 1002,
+                            pointerEvents: "none",
+                            animation: "wizTagSlideIn 150ms ease",
+                          }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase" }}>
+                              {MARKET_LEVEL_LABELS[hoveredLevel] || hoveredLevel}
+                            </span>
+                            <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
+                              {MARKET_LEVEL_DESCRIPTIONS[hoveredLevel]}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Hover Tooltip Card for Active Level Selection */}
+                    {hoveredActiveLevel && MARKET_LEVEL_DESCRIPTIONS[hoveredActiveLevel] && (
+                      <div style={{
+                        position: "absolute",
+                        bottom: "120%",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: 180,
+                        backgroundColor: "var(--color-ec-bg-elevated)",
+                        border: "0.5px solid var(--color-ec-border)",
+                        borderRadius: 6,
+                        padding: "10px",
+                        boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        zIndex: 1001,
+                        pointerEvents: "none"
+                      }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase" }}>
+                          {MARKET_LEVEL_LABELS[hoveredActiveLevel] || hoveredActiveLevel}
+                        </span>
+                        <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
+                          {MARKET_LEVEL_DESCRIPTIONS[hoveredActiveLevel]}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   
                   <select
                     value={riskManagement.hard_stop.operator || '>='}
@@ -3684,15 +3903,13 @@ export default function WizardStrategyBuilder({
                       fontFamily: 'var(--color-ec-sans)',
                       outline: 'none',
                       cursor: 'pointer',
-                      width: '40px',
+                      width: '95px',
                       height: '32px',
                       textAlign: 'center',
                     }}
                   >
-                    <option value=">">&gt;</option>
-                    <option value="<">&lt;</option>
-                    <option value=">=">&gt;=</option>
-                    <option value="<=">&lt;=</option>
+                    <option value=">=">Por encima</option>
+                    <option value="<=">Por debajo</option>
                   </select>
 
                   <div 
@@ -3792,7 +4009,7 @@ export default function WizardStrategyBuilder({
               ? "Desactivado" 
               : riskManagement.hard_stop.type === RiskType.PERCENTAGE 
               ? `Stop Loss: ${riskManagement.hard_stop.value}%` 
-              : `Stop Loss: ${riskManagement.hard_stop.value} (Offset ${riskManagement.hard_stop.offset_pct ?? 0}%)`}
+              : `Stop Loss: ${riskManagement.hard_stop.value} ${(riskManagement.hard_stop.operator === '<' || riskManagement.hard_stop.operator === '<=') ? '-' : '+'} ${riskManagement.hard_stop.offset_pct ?? 0}%`}
           </span>
         </div>
       </div>
@@ -4743,7 +4960,7 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_hard_stop !== false) {
       const label = riskManagement.hard_stop.type === RiskType.PERCENTAGE
         ? `Stop Loss: ${riskManagement.hard_stop.value}%`
-        : `Stop Loss: ${riskManagement.hard_stop.value} (Offset ${riskManagement.hard_stop.offset_pct ?? 0}%)`;
+        : `Stop Loss: ${riskManagement.hard_stop.value} ${(riskManagement.hard_stop.operator === '<' || riskManagement.hard_stop.operator === '<=') ? '-' : '+'} ${riskManagement.hard_stop.offset_pct ?? 0}%`;
       list.push({
         label,
         stepName: "Gestión de Riesgo"
@@ -5074,7 +5291,7 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_hard_stop !== false) {
       const label = riskManagement.hard_stop.type === RiskType.PERCENTAGE
         ? `Stop Loss: ${riskManagement.hard_stop.value}%`
-        : `Stop Loss: ${riskManagement.hard_stop.value} (Offset ${riskManagement.hard_stop.offset_pct ?? 0}%)`;
+        : `Stop Loss: ${riskManagement.hard_stop.value} ${(riskManagement.hard_stop.operator === '<' || riskManagement.hard_stop.operator === '<=') ? '-' : '+'} ${riskManagement.hard_stop.offset_pct ?? 0}%`;
       list.push({
         label,
         color: "#f87171",

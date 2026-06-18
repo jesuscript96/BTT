@@ -10,6 +10,7 @@ import {
   AlertCircle,
   ChevronUp,
   ChevronDown,
+  Lock,
 } from "lucide-react";
 import {
   getScreenerDaily,
@@ -585,6 +586,7 @@ export default function Screener() {
       fontFamily: "'General Sans', sans-serif",
       backgroundColor: "var(--color-ec-bg-base)",
       overflow: "hidden",
+      position: "relative",
     }}>
       {/* ── Header ── */}
       <header style={{
@@ -1548,6 +1550,93 @@ export default function Screener() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── Coming Soon Overlay ── */}
+      <div style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        backdropFilter: "blur(2.5px)",
+        backgroundColor: "rgba(22, 24, 26, 0.45)",
+        padding: "24px",
+      }}>
+        <div style={{
+          backgroundColor: "rgba(28, 30, 33, 0.92)",
+          backdropFilter: "blur(12px)",
+          border: "1px solid var(--color-ec-border)",
+          boxShadow: "0 16px 40px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05)",
+          borderRadius: "12px",
+          padding: "32px 28px",
+          maxWidth: "360px",
+          width: "100%",
+          textAlign: "center",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "18px",
+        }}>
+          {/* Lock Badge */}
+          <div style={{
+            width: "48px",
+            height: "48px",
+            borderRadius: "50%",
+            backgroundColor: "rgba(216, 122, 61, 0.1)",
+            border: "1px solid var(--color-ec-copper)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--color-ec-copper)",
+            boxShadow: "0 0 16px rgba(216, 122, 61, 0.2)",
+            marginBottom: "2px",
+          }}>
+            <Lock style={{ width: 20, height: 20, strokeWidth: 2 }} />
+          </div>
+
+          {/* Title / Text Info */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <h2 style={{
+              fontFamily: "'Fraunces', serif",
+              fontSize: "26px",
+              fontWeight: 600,
+              color: "var(--color-ec-text-high)",
+              margin: 0,
+              letterSpacing: "-0.4px",
+              lineHeight: "1.1",
+            }}>
+              Coming <em style={{ fontStyle: "italic", color: "var(--color-ec-copper)" }}>Soon</em>
+            </h2>
+            <h3 style={{
+              fontFamily: "'General Sans', sans-serif",
+              fontSize: "11.5px",
+              fontWeight: 600,
+              color: "var(--color-ec-text-primary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.8px",
+              margin: "6px 0 0 0",
+              lineHeight: "1.4",
+            }}>
+              Herramientas de market análisis y screening avanzadas
+            </h3>
+            <p style={{
+              fontFamily: "'General Sans', sans-serif",
+              fontSize: "11px",
+              fontWeight: 400,
+              color: "var(--color-ec-text-secondary)",
+              lineHeight: "1.5",
+              margin: 0,
+              padding: "0 4px",
+            }}>
+              Datos en streaming en tiempo real y alertas customizadas muy pronto
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

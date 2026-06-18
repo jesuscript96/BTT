@@ -217,14 +217,12 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             fontFamily: 'var(--color-ec-sans)',
                                             outline: 'none',
                                             cursor: 'pointer',
-                                            width: '60px',
+                                            width: '120px',
                                             height: '36px',
                                         }}
                                     >
-                                        <option value=">">&gt;</option>
-                                        <option value="<">&lt;</option>
-                                        <option value=">=">&gt;=</option>
-                                        <option value="<=">&lt;=</option>
+                                        <option value=">=">Por encima</option>
+                                        <option value="<=">Por debajo</option>
                                     </select>
 
                                     <div style={{ position: 'relative', width: '80px' }}>
