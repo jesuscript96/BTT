@@ -2,12 +2,14 @@ from fastapi import APIRouter, HTTPException
 from typing import Optional
 import os
 import time
+import json
 import yfinance as yf
 import feedparser
 import pandas as pd
 import numpy as np
 from datetime import datetime
 from app.database import get_db_connection
+from app.redis_client import get_redis
 
 router = APIRouter(
     prefix="/api/ticker-analysis",
@@ -760,7 +762,17 @@ def get_ticker_analysis(ticker: str):
     ticker = ticker.upper()
     now = datetime.now()
     
-    # Cache lookup
+    # Redis cache lookup (primary, optional)
+    r = get_redis()
+    if r:
+        try:
+            cached = r.get(f"ticker:analysis:{ticker}")
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            print(f"[REDIS] read failed for ticker:analysis:{ticker}: {e}")
+
+    # In-memory cache lookup (fallback when Redis is unavailable)
     with _analysis_cache_lock:
         if ticker in _analysis_cache:
             cached_data, expiry = _analysis_cache[ticker]
@@ -894,6 +906,11 @@ def get_ticker_analysis(ticker: str):
         res = _swr_cache(ticker, "analysis", ANALYSIS_CACHE_TTL, _compute)
         with _analysis_cache_lock:
             _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
+        if r and isinstance(res, dict) and res.get("status") != "calculating":
+            try:
+                r.setex(f"ticker:analysis:{ticker}", 900, json.dumps(res))
+            except Exception as e:
+                print(f"[REDIS] write failed for ticker:analysis:{ticker}: {e}")
         return res
     except Exception as e:
         print(f"Error fetching ticker analysis for {ticker}: {e}")
@@ -905,6 +922,16 @@ def get_ticker_chart(ticker: str):
     ticker = ticker.upper()
     now = datetime.now()
     
+    # Redis cache lookup (primary, optional)
+    r = get_redis()
+    if r:
+        try:
+            cached = r.get(f"ticker:chart:{ticker}")
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            print(f"[REDIS] read failed for ticker:chart:{ticker}: {e}")
+
     with _chart_cache_lock:
         if ticker in _chart_cache:
             cached_data, expiry = _chart_cache[ticker]
@@ -1017,6 +1044,11 @@ def get_ticker_chart(ticker: str):
         res = _swr_cache(ticker, "chart", CHART_CACHE_TTL, _compute)
         with _chart_cache_lock:
             _chart_cache[ticker] = (res, now + CHART_CACHE_TTL)
+        if r and isinstance(res, dict) and res.get("status") != "calculating":
+            try:
+                r.setex(f"ticker:chart:{ticker}", 3600, json.dumps(res))
+            except Exception as e:
+                print(f"[REDIS] write failed for ticker:chart:{ticker}: {e}")
         return res
     except Exception as e:
         print(f"Error fetching chart for {ticker}: {e}")
@@ -1098,6 +1130,18 @@ def get_ticker_gap_stats(ticker: str):
     ticker = ticker.upper()
     now = datetime.now()
     
+    # Redis cache lookup (primary, optional). Never serves a "calculating"
+    # placeholder — those are not written below, so a miss falls through to
+    # the SWR background-fetch path exactly as before.
+    r = get_redis()
+    if r:
+        try:
+            cached = r.get(f"ticker:gap_stats:{ticker}")
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            print(f"[REDIS] read failed for ticker:gap_stats:{ticker}: {e}")
+
     with _gap_stats_cache_lock:
         if ticker in _gap_stats_cache:
             cached_data, expiry = _gap_stats_cache[ticker]
@@ -1119,6 +1163,11 @@ def get_ticker_gap_stats(ticker: str):
         if isinstance(res, dict) and res.get("status") != "calculating":
             with _gap_stats_cache_lock:
                 _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
+            if r:
+                try:
+                    r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(res))
+                except Exception as e:
+                    print(f"[REDIS] write failed for ticker:gap_stats:{ticker}: {e}")
         return res
     except Exception as e:
         print(f"Error fetching gap stats for {ticker}: {e}")
@@ -1218,6 +1267,17 @@ def get_finviz_news(ticker: str):
     """Get news from Massive API (Polygon-style). Endpoint name kept for backwards compat."""
     ticker = ticker.upper()
     now = datetime.now()
+
+    # Redis cache lookup (primary, optional)
+    r = get_redis()
+    if r:
+        try:
+            cached = r.get(f"ticker:news:{ticker}")
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            print(f"[REDIS] read failed for ticker:news:{ticker}: {e}")
+
     with _finviz_news_cache_lock:
         if ticker in _finviz_news_cache:
             cached_data, expiry = _finviz_news_cache[ticker]
@@ -1290,6 +1350,11 @@ def get_finviz_news(ticker: str):
         result = _swr_cache(ticker, "news", FINVIZ_NEWS_CACHE_TTL, _compute)
         with _finviz_news_cache_lock:
             _finviz_news_cache[ticker] = (result, now + FINVIZ_NEWS_CACHE_TTL)
+        if r and isinstance(result, dict) and result.get("status") != "calculating":
+            try:
+                r.setex(f"ticker:news:{ticker}", 900, json.dumps(result))
+            except Exception as e:
+                print(f"[REDIS] write failed for ticker:news:{ticker}: {e}")
         return result
     except Exception as e:
         print(f"[WARN] Massive news failed for {ticker}: {e}")
@@ -1308,6 +1373,17 @@ def get_ticker_logo(ticker: str):
     is never exposed to the browser.
     """
     ticker = ticker.upper()
+
+    # Redis cache lookup (primary, optional)
+    r = get_redis()
+    if r:
+        try:
+            cached_redis = r.get(f"ticker:logo:{ticker}")
+            if cached_redis:
+                return json.loads(cached_redis)
+        except Exception as e:
+            print(f"[REDIS] read failed for ticker:logo:{ticker}: {e}")
+
     cached = _logo_cache.get(ticker)
     if cached and time.time() - cached["ts"] < LOGO_CACHE_TTL:
         return cached["data"]
@@ -1389,6 +1465,11 @@ def get_ticker_logo(ticker: str):
         }
 
         _logo_cache[ticker] = {"data": result, "ts": time.time()}
+        if r:
+            try:
+                r.setex(f"ticker:logo:{ticker}", 86400, json.dumps(result))
+            except Exception as e:
+                print(f"[REDIS] write failed for ticker:logo:{ticker}: {e}")
         return result
 
     except Exception as e:
