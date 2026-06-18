@@ -265,6 +265,21 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
       height: 280,
+      handleScale: {
+        mouseWheel: false,
+        pinch: false,
+        axisPressedMouseMove: {
+          time: false,
+          price: false,
+        },
+        axisDoubleClickReset: false,
+      },
+      handleScroll: {
+        mouseWheel: false,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
+        vertTouchDrag: false,
+      },
       layout: {
         background: { type: ColorType.Solid, color: bgColor },
         textColor: textColor,
