@@ -11,8 +11,10 @@ from app.services.data_service import get_strategy
 from app.services.optimization_service import (
     run_optimization_grid,
     extract_parameters,
-    OPTIMIZATION_PROGRESS,
-    OPTIMIZATION_RESULTS,
+    set_progress,
+    get_progress,
+    store_result,
+    pop_result,
 )
 
 logger = logging.getLogger("backtester.optimization")
@@ -90,7 +92,7 @@ def get_optimization_parameters(req: ParametersRequest):
 
 @router.get("/optimization/progress/{task_id}")
 def get_optimization_progress(task_id: str):
-    prog = OPTIMIZATION_PROGRESS.get(task_id, 0.0)
+    prog = get_progress(task_id, 0.0)
     logger.debug(f"[PROGRESS_CHECK] {task_id} = {prog}%")
     return {"progress": prog}
 
@@ -98,14 +100,13 @@ def get_optimization_progress(task_id: str):
 @router.get("/optimization/result/{task_id}")
 def get_optimization_result(task_id: str):
     """Retrieve the result of a completed optimization task."""
-    if task_id in OPTIMIZATION_RESULTS:
-        result = OPTIMIZATION_RESULTS.pop(task_id)
-        OPTIMIZATION_PROGRESS.pop(task_id, None)
-        if isinstance(result, Exception):
-            raise HTTPException(status_code=500, detail=str(result))
-        return result
+    found, is_error, payload = pop_result(task_id)
+    if found:
+        if is_error:
+            raise HTTPException(status_code=500, detail=payload)
+        return payload
     # Still running or unknown
-    prog = OPTIMIZATION_PROGRESS.get(task_id, -1)
+    prog = get_progress(task_id, -1)
     if prog < 0:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"status": "running", "progress": prog}
@@ -123,13 +124,13 @@ def _run_optimization_in_background(req_data: dict, task_id: str):
             task_id=task_id,
             strategy_definition=req_data.get("strategy_definition"),
         )
-        OPTIMIZATION_RESULTS[task_id] = result
-        OPTIMIZATION_PROGRESS[task_id] = 100.0
+        store_result(task_id, result)
+        set_progress(task_id, 100.0)
         logger.info(f"[OPT] Background task {task_id} completed successfully")
     except Exception as e:
         logger.error(f"[OPT] Background task {task_id} failed: {e}", exc_info=True)
-        OPTIMIZATION_RESULTS[task_id] = e
-        OPTIMIZATION_PROGRESS[task_id] = 100.0
+        store_result(task_id, e)
+        set_progress(task_id, 100.0)
 
 
 @router.post("/optimization/surface")
@@ -146,7 +147,7 @@ def run_surface(req: SurfaceRequest):
     task_id = req.task_id or f"opt_{id(req)}"
 
     # Initialize progress tracking
-    OPTIMIZATION_PROGRESS[task_id] = 0.0
+    set_progress(task_id, 0.0)
 
     req_data = {
         "strategy_id": req.strategy_id,

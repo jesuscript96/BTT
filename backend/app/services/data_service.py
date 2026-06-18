@@ -6,7 +6,10 @@ Data access layer for the backtester.
   - intraday_1m                  → streamed in ticker-batches per month
 """
 
+import base64
 import gc
+import hashlib
+import io
 import json
 import logging
 import time
@@ -21,6 +24,7 @@ from app.db.gcs_cache import (
     iter_intraday_groups_streamed,
     fetch_intraday_batch,
 )
+from app.redis_client import get_redis
 
 logger = logging.getLogger("backtester.data")
 
@@ -531,7 +535,119 @@ def _evaluate_rules_on_df(df: pd.DataFrame, rules: list) -> pd.DataFrame:
     return df[mask]
 
 
+# ─── Qualifying result cache (Redis, optional) ──────────────────────────────
+# Caches the fully-computed qualifying DataFrame keyed on the RESOLVED filters
+# (not just dataset_id), so editing a saved query invalidates the entry. The
+# Redis client uses decode_responses=True, so binary Arrow bytes are base64'd
+# to a plain ASCII string. TTL is short (qualifying can change when the dataset
+# is edited). Everything is best-effort: any failure falls through to a normal
+# recompute, so behavior is identical when Redis is unavailable.
+_QUALIFYING_REDIS_TTL = 300  # 5 min
+_QUALIFYING_MAX_CACHE_BYTES = 20 * 1024 * 1024  # 20 MB — don't saturate Redis
+
+
+def _qualifying_cache_key(
+    dataset_id: str,
+    filters: dict,
+    req_start_date: str | None,
+    req_end_date: str | None,
+    preconditions: list | None,
+    apply_day: str,
+) -> str:
+    """md5 of the resolved filters + every parameter that changes the result."""
+    # Canonicalize preconditions order-independently (list of dicts).
+    precond_canon = sorted(
+        json.dumps(p, sort_keys=True, default=str) for p in (preconditions or [])
+    )
+    material = json.dumps(
+        {
+            "dataset_id": dataset_id,
+            "filters": filters,
+            "start": req_start_date,
+            "end": req_end_date,
+            "apply_day": apply_day,
+            "preconditions": precond_canon,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return "qualifying:" + hashlib.md5(material.encode("utf-8")).hexdigest()
+
+
+def _serialize_qualifying_df(df: pd.DataFrame) -> str:
+    """DataFrame → Arrow IPC (feather) bytes → base64 ASCII string."""
+    buf = io.BytesIO()
+    df.to_feather(buf)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _deserialize_qualifying_df(payload: str) -> pd.DataFrame:
+    """base64 ASCII string → Arrow IPC bytes → DataFrame."""
+    return pd.read_feather(io.BytesIO(base64.b64decode(payload)))
+
+
 def fetch_qualifying_data(
+    dataset_id: str,
+    req_start_date: str | None = None,
+    req_end_date: str | None = None,
+    preconditions: list = None,
+    apply_day: str = 'gap_day',
+) -> pd.DataFrame:
+    """Cached wrapper around the qualifying computation.
+
+    On a Redis hit returns the cached DataFrame; otherwise computes via
+    `_fetch_qualifying_data_uncached` and caches the result (when <20 MB).
+    Falls back to a plain recompute if Redis is unavailable or anything fails.
+    """
+    r = get_redis()
+    cache_key = None
+    if r:
+        try:
+            # Resolve filters here ONLY to build the cache key. The uncached
+            # path resolves them again for the actual query — a cheap local
+            # users.duckdb read, negligible next to the GCS qualifying query.
+            key_filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+            if key_filters:
+                cache_key = _qualifying_cache_key(
+                    dataset_id, key_filters, req_start_date,
+                    req_end_date, preconditions, apply_day,
+                )
+                cached = r.get(cache_key)
+                if cached:
+                    return _deserialize_qualifying_df(cached)
+        except Exception as e:
+            logger.warning(f"[REDIS] qualifying cache read failed: {e}")
+            cache_key = None
+
+    df = _fetch_qualifying_data_uncached(
+        dataset_id,
+        req_start_date=req_start_date,
+        req_end_date=req_end_date,
+        preconditions=preconditions,
+        apply_day=apply_day,
+    )
+
+    if r and cache_key and df is not None and not df.empty:
+        try:
+            size = int(df.memory_usage(deep=True).sum())
+            if size <= _QUALIFYING_MAX_CACHE_BYTES:
+                r.setex(
+                    cache_key,
+                    _QUALIFYING_REDIS_TTL,
+                    _serialize_qualifying_df(df),
+                )
+            else:
+                logger.info(
+                    f"[REDIS] qualifying result {size} bytes > "
+                    f"{_QUALIFYING_MAX_CACHE_BYTES} — not cached"
+                )
+        except Exception as e:
+            logger.warning(f"[REDIS] qualifying cache write failed: {e}")
+
+    return df
+
+
+def _fetch_qualifying_data_uncached(
     dataset_id: str,
     req_start_date: str | None = None,
     req_end_date: str | None = None,
