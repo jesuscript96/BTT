@@ -734,6 +734,20 @@ class BacktestEngine:
                 series = df.groupby(['ticker', df['timestamp'].dt.date])['high'].transform(
                     lambda x: x.where(pm_mask).max()
                 )
+        elif name == IndicatorType.PM_HIGH_GAP:
+            if 'pm_high_gap' in df.columns:
+                series = df['pm_high_gap']
+            else:
+                if 'pm_high' in df.columns:
+                    pm_high = df['pm_high']
+                else:
+                    timestamps = pd.to_datetime(df["timestamp"])
+                    pm_mask = pd.Series((timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30), index=df.index)
+                    pm_high = df.groupby(['ticker', df['timestamp'].dt.date])['high'].transform(
+                        lambda x: x.where(pm_mask).max()
+                    )
+                prev_close = df['prev_close'] if 'prev_close' in df.columns else df['close']
+                series = (pm_high - prev_close) / prev_close * 100
         elif name == IndicatorType.PML:
             if 'pm_low' in df.columns:
                 series = df['pm_low']

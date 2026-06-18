@@ -365,7 +365,11 @@ function getConditionStrings(group: ConditionGroup, timeframe: string): string[]
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            targetStr = String(c.target);
+            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+              targetStr = `${c.target}%`;
+            } else {
+              targetStr = String(c.target);
+            }
           } else {
             targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
           }
@@ -415,7 +419,11 @@ function getConditionTags(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            targetStr = String(c.target);
+            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+              targetStr = `${c.target}%`;
+            } else {
+              targetStr = String(c.target);
+            }
           } else {
             targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
           }
@@ -2507,7 +2515,11 @@ export default function WizardStrategyBuilder({
                   marginTop: 4
                 }}
               >
-                {(wizardMode === "comparison" ? comparatorOptions : distanceComparatorOptions).map((opt) => (
+                {(wizardMode === "comparison"
+                  ? (wizardSource === IndicatorType.PM_HIGH_GAP
+                     ? comparatorOptions.filter(opt => [Comparator.GT, Comparator.LT, Comparator.GTE, Comparator.LTE].includes(opt.value as Comparator))
+                     : comparatorOptions)
+                  : distanceComparatorOptions).map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -2602,6 +2614,31 @@ export default function WizardStrategyBuilder({
                             fontFamily: 'var(--color-ec-sans)',
                             pointerEvents: 'none'
                           }}>M</span>
+                        </div>
+                      </div>
+                    ) : wizardSource === IndicatorType.PM_HIGH_GAP ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor (en %):</span>
+                        <div style={{ position: "relative", width: "100%" }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={wizardTargetValue}
+                            onChange={(e) => setWizardTargetValue(parseFloat(e.target.value) || 0)}
+                            placeholder="e.g. 2.5"
+                            style={{ width: "100%", background: "var(--color-ec-bg-surface)", border: "0.5px solid var(--color-ec-border)", color: "var(--color-ec-text-primary)", fontSize: 11, padding: "5px 24px 5px 8px", borderRadius: 4, boxSizing: "border-box" }}
+                          />
+                          <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-copper)',
+                            fontFamily: 'var(--color-ec-sans)',
+                            pointerEvents: 'none'
+                          }}>%</span>
                         </div>
                       </div>
                     ) : wizardSource === IndicatorType.ELAPSED_TIME_LAST_HIGH || wizardSource === IndicatorType.ELAPSED_TIME ? (
@@ -3714,7 +3751,7 @@ export default function WizardStrategyBuilder({
                         <span
                           onMouseEnter={(e) => {
                             e.stopPropagation();
-                            setHoveredActiveLevel(riskManagement.hard_stop.value || 'LOD');
+                            setHoveredActiveLevel(String(riskManagement.hard_stop.value || 'LOD'));
                           }}
                           onMouseLeave={() => setHoveredActiveLevel(null)}
                           style={{

@@ -101,6 +101,7 @@ class IndicatorType(str, Enum):
     TRIANGLE_ASCENDING = "Triangle Ascending"
     TRIANGLE_DESCENDING = "Triangle Descending"
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
+    PM_HIGH_GAP = "PM High Gap (%)"
     
     # Time / Others
     TIME_OF_DAY = "Time of Day"

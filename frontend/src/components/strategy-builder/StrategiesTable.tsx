@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Strategy, IndicatorConfig, AnyCondition, ConditionGroup, PostGapPrecondition, UniverseFilters, RiskManagement } from '@/types/strategy';
+import { Strategy, IndicatorConfig, AnyCondition, ConditionGroup, PostGapPrecondition, UniverseFilters, RiskManagement, IndicatorType } from '@/types/strategy';
 import { Loader2, Trash2, ChevronDown, ChevronUp, Play, Filter, Tag, Shield } from 'lucide-react';
 import { getStrategies, deleteStrategy } from '@/lib/api';
 import { COMPARATOR_LABELS, INDICATOR_LABELS } from './ConditionBuilder';
@@ -83,7 +83,7 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
             const sourceStr = formatIndicator(cond.source);
             const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator || "=";
             const targetStr = typeof cond.target === 'number' 
-                ? cond.target.toString() 
+                ? (cond.source.name === IndicatorType.PM_HIGH_GAP ? `${cond.target}%` : cond.target.toString()) 
                 : formatIndicator(cond.target);
             const tfStr = cond.timeframe ? `[${cond.timeframe}] ` : "";
             return `${tfStr}${sourceStr} ${compStr} ${targetStr}`;

@@ -40,6 +40,7 @@ export enum IndicatorType {
     TRIANGLE_ASCENDING = "Triangle Ascending",
     TRIANGLE_DESCENDING = "Triangle Descending",
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
+    PM_HIGH_GAP = "PM High Gap (%)",
 
     // Indicators
     SMA = "SMA",

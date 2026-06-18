@@ -86,6 +86,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
         IndicatorType.TRIANGLE_ASCENDING, IndicatorType.TRIANGLE_DESCENDING,
         IndicatorType.TRIANGLE_SYMMETRIC,
+        IndicatorType.PM_HIGH_GAP,
     ],
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
@@ -145,6 +146,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.TRIANGLE_ASCENDING]: "▲ Triangle Ascending",
     [IndicatorType.TRIANGLE_DESCENDING]: "▼ Triangle Descending",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "◇ Triangle Symmetric",
+    [IndicatorType.PM_HIGH_GAP]: "PM High Gap (%)",
     // Indicators
     [IndicatorType.SMA]: "SMA",
     [IndicatorType.EMA]: "EMA",
@@ -203,6 +205,7 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_ASCENDING]: "Patrón de triángulo ascendente.",
     [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
+    [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
     
     // Technical Indicators
     [IndicatorType.SMA]: "Media Móvil Simple.",
@@ -920,6 +923,7 @@ export const TargetInput = ({
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
     const isVol = isFixed && isVolumeIndicator(sourceIndicatorName);
+    const isPercent = isFixed && sourceIndicatorName === IndicatorType.PM_HIGH_GAP;
 
     const [localText, setLocalText] = React.useState("");
 
@@ -1040,6 +1044,42 @@ export const TargetInput = ({
                             M
                         </span>
                     </div>
+                ) : isPercent ? (
+                    <div style={{ position: 'relative', width: '100%' }}>
+                        <input
+                            type="number"
+                            step="any"
+                            value={localText}
+                            onChange={(e) => handleTextChange(e.target.value)}
+                            placeholder="e.g. 2.5"
+                            style={{
+                                width: '100%',
+                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                padding: '5px 24px 5px 8px',
+                                fontSize: 12,
+                                fontWeight: 500,
+                                color: 'var(--color-ec-text-primary)',
+                                fontFamily: 'var(--color-ec-sans)',
+                                outline: 'none',
+                            }}
+                        />
+                        <span style={{
+                            position: 'absolute',
+                            right: 8,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                            opacity: 0.6,
+                            pointerEvents: 'none',
+                            fontFamily: 'var(--color-ec-sans)',
+                        }}>
+                            %
+                        </span>
+                    </div>
                 ) : (
                     <input
                         type="number"
@@ -1102,6 +1142,14 @@ export const ConditionRow = ({
                     source: newSource,
                     comparator: Comparator.LT,
                     target: 30
+                });
+            } else if (newSource.name === IndicatorType.PM_HIGH_GAP) {
+                const isValidComp = [Comparator.LT, Comparator.GT, Comparator.LTE, Comparator.GTE].includes(condition.comparator);
+                onChange({
+                    ...condition,
+                    source: newSource,
+                    comparator: isValidComp ? condition.comparator : Comparator.GT,
+                    target: typeof condition.target === 'number' ? condition.target : 0
                 });
             } else {
                 onChange({
@@ -1181,9 +1229,18 @@ export const ConditionRow = ({
                                     onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
                                     className="bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs font-mono text-[var(--color-ec-copper)]"
                                 >
-                                    {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
-                                        <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
-                                    ))}
+                                    {Object.values(Comparator)
+                                        .filter(c => {
+                                            if (c.includes('DISTANCE')) return false;
+                                            if (condition.source.name === IndicatorType.PM_HIGH_GAP) {
+                                                return c === Comparator.LT || c === Comparator.GT || c === Comparator.LTE || c === Comparator.GTE;
+                                            }
+                                            return true;
+                                        })
+                                        .map(c => (
+                                            <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
+                                        ))
+                                    }
                                 </select>
 
                                 {/* TARGET: indicator OR fixed value */}
@@ -1392,6 +1449,8 @@ export const formatConditionText = (c: AnyCondition): string => {
         if (typeof c.target === 'number') {
             if (isVolumeIndicator(c.source.name)) {
                 targetStr = `${(c.target / 1000000).toString()}M`;
+            } else if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+                targetStr = `${c.target}%`;
             } else {
                 targetStr = String(c.target);
             }
