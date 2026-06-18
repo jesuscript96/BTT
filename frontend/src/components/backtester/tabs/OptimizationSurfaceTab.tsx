@@ -699,6 +699,29 @@ function isIntegerParam(param: OptimizationParam) {
   return intKeys.includes(lastKey) || param.step === 1;
 }
 
+function isVolumeParam(param?: { id: string; label: string; path?: string }) {
+  if (!param) return false;
+  const id = (param.id || "").toLowerCase();
+  const label = (param.label || "").toLowerCase();
+  const path = (param.path || "").toLowerCase();
+  return (
+    id.includes("volume") ||
+    id.includes("volumen") ||
+    id.includes("acumulated") ||
+    id.includes("accumulated") ||
+    id.includes("cum_volume") ||
+    id.includes("vol_") ||
+    label.includes("volume") ||
+    label.includes("volumen") ||
+    label.includes("acumulado") ||
+    label.includes("acumulada") ||
+    path.includes("volume") ||
+    path.includes("volumen") ||
+    path.includes("acumulated") ||
+    path.includes("accumulated")
+  );
+}
+
 function RangeSlider({
   label,
   value,
@@ -712,6 +735,29 @@ function RangeSlider({
   param?: OptimizationParam;
   gridSteps: number;
 }) {
+  const isVolume = isVolumeParam(param);
+  const scale = isVolume ? 1000000 : 1;
+  const displayLabel = isVolume ? `${label} (M)` : label;
+
+  const [localMin, setLocalMin] = useState(() => (value[0] / scale).toString());
+  const [localMax, setLocalMax] = useState(() => (value[1] / scale).toString());
+
+  useEffect(() => {
+    const currentVal = parseFloat(localMin);
+    const targetVal = value[0] / scale;
+    if (isNaN(currentVal) || currentVal !== targetVal) {
+      setLocalMin(targetVal.toString());
+    }
+  }, [value[0], scale]);
+
+  useEffect(() => {
+    const currentVal = parseFloat(localMax);
+    const targetVal = value[1] / scale;
+    if (isNaN(currentVal) || currentVal !== targetVal) {
+      setLocalMax(targetVal.toString());
+    }
+  }, [value[1], scale]);
+
   const step = param?.step || 1;
   const rangeWidth = value[1] - value[0];
   const intervalWidth = gridSteps * step;
@@ -733,32 +779,48 @@ function RangeSlider({
     const maxLow = Number((value[0] + kLow * intervalWidth).toFixed(4));
     const maxHigh = Number((value[0] + kHigh * intervalWidth).toFixed(4));
     suggestions = Array.from(new Set([maxLow, maxHigh])).filter((m) => m !== value[1] && m > value[0]);
-    warningMessage = `El rango (${rangeWidth}) debe ser múltiplo de ${intervalWidth} (para que los saltos sean múltiplos de ${step}).`;
+    warningMessage = isVolume
+      ? `El rango (${rangeWidth / scale}M) debe ser múltiplo de ${intervalWidth / scale}M (para que los saltos sean múltiplos de ${step / scale}M).`
+      : `El rango (${rangeWidth}) debe ser múltiplo de ${intervalWidth} (para que los saltos sean múltiplos de ${step}).`;
   }
 
   return (
     <div className="flex flex-col space-y-2 p-3 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)]">
-      <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase font-semibold tracking-wider">{label}</label>
+      <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase font-semibold tracking-wider">{displayLabel}</label>
       <div className="flex items-center gap-2">
         <input
           type="number"
-          value={value[0]}
-          step={step}
-          onChange={(e) => onChange([Number(e.target.value), value[1]])}
+          step="any"
+          value={localMin}
+          onChange={(e) => {
+            const valStr = e.target.value;
+            setLocalMin(valStr);
+            const num = parseFloat(valStr);
+            if (!isNaN(num)) {
+              onChange([num * scale, value[1]]);
+            }
+          }}
           className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
         />
         <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono font-bold">→</span>
         <input
           type="number"
-          value={value[1]}
-          step={step}
-          onChange={(e) => onChange([value[0], Number(e.target.value)])}
+          step="any"
+          value={localMax}
+          onChange={(e) => {
+            const valStr = e.target.value;
+            setLocalMax(valStr);
+            const num = parseFloat(valStr);
+            if (!isNaN(num)) {
+              onChange([value[0], num * scale]);
+            }
+          }}
           className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
         />
       </div>
       {param && (
         <p className="text-[9px] text-[var(--color-ec-text-muted)] font-mono opacity-80">
-          Actual: <span className="text-[var(--color-ec-text-primary)] font-bold">{param.current_value}</span> | Paso base: {step}
+          Actual: <span className="text-[var(--color-ec-text-primary)] font-bold">{isVolume ? `${param.current_value / scale}M` : param.current_value}</span> | Paso base: {isVolume ? `${step / scale}M` : step}
         </p>
       )}
       {limitWarning && (
@@ -778,7 +840,7 @@ function RangeSlider({
                   onClick={() => onChange([value[0], s])}
                   className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/35 text-amber-400 rounded cursor-pointer border border-amber-500/30 transition-all active:scale-[0.95] font-bold"
                 >
-                  {s} (Rango: {s - value[0]})
+                  {isVolume ? `${s / scale}M` : s} (Rango: {isVolume ? `${(s - value[0]) / scale}M` : s - value[0]})
                 </button>
               ))}
             </div>
