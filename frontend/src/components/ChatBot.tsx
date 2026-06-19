@@ -2,8 +2,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Send, X, Settings, RotateCcw, MessageSquareCode, AlertCircle, Paperclip, FileText, Check
+    Send, X, RotateCcw, AlertCircle, Paperclip, FileText
 } from 'lucide-react';
+import { API_BASE, getAuthHeaders } from '@/lib/api';
 
 interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
@@ -48,8 +49,6 @@ const RobotAvatar = ({ size = 32, glowing = false }) => (
 
 export function ChatBot() {
     const [isOpen, setIsOpen] = useState(false);
-    const [showSettings, setShowSettings] = useState(false);
-    const [apiKey, setApiKey] = useState('');
     const [input, setInput] = useState('');
     const [isGenerating, setIsGenerating] = useState(false);
     const [activeTicker, setActiveTicker] = useState<string | null>(null);
@@ -75,9 +74,6 @@ export function ChatBot() {
     // Load API key and check for cached ticker on mount
     useEffect(() => {
         if (typeof window !== 'undefined') {
-            const savedKey = localStorage.getItem('DEEPSEEK_API_KEY') || '';
-            setApiKey(savedKey);
-
             // Initialize active ticker if already loaded
             const lastTicker = (window as any).__lastLoadedTicker;
             if (lastTicker) {
@@ -118,19 +114,6 @@ export function ChatBot() {
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isGenerating]);
-
-    const handleSaveApiKey = (e: React.FormEvent) => {
-        e.preventDefault();
-        if (typeof window !== 'undefined') {
-            localStorage.setItem('DEEPSEEK_API_KEY', apiKey.trim());
-            setShowSettings(false);
-            
-            setMessages(prev => [
-                ...prev,
-                { role: 'system', content: "Clave API de DeepSeek guardada. Edgie está en línea." }
-            ]);
-        }
-    };
 
     const handleResetChat = () => {
         setAttachedFile(null);
@@ -227,19 +210,6 @@ export function ChatBot() {
         // 1. Add user message to state
         const newMessages = [...messages, { role: 'user', content: queryContent } as ChatMessage];
         setMessages(newMessages);
-
-        // 2. Check for API key (BYO key only — stored in localStorage; no public env fallback)
-        const currentKey = apiKey.trim();
-        if (!currentKey) {
-            setMessages(prev => [
-                ...prev,
-                { 
-                    role: 'system', 
-                    content: "Error: No se ha configurado la API Key de DeepSeek. Haz clic en el icono del engranaje en la parte superior para añadir tu clave de DeepSeek y activar a Edgie." 
-                }
-            ]);
-            return;
-        }
 
         setIsGenerating(true);
 
@@ -342,13 +312,10 @@ export function ChatBot() {
                     .map(m => ({ role: m.role, content: m.content }))
             ];
 
-            // 5. Query DeepSeek API directly
-            const response = await fetch('https://api.deepseek.com/chat/completions', {
+            // 5. Query DeepSeek via the backend proxy (API key stays server-side)
+            const response = await fetch(`${API_BASE}/edgie/chat`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${currentKey}`
-                },
+                headers: await getAuthHeaders(),
                 body: JSON.stringify({
                     model: 'deepseek-chat',
                     messages: apiMessages,
@@ -358,11 +325,14 @@ export function ChatBot() {
 
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
-                const errMsg = errData.error?.message || `HTTP error ${response.status}`;
+                const errMsg = errData.error?.message || errData.detail || `HTTP error ${response.status}`;
                 throw new Error(errMsg);
             }
 
             const data = await response.json();
+            if (data.error) {
+                throw new Error(data.error);
+            }
             const reply = data.choices?.[0]?.message?.content || 'No he recibido respuesta de DeepSeek.';
 
             setMessages(prev => [
@@ -503,21 +473,6 @@ export function ChatBot() {
                                 <RotateCcw size={15} />
                             </button>
                             <button
-                                onClick={() => setShowSettings(!showSettings)}
-                                title="Configurar API Key"
-                                style={{ 
-                                    background: 'none', 
-                                    border: 'none', 
-                                    color: showSettings ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-muted)', 
-                                    cursor: 'pointer', 
-                                    display: 'flex', 
-                                    padding: 4 
-                                }}
-                                className="hover:text-[var(--color-ec-text-high)] transition-colors"
-                            >
-                                <Settings size={15} />
-                            </button>
-                            <button
                                 onClick={() => setIsOpen(false)}
                                 style={{ background: 'none', border: 'none', color: 'var(--color-ec-text-muted)', cursor: 'pointer', display: 'flex', padding: 4 }}
                                 className="hover:text-[var(--color-ec-text-high)] transition-colors"
@@ -527,96 +482,8 @@ export function ChatBot() {
                         </div>
                     </div>
 
-                    {/* Settings Panel */}
-                    {showSettings ? (
-                        <div
-                            style={{
-                                flex: 1,
-                                padding: '24px',
-                                backgroundColor: 'var(--color-ec-bg-surface)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '18px'
-                            }}
-                        >
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1px' }}>
-                                    Parámetros del Copiloto Edgie
-                                </span>
-                                <p style={{ fontSize: 12, color: 'var(--color-ec-text-secondary)', lineHeight: 1.5 }}>
-                                    Ingresa tu clave de DeepSeek para conectar a Edgie directamente a la API de lenguaje natural. Se guarda localmente y no sale de tu ordenador.
-                                </p>
-                            </div>
-
-                            <form onSubmit={handleSaveApiKey} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                    <label style={{ fontSize: 10, color: 'var(--color-ec-text-primary)', fontWeight: 700 }}>DEEPSEEK_API_KEY</label>
-                                    <input
-                                        type="password"
-                                        placeholder="sk-..."
-                                        value={apiKey}
-                                        onChange={(e) => setApiKey(e.target.value)}
-                                        style={{
-                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                            border: '1px solid var(--color-ec-border)',
-                                            borderRadius: '8px',
-                                            padding: '10px 14px',
-                                            fontSize: 12,
-                                            color: 'var(--color-ec-text-high)',
-                                            outline: 'none',
-                                            width: '100%',
-                                            boxSizing: 'border-box'
-                                        }}
-                                    />
-                                </div>
-
-                                <div style={{ display: 'flex', gap: '10px', marginTop: 8 }}>
-                                    <button
-                                        type="submit"
-                                        style={{
-                                            flex: 1,
-                                            backgroundColor: 'var(--color-ec-copper)',
-                                            color: '#ffffff',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            padding: '10px',
-                                            fontSize: 12,
-                                            fontWeight: 600,
-                                            cursor: 'pointer'
-                                        }}
-                                        className="hover:bg-[var(--color-ec-copper-bright)] transition-colors"
-                                    >
-                                        Activar Robot
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowSettings(false)}
-                                        style={{
-                                            flex: 1,
-                                            backgroundColor: 'transparent',
-                                            color: 'var(--color-ec-text-secondary)',
-                                            border: '1px solid var(--color-ec-border)',
-                                            borderRadius: '8px',
-                                            padding: '10px',
-                                            fontSize: 12,
-                                            fontWeight: 600,
-                                            cursor: 'pointer'
-                                        }}
-                                        className="hover:bg-[var(--color-ec-bg-sidebar)] hover:text-white transition-colors"
-                                    >
-                                        Cancelar
-                                    </button>
-                                </div>
-                            </form>
-
-                            <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-ec-text-muted)', fontSize: 11 }}>
-                                <AlertCircle size={14} style={{ color: 'var(--color-ec-copper)' }} />
-                                <span>Tus credenciales están guardadas de forma segura en `localStorage`.</span>
-                            </div>
-                        </div>
-                    ) : (
-                        /* Chat Messages & Input Area */
-                        <>
+                    {/* Chat Messages & Input Area */}
+                    <>
                             {/* Messages Container */}
                             <div
                                 style={{
@@ -833,7 +700,6 @@ export function ChatBot() {
                                 </button>
                             </form>
                         </>
-                    )}
                 </div>
             )}
         </>
