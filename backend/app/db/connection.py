@@ -23,7 +23,7 @@ DB_TYPE = os.getenv("DB_PROVIDER", "gcs")
 GCS_ACCESS_KEY_ID = os.getenv("GCS_HMAC_KEY", "")
 GCS_SECRET_ACCESS_KEY = os.getenv("GCS_HMAC_SECRET", "")
 GCS_BUCKET = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
-DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "2GB")
+DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
 
 logger = logging.getLogger("backtester.db")
 
@@ -57,6 +57,9 @@ def _create_connection() -> duckdb.DuckDBPyConnection:
         conn.execute("SET http_keep_alive=true;")
         conn.execute("SET http_retries=2;")
         conn.execute("SET s3_url_style='path';")
+        # Cache parquet metadata/footers across queries so repeated GCS reads
+        # of the same month skip re-fetching footers (always on in prod).
+        conn.execute("SET enable_object_cache=true;")
 
 
 
