@@ -751,7 +751,9 @@ def scrape_finviz_snapshot(ticker: str) -> dict:
                 data["shares_outstanding"] = parse_finviz_number(val)
             elif label == "Shs Float":
                 data["float_shares"] = parse_finviz_number(val)
-                
+            elif label == "Price":
+                data["price"] = parse_finviz_number(val)
+
         return data
     except Exception as e:
         print(f"Error scraping Finviz snapshot for {ticker}: {e}")
@@ -888,6 +890,27 @@ def get_ticker_analysis(ticker: str):
             if market["float_shares"] is None:
                 market["float_shares"] = info.get("floatShares")
             print(f"[FALLBACK] Filled missing market data from yfinance for {ticker}: {market}")
+
+        # Price fallback: yfinance .info frequently 401s on Yahoo (esp. ADRs),
+        # leaving price None. Fall back to Finviz "Price", then to the last
+        # daily close in the DB, so price survives a Yahoo outage.
+        if market["price"] is None and finviz_data.get("price") is not None:
+            market["price"] = finviz_data.get("price")
+            print(f"[FALLBACK] Filled price from Finviz for {ticker}: {market['price']}")
+        if market["price"] is None:
+            try:
+                from app.database import get_db_connection
+                con = get_db_connection()
+                row = con.execute(
+                    "SELECT close FROM daily_metrics WHERE ticker = ? "
+                    "ORDER BY timestamp DESC LIMIT 1",
+                    [ticker]
+                ).fetchone()
+                if row and row[0] is not None:
+                    market["price"] = float(row[0])
+                    print(f"[FALLBACK] Filled price from DB daily close for {ticker}: {market['price']}")
+            except Exception as e:
+                print(f"[WARN] DB price fallback failed for {ticker}: {e}")
 
         # --- Financials (Snapshot) ---
         financials = {
