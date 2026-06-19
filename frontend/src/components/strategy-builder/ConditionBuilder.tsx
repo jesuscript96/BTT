@@ -1887,8 +1887,100 @@ export const GroupDisplay = ({
                                 <IndicatorParams
                                     value={formCondition.source}
                                     onChange={(newSource) => setFormCondition({ ...formCondition, source: newSource })}
-                                    hideOffset={false}
+                                    hideOffset={true}
                                 />
+
+                                {/* Checkbox for Offset to Variable de entrada */}
+                                {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name !== IndicatorType.ELAPSED_TIME && !isTriangle(formCondition.source.name) && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <input
+                                                type="checkbox"
+                                                id="source-offset-checkbox"
+                                                checked={!!formCondition.source.offset}
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setFormCondition({
+                                                        ...formCondition,
+                                                        source: {
+                                                            ...formCondition.source,
+                                                            offset: checked ? (formCondition.source.offset || 1) : 0
+                                                        }
+                                                    });
+                                                }}
+                                                style={{
+                                                    width: 14,
+                                                    height: 14,
+                                                    accentColor: 'var(--color-ec-copper)',
+                                                    cursor: 'pointer'
+                                                }}
+                                            />
+                                            <label
+                                                htmlFor="source-offset-checkbox"
+                                                style={{
+                                                    fontSize: 11,
+                                                    fontWeight: 600,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    cursor: 'pointer',
+                                                    userSelect: 'none'
+                                                }}
+                                            >
+                                                ¿Offset a Variable de entrada?
+                                            </label>
+                                            <TooltipIcon
+                                                customText="El offset simplemente indica la cantidad de velas hacia atrás en las que debe fijarse esta variable. Por ejemplo, en temporalidad de 1 minuto, si queremos una condición fija en la que el precio Close haya estado por encima del Premarket High hace 5 minutos, deberemos poner un offset de 5, para que el backtester entienda que la condición se activa si hace 5 minutos el close estaba por encima del PMH. Esta opción permite <u>crear patrones de acción del precio</u>."
+                                            />
+                                        </div>
+
+                                        {/* Mostrar select de velas de retraso si el checkbox está activo */}
+                                        {!!formCondition.source.offset && (
+                                            <div style={{ 
+                                                display: 'flex', 
+                                                alignItems: 'center', 
+                                                gap: 8, 
+                                                paddingLeft: 20,
+                                                marginTop: 2
+                                            }}>
+                                                <span style={{
+                                                    fontSize: 11,
+                                                    fontWeight: 600,
+                                                    color: 'var(--color-ec-text-secondary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                }}>Velas atrás:</span>
+                                                <select
+                                                    value={formCondition.source.offset || 1}
+                                                    onChange={(e) => {
+                                                        const val = Number(e.target.value);
+                                                        setFormCondition({
+                                                            ...formCondition,
+                                                            source: { ...formCondition.source, offset: val }
+                                                        });
+                                                    }}
+                                                    style={{
+                                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                        border: '0.5px solid var(--color-ec-border)',
+                                                        borderRadius: 4,
+                                                        padding: '2px 8px 2px 6px',
+                                                        fontSize: 11,
+                                                        fontWeight: 700,
+                                                        color: 'var(--color-ec-copper)',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                        outline: 'none',
+                                                        cursor: 'pointer',
+                                                        width: 55,
+                                                        textAlign: 'center'
+                                                    }}
+                                                >
+                                                    {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                                        <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                                            {val}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Mode toggle (Comparación vs Distancia %) if supported */}
@@ -2080,7 +2172,7 @@ export const GroupDisplay = ({
                                             target: newTarget
                                         })}
                                         allowedTargets={getAllowedTargets(formCondition.source.name as IndicatorType, 'indicator_comparison')}
-                                        hideOffset={false}
+                                        hideOffset={true}
                                         sourceIndicatorName={formCondition.source.name}
                                     />
                                 </div>
@@ -2127,7 +2219,7 @@ export const GroupDisplay = ({
                                                 type: 'price_level_distance',
                                                 level: newLevel
                                             })}
-                                            hideOffset={false}
+                                            hideOffset={true}
                                         />
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2203,7 +2295,7 @@ export const GroupDisplay = ({
                                             ¿Offset a Variable de cruce?
                                         </label>
                                         <TooltipIcon
-                                            customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual"
+                                            customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual. Esta opción permite <u>crear patrones de acción del precio</u>."
                                         />
                                     </div>
 
@@ -2677,9 +2769,10 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                                 {activeTooltip.title}
                             </span>
                         )}
-                        <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
-                            {activeTooltip.text}
-                        </span>
+                        <span 
+                            style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
+                            dangerouslySetInnerHTML={{ __html: activeTooltip.text }}
+                        />
                     </div>
                 )}
             </div>
