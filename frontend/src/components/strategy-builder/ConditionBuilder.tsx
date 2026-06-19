@@ -170,7 +170,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
 };
 
 interface TooltipContextType {
-    setActiveTooltip: (tooltip: { text: string; x: number; y: number; width: number; } | null) => void;
+    setActiveTooltip: (tooltip: { text: string; x: number; y: number; width?: number; title?: string; } | null) => void;
     containerRef: React.RefObject<HTMLDivElement | null>;
 }
 const TooltipContext = React.createContext<TooltipContextType | null>(null);
@@ -265,6 +265,7 @@ const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorT
                     x: tooltipX,
                     y: tooltipY,
                     width: estimatedWidth,
+                    title: indicatorName ? (INDICATOR_LABELS[indicatorName] || indicatorName) : undefined
                 });
                 e.currentTarget.style.color = "var(--color-ec-text-primary)";
                 e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
@@ -2491,7 +2492,8 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
         text: string;
         x: number;
         y: number;
-        width: number;
+        width?: number;
+        title?: string;
     } | null>(null);
 
     const containerRef = React.useRef<HTMLDivElement>(null);
@@ -2650,24 +2652,34 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                             top: activeTooltip.y,
                             left: activeTooltip.x,
                             transform: "translate(-50%, -100%)",
-                            backgroundColor: "var(--color-ec-bg-sidebar)",
+                            backgroundColor: "var(--color-ec-bg-elevated)",
                             color: "var(--color-ec-text-primary)",
                             border: "0.5px solid var(--color-ec-border)",
                             borderRadius: 6,
-                            padding: "8px 12px",
+                            padding: "10px 12px",
                             fontSize: 10,
-                            fontStyle: "italic",
                             lineHeight: 1.4,
-                            width: activeTooltip.width,
+                            width: "max-content",
+                            maxWidth: 240,
                             zIndex: 9999,
                             pointerEvents: "none",
-                            boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
+                            boxShadow: "0 -4px 16px rgba(0,0,0,0.25)",
                             fontFamily: "var(--color-ec-sans)",
                             transition: "opacity 150ms ease",
-                            whiteSpace: "pre-line",
+                            whiteSpace: "normal",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4
                         }}
                     >
-                        {activeTooltip.text}
+                        {activeTooltip.title && (
+                            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                                {activeTooltip.title}
+                            </span>
+                        )}
+                        <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
+                            {activeTooltip.text}
+                        </span>
                     </div>
                 )}
             </div>
