@@ -271,10 +271,10 @@ export const initialEntryLogic: EntryLogic = {
 };
 
 export const initialRiskManagement: RiskManagement = {
-    use_hard_stop: true,
-    use_take_profit: true,
+    use_hard_stop: false,
+    use_take_profit: false,
     take_profit_mode: TakeProfitMode.FULL,
-    accept_reentries: true,
+    accept_reentries: false,
     max_reentries: -1,
     hard_stop: { type: RiskType.PERCENTAGE, value: 2.0 },
     take_profit: { type: RiskType.PERCENTAGE, value: 6.0 },
