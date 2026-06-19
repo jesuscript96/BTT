@@ -15,6 +15,7 @@ import {
     getTickerLogo,
     type TickerLogoData
 } from '@/lib/api';
+import { ChatBot } from './ChatBot';
 
 interface TickerAnalysisProps {
     ticker?: string;
@@ -1908,6 +1909,22 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         };
     }, [selectedTicker]);
 
+    // Feed Edgie (ChatBot) the loaded ticker knowledge base. main fetches data
+    // progressively, so re-dispatch whenever a piece settles; Edgie reads the
+    // latest snapshot when the user sends a message.
+    useEffect(() => {
+        if (!selectedTicker || !data) return;
+        window.dispatchEvent(new CustomEvent('ticker-loaded', {
+            detail: {
+                ticker: selectedTicker,
+                data,
+                filings,
+                finvizNews,
+                secCompanyFacts: null, // opcional, no disponible en main
+            },
+        }));
+    }, [selectedTicker, data, filings, finvizNews]);
+
     // Empty state - Clean, centered search box
     if (!selectedTicker) {
         return (
@@ -2524,6 +2541,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         </div>
                     </div>
                 </>
+            <ChatBot />
         </div>
     );
 }
