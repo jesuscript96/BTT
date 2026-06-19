@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, Fragment } from "react";
+import { useMemo, Fragment } from "react";
 import type { DayResult, TradeRecord } from "@/lib/api_backtester";
 
 interface CalendarTabProps {
@@ -13,30 +13,25 @@ function formatPnl(pnl: number): string {
   const abs = Math.abs(pnl);
   const sign = pnl >= 0 ? "+" : "-";
   if (abs >= 1000) {
-    return `${sign}$${(abs / 1000).toFixed(2)} K`;
+    return `${sign} $${(abs / 1000).toFixed(2)}K`;
   }
-  return `${sign}$${abs.toFixed(2)}`;
+  return `${sign} $${abs.toFixed(2)}`;
 }
 
-export default function CalendarTab({ dayResults, trades, isDarkMode = false }: CalendarTabProps) {
+export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
   const statsByDate = useMemo(() => {
     const map = new Map<string, { pnl: number; count: number }>();
     for (const t of trades) {
       if (!t.date) continue;
       const cur = map.get(t.date) || { pnl: 0, count: 0 };
-      map.set(t.date, {
-        pnl: cur.pnl + t.pnl,
-        count: cur.count + 1
-      });
+      map.set(t.date, { pnl: cur.pnl + t.pnl, count: cur.count + 1 });
     }
     return map;
   }, [trades]);
 
   const months = useMemo(() => {
     const set = new Set<string>();
-    for (const dr of dayResults) {
-      set.add(dr.date.slice(0, 7));
-    }
+    for (const dr of dayResults) set.add(dr.date.slice(0, 7));
     return Array.from(set).sort();
   }, [dayResults]);
 
@@ -45,189 +40,209 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8" style={{ paddingTop: 24 }}>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5" style={{ paddingTop: 20 }}>
       {months.map((monthStr) => {
         const [year, month] = monthStr.split("-").map(Number);
         const firstDay = new Date(year, month - 1, 1);
         const lastDay = new Date(year, month, 0);
-        const startWeekday = (firstDay.getDay() + 6) % 7; // Monday = 0
+        const startWeekday = (firstDay.getDay() + 6) % 7;
 
         const monthName = new Date(year, month - 1, 1).toLocaleString("es-ES", { month: "long", year: "numeric" });
 
-        const days: (null | { date: string; pnl: number | null; count: number })[] = [];
-        for (let i = 0; i < startWeekday; i++) days.push(null);
+        // Build full 7-day array
+        const allDays: (null | { date: string; pnl: number | null; count: number; weekday: number })[] = [];
+        for (let i = 0; i < startWeekday; i++) allDays.push(null);
         for (let d = 1; d <= lastDay.getDate(); d++) {
           const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
           const stats = statsByDate.get(dateStr);
-          days.push({
-            date: dateStr,
-            pnl: stats ? stats.pnl : null,
-            count: stats ? stats.count : 0
-          });
+          const wd = (new Date(year, month - 1, d).getDay() + 6) % 7; // 0=Mon..6=Sun
+          allDays.push({ date: dateStr, pnl: stats ? stats.pnl : null, count: stats ? stats.count : 0, weekday: wd });
         }
-
-        // Pad the end of the days array to make it a multiple of 7
-        const totalCells = Math.ceil(days.length / 7) * 7;
-        while (days.length < totalCells) {
-          days.push(null);
-        }
+        const totalCells = Math.ceil(allDays.length / 7) * 7;
+        while (allDays.length < totalCells) allDays.push(null);
 
         // Group into weeks
-        const weeks: (null | { date: string; pnl: number | null; count: number })[][] = [];
-        for (let i = 0; i < days.length; i += 7) {
-          weeks.push(days.slice(i, i + 7));
-        }
+        const weeks: typeof allDays[] = [];
+        for (let i = 0; i < allDays.length; i += 7) weeks.push(allDays.slice(i, i + 7));
 
-        // Total Month PNL
-        let monthTotalPnl = 0;
-        for (const d of days) {
-          if (d && d.pnl !== null) {
-            monthTotalPnl += d.pnl;
-          }
+        // Monthly totals
+        let monthPnl = 0;
+        let monthTrades = 0;
+        for (const d of allDays) {
+          if (d && d.count > 0) { monthPnl += d.pnl || 0; monthTrades += d.count; }
         }
 
         return (
-          <div key={monthStr} className="p-5 rounded-lg bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] shadow-md flex flex-col">
-            {/* Title / Summary */}
-            <div className="pb-2.5 mb-3 border-b border-[var(--color-ec-border)] flex justify-between items-center">
-              <span className="text-[12px] font-bold uppercase tracking-wider text-[var(--color-ec-text-high)]">
+          <div
+            key={monthStr}
+            style={{
+              background: "var(--color-ec-bg-surface)",
+              border: "0.5px solid var(--color-ec-border)",
+              borderRadius: 8,
+              padding: "14px 14px 10px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 0,
+            }}
+          >
+            {/* ── Header ── */}
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              paddingBottom: 8, marginBottom: 8,
+              borderBottom: "0.5px solid var(--color-ec-border)",
+            }}>
+              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-ec-text-high)" }}>
                 {monthName}
               </span>
-              {monthTotalPnl !== 0 && (
-                <span className={`text-[11px] font-mono font-bold ${monthTotalPnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                  {monthTotalPnl >= 0 ? "+" : ""}{formatPnl(monthTotalPnl)}
-                </span>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {monthTrades > 0 && (
+                  <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--font-sans)" }}>
+                    {monthTrades} trades
+                  </span>
+                )}
+                {monthPnl !== 0 && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
+                    color: monthPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                  }}>
+                    {formatPnl(monthPnl)}
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* Grid */}
-            <div className="grid grid-cols-6 gap-[6px] flex-1">
-              {/* Day headers */}
-              {["L", "M", "X", "J", "V", "Sem"].map((l) => (
-                <div key={l} className="text-[10px] font-bold text-center mb-1 font-mono text-[var(--color-ec-text-secondary)]">
+            {/* ── Day Headers (L M X J V · Sem) ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1.1fr", gap: 4, marginBottom: 4 }}>
+              {["Lun", "Mar", "Mié", "Jue", "Vie", "Sem"].map((l) => (
+                <div key={l} style={{
+                  textAlign: "center", fontSize: 8, fontWeight: 700, color: "var(--color-ec-text-muted)",
+                  textTransform: "uppercase", letterSpacing: "0.08em", padding: "0 0 2px",
+                }}>
                   {l}
                 </div>
               ))}
+            </div>
 
-              {/* Render weeks */}
+            {/* ── Weeks ── */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {weeks.map((week, weekIdx) => {
-                // Calculate week totals using all 7 days of the week (includes weekends if any pnl exists, though normally 0)
-                let weeklyPnl = 0;
-                let weeklyCount = 0;
-                let hasWeeklyTrades = false;
-                for (const day of week) {
-                  if (day && day.count > 0) {
-                    weeklyPnl += day.pnl || 0;
-                    weeklyCount += day.count;
-                    hasWeeklyTrades = true;
-                  }
-                }
-
-                // Render only weekdays (first 5 elements of the week: Mon to Fri)
-                const weekDays = week.slice(0, 5);
+                let wPnl = 0, wCount = 0, wHas = false;
+                for (const d of week) { if (d && d.count > 0) { wPnl += d.pnl || 0; wCount += d.count; wHas = true; } }
+                const weekDays = week.slice(0, 5); // Mon–Fri
 
                 return (
-                  <Fragment key={`week-${weekIdx}`}>
-                    {/* Render the 5 weekdays */}
+                  <div key={`w-${weekIdx}`} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1.1fr", gap: 4 }}>
                     {weekDays.map((day, i) => {
-                      if (!day) return <div key={`empty-${weekIdx}-${i}`} className="aspect-[1.2] min-h-[60px] bg-transparent" />;
+                      if (!day) return <div key={`e-${weekIdx}-${i}`} style={{ minHeight: 44 }} />;
                       const dayNum = parseInt(day.date.split("-")[2]);
+                      const hasData = day.count > 0;
+                      const isWin = (day.pnl || 0) >= 0;
 
-                      const isPositive = day.pnl! >= 0;
-                      const boxBg = day.count > 0
-                        ? isPositive
-                          ? (isDarkMode ? "rgba(16, 185, 129, 0.12)" : "rgba(16, 185, 129, 0.08)")
-                          : (isDarkMode ? "rgba(244, 63, 94, 0.12)" : "rgba(244, 63, 94, 0.08)")
-                        : "transparent";
-
-                      const boxBorder = day.count > 0
-                        ? isPositive
-                          ? (isDarkMode ? "rgba(16, 185, 129, 0.25)" : "rgba(16, 185, 129, 0.2)")
-                          : (isDarkMode ? "rgba(244, 63, 94, 0.25)" : "rgba(244, 63, 94, 0.2)")
-                        : "transparent";
-
-                      const textColor = day.count > 0
-                        ? isPositive
-                          ? (isDarkMode ? "rgb(52, 211, 153)" : "rgb(5, 150, 105)")
-                          : (isDarkMode ? "rgb(251, 113, 133)" : "rgb(225, 29, 72)")
-                        : (isDarkMode ? "rgba(255, 255, 255, 0.4)" : "rgba(0, 0, 0, 0.4)");
+                      const profit = "var(--color-ec-profit)";
+                      const loss = "var(--color-ec-loss)";
+                      const accentColor = hasData ? (isWin ? profit : loss) : "transparent";
 
                       return (
                         <div
                           key={day.date}
-                          className="relative aspect-[1.2] min-h-[60px] rounded-[4px] border p-1.5 flex flex-col justify-end transition-colors cursor-default"
-                          title={day.count > 0 ? `${day.date}: ${day.count} trades, PnL: ${day.pnl?.toFixed(2)}` : day.date}
+                          title={hasData ? `${day.date}: ${day.count} trades · PnL: $${day.pnl?.toFixed(2)}` : day.date}
                           style={{
-                            backgroundColor: boxBg,
-                            borderColor: boxBorder,
+                            position: "relative",
+                            minHeight: 44,
+                            borderRadius: 5,
+                            border: `0.5px solid ${hasData ? accentColor : "var(--color-ec-border)"}`,
+                            background: hasData
+                              ? isWin ? "rgba(74, 157, 127, 0.08)" : "rgba(201, 77, 63, 0.08)"
+                              : "var(--color-ec-bg-elevated)",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 2,
+                            padding: "3px 2px",
+                            cursor: "default",
+                            transition: "border-color 0.15s, background 0.15s",
                           }}
                         >
-                          <span 
-                            className="absolute top-1 right-1.5 text-[9.5px] font-bold"
-                            style={{ color: day.count > 0 ? textColor : "var(--color-ec-text-secondary)", opacity: 0.9 }}
-                          >
+                          {/* Day number */}
+                          <span style={{
+                            position: "absolute", top: 2, right: 4,
+                            fontSize: 8, fontWeight: 600,
+                            color: hasData ? accentColor : "var(--color-ec-text-muted)",
+                            opacity: hasData ? 1 : 0.7,
+                          }}>
                             {dayNum}
                           </span>
-                          {day.count > 0 && (
-                            <div className="flex flex-col items-start leading-none gap-0.5">
-                              <span className="text-[7.5px] font-semibold opacity-85" style={{ color: textColor }}>
-                                {day.count} tr.
-                              </span>
-                              <span className="text-[8.5px] font-bold tracking-tighter" style={{ color: textColor }}>
+
+                          {hasData ? (
+                            <div style={{
+                              display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+                              background: isWin ? "rgba(74, 157, 127, 0.12)" : "rgba(201, 77, 63, 0.12)",
+                              borderRadius: 3,
+                              padding: "3px 6px 2px",
+                              width: "90%",
+                            }}>
+                              <span style={{
+                                fontSize: 9, fontWeight: 700, color: accentColor, letterSpacing: "-0.02em",
+                                fontFamily: "monospace", lineHeight: 1,
+                              }}>
                                 {formatPnl(day.pnl!)}
                               </span>
+                              <span style={{
+                                fontSize: 7.5, fontWeight: 600, color: accentColor, opacity: 0.75,
+                                fontFamily: "var(--font-sans)", lineHeight: 1,
+                              }}>
+                                {day.count} {day.count === 1 ? "trade" : "trades"}
+                              </span>
                             </div>
+                          ) : (
+                            <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-ec-text-muted)", opacity: 0.45 }}>
+                              —
+                            </span>
                           )}
                         </div>
                       );
                     })}
 
-                    {/* Render weekly total box */}
-                    {(() => {
-                      const isPositive = weeklyPnl >= 0;
-                      const boxBg = hasWeeklyTrades
-                        ? isPositive
-                          ? (isDarkMode ? "rgba(16, 185, 129, 0.08)" : "rgba(16, 185, 129, 0.05)")
-                          : (isDarkMode ? "rgba(244, 63, 94, 0.08)" : "rgba(244, 63, 94, 0.05)")
-                        : "transparent";
-
-                      const boxBorder = hasWeeklyTrades
-                        ? isPositive
-                          ? (isDarkMode ? "rgba(16, 185, 129, 0.3)" : "rgba(16, 185, 129, 0.25)")
-                          : (isDarkMode ? "rgba(244, 63, 94, 0.3)" : "rgba(244, 63, 94, 0.25)")
-                        : "transparent";
-
-                      const textColor = hasWeeklyTrades
-                        ? isPositive
-                          ? (isDarkMode ? "rgb(52, 211, 153)" : "rgb(5, 150, 105)")
-                          : (isDarkMode ? "rgb(251, 113, 133)" : "rgb(225, 29, 72)")
-                        : "transparent";
-
-                      return (
-                        <div
-                          key={`week-total-${weekIdx}`}
-                          className="aspect-[1.2] min-h-[60px] rounded-[4px] border p-1.5 flex flex-col justify-end transition-colors cursor-default"
-                          title={hasWeeklyTrades ? `Semana ${weekIdx + 1}: ${weeklyCount} trades, PnL: ${weeklyPnl.toFixed(2)}` : `Semana ${weekIdx + 1}`}
-                          style={{
-                            backgroundColor: boxBg,
-                            borderStyle: hasWeeklyTrades ? "dashed" : "solid",
-                            borderColor: boxBorder,
-                          }}
-                        >
-                          {hasWeeklyTrades && (
-                            <div className="flex flex-col items-start leading-none gap-0.5">
-                              <span className="text-[7.5px] font-bold opacity-80" style={{ color: textColor }}>
-                                {weeklyCount} tr.
-                              </span>
-                              <span className="text-[8.5px] font-extrabold tracking-tighter" style={{ color: textColor }}>
-                                {formatPnl(weeklyPnl)}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </Fragment>
+                    {/* ── Weekly Summary ── */}
+                    <div
+                      title={wHas ? `Sem ${weekIdx + 1}: ${wCount} trades · PnL: $${wPnl.toFixed(2)}` : `Sem ${weekIdx + 1}`}
+                      style={{
+                        minHeight: 44,
+                        borderRadius: 5,
+                        border: wHas
+                          ? `0.5px dashed ${wPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"}`
+                          : "0.5px solid var(--color-ec-border)",
+                        background: wHas
+                          ? wPnl >= 0 ? "rgba(74, 157, 127, 0.05)" : "rgba(201, 77, 63, 0.05)"
+                          : "transparent",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 1,
+                        padding: "3px 2px",
+                        cursor: "default",
+                      }}
+                    >
+                      {wHas && (
+                        <>
+                          <span style={{
+                            fontSize: 9, fontWeight: 800, letterSpacing: "-0.02em", fontFamily: "monospace", lineHeight: 1,
+                            color: wPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                          }}>
+                            {formatPnl(wPnl)}
+                          </span>
+                          <span style={{
+                            fontSize: 7, fontWeight: 600, lineHeight: 1, opacity: 0.7,
+                            color: wPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                          }}>
+                            {wCount} tr
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
             </div>
