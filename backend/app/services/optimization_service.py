@@ -11,7 +11,7 @@ import math
 import multiprocessing
 import os
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from itertools import product
 
 import numpy as np
@@ -637,9 +637,29 @@ def run_optimization_grid(
     dates = pd.to_datetime(qualifying_df["date"])
     ym_pairs = sorted(set(zip(dates.dt.year, dates.dt.month)))
 
-    chunks = []
-    n_chunks = len(ym_pairs)
-    conn = get_connection()
+    # Parallel month fetch — the optimization path has no chronological-order
+    # requirement (chunks are concat'd then re-grouped), so months download
+    # concurrently to overlap GCS network latency. Each worker uses its own
+    # thread-local DuckDB connection; _fetch_and_cache_month is thread-safe
+    # (atomic per-ticker writes + in-flight dedup). Workers capped to cores.
+    N_FETCH_WORKERS = min(4, len(ym_pairs))
+
+    def _fetch_one_month(args):
+        year, month, valid_pairs_month, batch_size, i, n_chunks = args
+        conn = get_connection()
+        path = _select_intraday_glob_for_month(conn, year, month)
+        if path is None:
+            logger.warning(f"[OPT] {year}-{month:02d}: no intraday parquet found (skipped)")
+            return None
+        return _fetch_and_cache_month(
+            year, month, path, valid_pairs_month,
+            batch_size=batch_size,
+            mi=i + 1,
+            n_months=n_chunks,
+        )
+
+    # Prepare per-month args (skip months with no qualifying pairs)
+    fetch_args = []
     for i, (year, month) in enumerate(ym_pairs):
         month_mask = (dates.dt.year == year) & (dates.dt.month == month)
         valid_pairs_month = qualifying_df.loc[month_mask, ["ticker", "date"]].drop_duplicates().copy()
@@ -648,24 +668,24 @@ def run_optimization_grid(
         # String dates: required by the cache-key json and matches the
         # streaming caller so precache-written months hash identically
         valid_pairs_month["date"] = pd.to_datetime(valid_pairs_month["date"]).dt.strftime("%Y-%m-%d")
-
-        path = _select_intraday_glob_for_month(conn, year, month)
-        if path is None:
-            logger.warning(f"[OPT] {year}-{month:02d}: no intraday parquet found (skipped)")
-            continue
-
-        chunk = _fetch_and_cache_month(
-            year, month, path, valid_pairs_month,
-            batch_size=max(1, int(INTRADAY_BATCH_SIZE)),
-            mi=i + 1,
-            n_months=n_chunks,
+        fetch_args.append(
+            (year, month, valid_pairs_month, max(1, int(INTRADAY_BATCH_SIZE)), i, len(ym_pairs))
         )
-        if chunk is not None and not chunk.empty:
-            chunks.append(chunk)
-        if task_id:
-            # Load progress goes smoothly from 2.0% to 5.0%
-            prog_val = round(2.0 + ((i + 1) / n_chunks) * 3.0, 2)
-            set_progress(task_id, prog_val)
+
+    chunks = []
+    completed = 0
+    if fetch_args:
+        with ThreadPoolExecutor(max_workers=N_FETCH_WORKERS) as pool:
+            futures = {pool.submit(_fetch_one_month, args): args for args in fetch_args}
+            for future in as_completed(futures):
+                chunk = future.result()
+                if chunk is not None and not chunk.empty:
+                    chunks.append(chunk)
+                completed += 1
+                if task_id:
+                    # Load progress goes smoothly from 2.0% to 5.0% as months complete
+                    prog_val = round(2.0 + (completed / len(fetch_args)) * 3.0, 2)
+                    set_progress(task_id, prog_val)
 
     if not chunks:
         intraday_df = pd.DataFrame()
