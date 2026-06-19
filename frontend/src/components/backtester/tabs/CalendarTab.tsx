@@ -45,7 +45,7 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-8" style={{ paddingTop: 24 }}>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8" style={{ paddingTop: 24 }}>
       {months.map((monthStr) => {
         const [year, month] = monthStr.split("-").map(Number);
         const firstDay = new Date(year, month - 1, 1);
@@ -101,9 +101,9 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
             </div>
 
             {/* Grid */}
-            <div className="grid grid-cols-8 gap-[5px] flex-1">
+            <div className="grid grid-cols-6 gap-[6px] flex-1">
               {/* Day headers */}
-              {["L", "M", "X", "J", "V", "S", "D", "Sem"].map((l) => (
+              {["L", "M", "X", "J", "V", "Sem"].map((l) => (
                 <div key={l} className="text-[10px] font-bold text-center mb-1 font-mono text-[var(--color-ec-text-secondary)]">
                   {l}
                 </div>
@@ -111,7 +111,7 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
 
               {/* Render weeks */}
               {weeks.map((week, weekIdx) => {
-                // Calculate week totals
+                // Calculate week totals using all 7 days of the week (includes weekends if any pnl exists, though normally 0)
                 let weeklyPnl = 0;
                 let weeklyCount = 0;
                 let hasWeeklyTrades = false;
@@ -123,11 +123,14 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
                   }
                 }
 
+                // Render only weekdays (first 5 elements of the week: Mon to Fri)
+                const weekDays = week.slice(0, 5);
+
                 return (
                   <Fragment key={`week-${weekIdx}`}>
-                    {/* Render the 7 days of the week */}
-                    {week.map((day, i) => {
-                      if (!day) return <div key={`empty-${weekIdx}-${i}`} className="aspect-[1.25] bg-transparent" />;
+                    {/* Render the 5 weekdays */}
+                    {weekDays.map((day, i) => {
+                      if (!day) return <div key={`empty-${weekIdx}-${i}`} className="aspect-[1.2] min-h-[60px] bg-transparent" />;
                       const dayNum = parseInt(day.date.split("-")[2]);
 
                       const isPositive = day.pnl! >= 0;
@@ -152,7 +155,7 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
                       return (
                         <div
                           key={day.date}
-                          className="relative aspect-[1.25] rounded-[4px] border p-1 flex flex-col justify-end transition-colors cursor-default"
+                          className="relative aspect-[1.2] min-h-[60px] rounded-[4px] border p-1.5 flex flex-col justify-end transition-colors cursor-default"
                           title={day.count > 0 ? `${day.date}: ${day.count} trades, PnL: ${day.pnl?.toFixed(2)}` : day.date}
                           style={{
                             backgroundColor: boxBg,
@@ -160,8 +163,8 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
                           }}
                         >
                           <span 
-                            className="absolute top-1 right-1 text-[8px] font-semibold opacity-60"
-                            style={{ color: isDarkMode ? "rgba(255, 255, 255, 0.6)" : "rgba(0, 0, 0, 0.6)" }}
+                            className="absolute top-1 right-1.5 text-[9.5px] font-bold"
+                            style={{ color: day.count > 0 ? textColor : "var(--color-ec-text-secondary)", opacity: 0.9 }}
                           >
                             {dayNum}
                           </span>
@@ -203,7 +206,7 @@ export default function CalendarTab({ dayResults, trades, isDarkMode = false }: 
                       return (
                         <div
                           key={`week-total-${weekIdx}`}
-                          className="aspect-[1.25] rounded-[4px] border p-1 flex flex-col justify-end transition-colors cursor-default"
+                          className="aspect-[1.2] min-h-[60px] rounded-[4px] border p-1.5 flex flex-col justify-end transition-colors cursor-default"
                           title={hasWeeklyTrades ? `Semana ${weekIdx + 1}: ${weeklyCount} trades, PnL: ${weeklyPnl.toFixed(2)}` : `Semana ${weekIdx + 1}`}
                           style={{
                             backgroundColor: boxBg,
