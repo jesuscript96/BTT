@@ -72,6 +72,15 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
   allowedTargets,
   exclude = []
 }) => {
+  const wizardExclusions = [
+    IndicatorType.HIGH_X_DAYS,
+    IndicatorType.LOW_X_DAYS,
+    IndicatorType.TRIANGLE_ASCENDING,
+    IndicatorType.TRIANGLE_DESCENDING,
+    IndicatorType.TRIANGLE_SYMMETRIC
+  ];
+  const combinedExclude = [...exclude, ...wizardExclusions];
+
   const [isOpen, setIsOpen] = useState(false);
   const [hoveredInd, setHoveredInd] = useState<IndicatorType | null>(null);
   const [hoveredActiveInd, setHoveredActiveInd] = useState<IndicatorType | null>(null);
@@ -172,7 +181,7 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
             {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
               const filtered = (allowedTargets 
                 ? indicators.filter(ind => allowedTargets.includes(ind))
-                : indicators).filter(ind => !exclude.includes(ind));
+                : indicators).filter(ind => !combinedExclude.includes(ind));
               if (filtered.length === 0) return null;
 
               return (
@@ -737,6 +746,19 @@ export default function WizardStrategyBuilder({
       if (wizardComparator === "DISTANCE_GT" || wizardComparator === "DISTANCE_LT") {
         setWizardComparator(Comparator.GT);
       }
+    }
+    const isCrossAllowed = [
+      IndicatorType.BAR_CLOSE,
+      IndicatorType.BAR_OPEN,
+      IndicatorType.HIGH_BAR,
+      IndicatorType.LOW_BAR,
+      IndicatorType.SMA,
+      IndicatorType.EMA,
+      IndicatorType.VWAP
+    ].includes(wizardSource);
+
+    if (!isCrossAllowed && (wizardComparator === Comparator.CROSSES_ABOVE || wizardComparator === Comparator.CROSSES_BELOW)) {
+      setWizardComparator(Comparator.GT);
     }
   }, [wizardSource, wizardComparator]);
 
@@ -2518,7 +2540,17 @@ export default function WizardStrategyBuilder({
                 {(wizardMode === "comparison"
                   ? (wizardSource === IndicatorType.PM_HIGH_GAP
                      ? comparatorOptions.filter(opt => [Comparator.GT, Comparator.LT, Comparator.GTE, Comparator.LTE].includes(opt.value as Comparator))
-                     : comparatorOptions)
+                     : [
+                         IndicatorType.BAR_CLOSE,
+                         IndicatorType.BAR_OPEN,
+                         IndicatorType.HIGH_BAR,
+                         IndicatorType.LOW_BAR,
+                         IndicatorType.SMA,
+                         IndicatorType.EMA,
+                         IndicatorType.VWAP
+                       ].includes(wizardSource)
+                       ? comparatorOptions
+                       : comparatorOptions.filter(opt => opt.value !== Comparator.CROSSES_ABOVE && opt.value !== Comparator.CROSSES_BELOW))
                   : distanceComparatorOptions).map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}

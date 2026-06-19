@@ -28,6 +28,16 @@ const isVolumeIndicator = (name?: string): boolean => {
     );
 };
 
+const ALLOWED_CROSSES_INDICATORS: IndicatorType[] = [
+    IndicatorType.BAR_CLOSE,
+    IndicatorType.BAR_OPEN,
+    IndicatorType.HIGH_BAR,
+    IndicatorType.LOW_BAR,
+    IndicatorType.SMA,
+    IndicatorType.EMA,
+    IndicatorType.VWAP
+];
+
 export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
     switch (name) {
         case IndicatorType.SMA:
@@ -205,7 +215,7 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_ASCENDING]: "Patrón de triángulo ascendente.",
     [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
-    [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre la apertura de ayer y el máximo del premarket high.",
+    [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
     
     // Technical Indicators
     [IndicatorType.SMA]: "Media Móvil Simple.",
@@ -1152,9 +1162,15 @@ export const ConditionRow = ({
                     target: typeof condition.target === 'number' ? condition.target : 0
                 });
             } else {
+                const isCrossAllowed = ALLOWED_CROSSES_INDICATORS.includes(newSource.name as IndicatorType);
+                let newComparator = condition.comparator;
+                if (!isCrossAllowed && (newComparator === Comparator.CROSSES_ABOVE || newComparator === Comparator.CROSSES_BELOW)) {
+                    newComparator = Comparator.GT;
+                }
                 onChange({
                     ...condition,
                     source: newSource,
+                    comparator: newComparator,
                     target: isTargetAllowed ? condition.target : getInitialTargetForSource(newSource.name as IndicatorType)
                 });
             }
@@ -1234,6 +1250,9 @@ export const ConditionRow = ({
                                             if (c.includes('DISTANCE')) return false;
                                             if (condition.source.name === IndicatorType.PM_HIGH_GAP) {
                                                 return c === Comparator.LT || c === Comparator.GT || c === Comparator.LTE || c === Comparator.GTE;
+                                            }
+                                            if (c === Comparator.CROSSES_ABOVE || c === Comparator.CROSSES_BELOW) {
+                                                return ALLOWED_CROSSES_INDICATORS.includes(condition.source.name as IndicatorType);
                                             }
                                             return true;
                                         })
@@ -1831,10 +1850,16 @@ export const GroupDisplay = ({
                                             const currentTargetKey = typeof formCondition.target === 'number' ? FIXED_VALUE_KEY : (formCondition.target as IndicatorConfig).name;
                                             const isTargetAllowed = currentTargetKey === FIXED_VALUE_KEY || allowed.includes(currentTargetKey as IndicatorType);
                                             
+                                            const isCrossAllowed = ALLOWED_CROSSES_INDICATORS.includes(name);
+                                            let newComparator = formCondition.comparator;
+                                            if (!isCrossAllowed && (newComparator === Comparator.CROSSES_ABOVE || newComparator === Comparator.CROSSES_BELOW)) {
+                                                newComparator = Comparator.GT;
+                                            }
+
                                             setFormCondition({
                                                 type: 'indicator_comparison',
                                                 source: { name, offset: 0, ...defaultParams },
-                                                comparator: formCondition.comparator as Comparator,
+                                                comparator: newComparator as Comparator,
                                                 target: isTargetAllowed ? formCondition.target : getInitialTargetForSource(name),
                                                 timeframe
                                             });
@@ -1962,9 +1987,19 @@ export const GroupDisplay = ({
                                             }}
                                             style={selectStyle}
                                         >
-                                            {Object.values(Comparator).filter(c => !c.includes('DISTANCE')).map(c => (
-                                                <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
-                                            ))}
+                                            {Object.values(Comparator)
+                                                .filter(c => {
+                                                    if (c.includes('DISTANCE')) return false;
+                                                    if (c === Comparator.CROSSES_ABOVE || c === Comparator.CROSSES_BELOW) {
+                                                        const sourceName = compCondition ? compCondition.source.name : formCondition.source.name;
+                                                        return ALLOWED_CROSSES_INDICATORS.includes(sourceName as IndicatorType);
+                                                    }
+                                                    return true;
+                                                })
+                                                .map(c => (
+                                                    <option key={c} value={c}>{COMPARATOR_LABELS[c] || c}</option>
+                                                ))
+                                            }
                                         </select>
                                     ) : (
                                         <select

@@ -768,7 +768,10 @@ def get_ticker_analysis(ticker: str):
         try:
             cached = r.get(f"ticker:analysis:{ticker}")
             if cached:
+                print(f"[REDIS] cache hit -> ticker:analysis:{ticker}")
                 return json.loads(cached)
+            else:
+                print(f"[REDIS] cache miss -> ticker:analysis:{ticker}")
         except Exception as e:
             print(f"[REDIS] read failed for ticker:analysis:{ticker}: {e}")
 
