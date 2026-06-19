@@ -1553,7 +1553,7 @@ export const GroupDisplay = ({
 
             setFormCondition({
                 type: 'indicator_comparison',
-                source: { ...formCondition.source, offset: 0 },
+                source: formCondition.source,
                 comparator: Comparator.GT,
                 target: defaultTarget,
                 timeframe: formCondition.timeframe
@@ -1568,7 +1568,7 @@ export const GroupDisplay = ({
 
             setFormCondition({
                 type: 'price_level_distance',
-                source: { ...formCondition.source, offset: 0 },
+                source: formCondition.source,
                 level: defaultLevel,
                 comparator: 'DISTANCE_LT',
                 value_pct: 2.0,
@@ -1579,11 +1579,7 @@ export const GroupDisplay = ({
 
     const handleSaveCondition = () => {
         const savedCondition = {
-            ...formCondition,
-            source: {
-                ...formCondition.source,
-                offset: 0
-            }
+            ...formCondition
         };
         if (editingIndex !== null) {
             const newConditions = [...group.conditions];
