@@ -1887,7 +1887,7 @@ export const GroupDisplay = ({
                                 <IndicatorParams
                                     value={formCondition.source}
                                     onChange={(newSource) => setFormCondition({ ...formCondition, source: newSource })}
-                                    hideOffset={true}
+                                    hideOffset={false}
                                 />
                             </div>
 
@@ -2080,7 +2080,7 @@ export const GroupDisplay = ({
                                             target: newTarget
                                         })}
                                         allowedTargets={getAllowedTargets(formCondition.source.name as IndicatorType, 'indicator_comparison')}
-                                        hideOffset={true}
+                                        hideOffset={false}
                                         sourceIndicatorName={formCondition.source.name}
                                     />
                                 </div>
@@ -2127,7 +2127,7 @@ export const GroupDisplay = ({
                                                 type: 'price_level_distance',
                                                 level: newLevel
                                             })}
-                                            hideOffset={true}
+                                            hideOffset={false}
                                         />
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
