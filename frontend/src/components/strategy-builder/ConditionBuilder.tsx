@@ -228,6 +228,33 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.ATR]: "Rango Medio Verdadero."
 };
 
+const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
+    IndicatorType.BAR_CLOSE,
+    IndicatorType.BAR_OPEN,
+    IndicatorType.HIGH_BAR,
+    IndicatorType.LOW_BAR,
+    IndicatorType.CONSEC_HIGHER_HIGHS,
+    IndicatorType.CONSEC_LOWER_LOWS,
+    IndicatorType.CONSEC_LOWER_HIGHS,
+    IndicatorType.CONSEC_HIGHER_LOWS,
+    IndicatorType.CONSEC_GREEN_CANDLES,
+    IndicatorType.CONSEC_RED_CANDLES,
+    IndicatorType.CANDLE_RANGE_PCT,
+    IndicatorType.SMA,
+    IndicatorType.EMA,
+    IndicatorType.VWAP,
+    IndicatorType.ACCUMULATED_VOLUME,
+    IndicatorType.BOLLINGER_BANDS,
+    IndicatorType.DONCHIAN,
+    IndicatorType.RVOL,
+    IndicatorType.VOLUME,
+    IndicatorType.ATR
+];
+
+const isOffsetAllowed = (name: IndicatorType | string): boolean => {
+    return ALLOWED_OFFSET_INDICATORS.includes(name as IndicatorType);
+};
+
 const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorType; customText?: string }) => {
     const context = React.useContext(TooltipContext);
     if (!context) return null;
@@ -1891,96 +1918,100 @@ export const GroupDisplay = ({
                                 />
 
                                 {/* Checkbox for Offset to Variable de entrada */}
-                                {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name !== IndicatorType.ELAPSED_TIME && !isTriangle(formCondition.source.name) && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                            <input
-                                                type="checkbox"
-                                                id="source-offset-checkbox"
-                                                checked={!!formCondition.source.offset}
-                                                onChange={(e) => {
-                                                    const checked = e.target.checked;
-                                                    setFormCondition({
-                                                        ...formCondition,
-                                                        source: {
-                                                            ...formCondition.source,
-                                                            offset: checked ? (formCondition.source.offset || 1) : 0
-                                                        }
-                                                    });
-                                                }}
-                                                style={{
-                                                    width: 14,
-                                                    height: 14,
-                                                    accentColor: 'var(--color-ec-copper)',
-                                                    cursor: 'pointer'
-                                                }}
-                                            />
-                                            <label
-                                                htmlFor="source-offset-checkbox"
-                                                style={{
-                                                    fontSize: 11,
-                                                    fontWeight: 600,
-                                                    color: 'var(--color-ec-text-primary)',
-                                                    cursor: 'pointer',
-                                                    userSelect: 'none'
-                                                }}
-                                            >
-                                                ¿Offset a Variable de entrada?
-                                            </label>
-                                            <TooltipIcon
-                                                customText="El offset simplemente indica la cantidad de velas hacia atrás en las que debe fijarse esta variable. Por ejemplo, en temporalidad de 1 minuto, si queremos una condición fija en la que el precio Close haya estado por encima del Premarket High hace 5 minutos, deberemos poner un offset de 5, para que el backtester entienda que la condición se activa si hace 5 minutos el close estaba por encima del PMH. Esta opción permite <u>crear patrones de acción del precio</u>."
-                                            />
-                                        </div>
-
-                                        {/* Mostrar select de velas de retraso si el checkbox está activo */}
-                                        {!!formCondition.source.offset && (
-                                            <div style={{ 
-                                                display: 'flex', 
-                                                alignItems: 'center', 
-                                                gap: 8, 
-                                                paddingLeft: 20,
-                                                marginTop: 2
-                                            }}>
-                                                <span style={{
-                                                    fontSize: 11,
-                                                    fontWeight: 600,
-                                                    color: 'var(--color-ec-text-secondary)',
-                                                    fontFamily: 'var(--color-ec-sans)',
-                                                }}>Velas atrás:</span>
-                                                <select
-                                                    value={formCondition.source.offset || 1}
+                                {formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name !== IndicatorType.ELAPSED_TIME && !isTriangle(formCondition.source.name) && (() => {
+                                    const allowed = isOffsetAllowed(formCondition.source.name);
+                                    return (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: allowed ? 1 : 0.35 }}>
+                                                <input
+                                                    type="checkbox"
+                                                    id="source-offset-checkbox"
+                                                    disabled={!allowed}
+                                                    checked={allowed && !!formCondition.source.offset}
                                                     onChange={(e) => {
-                                                        const val = Number(e.target.value);
+                                                        const checked = e.target.checked;
                                                         setFormCondition({
                                                             ...formCondition,
-                                                            source: { ...formCondition.source, offset: val }
+                                                            source: {
+                                                                ...formCondition.source,
+                                                                offset: checked ? (formCondition.source.offset || 1) : 0
+                                                            }
                                                         });
                                                     }}
                                                     style={{
-                                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                        border: '0.5px solid var(--color-ec-border)',
-                                                        borderRadius: 4,
-                                                        padding: '2px 8px 2px 6px',
+                                                        width: 14,
+                                                        height: 14,
+                                                        accentColor: 'var(--color-ec-copper)',
+                                                        cursor: allowed ? 'pointer' : 'not-allowed'
+                                                    }}
+                                                />
+                                                <label
+                                                    htmlFor={allowed ? "source-offset-checkbox" : undefined}
+                                                    style={{
                                                         fontSize: 11,
-                                                        fontWeight: 700,
-                                                        color: 'var(--color-ec-copper)',
-                                                        fontFamily: 'var(--color-ec-sans)',
-                                                        outline: 'none',
-                                                        cursor: 'pointer',
-                                                        width: 55,
-                                                        textAlign: 'center'
+                                                        fontWeight: 600,
+                                                        color: 'var(--color-ec-text-primary)',
+                                                        cursor: allowed ? 'pointer' : 'not-allowed',
+                                                        userSelect: 'none'
                                                     }}
                                                 >
-                                                    {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
-                                                        <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
-                                                            {val}
-                                                        </option>
-                                                    ))}
-                                                </select>
+                                                    ¿Offset a Variable de entrada?
+                                                </label>
+                                                <TooltipIcon
+                                                    customText="El offset simplemente indica la cantidad de velas hacia atrás en las que debe fijarse esta variable. Por ejemplo, en temporalidad de 1 minuto, si queremos una condición fija en la que el precio Close haya estado por encima del Premarket High hace 5 minutos, deberemos poner un offset de 5, para que el backtester entienda que la condición se activa si hace 5 minutos el close estaba por encima del PMH. Esta opción permite <u>crear patrones de acción del precio</u>."
+                                                />
                                             </div>
-                                        )}
-                                    </div>
-                                )}
+
+                                            {/* Mostrar select de velas de retraso si el checkbox está activo */}
+                                            {allowed && !!formCondition.source.offset && (
+                                                <div style={{ 
+                                                    display: 'flex', 
+                                                    alignItems: 'center', 
+                                                    gap: 8, 
+                                                    paddingLeft: 20,
+                                                    marginTop: 2
+                                                }}>
+                                                    <span style={{
+                                                        fontSize: 11,
+                                                        fontWeight: 600,
+                                                        color: 'var(--color-ec-text-secondary)',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                    }}>Velas atrás:</span>
+                                                    <select
+                                                        value={formCondition.source.offset || 1}
+                                                        onChange={(e) => {
+                                                            const val = Number(e.target.value);
+                                                            setFormCondition({
+                                                                ...formCondition,
+                                                                source: { ...formCondition.source, offset: val }
+                                                            });
+                                                        }}
+                                                        style={{
+                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                            border: '0.5px solid var(--color-ec-border)',
+                                                            borderRadius: 4,
+                                                            padding: '2px 8px 2px 6px',
+                                                            fontSize: 11,
+                                                            fontWeight: 700,
+                                                            color: 'var(--color-ec-copper)',
+                                                            fontFamily: 'var(--color-ec-sans)',
+                                                            outline: 'none',
+                                                            cursor: 'pointer',
+                                                            width: 55,
+                                                            textAlign: 'center'
+                                                        }}
+                                                    >
+                                                        {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                                            <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                                                {val}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {/* Mode toggle (Comparación vs Distancia %) if supported */}
@@ -2176,96 +2207,100 @@ export const GroupDisplay = ({
                                         sourceIndicatorName={formCondition.source.name}
                                     />
                                     {/* Checkbox for Offset to Variable de cruce */}
-                                    {typeof compCondition.target !== 'number' && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                <input
-                                                    type="checkbox"
-                                                    id="offset-checkbox"
-                                                    checked={!!compCondition.target.offset}
-                                                    onChange={(e) => {
-                                                        const checked = e.target.checked;
-                                                        setFormCondition({
-                                                            ...compCondition,
-                                                            target: {
-                                                                ...compCondition.target as IndicatorConfig,
-                                                                offset: checked ? ((compCondition.target as IndicatorConfig).offset || 1) : 0
-                                                            }
-                                                        });
-                                                    }}
-                                                    style={{
-                                                        width: 14,
-                                                        height: 14,
-                                                        accentColor: 'var(--color-ec-copper)',
-                                                        cursor: 'pointer'
-                                                    }}
-                                                />
-                                                <label
-                                                    htmlFor="offset-checkbox"
-                                                    style={{
-                                                        fontSize: 11,
-                                                        fontWeight: 600,
-                                                        color: 'var(--color-ec-text-primary)',
-                                                        cursor: 'pointer',
-                                                        userSelect: 'none'
-                                                    }}
-                                                >
-                                                    ¿Offset a Variable de cruce?
-                                                </label>
-                                                <TooltipIcon
-                                                    customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual. Esta opción permite <u>crear patrones de acción del precio</u>."
-                                                />
-                                            </div>
-
-                                            {/* Mostrar select de velas de retraso si el checkbox está activo */}
-                                            {!!(compCondition.target as IndicatorConfig).offset && (
-                                                <div style={{ 
-                                                    display: 'flex', 
-                                                    alignItems: 'center', 
-                                                    gap: 8, 
-                                                    paddingLeft: 20,
-                                                    marginTop: 2
-                                                }}>
-                                                    <span style={{
-                                                        fontSize: 11,
-                                                        fontWeight: 600,
-                                                        color: 'var(--color-ec-text-secondary)',
-                                                        fontFamily: 'var(--color-ec-sans)',
-                                                    }}>Velas atrás:</span>
-                                                    <select
-                                                        value={(compCondition.target as IndicatorConfig).offset || 1}
+                                    {typeof compCondition.target !== 'number' && (() => {
+                                        const allowed = isOffsetAllowed((compCondition.target as IndicatorConfig).name);
+                                        return (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: allowed ? 1 : 0.35 }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        id="offset-checkbox"
+                                                        disabled={!allowed}
+                                                        checked={allowed && !!compCondition.target.offset}
                                                         onChange={(e) => {
-                                                            const val = Number(e.target.value);
+                                                            const checked = e.target.checked;
                                                             setFormCondition({
                                                                 ...compCondition,
-                                                                target: { ...compCondition.target as IndicatorConfig, offset: val }
+                                                                target: {
+                                                                    ...compCondition.target as IndicatorConfig,
+                                                                    offset: checked ? ((compCondition.target as IndicatorConfig).offset || 1) : 0
+                                                                }
                                                             });
                                                         }}
                                                         style={{
-                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                            border: '0.5px solid var(--color-ec-border)',
-                                                            borderRadius: 4,
-                                                            padding: '2px 8px 2px 6px',
+                                                            width: 14,
+                                                            height: 14,
+                                                            accentColor: 'var(--color-ec-copper)',
+                                                            cursor: allowed ? 'pointer' : 'not-allowed'
+                                                        }}
+                                                    />
+                                                    <label
+                                                        htmlFor={allowed ? "offset-checkbox" : undefined}
+                                                        style={{
                                                             fontSize: 11,
-                                                            fontWeight: 700,
-                                                            color: 'var(--color-ec-copper)',
-                                                            fontFamily: 'var(--color-ec-sans)',
-                                                            outline: 'none',
-                                                            cursor: 'pointer',
-                                                            width: 55,
-                                                            textAlign: 'center'
+                                                            fontWeight: 600,
+                                                            color: 'var(--color-ec-text-primary)',
+                                                            cursor: allowed ? 'pointer' : 'not-allowed',
+                                                            userSelect: 'none'
                                                         }}
                                                     >
-                                                        {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
-                                                            <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
-                                                                {val}
-                                                            </option>
-                                                        ))}
-                                                    </select>
+                                                        ¿Offset a Variable de cruce?
+                                                    </label>
+                                                    <TooltipIcon
+                                                        customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual. Esta opción permite <u>crear patrones de acción del precio</u>."
+                                                    />
                                                 </div>
-                                            )}
-                                        </div>
-                                    )}
+
+                                                {/* Mostrar select de velas de retraso si el checkbox está activo */}
+                                                {allowed && !!(compCondition.target as IndicatorConfig).offset && (
+                                                    <div style={{ 
+                                                        display: 'flex', 
+                                                        alignItems: 'center', 
+                                                        gap: 8, 
+                                                        paddingLeft: 20,
+                                                        marginTop: 2
+                                                    }}>
+                                                        <span style={{
+                                                            fontSize: 11,
+                                                            fontWeight: 600,
+                                                            color: 'var(--color-ec-text-secondary)',
+                                                            fontFamily: 'var(--color-ec-sans)',
+                                                        }}>Velas atrás:</span>
+                                                        <select
+                                                            value={(compCondition.target as IndicatorConfig).offset || 1}
+                                                            onChange={(e) => {
+                                                                const val = Number(e.target.value);
+                                                                setFormCondition({
+                                                                    ...compCondition,
+                                                                    target: { ...compCondition.target as IndicatorConfig, offset: val }
+                                                                });
+                                                            }}
+                                                            style={{
+                                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                border: '0.5px solid var(--color-ec-border)',
+                                                                borderRadius: 4,
+                                                                padding: '2px 8px 2px 6px',
+                                                                fontSize: 11,
+                                                                fontWeight: 700,
+                                                                color: 'var(--color-ec-copper)',
+                                                                fontFamily: 'var(--color-ec-sans)',
+                                                                outline: 'none',
+                                                                cursor: 'pointer',
+                                                                width: 55,
+                                                                textAlign: 'center'
+                                                            }}
+                                                        >
+                                                            {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                                                <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                                                    {val}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             ) : distCondition ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -2299,7 +2334,11 @@ export const GroupDisplay = ({
                                                 setFormCondition({
                                                     ...distCondition,
                                                     type: 'price_level_distance',
-                                                    level: { name, offset: distCondition.level.offset, ...defaultParams }
+                                                    level: { 
+                                                        name, 
+                                                        offset: isOffsetAllowed(name) ? distCondition.level.offset : 0, 
+                                                        ...defaultParams 
+                                                    }
                                                 });
                                             }}
                                         />
@@ -2314,94 +2353,100 @@ export const GroupDisplay = ({
                                         />
 
                                         {/* Checkbox for Offset to Variable de cruce */}
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                                <input
-                                                    type="checkbox"
-                                                    id="dist-offset-checkbox"
-                                                    checked={!!distCondition.level.offset}
-                                                    onChange={(e) => {
-                                                        const checked = e.target.checked;
-                                                        setFormCondition({
-                                                            ...distCondition,
-                                                            level: {
-                                                                ...distCondition.level,
-                                                                offset: checked ? (distCondition.level.offset || 1) : 0
-                                                            }
-                                                        });
-                                                    }}
-                                                    style={{
-                                                        width: 14,
-                                                        height: 14,
-                                                        accentColor: 'var(--color-ec-copper)',
-                                                        cursor: 'pointer'
-                                                    }}
-                                                />
-                                                <label
-                                                    htmlFor="dist-offset-checkbox"
-                                                    style={{
-                                                        fontSize: 11,
-                                                        fontWeight: 600,
-                                                        color: 'var(--color-ec-text-primary)',
-                                                        cursor: 'pointer',
-                                                        userSelect: 'none'
-                                                    }}
-                                                >
-                                                    ¿Offset a Variable de cruce?
-                                                </label>
-                                                <TooltipIcon
-                                                    customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual. Esta opción permite <u>crear patrones de acción del precio</u>."
-                                                />
-                                            </div>
+                                        {(() => {
+                                            const allowed = isOffsetAllowed(distCondition.level.name);
+                                            return (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: allowed ? 1 : 0.35 }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            id="dist-offset-checkbox"
+                                                            disabled={!allowed}
+                                                            checked={allowed && !!distCondition.level.offset}
+                                                            onChange={(e) => {
+                                                                const checked = e.target.checked;
+                                                                setFormCondition({
+                                                                    ...distCondition,
+                                                                    level: {
+                                                                        ...distCondition.level,
+                                                                        offset: checked ? (distCondition.level.offset || 1) : 0
+                                                                    }
+                                                                });
+                                                            }}
+                                                            style={{
+                                                                width: 14,
+                                                                height: 14,
+                                                                accentColor: 'var(--color-ec-copper)',
+                                                                cursor: allowed ? 'pointer' : 'not-allowed'
+                                                            }}
+                                                        />
+                                                        <label
+                                                            htmlFor={allowed ? "dist-offset-checkbox" : undefined}
+                                                            style={{
+                                                                fontSize: 11,
+                                                                fontWeight: 600,
+                                                                color: 'var(--color-ec-text-primary)',
+                                                                cursor: allowed ? 'pointer' : 'not-allowed',
+                                                                userSelect: 'none'
+                                                            }}
+                                                        >
+                                                            ¿Offset a Variable de cruce?
+                                                        </label>
+                                                        <TooltipIcon
+                                                            customText="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close > SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual. Esta opción permite <u>crear patrones de acción del precio</u>."
+                                                        />
+                                                    </div>
 
-                                            {/* Mostrar select de velas de retraso si el checkbox está activo */}
-                                            {!!distCondition.level.offset && (
-                                                <div style={{ 
-                                                    display: 'flex', 
-                                                    alignItems: 'center', 
-                                                    gap: 8, 
-                                                    paddingLeft: 20,
-                                                    marginTop: 2
-                                                }}>
-                                                    <span style={{
-                                                        fontSize: 11,
-                                                        fontWeight: 600,
-                                                        color: 'var(--color-ec-text-secondary)',
-                                                        fontFamily: 'var(--color-ec-sans)',
-                                                    }}>Velas atrás:</span>
-                                                    <select
-                                                        value={distCondition.level.offset || 1}
-                                                        onChange={(e) => {
-                                                            const val = Number(e.target.value);
-                                                            setFormCondition({
-                                                                ...distCondition,
-                                                                level: { ...distCondition.level, offset: val }
-                                                            });
-                                                        }}
-                                                        style={{
-                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                            border: '0.5px solid var(--color-ec-border)',
-                                                            borderRadius: 4,
-                                                            padding: '2px 8px 2px 6px',
-                                                            fontSize: 11,
-                                                            fontWeight: 700,
-                                                            color: 'var(--color-ec-copper)',
-                                                            fontFamily: 'var(--color-ec-sans)',
-                                                            outline: 'none',
-                                                            cursor: 'pointer',
-                                                            width: 55,
-                                                            textAlign: 'center'
-                                                        }}
-                                                    >
-                                                        {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
-                                                            <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
-                                                                {val}
-                                                            </option>
-                                                        ))}
-                                                    </select>
+                                                    {/* Mostrar select de velas de retraso si el checkbox está activo */}
+                                                    {allowed && !!distCondition.level.offset && (
+                                                        <div style={{ 
+                                                            display: 'flex', 
+                                                            alignItems: 'center', 
+                                                            gap: 8, 
+                                                            paddingLeft: 20,
+                                                            marginTop: 2
+                                                        }}>
+                                                            <span style={{
+                                                                fontSize: 11,
+                                                                fontWeight: 600,
+                                                                color: 'var(--color-ec-text-secondary)',
+                                                                fontFamily: 'var(--color-ec-sans)',
+                                                            }}>Velas atrás:</span>
+                                                            <select
+                                                                value={distCondition.level.offset || 1}
+                                                                onChange={(e) => {
+                                                                    const val = Number(e.target.value);
+                                                                    setFormCondition({
+                                                                        ...distCondition,
+                                                                        level: { ...distCondition.level, offset: val }
+                                                                    });
+                                                                }}
+                                                                style={{
+                                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                    border: '0.5px solid var(--color-ec-border)',
+                                                                    borderRadius: 4,
+                                                                    padding: '2px 8px 2px 6px',
+                                                                    fontSize: 11,
+                                                                    fontWeight: 700,
+                                                                    color: 'var(--color-ec-copper)',
+                                                                    fontFamily: 'var(--color-ec-sans)',
+                                                                    outline: 'none',
+                                                                    cursor: 'pointer',
+                                                                    width: 55,
+                                                                    textAlign: 'center'
+                                                                }}
+                                                            >
+                                                                {Array.from({ length: 20 }, (_, i) => i + 1).map((val) => (
+                                                                    <option key={val} value={val} style={{ backgroundColor: 'var(--color-ec-bg-surface)', color: 'var(--color-ec-text-primary)' }}>
+                                                                        {val}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            )}
-                                        </div>
+                                            );
+                                        })()}
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                         <span style={labelStyle}>Posición</span>
