@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -624,80 +625,288 @@ def _get_cache_hash(year: int, month: int, path: str, tickers: list[str], valid_
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
+# ─── Per-ticker intraday cache (new scheme) ─────────────────────────────────
+# Key: {CACHE_DIR}/{kind}/{year}/{month:02d}/{ticker}.parquet — ONE file per
+# (ticker, year, month), shared across ALL datasets/users. Replaces the old
+# per-tickerset file (month_{y}_{m}_{kind}_{md5(tickerset)}.parquet), which
+# duplicated the same ticker-month across every dataset that referenced it.
+# Old files are left untouched (orphaned); admin/deploy cleans them up.
+
+CACHE_DISK_QUOTA_GB = float(os.getenv("CACHE_DISK_QUOTA_GB", "40"))
+
+# In-process dedup of concurrent GCS fetches for the same (kind, y, m, ticker).
+_INFLIGHT_FETCH: set = set()
+_INFLIGHT_LOCK = threading.Lock()
+
+
+def _sanitize_ticker(ticker: str) -> str:
+    """Make a ticker safe as a filename (US tickers are alnum + . - _ only)."""
+    return "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(ticker))
+
+
+def _ticker_cache_path(y: int, m: int, kind: str, ticker: str) -> str:
+    """{CACHE_DIR}/{kind}/{year}/{month:02d}/{ticker}.parquet (sharded subdirs)."""
+    return os.path.join(LOCAL_CACHE_DIR, kind, str(y), f"{m:02d}", f"{_sanitize_ticker(ticker)}.parquet")
+
+
+def _atomic_write_parquet(df: pd.DataFrame, final_path: str) -> None:
+    """Write to a temp file then os.replace — atomic on the same filesystem, so a
+    concurrent reader sees either the old file or the complete new one, never a
+    half-written one. Concurrent writers are idempotent (same data → last wins)."""
+    os.makedirs(os.path.dirname(final_path), exist_ok=True)
+    tmp = f"{final_path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        df.to_parquet(tmp)
+        os.replace(tmp, final_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def _claim_tickers(kind: str, y: int, m: int, tickers: list[str]):
+    """Claim tickers for fetching. Returns (to_fetch, deferred): to_fetch are
+    claimed by THIS caller (marked in-flight); deferred are already being fetched
+    by another thread in this process."""
+    to_fetch, deferred = [], []
+    with _INFLIGHT_LOCK:
+        for t in tickers:
+            key = (kind, y, m, t)
+            if key in _INFLIGHT_FETCH:
+                deferred.append(t)
+            else:
+                _INFLIGHT_FETCH.add(key)
+                to_fetch.append(t)
+    return to_fetch, deferred
+
+
+def _release_tickers(kind: str, y: int, m: int, tickers: list[str]) -> None:
+    with _INFLIGHT_LOCK:
+        for t in tickers:
+            _INFLIGHT_FETCH.discard((kind, y, m, t))
+
+
+def _gcs_fetch_tickers(path: str, y: int, m: int, tickers: list[str]) -> pd.DataFrame | None:
+    """ONE GCS query for the given tickers in month (y, m). Returns a DataFrame
+    (ticker,date,timestamp,OHLCV) or None on query failure."""
+    if not tickers:
+        return None
+    conn = get_connection()
+    hive_f = _hive_partition_year_month_sql("i", y, m)
+    tickers_str = ", ".join(f"'{t}'" for t in tickers)
+    sql = f"""
+    SELECT i.ticker, i.date, i."timestamp",
+           i.open, i.high, i.low, i."close", i.volume
+    FROM read_parquet('{path}', hive_partitioning=true) i
+    WHERE {hive_f} AND i.ticker IN ({tickers_str})
+    """
+    try:
+        t_sql = time.time()
+        df = conn.execute(sql).fetchdf()
+        logger.info(f"  [FETCH GCS]   {y}-{m:02d}: {len(df):,} rows for {len(tickers)} ticker(s) ({round(time.time()-t_sql, 2)}s)")
+        return df
+    except Exception as e:
+        logger.error(f"  [ERROR] Failed downloading month {y}-{m:02d}: {e}")
+        return None
+
+
+def _enforce_cache_quota() -> None:
+    """If the per-ticker cache exceeds CACHE_DISK_QUOTA_GB, delete least-recently
+    accessed (st_atime) parquets until under 80% of quota. Best-effort, never
+    raises. ONLY touches new-scheme files under {CACHE_DIR}/{raw,opt}/... — the
+    old orphaned {hash}.parquet files at the cache root are never evicted here."""
+    try:
+        quota = CACHE_DISK_QUOTA_GB * 1024 ** 3
+        if quota <= 0:
+            return
+        entries = []
+        total = 0
+        for kind in ("raw", "opt"):
+            base = os.path.join(LOCAL_CACHE_DIR, kind)
+            if not os.path.isdir(base):
+                continue
+            for root, _dirs, names in os.walk(base):
+                for n in names:
+                    if not n.endswith(".parquet"):
+                        continue
+                    fp = os.path.join(root, n)
+                    try:
+                        st = os.stat(fp)
+                    except OSError:
+                        continue
+                    entries.append((st.st_atime, st.st_size, fp))
+                    total += st.st_size
+        if total <= quota:
+            return
+        target = quota * 0.8
+        entries.sort(key=lambda e: e[0])  # oldest access first
+        freed = 0
+        for _atime, size, fp in entries:
+            if total - freed <= target:
+                break
+            try:
+                os.remove(fp)
+                freed += size
+            except OSError:
+                continue
+        logger.info(f"  [CACHE EVICT] freed {freed/1e6:.1f} MB (was {total/1e6:.1f} MB > quota {quota/1e6:.0f} MB)")
+    except Exception as e:
+        logger.warning(f"  [CACHE EVICT] failed: {e}")
+
+
 def _fetch_and_cache_month(
     y: int, m: int, path: str, valid_pairs_month: pd.DataFrame, batch_size: int, mi: int, n_months: int
 ) -> pd.DataFrame | None:
+    """Return the month's intraday for the requested (ticker, date) pairs.
+
+    Drop-in replacement: identical signature/return as before. The disk cache is
+    now keyed PER TICKER ({kind}/{y}/{mm}/{ticker}.parquet) instead of per
+    tickerset, so each ticker-month is stored ONCE and shared across all datasets.
+    A miss fetches only the tickers not already on disk; the post-cache merge to
+    valid_pairs is unchanged.
+    """
     t_month_start = time.time()
-    
+
     unique_tickers = valid_pairs_month["ticker"].unique().tolist()
     if not unique_tickers:
         return None
-        
-    tickers_hash = hashlib.md5(",".join(sorted(unique_tickers)).encode("utf-8")).hexdigest()
-    kind = "opt" if "optimized" in path else "raw"
-    cache_file = os.path.join(LOCAL_CACHE_DIR, f"month_{y}_{m:02d}_{kind}_{tickers_hash}.parquet")
-    
-    df_month = None
-    if os.path.exists(cache_file):
-        try:
-            df_month = pd.read_parquet(cache_file)
-            logger.info(f"  [CACHE HIT] Month {y}-{m:02d} ({mi}/{n_months}) loaded from local disk ({round(time.time()-t_month_start, 3)}s)")
-        except Exception as e:
-            logger.warning(f"  [CACHE ERROR] Could not read {cache_file}: {e}")
-            df_month = None
 
-    if df_month is None:
-        logger.info(f"  [CACHE MISS] Month {y}-{m:02d} ({mi}/{n_months}): downloading GCS data for {len(unique_tickers)} tickers...")
-        conn = get_connection()
-        hive_f = _hive_partition_year_month_sql("i", y, m)
-        tickers_str = ", ".join(f"'{t}'" for t in unique_tickers)
-        sql = f"""
-        SELECT i.ticker, i.date, i."timestamp",
-               i.open, i.high, i.low, i."close", i.volume
-        FROM read_parquet('{path}', hive_partitioning=true) i
-        WHERE {hive_f} AND i.ticker IN ({tickers_str})
-        """
-        try:
-            t_sql = time.time()
-            df_month = conn.execute(sql).fetchdf()
-            t_done = round(time.time() - t_sql, 2)
-            logger.info(f"  [FETCH GCS]   {y}-{m:02d}: {len(df_month):,} rows downloaded ({t_done}s)")
-            
-            # Cache the full month to disk
+    kind = "opt" if "optimized" in path else "raw"
+
+    # 1. Split requested tickers into disk HITs and MISSes.
+    parts: list[pd.DataFrame] = []
+    missing: list[str] = []
+    n_hits = 0
+    for t in unique_tickers:
+        fp = _ticker_cache_path(y, m, kind, t)
+        if os.path.exists(fp):
             try:
-                df_month.to_parquet(cache_file)
-                logger.info(f"  [CACHE WRITE] Month {y}-{m:02d} saved to local disk")
-            except Exception as e:
-                logger.warning(f"  [CACHE WRITE ERROR] Failed saving {cache_file}: {e}")
-        except Exception as e:
-            logger.error(f"  [ERROR] Failed downloading month {y}-{m:02d}: {e}")
-            if ALLOW_MOCK_DATA:
-                logger.warning(f"[MOCK] Month {y}-{m:02d} FAILED: {e}. Using synthetic data.")
+                parts.append(pd.read_parquet(fp))
+                n_hits += 1
                 try:
-                    intraday = _generate_mock_intraday_df(valid_pairs_month)
-                    if not intraday.empty:
-                        for col in ("open", "high", "low", "close"):
-                            if col in intraday.columns:
-                                intraday[col] = intraday[col].astype("float32")
-                        if "volume" in intraday.columns:
-                            intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
-                        intraday = intraday.sort_values(["date", "ticker", "timestamp"])
-                        return intraday
-                except Exception as mock_err:
-                    logger.error(f"Failed generating mock data: {mock_err}")
-            return None
+                    os.utime(fp, None)  # bump atime so LRU eviction tracks real use
+                except OSError:
+                    pass
+            except Exception as e:
+                logger.warning(f"  [CACHE ERROR] Could not read {fp}: {e}")
+                missing.append(t)
+        else:
+            missing.append(t)
+
+    wrote_new = False
+    gcs_failed = False
+
+    # 2. Fetch MISSes from GCS (deduped in-process), one parquet per ticker.
+    if missing:
+        to_fetch, deferred = _claim_tickers(kind, y, m, missing)
+        try:
+            if to_fetch:
+                df_new = _gcs_fetch_tickers(path, y, m, to_fetch)
+                if df_new is None:
+                    gcs_failed = True
+                else:
+                    returned = set(df_new["ticker"].unique()) if not df_new.empty else set()
+                    if not df_new.empty:
+                        for tk, g in df_new.groupby("ticker"):
+                            try:
+                                _atomic_write_parquet(g.copy(), _ticker_cache_path(y, m, kind, tk))
+                                wrote_new = True
+                            except Exception as e:
+                                logger.warning(f"  [CACHE WRITE ERROR] {tk} {y}-{m:02d}: {e}")
+                        parts.append(df_new)
+                    # Empty marker for tickers with no data this month so they
+                    # aren't re-downloaded on every run (parity with the old
+                    # per-tickerset file, which cached their absence).
+                    for tk in to_fetch:
+                        if tk not in returned:
+                            try:
+                                _atomic_write_parquet(
+                                    pd.DataFrame(columns=["ticker", "date", "timestamp", "open", "high", "low", "close", "volume"]),
+                                    _ticker_cache_path(y, m, kind, tk),
+                                )
+                                wrote_new = True
+                            except Exception:
+                                pass
+        finally:
+            _release_tickers(kind, y, m, to_fetch)
+
+        # 3. Deferred tickers (another thread is fetching): wait briefly for its
+        #    atomic write, then read from disk; fall back to our own fetch.
+        if deferred:
+            still: list[str] = []
+            for t in deferred:
+                fp = _ticker_cache_path(y, m, kind, t)
+                waited = 0.0
+                while not os.path.exists(fp) and waited < 5.0:
+                    time.sleep(0.1)
+                    waited += 0.1
+                if os.path.exists(fp):
+                    try:
+                        parts.append(pd.read_parquet(fp))
+                    except Exception:
+                        still.append(t)
+                else:
+                    still.append(t)
+            if still:
+                to_fetch2, _ = _claim_tickers(kind, y, m, still)
+                try:
+                    if to_fetch2:
+                        df2 = _gcs_fetch_tickers(path, y, m, to_fetch2)
+                        if df2 is None:
+                            gcs_failed = True
+                        elif not df2.empty:
+                            for tk, g in df2.groupby("ticker"):
+                                try:
+                                    _atomic_write_parquet(g.copy(), _ticker_cache_path(y, m, kind, tk))
+                                    wrote_new = True
+                                except Exception:
+                                    pass
+                            parts.append(df2)
+                finally:
+                    _release_tickers(kind, y, m, to_fetch2)
+
+    # 4. Enforce disk quota after writing new files.
+    if wrote_new:
+        _enforce_cache_quota()
+
+    # 5. If nothing resolved and GCS failed, optional synthetic fallback (parity).
+    non_empty = [p for p in parts if p is not None and not p.empty]
+    if not non_empty:
+        if gcs_failed and ALLOW_MOCK_DATA:
+            logger.warning(f"[MOCK] Month {y}-{m:02d}: GCS failed. Using synthetic data.")
+            try:
+                intraday = _generate_mock_intraday_df(valid_pairs_month)
+                if not intraday.empty:
+                    for col in ("open", "high", "low", "close"):
+                        if col in intraday.columns:
+                            intraday[col] = intraday[col].astype("float32")
+                    if "volume" in intraday.columns:
+                        intraday["volume"] = pd.to_numeric(intraday["volume"], errors="coerce").fillna(0).astype("int32")
+                    return intraday.sort_values(["date", "ticker", "timestamp"])
+            except Exception as mock_err:
+                logger.error(f"Failed generating mock data: {mock_err}")
+        return None
+
+    df_month = pd.concat(non_empty, ignore_index=True) if len(non_empty) > 1 else non_empty[0]
+    logger.info(
+        f"  [CACHE] Month {y}-{m:02d} ({mi}/{n_months}): {n_hits} hit, {len(missing)} miss "
+        f"({round(time.time()-t_month_start, 3)}s)"
+    )
 
     if df_month is None or df_month.empty:
         return None
 
-    # Filter the month DataFrame by the requested tickers and dates
+    # 6. Filter to requested (ticker, date) pairs — UNCHANGED post-cache logic.
     try:
         vp_copy = valid_pairs_month.copy()
         vp_copy["date"] = pd.to_datetime(vp_copy["date"]).dt.strftime("%Y-%m-%d")
         df_month["date"] = pd.to_datetime(df_month["date"]).dt.strftime("%Y-%m-%d")
-        
+
         intraday = df_month.merge(vp_copy, on=["ticker", "date"], how="inner")
-        
+
         if intraday.empty:
             logger.warning(f"  [WARN] Month {y}-{m:02d}: merged 0 rows for requested pairs.")
             return None
