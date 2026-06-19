@@ -91,18 +91,18 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
               paddingBottom: 8, marginBottom: 8,
               borderBottom: "0.5px solid var(--color-ec-border)",
             }}>
-              <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-ec-text-high)" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-ec-text-high)" }}>
                 {monthName}
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {monthTrades > 0 && (
-                  <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--font-sans)" }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--font-sans)" }}>
                     {monthTrades} trades
                   </span>
                 )}
                 {monthPnl !== 0 && (
                   <span style={{
-                    fontSize: 10, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
+                    fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
                     color: monthPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
                   }}>
                     {formatPnl(monthPnl)}
@@ -112,8 +112,8 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
             </div>
 
             {/* ── Day Headers (L M X J V · Sem) ── */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1.1fr", gap: 4, marginBottom: 4 }}>
-              {["Lun", "Mar", "Mié", "Jue", "Vie", "Sem"].map((l) => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1px 1.1fr", gap: 4, marginBottom: 4 }}>
+              {["Lun", "Mar", "Mié", "Jue", "Vie"].map((l) => (
                 <div key={l} style={{
                   textAlign: "center", fontSize: 8, fontWeight: 700, color: "var(--color-ec-text-muted)",
                   textTransform: "uppercase", letterSpacing: "0.08em", padding: "0 0 2px",
@@ -121,6 +121,13 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
                   {l}
                 </div>
               ))}
+              <div /> {/* Separator column placeholder */}
+              <div style={{
+                textAlign: "center", fontSize: 8, fontWeight: 700, color: "var(--color-ec-text-muted)",
+                textTransform: "uppercase", letterSpacing: "0.08em", padding: "0 0 2px",
+              }}>
+                Sem
+              </div>
             </div>
 
             {/* ── Weeks ── */}
@@ -131,7 +138,7 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
                 const weekDays = week.slice(0, 5); // Mon–Fri
 
                 return (
-                  <div key={`w-${weekIdx}`} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1.1fr", gap: 4 }}>
+                  <div key={`w-${weekIdx}`} style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1px 1.1fr", gap: 4 }}>
                     {weekDays.map((day, i) => {
                       if (!day) return <div key={`e-${weekIdx}-${i}`} style={{ minHeight: 44 }} />;
                       const dayNum = parseInt(day.date.split("-")[2]);
@@ -149,7 +156,7 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
                           style={{
                             position: "relative",
                             minHeight: 44,
-                            borderRadius: 5,
+                            borderRadius: 0,
                             border: `0.5px solid ${hasData ? accentColor : "var(--color-ec-border)"}`,
                             background: hasData
                               ? isWin ? "rgba(74, 157, 127, 0.08)" : "rgba(201, 77, 63, 0.08)"
@@ -178,7 +185,7 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
                             <div style={{
                               display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
                               background: isWin ? "rgba(74, 157, 127, 0.12)" : "rgba(201, 77, 63, 0.12)",
-                              borderRadius: 3,
+                              borderRadius: 0,
                               padding: "3px 6px 2px",
                               width: "90%",
                             }}>
@@ -204,12 +211,15 @@ export default function CalendarTab({ dayResults, trades }: CalendarTabProps) {
                       );
                     })}
 
+                    {/* ── Separator Line ── */}
+                    <div style={{ background: "var(--color-ec-border)" }} />
+
                     {/* ── Weekly Summary ── */}
                     <div
                       title={wHas ? `Sem ${weekIdx + 1}: ${wCount} trades · PnL: $${wPnl.toFixed(2)}` : `Sem ${weekIdx + 1}`}
                       style={{
                         minHeight: 44,
-                        borderRadius: 5,
+                        borderRadius: 0,
                         border: wHas
                           ? `0.5px dashed ${wPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"}`
                           : "0.5px solid var(--color-ec-border)",
