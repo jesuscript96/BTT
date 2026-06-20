@@ -1306,7 +1306,7 @@ export default function WizardStrategyBuilder({
           gap: 0, 
           borderBottom: "1px solid var(--color-ec-border)", 
           marginBottom: 16,
-          paddingBottom: 16
+          paddingBottom: 12
         }}>
           <button
             type="button"
@@ -1314,10 +1314,11 @@ export default function WizardStrategyBuilder({
             style={{
               flex: 1,
               display: "flex",
-              flexDirection: "column",
+              flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              padding: "12px 12px",
+              gap: 8,
+              padding: "8px 12px",
               border: "none",
               background: !customUniverse ? "rgba(216, 122, 61, 0.04)" : "transparent",
               borderRadius: 6,
@@ -1327,24 +1328,23 @@ export default function WizardStrategyBuilder({
             }}
           >
             <Database style={{ 
-              width: 22, 
-              height: 22, 
+              width: 15, 
+              height: 15, 
               strokeWidth: 1.5, 
-              marginBottom: 6, 
               color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
             }} />
             <span style={{
               fontFamily: "var(--color-ec-sans)",
-              fontSize: 12,
+              fontSize: 10.5,
               fontWeight: 700,
               textTransform: "uppercase",
-              letterSpacing: "0.05em",
+              letterSpacing: "0.06em",
             }}>
               Dataset Guardado
             </span>
           </button>
           
-          <div style={{ width: 1, height: 40, backgroundColor: "var(--color-ec-border)", margin: "0 16px" }} />
+          <div style={{ width: 1, height: 18, backgroundColor: "var(--color-ec-border)", margin: "0 12px" }} />
           
           <button
             type="button"
@@ -1352,10 +1352,11 @@ export default function WizardStrategyBuilder({
             style={{
               flex: 1,
               display: "flex",
-              flexDirection: "column",
+              flexDirection: "row",
               alignItems: "center",
               justifyContent: "center",
-              padding: "12px 12px",
+              gap: 8,
+              padding: "8px 12px",
               border: "none",
               background: customUniverse ? "rgba(216, 122, 61, 0.04)" : "transparent",
               borderRadius: 6,
@@ -1365,18 +1366,17 @@ export default function WizardStrategyBuilder({
             }}
           >
             <SlidersHorizontal style={{ 
-              width: 22, 
-              height: 22, 
+              width: 15, 
+              height: 15, 
               strokeWidth: 1.5, 
-              marginBottom: 6, 
               color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
             }} />
             <span style={{
               fontFamily: "var(--color-ec-sans)",
-              fontSize: 12,
+              fontSize: 10.5,
               fontWeight: 700,
               textTransform: "uppercase",
-              letterSpacing: "0.05em",
+              letterSpacing: "0.06em",
             }}>
               Personalizar
             </span>
