@@ -18,7 +18,7 @@ import {
   Comparator,
   TakeProfitMode,
 } from "@/types/strategy";
-import { fetchDatasets, type Dataset } from "@/lib/api_backtester";
+import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
@@ -655,6 +655,10 @@ export default function WizardStrategyBuilder({
     date_to: MAX_DATE,
     rules: []
   });
+  const [dbDateRange, setDbDateRange] = useState<any>({
+    min_date: "2022-01-01",
+    max_date: new Date().toISOString().split("T")[0]
+  });
 
   // Custom Universe Rules Form States
   const [isUnivFiltroOpen, setIsUnivFiltroOpen] = useState(false);
@@ -677,17 +681,23 @@ export default function WizardStrategyBuilder({
   const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
   const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
 
-  // Fetch datasets list
+  // Fetch datasets list and available date range
   useEffect(() => {
     const loadDatasetsList = async () => {
       try {
-        const d = await fetchDatasets();
+        const [d, range] = await Promise.all([
+          fetchDatasets(),
+          fetchAvailableDateRange()
+        ]);
         setDatasets(d);
         if (d.length > 0) {
           setSelectedDataset(prev => prev || d[0].id);
         }
+        if (range) {
+          setDbDateRange(range);
+        }
       } catch (err) {
-        console.error("Error loading datasets in Wizard:", err);
+        console.error("Error loading datasets/dates in Wizard:", err);
       } finally {
         setLoadingDatasets(false);
       }
@@ -1384,6 +1394,8 @@ export default function WizardStrategyBuilder({
                 <input
                   type="date"
                   value={universeFilters.date_from || ''}
+                  min={dbDateRange.min_date}
+                  max={universeFilters.date_to || dbDateRange.max_date}
                   onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_from: e.target.value }))}
                   style={{
                     backgroundColor: "var(--color-ec-bg-elevated)",
@@ -1401,6 +1413,8 @@ export default function WizardStrategyBuilder({
                 <input
                   type="date"
                   value={universeFilters.date_to || ''}
+                  min={universeFilters.date_from || dbDateRange.min_date}
+                  max={dbDateRange.max_date}
                   onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
                   style={{
                     backgroundColor: "var(--color-ec-bg-elevated)",

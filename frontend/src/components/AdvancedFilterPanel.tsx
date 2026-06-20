@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { Filter, RefreshCw, Download, ChevronDown, ChevronUp, X } from "lucide-react";
+import { fetchAvailableDateRange } from "@/lib/api_backtester";
 
 interface AdvancedFilterPanelProps {
     filters: any;
@@ -69,6 +70,18 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
     const [hodAfter, setHodAfter] = React.useState(filters.hod_after || "");
     const [lodBefore, setLodBefore] = React.useState(filters.lod_before || "");
     const [showRulesDropdown, setShowRulesDropdown] = React.useState(false);
+    const [dbDateRange, setDbDateRange] = React.useState<any>({
+        min_date: "2022-01-01",
+        max_date: new Date().toISOString().split("T")[0]
+    });
+
+    React.useEffect(() => {
+        fetchAvailableDateRange().then(range => {
+            if (range) {
+                setDbDateRange(range);
+            }
+        }).catch(() => {});
+    }, []);
 
     // Sync from props (when loading datasets)
     React.useEffect(() => {
@@ -114,6 +127,8 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input
                             type="date" value={startDate}
+                            min={dbDateRange.min_date}
+                            max={endDate || dbDateRange.max_date}
                             onChange={(e) => { setStartDate(e.target.value); updateParent('start_date', e.target.value); }}
                             title="Start Date"
                             style={{ background: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 5, padding: '0 8px', height: 30, fontFamily: "'General Sans', sans-serif", fontSize: 12, color: 'var(--color-ec-text-primary)', outline: 'none', width: 110, colorScheme: 'dark' }}
@@ -121,6 +136,8 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                         <span style={{ color: 'var(--color-ec-text-muted)', fontSize: 12, padding: '0 2px' }}>—</span>
                         <input
                             type="date" value={endDate}
+                            min={startDate || dbDateRange.min_date}
+                            max={dbDateRange.max_date}
                             onChange={(e) => { setEndDate(e.target.value); updateParent('end_date', e.target.value); }}
                             title="End Date"
                             style={{ background: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 5, padding: '0 8px', height: 30, fontFamily: "'General Sans', sans-serif", fontSize: 12, color: 'var(--color-ec-text-primary)', outline: 'none', width: 110, colorScheme: 'dark' }}

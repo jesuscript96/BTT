@@ -241,6 +241,24 @@ export async function runMonteCarlo(params: {
   return data;
 }
 
+export interface AvailableDateRange {
+  min_date: string;
+  max_date: string;
+}
+
+export async function fetchAvailableDateRange(): Promise<AvailableDateRange> {
+  try {
+    const { data } = await api.get(`/market/available-date-range?t=${Date.now()}`);
+    return data;
+  } catch (err) {
+    console.error("Failed to fetch available date range, using fallbacks:", err);
+    return {
+      min_date: "2022-01-01",
+      max_date: new Date().toISOString().split("T")[0]
+    };
+  }
+}
+
 export async function fetchDatasets(): Promise<Dataset[]> {
   const { data } = await api.get(`/data/datasets?t=${Date.now()}`);
   return data;

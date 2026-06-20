@@ -22,7 +22,7 @@ import type {
 } from "@/types/strategy";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock } from "lucide-react";
-import { fetchDatasets, type Dataset } from "@/lib/api_backtester";
+import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 
 /* ── Date range constants for dataset filter ── */
 const MIN_DATE = "2006-01-01";
@@ -258,6 +258,10 @@ export default function InlineStrategyBuilder({
     date_to: MAX_DATE,
     rules: []
   });
+  const [dbDateRange, setDbDateRange] = useState<any>({
+    min_date: "2022-01-01",
+    max_date: new Date().toISOString().split("T")[0]
+  });
 
   // Custom Universe Rules Form States
   const [tempUnivDay, setTempUnivDay] = useState<'gap_day' | 'gap_plus_1_day' | 'gap_plus_2_day'>('gap_day');
@@ -270,10 +274,16 @@ export default function InlineStrategyBuilder({
   useEffect(() => {
     const loadDatasetsList = async () => {
       try {
-        const d = await fetchDatasets();
+        const [d, range] = await Promise.all([
+          fetchDatasets(),
+          fetchAvailableDateRange()
+        ]);
         setDatasets(d);
         if (d.length > 0) {
           setSelectedDataset(prev => prev || d[0].id);
+        }
+        if (range) {
+          setDbDateRange(range);
         }
       } catch (err) {
         console.error("Error loading datasets in Free Mode:", err);
@@ -675,6 +685,8 @@ export default function InlineStrategyBuilder({
                   <input
                     type="date"
                     value={universeFilters.date_from || ''}
+                    min={dbDateRange.min_date}
+                    max={universeFilters.date_to || dbDateRange.max_date}
                     onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_from: e.target.value }))}
                     style={{
                       backgroundColor: 'var(--color-ec-bg-surface)',
@@ -692,6 +704,8 @@ export default function InlineStrategyBuilder({
                   <input
                     type="date"
                     value={universeFilters.date_to || ''}
+                    min={universeFilters.date_from || dbDateRange.min_date}
+                    max={dbDateRange.max_date}
                     onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
                     style={{
                       backgroundColor: 'var(--color-ec-bg-surface)',

@@ -260,6 +260,20 @@ def get_latest_market_date():
     finally:
         if con: con.close()
 
+@router.get("/available-date-range")
+def get_available_date_range():
+    con = None
+    try:
+        con = get_db_connection(read_only=True)
+        row = con.execute("SELECT MIN(CAST(timestamp AS VARCHAR)[:10]), MAX(CAST(timestamp AS VARCHAR)[:10]) FROM daily_metrics").fetchone()
+        if row and row[0] and row[1]:
+            return {"min_date": str(row[0]), "max_date": str(row[1])}
+        return {"min_date": "2022-01-01", "max_date": date.today().isoformat()}
+    except Exception as e:
+        return {"min_date": "2022-01-01", "max_date": date.today().isoformat()}
+    finally:
+        if con: con.close()
+
 # === HIDDEN FOR MVP — Market Analysis /aggregate/intraday endpoint disabled ===
 '''
 @router.get("/aggregate/intraday")

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Calendar, Play, Square, Save, FolderOpen } from 'lucide-react'
 import { getQueries } from '@/lib/api'
+import { fetchAvailableDateRange } from '@/lib/api_backtester'
 
 interface ConfigurationPanelProps {
     config: {
@@ -29,12 +30,25 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
     const [savedDatasets, setSavedDatasets] = useState<SavedDataset[]>([])
     const [datasetsLoading, setDatasetsLoading] = useState(true)
 
+    const [dbDateRange, setDbDateRange] = useState<any>({
+        min_date: "2022-01-01",
+        max_date: new Date().toISOString().split("T")[0]
+    });
+
     useEffect(() => {
         let cancelled = false
         async function load() {
             try {
-                const data = await getQueries()
-                if (!cancelled) setSavedDatasets(data)
+                const [data, range] = await Promise.all([
+                    getQueries(),
+                    fetchAvailableDateRange()
+                ])
+                if (!cancelled) {
+                    setSavedDatasets(data)
+                    if (range) {
+                        setDbDateRange(range)
+                    }
+                }
             } catch (_) {
                 if (!cancelled) setSavedDatasets([])
             } finally {
@@ -207,6 +221,8 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                             <input
                                 type="date"
                                 value={config.dateFrom}
+                                min={dbDateRange.min_date}
+                                max={config.dateTo || dbDateRange.max_date}
                                 onChange={(e) => onChange({ ...config, dateFrom: e.target.value })}
                                 className=""
                                 style={{
@@ -240,6 +256,8 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                             <input
                                 type="date"
                                 value={config.dateTo}
+                                min={config.dateFrom || dbDateRange.min_date}
+                                max={dbDateRange.max_date}
                                 onChange={(e) => onChange({ ...config, dateTo: e.target.value })}
                                 className=""
                                 style={{

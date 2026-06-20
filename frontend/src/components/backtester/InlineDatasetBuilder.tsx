@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { fetchAvailableDateRange } from "@/lib/api_backtester";
 
 interface Props {
   onSave: (name: string, filters: any) => Promise<void>;
@@ -65,6 +66,21 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
   const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
   const [dateTo, setDateTo] = useState(MAX_DATE);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const [dbDateRange, setDbDateRange] = useState<any>({
+    min_date: "2022-01-01",
+    max_date: new Date().toISOString().split("T")[0]
+  });
+
+  useEffect(() => {
+    fetchAvailableDateRange().then(range => {
+      if (range) {
+        setDbDateRange(range);
+        setDateFrom(prev => prev < range.min_date ? range.min_date : prev);
+        setDateTo(prev => prev > range.max_date ? range.max_date : prev);
+      }
+    }).catch(() => {});
+  }, []);
+
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [tempName, setTempName] = useState("");
   const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string }>>>({
@@ -387,8 +403,8 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
               <input
                 type="date"
                 value={dateFrom}
-                min={MIN_DATE}
-                max={dateTo || MAX_DATE}
+                min={dbDateRange.min_date}
+                max={dateTo || dbDateRange.max_date}
                 onChange={(e) => setDateFrom(e.target.value)}
                 style={{
                   backgroundColor: "var(--color-ec-bg-elevated)",
@@ -407,8 +423,8 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
               <input
                 type="date"
                 value={dateTo}
-                min={dateFrom || MIN_DATE}
-                max={MAX_DATE}
+                min={dateFrom || dbDateRange.min_date}
+                max={dbDateRange.max_date}
                 onChange={(e) => setDateTo(e.target.value)}
                 style={{
                   backgroundColor: "var(--color-ec-bg-elevated)",
