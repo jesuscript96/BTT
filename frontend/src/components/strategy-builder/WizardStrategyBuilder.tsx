@@ -72,14 +72,9 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
     setHovered(true);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    setCoords({ x: e.clientX, y: e.clientY });
-  };
-
   return (
     <span 
       onMouseEnter={handleMouseEnter}
-      onMouseMove={handleMouseMove}
       onMouseLeave={() => setHovered(false)}
       style={{
         display: 'inline-flex',
@@ -103,8 +98,8 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
       {hovered && (
         <span style={{
           position: 'fixed',
-          top: coords.y - 8,
-          left: coords.x + 16,
+          top: coords.y - 6,
+          left: coords.x + 6,
           transform: 'translate(0, -100%)',
           backgroundColor: 'var(--color-ec-bg-elevated)',
           border: '0.5px solid var(--color-ec-border)',
@@ -264,9 +259,9 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
                           fontWeight: isSelected ? 700 : 500,
                           cursor: "pointer",
                           display: "flex",
-                          justifyContent: "space-between",
+                          justifyContent: "flex-start",
                           alignItems: "center",
-                          gap: 5,
+                          gap: 6,
                           backgroundColor: isSelected ? "rgba(216, 122, 61, 0.06)" : "transparent",
                           borderLeft: isSelected ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
                           transition: "all 100ms ease",
@@ -4575,7 +4570,7 @@ export default function WizardStrategyBuilder({
                                 fontWeight: isSelected ? 700 : 500,
                                 cursor: "pointer",
                                 display: "flex",
-                                justifyContent: "space-between",
+                                justifyContent: "flex-start",
                                 alignItems: "center",
                                 gap: 5,
                                 backgroundColor: isSelected ? "rgba(216, 122, 61, 0.06)" : "transparent",

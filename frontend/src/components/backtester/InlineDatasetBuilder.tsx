@@ -572,13 +572,6 @@ export default function InlineDatasetBuilder({
                               e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
                               e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
                             }}
-                            onMouseMove={(e) => {
-                              setActiveTooltip(prev => prev ? {
-                                ...prev,
-                                x: e.clientX,
-                                y: e.clientY,
-                              } : null);
-                            }}
                             onMouseLeave={(e) => {
                               setActiveTooltip(null);
                               e.currentTarget.style.color = "var(--color-ec-text-muted)";
@@ -1064,8 +1057,8 @@ export default function InlineDatasetBuilder({
         <div
           style={{
             position: "fixed",
-            top: activeTooltip.y - 8,
-            left: activeTooltip.x + 16,
+            top: activeTooltip.y - 6,
+            left: activeTooltip.x + 6,
             transform: "translate(0, -100%)",
             backgroundColor: "var(--color-ec-bg-sidebar)",
             color: "var(--color-ec-text-primary)",

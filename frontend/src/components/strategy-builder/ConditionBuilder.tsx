@@ -277,15 +277,6 @@ const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorT
                 e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
                 e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
             }}
-            onMouseMove={(e) => {
-                setActiveTooltip({
-                    text: description,
-                    x: e.clientX,
-                    y: e.clientY,
-                    width: 185,
-                    title: indicatorName ? (INDICATOR_LABELS[indicatorName] || indicatorName) : undefined
-                });
-            }}
             onMouseLeave={(e) => {
                 setActiveTooltip(null);
                 e.currentTarget.style.color = "var(--color-ec-text-muted)";
@@ -2838,8 +2829,8 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                     <div
                         style={{
                             position: "fixed",
-                            top: activeTooltip.y - 8,
-                            left: activeTooltip.x + 16,
+                            top: activeTooltip.y - 6,
+                            left: activeTooltip.x + 6,
                             transform: "translate(0, -100%)",
                             backgroundColor: "var(--color-ec-bg-elevated)",
                             color: "var(--color-ec-text-primary)",
