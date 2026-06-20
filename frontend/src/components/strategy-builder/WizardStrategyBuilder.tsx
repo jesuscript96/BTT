@@ -1182,17 +1182,18 @@ export default function WizardStrategyBuilder({
       const [coords, setCoords] = useState({ x: 0, y: 0 });
 
       const handleMouseEnter = (e: React.MouseEvent) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        setCoords({
-          x: rect.left + rect.width / 2,
-          y: rect.top - 6
-        });
+        setCoords({ x: e.clientX, y: e.clientY });
         setHovered(true);
+      };
+
+      const handleMouseMove = (e: React.MouseEvent) => {
+        setCoords({ x: e.clientX, y: e.clientY });
       };
 
       return (
         <span 
           onMouseEnter={handleMouseEnter}
+          onMouseMove={handleMouseMove}
           onMouseLeave={() => setHovered(false)}
           style={{
             display: 'inline-flex',
@@ -1216,9 +1217,9 @@ export default function WizardStrategyBuilder({
           {hovered && (
             <span style={{
               position: 'fixed',
-              top: coords.y,
-              left: coords.x,
-              transform: 'translate(-50%, -100%)',
+              top: coords.y - 4,
+              left: coords.x + 4,
+              transform: 'translate(0, -100%)',
               backgroundColor: 'var(--color-ec-bg-elevated)',
               border: '0.5px solid var(--color-ec-border)',
               borderRadius: 4,
@@ -1229,7 +1230,7 @@ export default function WizardStrategyBuilder({
               whiteSpace: 'normal',
               width: 185,
               boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-              zIndex: 99999,
+              zIndex: 100005,
               textAlign: 'left',
               pointerEvents: 'none',
               lineHeight: '1.3',
@@ -1451,13 +1452,13 @@ export default function WizardStrategyBuilder({
                         const lbl = formatFilterValue(key, val);
                         return lbl ? (
                           <span key={key} style={{ 
-                            fontSize: 9.5, 
+                            fontSize: 10, 
                             fontWeight: 600,
-                            padding: '4px 8px', 
-                            borderRadius: 4, 
-                            backgroundColor: 'rgba(216, 122, 61, 0.08)', 
-                            color: 'var(--color-ec-copper)', 
-                            border: '0.5px solid rgba(216, 122, 61, 0.25)' 
+                            padding: '4px 10px', 
+                            borderRadius: 6, 
+                            backgroundColor: 'rgba(216, 122, 61, 0.12)', 
+                            color: 'var(--color-ec-text-high)', 
+                            border: '0.5px solid rgba(216, 122, 61, 0.35)' 
                           }}>
                             {lbl}
                           </span>
@@ -1465,13 +1466,13 @@ export default function WizardStrategyBuilder({
                       })}
                     {(currentDs.filters.rules || []).map((r: any, idx: number) => (
                       <span key={idx} style={{ 
-                        fontSize: 9.5, 
+                        fontSize: 10, 
                         fontWeight: 600,
-                        padding: '4px 8px', 
-                        borderRadius: 4, 
-                        backgroundColor: 'rgba(216, 122, 61, 0.08)', 
-                        color: 'var(--color-ec-copper)', 
-                        border: '0.5px solid rgba(216, 122, 61, 0.25)' 
+                        padding: '4px 10px', 
+                        borderRadius: 6, 
+                        backgroundColor: 'rgba(216, 122, 61, 0.12)', 
+                        color: 'var(--color-ec-text-high)', 
+                        border: '0.5px solid rgba(216, 122, 61, 0.35)' 
                       }}>
                         {formatUnivRule(r)}
                       </span>
@@ -1887,21 +1888,22 @@ export default function WizardStrategyBuilder({
                       }));
                     }}
                     style={{
-                      fontSize: 9.5,
-                      fontWeight: 600,
-                      padding: '4px 6px 4px 8px',
-                      borderRadius: 4,
-                      backgroundColor: 'rgba(216, 122, 61, 0.08)',
-                      color: 'var(--color-ec-copper)',
-                      border: '0.5px solid rgba(216, 122, 61, 0.25)',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: 4,
+                      gap: 6,
+                      padding: '4px 10px',
+                      backgroundColor: 'rgba(216, 122, 61, 0.12)',
+                      border: '0.5px solid rgba(216, 122, 61, 0.35)',
+                      borderRadius: 6,
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: 'var(--color-ec-text-high)',
                       cursor: 'pointer',
                     }}
                   >
                     <span>{formatUnivRule(r)}</span>
-                    <span style={{ fontSize: 10, color: 'rgba(216, 122, 61, 0.6)', marginLeft: 4 }}>×</span>
+                    <span style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', marginLeft: 4 }}>×</span>
                   </span>
                 ))}
               </div>
@@ -2516,14 +2518,14 @@ export default function WizardStrategyBuilder({
                         display: 'flex',
                         alignItems: 'center',
                         gap: 6,
-                        backgroundColor: 'rgba(216, 122, 61, 0.08)',
-                        border: '0.5px solid rgba(216, 122, 61, 0.25)',
-                        borderRadius: 4,
-                        padding: '4px 6px 4px 8px',
+                        backgroundColor: 'rgba(216, 122, 61, 0.12)',
+                        border: '0.5px solid rgba(216, 122, 61, 0.35)',
+                        borderRadius: 6,
+                        padding: '4px 10px',
                         fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9.5,
+                        fontSize: 10,
                         fontWeight: 600,
-                        color: 'var(--color-ec-copper)',
+                        color: 'var(--color-ec-text-high)',
                       }}
                     >
                       <span>{dayLabel} • {metricLabel}: {valLabel}</span>
@@ -2535,8 +2537,7 @@ export default function WizardStrategyBuilder({
                         style={{
                           background: 'none',
                           border: 'none',
-                          color: 'var(--color-ec-copper)',
-                          opacity: 0.7,
+                          color: 'var(--color-ec-text-muted)',
                           cursor: 'pointer',
                           fontSize: 10,
                           lineHeight: 1,
@@ -4177,14 +4178,14 @@ export default function WizardStrategyBuilder({
                         display: "inline-flex",
                         alignItems: "center",
                         gap: 6,
-                        padding: "4px 6px 4px 8px",
-                        backgroundColor: "rgba(216, 122, 61, 0.08)",
-                        border: "0.5px solid rgba(216, 122, 61, 0.25)",
-                        borderRadius: 4,
+                        padding: "4px 10px",
+                        backgroundColor: "rgba(216, 122, 61, 0.12)",
+                        border: "0.5px solid rgba(216, 122, 61, 0.35)",
+                        borderRadius: 6,
                         fontFamily: "var(--color-ec-sans)",
-                        fontSize: 9.5,
+                        fontSize: 10,
                         fontWeight: 600,
-                        color: "var(--color-ec-copper)",
+                        color: "var(--color-ec-text-high)",
                         animation: "wizTagSlideIn 200ms ease"
                       }}
                     >
@@ -4204,8 +4205,7 @@ export default function WizardStrategyBuilder({
                         style={{
                           background: "none",
                           border: "none",
-                          color: "var(--color-ec-copper)",
-                          opacity: 0.7,
+                          color: "var(--color-ec-text-muted)",
                           cursor: "pointer",
                           display: "flex",
                           alignItems: "center",
