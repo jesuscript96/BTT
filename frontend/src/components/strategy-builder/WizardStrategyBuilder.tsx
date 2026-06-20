@@ -102,8 +102,8 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
       {hovered && (
         <span style={{
           position: 'fixed',
-          top: coords.y - 4,
-          left: coords.x + 4,
+          top: coords.y - 8,
+          left: coords.x + 16,
           transform: 'translate(0, -100%)',
           backgroundColor: 'var(--color-ec-bg-elevated)',
           border: '0.5px solid var(--color-ec-border)',
@@ -309,6 +309,7 @@ interface Props {
   customStartTime?: string;
   customEndTime?: string;
   initialStrategy?: any;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 /* ── Date range constants for dataset filter ── */
@@ -592,6 +593,7 @@ export default function WizardStrategyBuilder({
   customStartTime = "09:30",
   customEndTime = "16:00",
   initialStrategy,
+  onExpandedChange,
 }: Props) {
   const [currentStep, setCurrentStep] = useState(0);
   const createdAtRef = useRef(new Date().toISOString());
@@ -680,6 +682,17 @@ export default function WizardStrategyBuilder({
   const [tempUnivOp, setTempUnivOp] = useState<string>('>=');
   const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
   const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
+
+  useEffect(() => {
+    if (onExpandedChange) {
+      const isUnivStep = STEPS[currentStep]?.key === 'universo';
+      const isBetween = tempUnivOp === 'between';
+      onExpandedChange(isUnivStep && isBetween);
+    }
+    return () => {
+      onExpandedChange?.(false);
+    };
+  }, [currentStep, tempUnivOp, onExpandedChange]);
 
   // Fetch datasets list and available date range
   useEffect(() => {
@@ -1413,7 +1426,7 @@ export default function WizardStrategyBuilder({
                 <input
                   type="date"
                   value={universeFilters.date_to || ''}
-                  min={dbDateRange.min_date}
+                  min={universeFilters.date_from && universeFilters.date_from > dbDateRange.min_date ? universeFilters.date_from : dbDateRange.min_date}
                   max={dbDateRange.max_date}
                   onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
                   style={{
@@ -1641,7 +1654,7 @@ export default function WizardStrategyBuilder({
                 </div>
 
                 {/* Value 1 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: 65, flexShrink: 0 }}>
                   <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>
                     {tempUnivOp === 'between' ? 'Mín' : 'Valor'}
                   </label>
@@ -1666,7 +1679,7 @@ export default function WizardStrategyBuilder({
 
                 {/* Value 2 (between) */}
                 {tempUnivOp === 'between' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: 65, flexShrink: 0 }}>
                     <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Máx</label>
                     <input
                       type="text"
@@ -5514,7 +5527,7 @@ export default function WizardStrategyBuilder({
     } else if (selectedDataset) {
       const currentDs = datasets.find(d => d.id === selectedDataset);
       list.push({
-        label: `Dataset: ${currentDs ? currentDs.name : selectedDataset}`,
+        label: `Dataset: ${currentDs ? currentDs.name : (loadingDatasets ? "Cargando..." : selectedDataset)}`,
         stepName: "Universo"
       });
     }
@@ -5660,7 +5673,8 @@ export default function WizardStrategyBuilder({
     datasets,
     wizardMarketSessions,
     wizardCustomStartTime,
-    wizardCustomEndTime
+    wizardCustomEndTime,
+    loadingDatasets
   ]);
 
   // Step 6: Resumen de estrategia
@@ -6437,21 +6451,21 @@ export default function WizardStrategyBuilder({
           </div>
         </div>
 
-        {/* Right: Step Content */}
         <div style={{
           flex: 1,
           overflow: "hidden",
           padding: "20px 22px 20px",
           display: "flex",
           flexDirection: "column",
-          justifyContent: "space-between",
+          justifyContent: STEPS[currentStep]?.key === "summary" ? "flex-start" : "space-between",
         }}>
           <div style={{
-            flex: 1,
+            flex: STEPS[currentStep]?.key === "summary" ? "0 1 auto" : 1,
             display: "flex",
             flexDirection: "column",
             overflowY: "auto",
-            scrollbarWidth: "none"
+            scrollbarWidth: "none",
+            minHeight: 0
           }}>
             <div style={{
               fontFamily: "var(--color-ec-sans)",
@@ -6503,6 +6517,7 @@ export default function WizardStrategyBuilder({
             marginTop: STEPS[currentStep]?.key === "summary" ? 8 : 32,
             paddingTop: 16,
             borderTop: "0.5px solid var(--color-ec-border)",
+            flexShrink: 0,
           }}>
             {currentStep > 0 ? (
               <button

@@ -7,6 +7,7 @@ interface Props {
   onSave: (name: string, filters: any) => Promise<void>;
   onBack: () => void;
   isSaving?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 interface ParameterConfig {
@@ -61,7 +62,12 @@ const TWO_YEARS_AGO = new Date(
   new Date().setFullYear(new Date().getFullYear() - 2)
 ).toISOString().split("T")[0];
 
-export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false }: Props) {
+export default function InlineDatasetBuilder({
+  onSave,
+  onBack,
+  isSaving = false,
+  onExpandedChange,
+}: Props) {
   const [name, setName] = useState("Nuevo Dataset");
   const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
   const [dateTo, setDateTo] = useState(MAX_DATE);
@@ -95,6 +101,20 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
     gap_plus_1_day: true,
     gap_plus_2_day: true,
   });
+
+  useEffect(() => {
+    if (onExpandedChange) {
+      const hasBetween = Object.entries(expandedSections).some(([sectionId, isExpanded]) => {
+        if (!isExpanded) return false;
+        const sectionValues = values[sectionId as SectionId] || {};
+        return Object.values(sectionValues).some(v => v.op === 'between');
+      });
+      onExpandedChange(hasBetween);
+    }
+    return () => {
+      onExpandedChange?.(false);
+    };
+  }, [expandedSections, values, onExpandedChange]);
 
   const [activeTooltip, setActiveTooltip] = useState<{
     text: string;
@@ -423,7 +443,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
               <input
                 type="date"
                 value={dateTo}
-                min={dbDateRange.min_date}
+                min={dateFrom && dateFrom > dbDateRange.min_date ? dateFrom : dbDateRange.min_date}
                 max={dbDateRange.max_date}
                 onChange={(e) => setDateTo(e.target.value)}
                 style={{
@@ -529,9 +549,6 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                           </span>
                           <span
                             onMouseEnter={(e) => {
-                              if (!containerRef.current) return;
-                              const containerRect = containerRef.current.getBoundingClientRect();
-                              const rect = e.currentTarget.getBoundingClientRect();
                               let text = PARAM_DESCRIPTIONS[param.key];
                               if (param.key === "pm_open") {
                                 if (sectionId === "gap_day") {
@@ -544,30 +561,23 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                               }
                               // Estimar el ancho del tooltip basado en el largo del texto (entre 100px y 220px)
                               const estimatedWidth = Math.min(Math.max(text.length * 6.5 + 24, 100), 220);
-                              const halfWidth = estimatedWidth / 2;
-                              
-                              let tooltipX = rect.left - containerRect.left + rect.width / 2;
-                              const tooltipY = rect.top - containerRect.top - 6;
-                              
-                              const minMargin = 16;
-                              if (tooltipX - halfWidth < minMargin) {
-                                tooltipX = minMargin + halfWidth;
-                              }
-                              
-                              const maxRight = containerRect.width - minMargin;
-                              if (tooltipX + halfWidth > maxRight) {
-                                tooltipX = maxRight - halfWidth;
-                              }
                               
                               setActiveTooltip({
                                 text,
-                                x: tooltipX,
-                                y: tooltipY,
+                                x: e.clientX,
+                                y: e.clientY,
                                 width: estimatedWidth,
                               });
                               e.currentTarget.style.color = "var(--color-ec-text-primary)";
                               e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
                               e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
+                            }}
+                            onMouseMove={(e) => {
+                              setActiveTooltip(prev => prev ? {
+                                ...prev,
+                                x: e.clientX,
+                                y: e.clientY,
+                              } : null);
                             }}
                             onMouseLeave={(e) => {
                               setActiveTooltip(null);
@@ -1053,10 +1063,10 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
       {activeTooltip && (
         <div
           style={{
-            position: "absolute",
-            top: activeTooltip.y,
-            left: activeTooltip.x,
-            transform: "translate(-50%, -100%)",
+            position: "fixed",
+            top: activeTooltip.y - 8,
+            left: activeTooltip.x + 16,
+            transform: "translate(0, -100%)",
             backgroundColor: "var(--color-ec-bg-sidebar)",
             color: "var(--color-ec-text-primary)",
             border: "0.5px solid var(--color-ec-border)",
@@ -1066,7 +1076,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
             fontStyle: "italic",
             lineHeight: 1.4,
             width: activeTooltip.width,
-            zIndex: 9999,
+            zIndex: 100005,
             pointerEvents: "none",
             boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
             fontFamily: "var(--color-ec-sans)",

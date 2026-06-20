@@ -26,7 +26,15 @@ import {
 
 export default function Home() {
   const [mode, setMode] = useState<"config" | "builder_choice" | "builder" | "wizard" | "dataset">("config");
+  const [drawerExpanded, setDrawerExpanded] = useState(false);
   const [strategySessionKey, setStrategySessionKey] = useState<string>("init");
+
+  useEffect(() => {
+    if (mode !== 'builder' && mode !== 'wizard' && mode !== 'dataset') {
+      setDrawerExpanded(false);
+    }
+  }, [mode]);
+
   const [datasetRefresh, setDatasetRefresh] = useState(0);
   const [pendingDatasetSelect, setPendingDatasetSelect] = useState<string | undefined>(undefined);
   const [isSavingDataset, setIsSavingDataset] = useState(false);
@@ -1183,12 +1191,12 @@ export default function Home() {
           top: 0,
           left: 280,
           bottom: 0,
-          width: 550,
+          width: (mode === 'builder' || mode === 'wizard') && drawerExpanded ? 680 : 550,
           backgroundColor: 'var(--color-ec-bg-sidebar)',
           borderRight: '0.5px solid var(--color-ec-border)',
           zIndex: 40,
           transform: (mode === 'builder_choice' || mode === 'builder' || mode === 'wizard') ? 'translateX(0)' : 'translateX(-100%)',
-          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '10px 0 30px rgba(0, 0, 0, 0.15)',
           display: 'flex',
           flexDirection: 'column',
@@ -1240,6 +1248,7 @@ export default function Home() {
                     customStartTime={activeCustomStartTime}
                     customEndTime={activeCustomEndTime}
                     initialStrategy={builderDraft || activeStrategy || undefined}
+                    onExpandedChange={setDrawerExpanded}
                   />
                 </div>
               )}
@@ -1257,6 +1266,7 @@ export default function Home() {
                     customEndTime={activeCustomEndTime}
                     onDraftChange={handleDraftChange}
                     initialStrategy={builderDraft || activeStrategy || undefined}
+                    onExpandedChange={setDrawerExpanded}
                   />
                 </div>
               )}
@@ -1270,12 +1280,12 @@ export default function Home() {
           top: 0,
           left: 280,
           bottom: 0,
-          width: 550,
+          width: mode === 'dataset' && drawerExpanded ? 680 : 550,
           backgroundColor: 'var(--color-ec-bg-sidebar)',
           borderRight: '0.5px solid var(--color-ec-border)',
           zIndex: 40,
           transform: mode === 'dataset' ? 'translateX(0)' : 'translateX(-100%)',
-          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '10px 0 30px rgba(0, 0, 0, 0.15)',
           display: 'flex',
           flexDirection: 'column',
@@ -1284,6 +1294,7 @@ export default function Home() {
           <InlineDatasetBuilder
             onBack={() => setMode('config')}
             isSaving={isSavingDataset}
+            onExpandedChange={setDrawerExpanded}
             onSave={async (name, filters) => {
               if (isSavingDataset) return;
               setIsSavingDataset(true);

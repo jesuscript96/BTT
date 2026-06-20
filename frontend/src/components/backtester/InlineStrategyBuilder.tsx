@@ -182,6 +182,7 @@ interface Props {
   customEndTime?: string;
   onDraftChange?: (draft: Draft) => void;
   initialStrategy?: any;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 export default function InlineStrategyBuilder({
@@ -192,6 +193,7 @@ export default function InlineStrategyBuilder({
   customEndTime = "16:00",
   onDraftChange,
   initialStrategy,
+  onExpandedChange,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   const createdAtRef = useRef(new Date().toISOString());
@@ -269,6 +271,15 @@ export default function InlineStrategyBuilder({
   const [tempUnivOp, setTempUnivOp] = useState<string>('>=');
   const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
   const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
+
+  useEffect(() => {
+    if (onExpandedChange) {
+      onExpandedChange(tempUnivOp === 'between');
+    }
+    return () => {
+      onExpandedChange?.(false);
+    };
+  }, [tempUnivOp, onExpandedChange]);
 
   // Fetch datasets list on mount
   useEffect(() => {
@@ -704,7 +715,7 @@ export default function InlineStrategyBuilder({
                   <input
                     type="date"
                     value={universeFilters.date_to || ''}
-                    min={dbDateRange.min_date}
+                    min={universeFilters.date_from && universeFilters.date_from > dbDateRange.min_date ? universeFilters.date_from : dbDateRange.min_date}
                     max={dbDateRange.max_date}
                     onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
                     style={{
@@ -805,7 +816,7 @@ export default function InlineStrategyBuilder({
                     <option value="between">Entre</option>
                   </select>
 
-                  <input
+                   <input
                     type="text"
                     value={tempUnivVal1}
                     onChange={(e) => setTempUnivVal1(e.target.value)}
@@ -817,7 +828,7 @@ export default function InlineStrategyBuilder({
                       padding: '3px 4px',
                       borderRadius: 4,
                       outline: 'none',
-                      width: tempUnivOp === 'between' ? 40 : 50,
+                      width: 65,
                     }}
                   />
 
@@ -834,7 +845,7 @@ export default function InlineStrategyBuilder({
                         padding: '3px 4px',
                         borderRadius: 4,
                         outline: 'none',
-                        width: 40,
+                        width: 65,
                       }}
                     />
                   )}

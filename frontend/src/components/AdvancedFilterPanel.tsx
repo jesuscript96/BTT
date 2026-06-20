@@ -136,7 +136,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                         <span style={{ color: 'var(--color-ec-text-muted)', fontSize: 12, padding: '0 2px' }}>—</span>
                         <input
                             type="date" value={endDate}
-                            min={dbDateRange.min_date}
+                            min={startDate && startDate > dbDateRange.min_date ? startDate : dbDateRange.min_date}
                             max={dbDateRange.max_date}
                             onChange={(e) => { setEndDate(e.target.value); updateParent('end_date', e.target.value); }}
                             title="End Date"

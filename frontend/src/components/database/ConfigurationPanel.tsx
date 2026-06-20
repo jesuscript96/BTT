@@ -256,7 +256,7 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                             <input
                                 type="date"
                                 value={config.dateTo}
-                                min={dbDateRange.min_date}
+                                min={config.dateFrom && config.dateFrom > dbDateRange.min_date ? config.dateFrom : dbDateRange.min_date}
                                 max={dbDateRange.max_date}
                                 onChange={(e) => onChange({ ...config, dateTo: e.target.value })}
                                 className=""

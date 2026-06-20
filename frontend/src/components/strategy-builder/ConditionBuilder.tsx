@@ -446,41 +446,47 @@ export const IndicatorSelector = ({
                                     const isSelected = value === t;
                                     return (
                                         <div 
-                                            key={t}
-                                            style={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'flex-start',
-                                                gap: 5,
-                                                backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
-                                                borderLeft: isSelected ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
-                                                padding: '4px 10px',
-                                            }}
-                                            onMouseEnter={(e) => {
-                                                if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-surface)';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
-                                            }}
-                                        >
-                                            <div 
-                                                onClick={() => { onChange(t); setIsOpen(false); }}
-                                                style={{
-                                                    cursor: 'pointer',
-                                                    color: isSelected ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
-                                                    fontWeight: isSelected ? 600 : 400,
-                                                    fontSize: 11.5,
-                                                    textOverflow: 'ellipsis',
-                                                    overflow: 'hidden',
-                                                    whiteSpace: 'nowrap'
-                                                }}
-                                            >
-                                                {INDICATOR_LABELS[t] || t}
-                                            </div>
-                                            <div style={{ display: 'flex', alignItems: 'center' }}>
-                                                <TooltipIcon indicatorName={t} />
-                                            </div>
-                                        </div>
+                                             key={t}
+                                             style={{
+                                                 display: 'flex',
+                                                 alignItems: 'center',
+                                                 justifyContent: 'flex-start',
+                                                 backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
+                                                 borderLeft: isSelected ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                                                 padding: '4px 10px',
+                                             }}
+                                             onMouseEnter={(e) => {
+                                                 if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-surface)';
+                                             }}
+                                             onMouseLeave={(e) => {
+                                                 if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                                             }}
+                                         >
+                                             <div 
+                                                 onClick={() => { onChange(t); setIsOpen(false); }}
+                                                 style={{
+                                                     flex: 1,
+                                                     display: 'flex',
+                                                     alignItems: 'center',
+                                                     gap: 6,
+                                                     cursor: 'pointer',
+                                                     color: isSelected ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
+                                                     fontWeight: isSelected ? 600 : 400,
+                                                     fontSize: 11.5,
+                                                     minWidth: 0,
+                                                 }}
+                                             >
+                                                 <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                                     {INDICATOR_LABELS[t] || t}
+                                                 </span>
+                                                 <span 
+                                                     onClick={(e) => e.stopPropagation()} 
+                                                     style={{ display: 'inline-flex', alignItems: 'center' }}
+                                                 >
+                                                     <TooltipIcon indicatorName={t} />
+                                                 </span>
+                                             </div>
+                                         </div>
                                     );
                                 })}
                             </div>
@@ -2832,8 +2838,8 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                     <div
                         style={{
                             position: "fixed",
-                            top: activeTooltip.y - 4,
-                            left: activeTooltip.x + 4,
+                            top: activeTooltip.y - 8,
+                            left: activeTooltip.x + 16,
                             transform: "translate(0, -100%)",
                             backgroundColor: "var(--color-ec-bg-elevated)",
                             color: "var(--color-ec-text-primary)",
