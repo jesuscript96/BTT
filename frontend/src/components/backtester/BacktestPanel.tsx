@@ -59,6 +59,7 @@ interface BacktestPanelProps {
   pendingDatasetSelect?: string;
   onClearPendingDataset?: () => void;
   activeStrategy?: any;
+  onConfigureStrategy?: (strategyId: string) => void;
 }
 
 function formatConditionGroup(group: any): string {
@@ -290,7 +291,8 @@ export default function BacktestPanel({
   onParamsChange,
   loading,
   isDarkMode = false,
-  activeStrategy
+  activeStrategy,
+  onConfigureStrategy
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -639,6 +641,28 @@ export default function BacktestPanel({
     riskType, feeType, isPercent, loadingData
   ]);
 
+  // Synchronize dataset selection with the selected strategy's associated dataset
+  useEffect(() => {
+    if (!selectedStrategy) return;
+    let rawDef: any = null;
+    if ((selectedStrategy === "draft" || selectedStrategy === "wizard_draft") && activeStrategy) {
+      rawDef = activeStrategy.definition || activeStrategy;
+    } else {
+      const strat = strategies.find((s) => s.id === selectedStrategy);
+      rawDef = strat?.definition || strat;
+    }
+
+    if (typeof rawDef === "string") {
+      try {
+        rawDef = JSON.parse(rawDef);
+      } catch (e) {}
+    }
+
+    if (rawDef && rawDef.dataset_id) {
+      setSelectedDataset(rawDef.dataset_id);
+    }
+  }, [selectedStrategy, strategies, activeStrategy]);
+
   const handleRun = () => {
     if (!selectedDataset || !selectedStrategy) return;
     if (isSelectedStratRiskInvalid) {
@@ -681,6 +705,7 @@ export default function BacktestPanel({
   };
 
   // getStratDef was moved to the top of the component to avoid rendering loop issues.
+  const isConfigurable = !!(selectedStrategy && selectedStrategy !== "draft" && selectedStrategy !== "wizard_draft");
 
 
 
@@ -728,267 +753,7 @@ export default function BacktestPanel({
       )}
 
       <div className="space-y-3">
-        <div>
-          <label style={{
-            display: 'block',
-            fontFamily: 'var(--color-ec-sans)',
-            fontSize: 9,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.12em',
-            color: 'var(--color-ec-text-muted)',
-            marginBottom: 5,
-          }}>
-            Cargar Dataset Guardado
-          </label>
-          {loadingData ? (
-            <div className="h-9 bg-gray-100 rounded animate-pulse" />
-          ) : (
-            <select
-              value={selectedDataset}
-              onChange={(e) => setSelectedDataset(e.target.value)}
-              style={{
-                backgroundColor: 'var(--color-ec-bg-elevated)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 5,
-                padding: '7px 10px',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-primary)',
-                outline: 'none',
-                width: '100%',
-                cursor: 'pointer',
-              }}
-            >
-              {datasets.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : " (Pendiente)"}
-                </option>
-              ))}
-            </select>
-          )}
-          {!loadingData && selectedDataset && (() => {
-            const currentDs = datasets.find((d) => d.id === selectedDataset);
-            if (!currentDs) return null;
-
-            const filters = currentDs.filters || {};
-            const rules = filters.rules || [];
-
-            // Skip keys that represent dates, pagination, counts, or are shown elsewhere
-            const keysToSkip = ['date_from', 'date_to', 'start_date', 'end_date', 'min_date', 'max_date', 'pair_count', 'id', 'name', 'created_at', 'updated_at', 'rules', 'ticker'];
-
-            // Gather formatted basic filters
-            const basicFiltersText = Object.entries(filters)
-              .filter(([key]) => !keysToSkip.includes(key))
-              .map(([key, value]) => formatFilterValue(key, value))
-              .filter(Boolean) as string[];
-
-            const formattedRules = rules.map((r: any) => formatRule(r)).filter(Boolean) as string[];
-            const totalFiltersCount = basicFiltersText.length + formattedRules.length;
-
-            const hasDetails = basicFiltersText.length > 0 || formattedRules.length > 0 || currentDs.min_date || currentDs.max_date || (currentDs.pair_count !== undefined && currentDs.pair_count !== null);
-            if (!hasDetails) return null;
-
-            return (
-              <div style={{
-                marginTop: 8,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}>
-                {/* Meta details (Dates and Tickers) */}
-                {((currentDs.pair_count !== undefined && currentDs.pair_count !== null) || currentDs.min_date || currentDs.max_date) && (
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2,
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 10,
-                    color: 'var(--color-ec-text-secondary)',
-                  }}>
-                    <div>
-                      {currentDs.pair_count !== undefined && currentDs.pair_count !== null && (
-                        <>
-                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
-                          <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
-                            {currentDs.pair_count > 0 ? `${currentDs.pair_count} ${currentDs.pair_count === 1 ? 'par' : 'pares'}` : "Pendiente"}
-                          </span>
-                        </>
-                      )}
-                      {(currentDs.min_date || currentDs.max_date) && (
-                        <>
-                          {currentDs.pair_count !== undefined && currentDs.pair_count !== null && (
-                            <span style={{ color: 'var(--color-ec-text-muted)' }}> | </span>
-                          )}
-                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
-                          <span>
-                            {currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Collapsible Filters Accordion */}
-                {totalFiltersCount > 0 && (
-                  <div style={{
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 10.5,
-                  }}>
-                    <div
-                      onClick={() => setShowDatasetFilters(!showDatasetFilters)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        color: 'var(--color-ec-copper)',
-                        fontSize: 9,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.08em',
-                        transition: 'opacity 150ms',
-                        width: 'fit-content',
-                        opacity: 0.85,
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.85'}
-                    >
-                      <span>Filtros seleccionados: {totalFiltersCount}</span>
-                      <span style={{ fontSize: 7, marginLeft: 2 }}>{showDatasetFilters ? '▲' : '▼'}</span>
-                    </div>
-
-                    {showDatasetFilters && (
-                      <div style={{
-                        marginTop: 6,
-                        backgroundColor: 'var(--color-ec-bg-elevated)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5,
-                        padding: '8px 10px',
-                        display: 'flex',
-                        flexWrap: 'wrap',
-                        gap: 4,
-                      }}>
-                        {[...basicFiltersText, ...formattedRules].map((txt, idx) => (
-                          <span
-                            key={idx}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              padding: '2px 6px',
-                              borderRadius: 4,
-                              backgroundColor: 'rgba(216, 122, 61, 0.08)',
-                              border: '0.5px solid rgba(216, 122, 61, 0.2)',
-                              color: 'var(--color-ec-copper)',
-                              fontSize: 9.5,
-                              fontWeight: 700,
-                            }}
-                          >
-                            {txt}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-          <button
-            type="button"
-            onClick={onNewDataset}
-            onMouseEnter={() => setHoveredBtn("dataset")}
-            onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
-            onMouseDown={() => setActiveBtn("dataset")}
-            onMouseUp={() => setActiveBtn(null)}
-            style={{
-              width: '100%',
-              padding: '8px 0',
-              borderRadius: 5,
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: '1px',
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-              border: hoveredBtn === "dataset" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
-              backgroundColor: hoveredBtn === "dataset" ? 'var(--color-ec-copper)' : 'transparent',
-              color: hoveredBtn === "dataset" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
-              fontFamily: 'var(--color-ec-sans)',
-              marginTop: 6,
-              marginBottom: 2,
-              boxShadow: hoveredBtn === "dataset" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
-              transform: activeBtn === "dataset" ? 'scale(0.98)' : hoveredBtn === "dataset" ? 'scale(1.015)' : 'scale(1)',
-              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
-            }}
-          >
-            + NUEVO DATASET
-          </button>
-          {precacheStatus && (precacheStatus.status === "running" || precacheStatus.status === "pending") && (
-            <div style={{
-              marginTop: 8,
-              padding: '8px 10px',
-              backgroundColor: 'var(--color-ec-bg-elevated)',
-              border: '0.5px solid var(--color-ec-border)',
-              borderRadius: 5,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 9,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                color: 'var(--color-ec-copper)',
-              }}>
-                <span>{precacheStatus.status === "pending" ? "Preparando dataset (calculando pares)..." : "Descargando Data..."}</span>
-                {precacheStatus.status === "running" && <span>{Math.round(visualPercent)}%</span>}
-              </div>
-              {precacheStatus.status === "running" && (
-              <div style={{
-                height: 4,
-                backgroundColor: 'rgba(216, 122, 61, 0.15)',
-                borderRadius: 2,
-                overflow: 'hidden',
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${visualPercent}%`,
-                  backgroundColor: 'var(--color-ec-copper)',
-                  borderRadius: 2,
-                  transition: 'width 1000ms linear',
-                }} />
-              </div>
-              )}
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 8,
-                color: 'var(--color-ec-text-muted)',
-                marginTop: 2,
-                gap: 8,
-              }}>
-                <span style={{ textAlign: 'left', flex: 1, lineHeight: '1.2' }}>
-                  La carga puede tardar unos minutos.
-                </span>
-                {precacheStatus.status === "running" && (
-                <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                  {Math.min(precacheStatus.total, Math.round(precacheStatus.total * (visualPercent / 100)))} / {precacheStatus.total} pares
-                </span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 0 }}>
           <label style={{
             display: 'block',
             fontFamily: 'var(--color-ec-sans)',
@@ -1140,40 +905,146 @@ export default function BacktestPanel({
                   </div>
                 )}
 
-
               </div>
             );
           })()}
-          
-          <button
-            type="button"
-            onClick={onNewStrategy}
-            onMouseEnter={() => setHoveredBtn("strategy")}
-            onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
-            onMouseDown={() => setActiveBtn("strategy")}
-            onMouseUp={() => setActiveBtn(null)}
-            style={{
-              width: '100%',
-              padding: '8px 0',
+
+          {precacheStatus && (precacheStatus.status === "running" || precacheStatus.status === "pending") && (
+            <div style={{
+              marginTop: 8,
+              padding: '8px 10px',
+              backgroundColor: 'var(--color-ec-bg-elevated)',
+              border: '0.5px solid var(--color-ec-border)',
               borderRadius: 5,
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: '1px',
-              textTransform: 'uppercase',
-              cursor: 'pointer',
-              border: hoveredBtn === "strategy" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
-              backgroundColor: hoveredBtn === "strategy" ? 'var(--color-ec-copper)' : 'transparent',
-              color: hoveredBtn === "strategy" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
-              fontFamily: 'var(--color-ec-sans)',
-              marginTop: 4,
-              marginBottom: 8,
-              boxShadow: hoveredBtn === "strategy" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
-              transform: activeBtn === "strategy" ? 'scale(0.98)' : hoveredBtn === "strategy" ? 'scale(1.015)' : 'scale(1)',
-              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
-            }}
-          >
-            + Nueva Estrategia
-          </button>
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              marginBottom: 4,
+            }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 9,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--color-ec-copper)',
+              }}>
+                <span>{precacheStatus.status === "pending" ? "Preparando dataset (calculando pares)..." : "Descargando Data..."}</span>
+                {precacheStatus.status === "running" && <span>{Math.round(visualPercent)}%</span>}
+              </div>
+              {precacheStatus.status === "running" && (
+              <div style={{
+                height: 4,
+                backgroundColor: 'rgba(216, 122, 61, 0.15)',
+                borderRadius: 2,
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${visualPercent}%`,
+                  backgroundColor: 'var(--color-ec-copper)',
+                  borderRadius: 2,
+                  transition: 'width 1000ms linear',
+                }} />
+              </div>
+              )}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 8,
+                color: 'var(--color-ec-text-muted)',
+                marginTop: 2,
+                gap: 8,
+              }}>
+                <span style={{ textAlign: 'left', flex: 1, lineHeight: '1.2' }}>
+                  La carga puede tardar unos minutos.
+                </span>
+                {precacheStatus.status === "running" && (
+                <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                  {Math.min(precacheStatus.total, Math.round(precacheStatus.total * (visualPercent / 100)))} / {precacheStatus.total} pares
+                </span>
+                )}
+              </div>
+            </div>
+          )}
+          
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 8,
+            marginTop: 4,
+            marginBottom: 8,
+          }}>
+            <button
+              type="button"
+              onClick={onNewStrategy}
+              onMouseEnter={() => setHoveredBtn("strategy")}
+              onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+              onMouseDown={() => setActiveBtn("strategy")}
+              onMouseUp={() => setActiveBtn(null)}
+              style={{
+                padding: '8px 0',
+                borderRadius: 5,
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '1px',
+                textTransform: 'uppercase',
+                cursor: 'pointer',
+                border: hoveredBtn === "strategy" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
+                backgroundColor: hoveredBtn === "strategy" ? 'var(--color-ec-copper)' : 'transparent',
+                color: hoveredBtn === "strategy" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
+                fontFamily: 'var(--color-ec-sans)',
+                boxShadow: hoveredBtn === "strategy" ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
+                transform: activeBtn === "strategy" ? 'scale(0.98)' : hoveredBtn === "strategy" ? 'scale(1.015)' : 'scale(1)',
+                transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+              }}
+            >
+              + Nueva
+            </button>
+            <button
+              type="button"
+              disabled={!isConfigurable}
+              onClick={() => onConfigureStrategy?.(selectedStrategy)}
+              onMouseEnter={() => isConfigurable && setHoveredBtn("config_strat")}
+              onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+              onMouseDown={() => isConfigurable && setActiveBtn("config_strat")}
+              onMouseUp={() => setActiveBtn(null)}
+              style={{
+                padding: '8px 0',
+                borderRadius: 5,
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: '1.5px',
+                textTransform: 'uppercase',
+                cursor: isConfigurable ? 'pointer' : 'not-allowed',
+                border: !isConfigurable
+                  ? '0.5px solid var(--color-ec-border)'
+                  : hoveredBtn === "config_strat"
+                    ? '0.5px solid transparent'
+                    : '0.5px solid var(--color-ec-copper)',
+                backgroundColor: !isConfigurable
+                  ? 'transparent'
+                  : hoveredBtn === "config_strat"
+                    ? 'var(--color-ec-copper)'
+                    : 'transparent',
+                color: !isConfigurable
+                  ? 'var(--color-ec-text-muted)'
+                  : hoveredBtn === "config_strat"
+                    ? 'var(--color-ec-copper-text)'
+                    : 'var(--color-ec-copper)',
+                fontFamily: 'var(--color-ec-sans)',
+                opacity: isConfigurable ? 1 : 0.5,
+                boxShadow: hoveredBtn === "config_strat" && isConfigurable ? '0 0 12px rgba(216, 122, 61, 0.35)' : 'none',
+                transform: activeBtn === "config_strat" && isConfigurable ? 'scale(0.98)' : hoveredBtn === "config_strat" && isConfigurable ? 'scale(1.015)' : 'scale(1)',
+                transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+              }}
+            >
+              ⚙ Configurar
+            </button>
+          </div>
         </div>
 
         <div style={{

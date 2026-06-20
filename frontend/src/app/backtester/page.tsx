@@ -124,14 +124,42 @@ export default function Home() {
 
   const handleRunWithDraft = async (draft: Draft) => {
     const p = panelParamsRef.current;
-    if (!p?.dataset_id) {
-      setError("Selecciona un dataset en el panel de configuración antes de probar el draft.");
+    
+    let activeDatasetId = (draft as any).dataset_id;
+    
+    // Auto-create dataset if custom universe filters are specified but no dataset_id exists
+    if (!activeDatasetId && (draft as any).universe_filters) {
+      setLoading(true);
+      setError(null);
+      try {
+        const uniqueName = `Universo_${draft.name.replace(/\s+/g, "_")}_${Date.now().toString().slice(-4)}`;
+        const newQuery = await createQuery({ name: uniqueName, filters: (draft as any).universe_filters });
+        activeDatasetId = newQuery.id;
+        (draft as any).dataset_id = newQuery.id; // update draft in place
+        
+        // Refresh datasets list in backtest panel so it exists in lists
+        setDatasetRefresh((prev) => prev + 1);
+        setPendingDatasetSelect(newQuery.id);
+      } catch (err: any) {
+        setError(err.message || "Error al crear el universo para la estrategia.");
+        setLoading(false);
+        return;
+      }
+    }
+
+    if (!activeDatasetId) {
+      // Fallback to panel params dataset_id if not present in draft
+      activeDatasetId = p?.dataset_id;
+    }
+
+    if (!activeDatasetId) {
+      setError("Configura el universo de la estrategia antes de ejecutar el backtest.");
       return;
     }
 
     try {
       const { fetchPrecacheStatus } = await import("@/lib/api_backtester");
-      const statusData = await fetchPrecacheStatus(p.dataset_id);
+      const statusData = await fetchPrecacheStatus(activeDatasetId);
       if (statusData && statusData.status === "running") {
         setError(`Espera a que se cargue el dataset (progreso: ${statusData.percent}%)`);
         return;
@@ -146,7 +174,7 @@ export default function Home() {
     pollTimerRef.current = setInterval(async () => {
       try {
         const { fetchBacktestProgress } = await import("@/lib/api_backtester");
-        const prog = await fetchBacktestProgress(p.dataset_id);
+        const prog = await fetchBacktestProgress(activeDatasetId);
         setBacktestProgress(prog);
       } catch (err) {
         console.warn("Could not fetch backtest progress:", err);
@@ -172,36 +200,38 @@ export default function Home() {
         market_sessions: draft.market_sessions,
         custom_start_time: draft.custom_start_time,
         custom_end_time: draft.custom_end_time,
+        dataset_id: activeDatasetId,
+        universe_filters: (draft as any).universe_filters,
       }
     });
 
-    initCashRef.current = p.init_cash;
-    riskRRef.current = p.risk_r;
-    datasetIdRef.current = p.dataset_id;
+    initCashRef.current = p?.init_cash ?? 10000;
+    riskRRef.current = p?.risk_r ?? 100;
+    datasetIdRef.current = activeDatasetId;
     strategyIdRef.current = "draft";
     backtestParamsRef.current = {
-      init_cash: p.init_cash,
-      risk_r: p.risk_r,
-      fees: p.fees,
-      slippage: p.slippage,
-      start_date: p.start_date,
-      end_date: p.end_date,
-      market_sessions: draft.market_sessions || p.market_sessions,
-      custom_start_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_start_time || p.custom_start_time) : undefined,
-      custom_end_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_end_time || p.custom_end_time) : undefined,
-      monthly_expenses: p.monthly_expenses,
-      locates_cost: p.locates_cost,
-      is_percent: p.is_percent,
-      risk_type: p.risk_type,
-      fixed_ratio_delta: p.fixed_ratio_delta,
-      size_by_sl: draft.risk_management.size_by_sl || p.size_by_sl || false,
-      fee_type: p.fee_type,
-      look_ahead_prevention: p.look_ahead_prevention,
+      init_cash: p?.init_cash ?? 10000,
+      risk_r: p?.risk_r ?? 100,
+      fees: p?.fees ?? 0.01,
+      slippage: p?.slippage ?? 0.01,
+      start_date: p?.start_date,
+      end_date: p?.end_date,
+      market_sessions: draft.market_sessions || p?.market_sessions,
+      custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time) : undefined,
+      custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time) : undefined,
+      monthly_expenses: p?.monthly_expenses,
+      locates_cost: p?.locates_cost,
+      is_percent: p?.is_percent,
+      risk_type: p?.risk_type,
+      fixed_ratio_delta: p?.fixed_ratio_delta,
+      size_by_sl: draft.risk_management.size_by_sl || p?.size_by_sl || false,
+      fee_type: p?.fee_type,
+      look_ahead_prevention: p?.look_ahead_prevention ?? true,
     };
 
     try {
       const data = await runBacktestWithDefinition({
-        dataset_id: p.dataset_id,
+        dataset_id: activeDatasetId,
         strategy_definition: {
           name: draft.name,
           bias: draft.bias,
@@ -213,23 +243,25 @@ export default function Home() {
           market_sessions: draft.market_sessions,
           custom_start_time: draft.custom_start_time,
           custom_end_time: draft.custom_end_time,
+          dataset_id: activeDatasetId,
+          universe_filters: (draft as any).universe_filters,
         },
-        init_cash: p.init_cash,
-        risk_r: p.risk_r,
-        risk_type: p.risk_type,
-        fixed_ratio_delta: p.fixed_ratio_delta,
+        init_cash: p?.init_cash ?? 10000,
+        risk_r: p?.risk_r ?? 100,
+        risk_type: p?.risk_type ?? "FIXED",
+        fixed_ratio_delta: p?.fixed_ratio_delta,
         size_by_sl: draft.risk_management.size_by_sl || false,
-        fees: p.fees,
-        fee_type: p.fee_type,
-        slippage: p.slippage,
-        start_date: p.start_date || undefined,
-        end_date: p.end_date || undefined,
-        market_sessions: draft.market_sessions || p.market_sessions,
-        custom_start_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_start_time || p.custom_start_time || undefined) : undefined,
-        custom_end_time: (draft.market_sessions || p.market_sessions || []).includes("custom") ? (draft.custom_end_time || p.custom_end_time || undefined) : undefined,
-        locates_cost: p.locates_cost,
-        monthly_expenses: p.monthly_expenses,
-        look_ahead_prevention: p.look_ahead_prevention,
+        fees: p?.fees ?? 0.01,
+        fee_type: p?.fee_type ?? "PERCENT",
+        slippage: p?.slippage ?? 0.01,
+        start_date: p?.start_date || undefined,
+        end_date: p?.end_date || undefined,
+        market_sessions: draft.market_sessions || p?.market_sessions,
+        custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time || undefined) : undefined,
+        custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
+        locates_cost: p?.locates_cost,
+        monthly_expenses: p?.monthly_expenses,
+        look_ahead_prevention: p?.look_ahead_prevention ?? true,
       });
       setResult(data);
       if (data.trades && data.trades.length > 0) {
@@ -249,9 +281,9 @@ export default function Home() {
       } else if (err && typeof err === "object" && "message" in err) {
         const errMsg = (err as { message: string }).message;
         if (errMsg.includes("timeout")) {
-          msg = "Timeout: el backtest tardo demasiado. Prueba con un dataset mas pequeno.";
+          msg = "Timeout: el backtest tardó demasiado. Prueba con un dataset más pequeño.";
         } else if (errMsg.includes("Network")) {
-          msg = "Error de red: verifica que el backend este corriendo.";
+          msg = "Error de red: verifica que el backend esté corriendo.";
         } else {
           msg = errMsg;
         }
@@ -716,6 +748,57 @@ export default function Home() {
               loading={loading}
               isDarkMode={isDarkMode}
               activeStrategy={computedActiveStrategy}
+              onConfigureStrategy={async (strategyId) => {
+                if (strategyId === "draft") {
+                  setMode('builder');
+                } else if (strategyId === "wizard_draft") {
+                  setMode('wizard');
+                } else if (strategyId) {
+                  try {
+                    const strategyData = await getStrategy(strategyId);
+                    setActiveStrategy(strategyData);
+                    
+                    const def = typeof strategyData.definition === 'string' 
+                      ? JSON.parse(strategyData.definition) 
+                      : strategyData.definition || strategyData;
+                    
+                    setBuilderDraft({
+                      name: strategyData.name || "",
+                      bias: def.bias || "long",
+                      apply_day: def.apply_day || "gap_day",
+                      postgap_preconditions: def.postgap_preconditions || [],
+                      entry_logic: def.entry_logic || {
+                        root_condition: { type: "group", operator: "AND", conditions: [] },
+                        entry_time_windows: []
+                      },
+                      exit_logic: def.exit_logic || {
+                        root_condition: { type: "group", operator: "AND", conditions: [] }
+                      },
+                      risk_management: def.risk_management || {
+                        size_by_sl: false,
+                        use_take_profit: false,
+                        take_profit_mode: "Fixed",
+                        fixed_take_profit_pct: 1.0,
+                        partial_take_profits: [],
+                        use_stop_loss: true,
+                        stop_loss_mode: "Fixed",
+                        fixed_stop_loss_pct: 1.0,
+                        trail_stop_loss_pct: 1.0,
+                        use_time_exit: false,
+                        time_exit_session: "rth",
+                        time_exit_value: "15:58",
+                        swing_option: { active: false, target_day: "gap_1_day" }
+                      },
+                      dataset_id: def.dataset_id,
+                      universe_filters: def.universe_filters,
+                    } as any);
+                    
+                    setMode('builder_choice');
+                  } catch (err) {
+                    alert("Error al cargar la estrategia para configurar.");
+                  }
+                }
+              }}
             />
             {result && (
               <DaySelector
@@ -765,7 +848,7 @@ export default function Home() {
                 fontFamily: 'var(--color-ec-sans)',
                 color: 'var(--color-ec-text-muted)',
               }}>
-                Selecciona un dataset y una estrategia<br />para ejecutar el backtest
+                Selecciona una estrategia<br />para ejecutar el backtest
               </div>
             </div>
           )}

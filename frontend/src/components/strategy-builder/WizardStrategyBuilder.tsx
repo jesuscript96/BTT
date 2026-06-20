@@ -18,6 +18,7 @@ import {
   Comparator,
   TakeProfitMode,
 } from "@/types/strategy";
+import { fetchDatasets, type Dataset } from "@/lib/api_backtester";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
@@ -39,6 +40,8 @@ export interface WizardDraft {
   market_sessions?: string[];
   custom_start_time?: string;
   custom_end_time?: string;
+  dataset_id?: string;
+  universe_filters?: any;
 }
 
 const MARKET_LEVEL_LABELS: Record<string, string> = {
@@ -340,8 +343,109 @@ interface Props {
   initialStrategy?: any;
 }
 
+/* ── Date range constants for dataset filter ── */
+const MIN_DATE = "2006-01-01";
+const MAX_DATE = new Date().toISOString().split("T")[0];
+const TWO_YEARS_AGO = new Date(
+  new Date().setFullYear(new Date().getFullYear() - 2)
+).toISOString().split("T")[0];
+
+function formatDate(dStr: string): string {
+  if (!dStr) return '';
+  const parts = dStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dStr;
+}
+
+function formatFilterValue(key: string, value: any): string | null {
+  if (key === 'rules') return null;
+  if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) return null;
+  const labels: Record<string, string> = {
+    min_market_cap: 'mcap mín',
+    max_market_cap: 'mcap máx',
+    min_price: 'precio mín',
+    max_price: 'precio máx',
+    min_volume: 'volumen mín',
+    max_shares_float: 'float máx',
+    require_shortable: 'shortable',
+    exclude_dilution: 'sin dilución',
+    date_from: 'desde',
+    date_to: 'hasta',
+    min_change_pct: 'variación mín %',
+    max_change_pct: 'variación máx %',
+    start_date: 'desde',
+    end_date: 'hasta',
+  };
+  const label = labels[key] || key.replace(/_/g, " ").toLowerCase();
+
+  if (typeof value === 'boolean') return value ? label : null;
+  if (typeof value === 'number') {
+    if (key.includes('market_cap')) {
+      if (value >= 1_000_000_000) return `${label}: $${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+      if (value >= 1_000_000) return `${label}: $${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    }
+    if (value >= 1_000_000) return `${label}: ${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    if (value >= 1_000) return `${label}: ${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+    return `${label}: ${value}`;
+  }
+  return `${label}: ${value}`;
+}
+
+function getFriendlyMetricLabel(metric: string): string {
+  if (!metric) return "";
+  const m = metric.replace(/['"]+/g, '');
+  const labelMap: Record<string, string> = {
+    "Close Price": "cierre",
+    "Min Open PM price": "apertura pm",
+    "PMH Gap %": "gap pm high %",
+    "Premarket Volume": "volumen premarket",
+    "Open Gap %": "gap de apertura %",
+    "EOD Volume": "volumen rth",
+    "RTH Range %": "rango rth %",
+    "Open Price": "apertura rth",
+    "High Price": "máximo rth",
+    "Low Price": "mínimo rth",
+    "RTH Run %": "run rth %",
+    "High Spike %": "spike máximo %",
+    "Low Spike %": "spike mínimo %",
+    "lead_rth_close_1": "cierre gap+1",
+    "lead_open_1": "apertura pm gap+1",
+    "lead_pmh_gap_pct_1": "gap pm high gap+1 %",
+    "lead_pm_volume_1": "volumen premarket gap+1",
+    "lead_gap_pct_1": "gap de apertura gap+1 %",
+    "lead_rth_volume_1": "volumen rth gap+1",
+    "lead_rth_range_pct_1": "rango rth gap+1 %",
+  };
+  if (labelMap[m]) return labelMap[m];
+  return m.replace(/_/g, " ").toLowerCase();
+}
+
+function formatRule(rule: any): string {
+  if (!rule || !rule.metric) return '';
+  const opMap: Record<string, string> = {
+    'GT': '>', 'LT': '<', 'GTE': '>=', 'LTE': '<=', 'EQUAL': '=', 'NEQ': '!=',
+    'GREATER_THAN_OR_EQUAL': '>=', 'LESS_THAN_OR_EQUAL': '<=', 'GREATER_THAN': '>', 'LESS_THAN': '<',
+  };
+  const op = opMap[rule.operator] || rule.operator;
+  const friendlyMetric = getFriendlyMetricLabel(rule.metric);
+  let friendlyVal = rule.value;
+  const numVal = parseFloat(rule.value);
+  if (!isNaN(numVal)) {
+    if (rule.metric.toLowerCase().includes('volume')) {
+      if (numVal >= 1_000_000) friendlyVal = `${(numVal / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+      else if (numVal >= 1_000) friendlyVal = `${(numVal / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+    }
+    else if (rule.metric.includes('%') || rule.metric.toLowerCase().includes('pct')) friendlyVal = `${numVal}%`;
+    else if (rule.metric.toLowerCase().includes('price') || rule.metric.toLowerCase().includes('close') || rule.metric.toLowerCase().includes('open')) friendlyVal = `$${numVal.toFixed(2).replace(/\.00$/, '')}`;
+  }
+  return `${friendlyMetric} ${op} ${friendlyVal}`;
+}
+
 /* ── All wizard steps, matching InlineStrategyBuilder sections ── */
 const STEPS = [
+  { key: "universo",        label: "Universo",           shortLabel: "Universo" },
   { key: "bias",            label: "Dirección",          shortLabel: "Bias" },
   { key: "apply_day",       label: "Día de aplicación",  shortLabel: "Día" },
   { key: "market_sessions", label: "Sesión de aplicación", shortLabel: "Sesión" },
@@ -541,6 +645,8 @@ export default function WizardStrategyBuilder({
       market_sessions: stratObj.market_sessions,
       custom_start_time: stratObj.custom_start_time,
       custom_end_time: stratObj.custom_end_time,
+      dataset_id: stratObj.dataset_id,
+      universe_filters: stratObj.universe_filters,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -562,7 +668,64 @@ export default function WizardStrategyBuilder({
     }
     if (stratObj.custom_start_time) setWizardCustomStartTime(stratObj.custom_start_time);
     if (stratObj.custom_end_time) setWizardCustomEndTime(stratObj.custom_end_time);
+    if (stratObj.dataset_id) {
+      setSelectedDataset(stratObj.dataset_id);
+      setCustomUniverse(false);
+    } else if (stratObj.universe_filters) {
+      setUniverseFilters(stratObj.universe_filters);
+      setCustomUniverse(true);
+    }
   }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
+
+  // Universe (Dataset) States
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [loadingDatasets, setLoadingDatasets] = useState(true);
+  const [selectedDataset, setSelectedDataset] = useState<string>("");
+  const [customUniverse, setCustomUniverse] = useState<boolean>(false);
+  const [universeFilters, setUniverseFilters] = useState<any>({
+    date_from: TWO_YEARS_AGO,
+    date_to: MAX_DATE,
+    rules: []
+  });
+
+  // Custom Universe Rules Form States
+  const [isUnivFiltroOpen, setIsUnivFiltroOpen] = useState(false);
+  const univFiltroDropdownRef = useRef<HTMLDivElement>(null);
+  
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (univFiltroDropdownRef.current && !univFiltroDropdownRef.current.contains(e.target as Node)) {
+        setIsUnivFiltroOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Custom Universe Rules Form States
+  const [tempUnivDay, setTempUnivDay] = useState<'gap_day' | 'gap_plus_1_day' | 'gap_plus_2_day'>('gap_day');
+  const [tempUnivParam, setTempUnivParam] = useState<string>('gap_pct');
+  const [tempUnivOp, setTempUnivOp] = useState<string>('>=');
+  const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
+  const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
+
+  // Fetch datasets list
+  useEffect(() => {
+    const loadDatasetsList = async () => {
+      try {
+        const d = await fetchDatasets();
+        setDatasets(d);
+        if (d.length > 0) {
+          setSelectedDataset(prev => prev || d[0].id);
+        }
+      } catch (err) {
+        console.error("Error loading datasets in Wizard:", err);
+      } finally {
+        setLoadingDatasets(false);
+      }
+    };
+    loadDatasetsList();
+  }, []);
 
   // Strategy Builder States
   const [bias, setBias] = useState<"long" | "short" | null>(null);
@@ -801,11 +964,10 @@ export default function WizardStrategyBuilder({
 
   // Update parent with latest draft strategy
   useEffect(() => {
-    if (!bias) return;
-    const draft: WizardDraft = {
+    const draft: any = {
       id: "wizard_draft",
       name: "Nueva Estrategia (Wizard)",
-      bias,
+      bias: bias || "long",
       apply_day: applyDay,
       postgap_preconditions: postgapPreconditions,
       entry_logic: entryLogic,
@@ -815,11 +977,13 @@ export default function WizardStrategyBuilder({
       market_sessions: wizardMarketSessions,
       custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
       custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
+      dataset_id: customUniverse ? undefined : selectedDataset,
+      universe_filters: customUniverse ? universeFilters : undefined,
     };
     
     // Sync lastLoadedStrategyRef to prevent initialStrategy reload loops
     lastLoadedStrategyRef.current = JSON.stringify({
-      bias,
+      bias: bias,
       apply_day: applyDay,
       postgap_preconditions: postgapPreconditions,
       entry_logic: entryLogic,
@@ -828,10 +992,12 @@ export default function WizardStrategyBuilder({
       market_sessions: wizardMarketSessions,
       custom_start_time: wizardCustomStartTime,
       custom_end_time: wizardCustomEndTime,
+      dataset_id: customUniverse ? undefined : selectedDataset,
+      universe_filters: customUniverse ? universeFilters : undefined,
     });
 
     onDraftChange?.(draft);
-  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, onDraftChange]);
+  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, selectedDataset, customUniverse, universeFilters, onDraftChange]);
 
   // Actions handlers
   const handleBiasSelect = (b: "long" | "short") => {
@@ -934,10 +1100,10 @@ export default function WizardStrategyBuilder({
 
     setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
 
-    const draft: WizardDraft = {
+    const draft: WizardDraft & { dataset_id?: string; universe_filters?: any } = {
       id: `wizard_draft_${Date.now()}`,
       name: "Nueva Estrategia (Wizard)",
-      bias,
+      bias: bias || "long",
       apply_day: applyDay,
       postgap_preconditions: postgapPreconditions,
       entry_logic: entryLogic,
@@ -947,6 +1113,8 @@ export default function WizardStrategyBuilder({
       market_sessions: wizardMarketSessions,
       custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
       custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
+      dataset_id: customUniverse ? undefined : selectedDataset,
+      universe_filters: customUniverse ? universeFilters : undefined,
     };
 
     onTest(draft);
@@ -955,6 +1123,8 @@ export default function WizardStrategyBuilder({
   /* ── Steps rendering ── */
   const renderStep = () => {
     switch (STEPS[currentStep]?.key) {
+      case "universo":
+        return renderUniversoStep();
       case "bias":
         return renderBiasStep();
       case "apply_day":
@@ -972,6 +1142,701 @@ export default function WizardStrategyBuilder({
       default:
         return null;
     }
+  };
+
+  // Step 0: Universo Step
+  const renderUniversoStep = () => {
+    const getDayWidth = (val: string) => {
+      return val === 'gap_day' ? 110 : 105;
+    };
+    
+    const getParamWidth = (val: string) => {
+      const widths: Record<string, number> = {
+        gap_pct: 75,
+        pm_volume: 120,
+        rth_volume: 125,
+        rth_close: 125,
+        pm_open: 125,
+        pmh_gap_pct: 125,
+        rth_range_pct: 115,
+      };
+      return widths[val] || 115;
+    };
+    
+    const getOpWidth = (val: string) => {
+      return val === 'between' ? 70 : 45;
+    };
+
+    const FILTRO_DESCRIPTIONS: Record<string, string> = {
+      gap_pct: "Porcentaje de diferencia entre el precio de apertura y el cierre del día anterior.",
+      pm_volume: "Volumen total negociado durante la sesión de premercado (en millones).",
+      rth_volume: "Volumen total negociado durante el horario regular de trading (en millones).",
+      rth_close: "Precio de cierre de la vela (o precio actual).",
+      pm_open: "Precio al que se realiza la primera transacción de premercado.",
+      pmh_gap_pct: "Porcentaje de diferencia entre el máximo de premercado y el cierre del día anterior.",
+      rth_range_pct: "Rango de precio (Máximo - Mínimo) expresado como porcentaje del precio durante la sesión RTH.",
+    };
+
+    const CustomTooltip = ({ title, text }: { title: string; text: string }) => {
+      const [hovered, setHovered] = useState(false);
+      const [coords, setCoords] = useState({ x: 0, y: 0 });
+
+      const handleMouseEnter = (e: React.MouseEvent) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        setCoords({
+          x: rect.left + rect.width / 2,
+          y: rect.top - 6
+        });
+        setHovered(true);
+      };
+
+      return (
+        <span 
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={() => setHovered(false)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 13,
+            height: 13,
+            borderRadius: '50%',
+            backgroundColor: 'var(--color-ec-bg-elevated)',
+            border: '0.5px solid var(--color-ec-border)',
+            color: 'var(--color-ec-text-muted)',
+            fontSize: 9,
+            fontWeight: 700,
+            cursor: 'help',
+            marginLeft: 4,
+            flexShrink: 0,
+            userSelect: 'none',
+          }}
+        >
+          ?
+          {hovered && (
+            <span style={{
+              position: 'fixed',
+              top: coords.y,
+              left: coords.x,
+              transform: 'translate(-50%, -100%)',
+              backgroundColor: 'var(--color-ec-bg-elevated)',
+              border: '0.5px solid var(--color-ec-border)',
+              borderRadius: 4,
+              padding: '6px 8px',
+              color: 'var(--color-ec-text-primary)',
+              fontSize: 9.5,
+              fontWeight: 400,
+              whiteSpace: 'normal',
+              width: 185,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+              zIndex: 99999,
+              textAlign: 'left',
+              pointerEvents: 'none',
+              lineHeight: '1.3',
+            }}>
+              <strong style={{ display: 'block', color: 'var(--color-ec-copper)', marginBottom: 2 }}>{title}</strong>
+              {text}
+            </span>
+          )}
+        </span>
+      );
+    };
+
+    const cardStyle = (active: boolean): React.CSSProperties => ({
+      flex: 1,
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: 6,
+      padding: "12px 14px",
+      borderRadius: 7,
+      border: active ? "1.5px solid var(--color-ec-copper)" : "1px solid var(--color-ec-border)",
+      backgroundColor: active ? "rgba(216, 122, 61, 0.07)" : "var(--color-ec-bg-surface)",
+      cursor: "pointer",
+      textAlign: "center",
+      transition: "all 200ms ease",
+    });
+
+    const currentDs = datasets.find(d => d.id === selectedDataset);
+
+    // Helpers to format filters in Universo step
+    const formatUnivRule = (r: any) => {
+      const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+      const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
+      let friendlyVal = r.value;
+      const numVal = parseFloat(r.value);
+      if (!isNaN(numVal)) {
+        if (r.metric.toLowerCase().includes('volume')) {
+          friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+        }
+      }
+      return `${friendlyName} ${friendlyOp} ${friendlyVal}`;
+    };
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div>
+          <h3 style={{
+            fontFamily: "var(--color-ec-serif)",
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--color-ec-text-high)",
+            margin: "0 0 4px 0",
+            letterSpacing: "-0.2px",
+          }}>
+            Configura el Universo del Dataset
+          </h3>
+          <p style={{
+            fontFamily: "var(--color-ec-sans)",
+            fontSize: 10,
+            color: "var(--color-ec-text-muted)",
+            margin: 0,
+            lineHeight: 1.5,
+          }}>
+            Carga un dataset previamente guardado o define filtros personalizados de mercado para tu estrategia
+          </p>
+        </div>
+
+        {/* Choice Buttons */}
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--color-ec-border)", marginBottom: 16 }}>
+          <button
+            type="button"
+            onClick={() => setCustomUniverse(false)}
+            style={{
+              flex: 1,
+              padding: "10px 0",
+              border: "none",
+              borderBottom: !customUniverse ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+              backgroundColor: !customUniverse ? "rgba(216, 122, 61, 0.05)" : "transparent",
+              color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
+              cursor: "pointer",
+              textAlign: "center",
+              fontFamily: "var(--color-ec-sans)",
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              transition: "all 150ms ease",
+            }}
+          >
+            Dataset Guardado
+          </button>
+          <button
+            type="button"
+            onClick={() => setCustomUniverse(true)}
+            style={{
+              flex: 1,
+              padding: "10px 0",
+              border: "none",
+              borderBottom: customUniverse ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+              backgroundColor: customUniverse ? "rgba(216, 122, 61, 0.05)" : "transparent",
+              color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
+              cursor: "pointer",
+              textAlign: "center",
+              fontFamily: "var(--color-ec-sans)",
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              transition: "all 150ms ease",
+            }}
+          >
+            Personalizar
+          </button>
+        </div>
+
+        {/* Conditionally render content */}
+        {!customUniverse ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <label style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: "var(--color-ec-text-muted)" }}>
+              Seleccionar Dataset
+            </label>
+            {loadingDatasets ? (
+              <div style={{ height: 36, backgroundColor: "var(--color-ec-bg-elevated)", borderRadius: 5, animation: "pulse 1.5s infinite" }} />
+            ) : (
+              <select
+                value={selectedDataset}
+                onChange={(e) => setSelectedDataset(e.target.value)}
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '8px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  width: '100%',
+                  cursor: 'pointer',
+                }}
+              >
+                {datasets.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : " (Pendiente)"}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {currentDs && (
+              <div style={{
+                marginTop: 4,
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 5,
+                padding: '10px 12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6
+              }}>
+                <div style={{ display: 'flex', gap: 16, fontSize: 10.5, fontFamily: 'var(--color-ec-sans)' }}>
+                  <div>
+                    <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
+                    <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
+                      {currentDs.pair_count > 0 ? `${currentDs.pair_count} pares` : "Pendiente"}
+                    </span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
+                    <span style={{ color: 'var(--color-ec-text-primary)' }}>
+                      {currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Render filters inside the dataset */}
+                {currentDs.filters && Object.keys(currentDs.filters).length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                    {Object.entries(currentDs.filters)
+                      .filter(([k]) => k !== 'rules' && k !== 'date_from' && k !== 'date_to')
+                      .map(([key, val]) => {
+                        const lbl = formatFilterValue(key, val);
+                        return lbl ? (
+                          <span key={key} style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 4, backgroundColor: 'rgba(216, 122, 61, 0.08)', color: 'var(--color-ec-copper)', border: '0.5px solid rgba(216, 122, 61, 0.2)' }}>
+                            {lbl}
+                          </span>
+                        ) : null;
+                      })}
+                    {(currentDs.filters.rules || []).map((r: any, idx: number) => (
+                      <span key={idx} style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 4, backgroundColor: 'rgba(216, 122, 61, 0.08)', color: 'var(--color-ec-copper)', border: '0.5px solid rgba(216, 122, 61, 0.2)' }}>
+                        {formatRule(r)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          // Custom universe form
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Fecha Desde</label>
+                <input
+                  type="date"
+                  value={universeFilters.date_from || ''}
+                  onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_from: e.target.value }))}
+                  style={{
+                    backgroundColor: "var(--color-ec-bg-elevated)",
+                    border: "0.5px solid var(--color-ec-border)",
+                    borderRadius: 5,
+                    padding: "6px 8px",
+                    color: "var(--color-ec-text-primary)",
+                    fontSize: 11,
+                    outline: "none",
+                  }}
+                />
+              </div>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                <label style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Fecha Hasta</label>
+                <input
+                  type="date"
+                  value={universeFilters.date_to || ''}
+                  onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
+                  style={{
+                    backgroundColor: "var(--color-ec-bg-elevated)",
+                    border: "0.5px solid var(--color-ec-border)",
+                    borderRadius: 5,
+                    padding: "6px 8px",
+                    color: "var(--color-ec-text-primary)",
+                    fontSize: 11,
+                    outline: "none",
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Rule builder form */}
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              padding: 10,
+              backgroundColor: 'rgba(255, 255, 255, 0.01)',
+              border: '0.5px solid var(--color-ec-border)',
+              borderRadius: 6,
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: "var(--color-ec-copper)", borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)", paddingBottom: 2 }}>
+                Añadir filtro de mercado
+              </div>
+
+              {/* Row 1: Día */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Día</label>
+                <select
+                  value={tempUnivDay}
+                  onChange={(e) => setTempUnivDay(e.target.value as any)}
+                  style={{
+                    background: 'var(--color-ec-bg-surface)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    color: 'var(--color-ec-text-primary)',
+                    fontSize: 10,
+                    padding: '4px 6px',
+                    borderRadius: 4,
+                    outline: 'none',
+                    cursor: 'pointer',
+                    width: getDayWidth(tempUnivDay),
+                  }}
+                >
+                  <option value="gap_day">Día del Gap</option>
+                  <option value="gap_plus_1_day">Día Gap +1</option>
+                  <option value="gap_plus_2_day">Día Gap +2</option>
+                </select>
+              </div>
+
+              {/* Row 2: Filtro, Operador, Valor (Mín / Máx) */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', width: '100%' }}>
+                {/* Custom dropdown for Filtro */}
+                <div 
+                  ref={univFiltroDropdownRef} 
+                  style={{ 
+                    position: 'relative', 
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 3,
+                    width: getParamWidth(tempUnivParam),
+                    flexShrink: 0,
+                  }}
+                >
+                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Filtro</label>
+                  
+                  {/* Trigger */}
+                  <div
+                    onClick={() => setIsUnivFiltroOpen(!isUnivFiltroOpen)}
+                    style={{
+                      backgroundColor: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 4,
+                      padding: '4px 6px',
+                      fontSize: 10,
+                      fontWeight: 500,
+                      color: 'var(--color-ec-text-primary)',
+                      fontFamily: 'var(--color-ec-sans)',
+                      width: '100%',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      userSelect: 'none',
+                      boxSizing: 'border-box',
+                      height: 23,
+                    }}
+                  >
+                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                      {{
+                        gap_pct: "Gap (%)",
+                        pm_volume: "Volumen PM (M)",
+                        rth_volume: "Volumen RTH (M)",
+                        rth_close: "Apertura RTH ($)",
+                        pm_open: "Apertura PM ($)",
+                        pmh_gap_pct: "PM High Gap (%)",
+                        rth_range_pct: "Rango RTH (%)",
+                      }[tempUnivParam] || tempUnivParam}
+                    </span>
+                    <span style={{ fontSize: 7, color: 'var(--color-ec-text-muted)', marginLeft: 4 }}>
+                      {isUnivFiltroOpen ? '▲' : '▼'}
+                    </span>
+                  </div>
+
+                  {/* List */}
+                  {isUnivFiltroOpen && (
+                    <div style={{
+                      position: 'fixed',
+                      top: univFiltroDropdownRef.current ? univFiltroDropdownRef.current.getBoundingClientRect().bottom + 4 : 0,
+                      left: univFiltroDropdownRef.current ? univFiltroDropdownRef.current.getBoundingClientRect().left : 0,
+                      width: 215,
+                      maxHeight: 180,
+                      overflowY: 'auto',
+                      backgroundColor: 'var(--color-ec-bg-elevated)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 5,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+                      zIndex: 99999,
+                      fontFamily: 'var(--color-ec-sans)',
+                    }}>
+                      {[
+                        { value: "gap_pct", label: "Gap (%)" },
+                        { value: "pm_volume", label: "Volumen Premarket (M)" },
+                        { value: "rth_volume", label: "Volumen RTH (M)" },
+                        { value: "rth_close", label: "Precio Apertura RTH ($)" },
+                        { value: "pm_open", label: "Precio Apertura PM ($)" },
+                        { value: "pmh_gap_pct", label: "PM High Gap (%)" },
+                        { value: "rth_range_pct", label: "Rango Vela RTH (%)" },
+                      ].map((opt) => {
+                        const isSelected = tempUnivParam === opt.value;
+                        return (
+                          <div 
+                            key={opt.value}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
+                              borderLeft: isSelected ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
+                              padding: '5px 8px',
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => {
+                              setTempUnivParam(opt.value);
+                              setIsUnivFiltroOpen(false);
+                              if (opt.value === 'pm_volume' || opt.value === 'rth_volume') {
+                                setTempUnivVal1('1.0');
+                              } else if (opt.value === 'gap_pct' || opt.value === 'rth_range_pct') {
+                                setTempUnivVal1('2.0');
+                              } else {
+                                setTempUnivVal1('5.0');
+                              }
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-ec-bg-surface)';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                            }}
+                          >
+                            <span style={{
+                              color: isSelected ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-primary)',
+                              fontWeight: isSelected ? 600 : 400,
+                              fontSize: 10,
+                              textOverflow: 'ellipsis',
+                              overflow: 'hidden',
+                              whiteSpace: 'nowrap',
+                              flex: 1,
+                            }}>
+                              {opt.label}
+                            </span>
+                            <CustomTooltip title={opt.label} text={FILTRO_DESCRIPTIONS[opt.value] || ""} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Operator */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: getOpWidth(tempUnivOp), flexShrink: 0 }}>
+                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Op.</label>
+                  <select
+                    value={tempUnivOp}
+                    onChange={(e) => setTempUnivOp(e.target.value)}
+                    style={{
+                      background: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-primary)',
+                      fontSize: 10,
+                      padding: '4px 6px',
+                      borderRadius: 4,
+                      outline: 'none',
+                      cursor: 'pointer',
+                      width: '100%',
+                      height: 23,
+                    }}
+                  >
+                    <option value=">=">&gt;=</option>
+                    <option value="<=">&lt;=</option>
+                    <option value=">">&gt;</option>
+                    <option value="<">&lt;</option>
+                    <option value="between">Entre</option>
+                  </select>
+                </div>
+
+                {/* Value 1 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>
+                    {tempUnivOp === 'between' ? 'Mín' : 'Valor'}
+                  </label>
+                  <input
+                    type="text"
+                    value={tempUnivVal1}
+                    onChange={(e) => setTempUnivVal1(e.target.value)}
+                    style={{
+                      background: 'var(--color-ec-bg-surface)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-primary)',
+                      fontSize: 10,
+                      padding: '4px 6px',
+                      borderRadius: 4,
+                      outline: 'none',
+                      width: '100%',
+                      height: 23,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* Value 2 (between) */}
+                {tempUnivOp === 'between' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+                    <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Máx</label>
+                    <input
+                      type="text"
+                      value={tempUnivVal2}
+                      onChange={(e) => setTempUnivVal2(e.target.value)}
+                      style={{
+                        background: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        color: 'var(--color-ec-text-primary)',
+                        fontSize: 10,
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        outline: 'none',
+                        width: '100%',
+                        height: 23,
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Row 3: + Añadir button lowered to its own row */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const val1 = parseFloat(tempUnivVal1);
+                    const val2 = tempUnivOp === 'between' ? parseFloat(tempUnivVal2) : null;
+                    if (isNaN(val1) || (tempUnivOp === 'between' && isNaN(val2!))) {
+                      alert("Por favor introduce valores numéricos válidos.");
+                      return;
+                    }
+
+                    // Add condition to universeFilters.rules
+                    let fieldName = "";
+                    const lagSuffix = tempUnivDay === "gap_day" ? "" : tempUnivDay === "gap_plus_1_day" ? "_1" : "_2";
+                    
+                    if (tempUnivDay === "gap_day") {
+                      if (tempUnivParam === "rth_close") fieldName = "Close Price";
+                      else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
+                      else if (tempUnivParam === "pmh_gap_pct") fieldName = "PMH Gap %";
+                      else if (tempUnivParam === "pm_volume") fieldName = "Premarket Volume";
+                      else if (tempUnivParam === "gap_pct") fieldName = "Open Gap %";
+                      else if (tempUnivParam === "rth_volume") fieldName = "EOD Volume";
+                      else if (tempUnivParam === "rth_range_pct") fieldName = "RTH Range %";
+                    } else {
+                      if (tempUnivParam === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
+                      else if (tempUnivParam === "pm_open") fieldName = `lead_open${lagSuffix}`;
+                      else if (tempUnivParam === "pmh_gap_pct") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
+                      else if (tempUnivParam === "pm_volume") fieldName = `lead_pm_volume${lagSuffix}`;
+                      else if (tempUnivParam === "gap_pct") fieldName = `lead_gap_pct${lagSuffix}`;
+                      else if (tempUnivParam === "rth_volume") fieldName = `lead_rth_volume${lagSuffix}`;
+                      else if (tempUnivParam === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
+                    }
+
+                    if (!fieldName) return;
+                    
+                    const isVol = tempUnivParam === "pm_volume" || tempUnivParam === "rth_volume";
+                    const multiplier = isVol ? 1000000 : 1;
+
+                    const newRules = [...(universeFilters.rules || [])];
+
+                    if (tempUnivOp === 'between') {
+                      newRules.push({
+                        metric: fieldName,
+                        operator: "GREATER_THAN_OR_EQUAL",
+                        valueType: "static",
+                        value: (val1 * multiplier).toString()
+                      });
+                      newRules.push({
+                        metric: fieldName,
+                        operator: "LESS_THAN_OR_EQUAL",
+                        valueType: "static",
+                        value: (val2! * multiplier).toString()
+                      });
+                    } else {
+                      let opName = "";
+                      if (tempUnivOp === ">=") opName = "GREATER_THAN_OR_EQUAL";
+                      else if (tempUnivOp === "<=") opName = "LESS_THAN_OR_EQUAL";
+                      else if (tempUnivOp === ">") opName = "GREATER_THAN";
+                      else if (tempUnivOp === "<") opName = "LESS_THAN";
+
+                      newRules.push({
+                        metric: fieldName,
+                        operator: opName,
+                        valueType: "static",
+                        value: (val1 * multiplier).toString()
+                      });
+                    }
+
+                    setUniverseFilters((prev: any) => ({
+                      ...prev,
+                      rules: newRules
+                    }));
+                  }}
+                  style={{
+                    backgroundColor: 'var(--color-ec-copper)',
+                    color: 'var(--color-ec-copper-text)',
+                    border: 'none',
+                    borderRadius: 4,
+                    padding: '5px 12px',
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    height: 25,
+                  }}
+                >
+                  + Añadir
+                </button>
+              </div>
+            </div>
+
+            {/* List of custom universe filters as tags */}
+            {universeFilters.rules && universeFilters.rules.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                {universeFilters.rules.map((r: any, idx: number) => (
+                  <span
+                    key={idx}
+                    onClick={() => {
+                      setUniverseFilters((prev: any) => ({
+                        ...prev,
+                        rules: prev.rules.filter((_: any, i: number) => i !== idx)
+                      }));
+                    }}
+                    style={{
+                      fontSize: 9.5,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                      color: 'var(--color-ec-copper)',
+                      border: '0.5px solid rgba(216, 122, 61, 0.2)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span>{formatUnivRule(r)}</span>
+                    <span style={{ fontSize: 9, fontWeight: 700 }}>×</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   // Step 1: Direction Bias
@@ -4959,6 +5824,35 @@ export default function WizardStrategyBuilder({
   const allTagsUnified = useMemo(() => {
     const list: { label: string; stepName: string }[] = [];
     
+    // 0. Universo
+    if (customUniverse) {
+      list.push({
+        label: `Personalizado: Desde ${universeFilters.date_from || '?'} hasta ${universeFilters.date_to || '?'}`,
+        stepName: "Universo"
+      });
+      (universeFilters.rules || []).forEach((r: any) => {
+        const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+        const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
+        let friendlyVal = r.value;
+        const numVal = parseFloat(r.value);
+        if (!isNaN(numVal)) {
+          if (r.metric.toLowerCase().includes('volume')) {
+            friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+          }
+        }
+        list.push({
+          label: `${friendlyName} ${friendlyOp} ${friendlyVal}`,
+          stepName: "Universo"
+        });
+      });
+    } else if (selectedDataset) {
+      const currentDs = datasets.find(d => d.id === selectedDataset);
+      list.push({
+        label: `Dataset: ${currentDs ? currentDs.name : selectedDataset}`,
+        stepName: "Universo"
+      });
+    }
+
     // 1. Bias
     if (bias) {
       list.push({
@@ -5127,6 +6021,7 @@ export default function WizardStrategyBuilder({
         }}>
           {(() => {
             const categories: Record<string, string[]> = {
+              "Universo": [],
               "Dirección": [],
               "Día de Aplicación": [],
               "Sesión de Aplicación": [],
@@ -5227,7 +6122,7 @@ export default function WizardStrategyBuilder({
     if (!bias || currentStep === summaryStepIdx) return [];
     return [{
       label: bias === "long" ? "▲ Long" : "▼ Short",
-      color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+      color: "var(--color-ec-copper)",
       onRemove: () => {
         setBias(null);
         setCompletedSteps(prev => {
@@ -5318,7 +6213,7 @@ export default function WizardStrategyBuilder({
       (newRoot) => setEntryLogic({ ...entryLogic, root_condition: newRoot })
     );
     condTags.forEach(tag => {
-      list.push({ ...tag, color: "#60a5fa" });
+      list.push({ ...tag, color: "var(--color-ec-copper)" });
     });
 
     // Time window tags
@@ -5326,7 +6221,7 @@ export default function WizardStrategyBuilder({
     windows.forEach((w, wIdx) => {
       list.push({
         label: `Hora: ${w.from_time} - ${w.to_time}`,
-        color: "#3b82f6",
+        color: "var(--color-ec-copper)",
         onRemove: () => {
           setEntryLogic({
             ...entryLogic,
@@ -5345,7 +6240,7 @@ export default function WizardStrategyBuilder({
       exitLogic.root_condition,
       exitLogic.timeframe,
       (newRoot) => setExitLogic({ ...exitLogic, root_condition: newRoot })
-    ).map(tag => ({ ...tag, color: "#f43f5e" }));
+    ).map(tag => ({ ...tag, color: "var(--color-ec-copper)" }));
   }, [exitLogic, currentStep]);
 
   const riskTags = useMemo(() => {
@@ -5363,7 +6258,7 @@ export default function WizardStrategyBuilder({
         : `Stop Loss: ${riskManagement.hard_stop.value} ${(riskManagement.hard_stop.operator === '<' || riskManagement.hard_stop.operator === '<=') ? '-' : '+'} ${riskManagement.hard_stop.offset_pct ?? 0}%`;
       list.push({
         label,
-        color: "#f87171",
+        color: "var(--color-ec-copper)",
         onRemove: () => {
           setRiskManagement({
             ...riskManagement,
@@ -5374,7 +6269,7 @@ export default function WizardStrategyBuilder({
       if (riskManagement.size_by_sl) {
         list.push({
           label: `Calcular Shares por SL: Sí`,
-          color: "#f87171",
+          color: "var(--color-ec-copper)",
           onRemove: () => {
             setRiskManagement({
               ...riskManagement,
@@ -5386,7 +6281,7 @@ export default function WizardStrategyBuilder({
     } else {
       list.push({
         label: `Stop Loss: Desactivado`,
-        color: "var(--color-ec-text-muted)",
+        color: "var(--color-ec-copper)",
         onRemove: () => {
           setRiskManagement({
             ...riskManagement,
@@ -5401,7 +6296,7 @@ export default function WizardStrategyBuilder({
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
           label: `Take Profit: ${riskManagement.take_profit.value}%`,
-          color: "var(--color-ec-profit)",
+          color: "var(--color-ec-copper)",
           onRemove: () => {
             setRiskManagement({
               ...riskManagement,
@@ -5415,7 +6310,7 @@ export default function WizardStrategyBuilder({
           const distStr = p.distance_pct === 'EOD' ? 'EOD' : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
-            color: "var(--color-ec-profit)",
+            color: "var(--color-ec-copper)",
             onRemove: () => {
               const newPartials = partials.filter((_, i) => i !== idx);
               setRiskManagement({
@@ -5430,7 +6325,7 @@ export default function WizardStrategyBuilder({
     } else {
       list.push({
         label: `Take Profit: Desactivado`,
-        color: "var(--color-ec-text-muted)",
+        color: "var(--color-ec-copper)",
         onRemove: () => {
           setRiskManagement({
             ...riskManagement,
@@ -5444,7 +6339,7 @@ export default function WizardStrategyBuilder({
     if (riskManagement.trailing_stop?.active) {
       list.push({
         label: `Trailing: ${riskManagement.trailing_stop.buffer_pct}% (${riskManagement.trailing_stop.type})`,
-        color: "#fbbf24",
+        color: "var(--color-ec-copper)",
         onRemove: () => {
           setRiskManagement({
             ...riskManagement,
@@ -5462,7 +6357,7 @@ export default function WizardStrategyBuilder({
       label: riskManagement.accept_reentries !== false 
         ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
         : "Reentradas: Bloqueadas",
-      color: "#fbbf24",
+      color: "var(--color-ec-copper)",
       onRemove: () => {
         setRiskManagement({
           ...riskManagement,
@@ -5563,6 +6458,17 @@ export default function WizardStrategyBuilder({
       </div>
     );
   };
+
+  const isContinueDisabled = (() => {
+    const stepKey = STEPS[currentStep]?.key;
+    if (stepKey === "universo") {
+      return !customUniverse && !selectedDataset;
+    }
+    if (stepKey === "bias") {
+      return bias === null;
+    }
+    return false;
+  })();
 
   return (
     <div style={{
@@ -6017,10 +6923,10 @@ export default function WizardStrategyBuilder({
                     setCompletedSteps((prev) => new Set(prev).add(currentStep));
                     setCurrentStep((prev) => prev + 1);
                   }}
-                  disabled={currentStep === 0 && bias === null}
+                  disabled={isContinueDisabled}
                   style={{
-                    backgroundColor: (currentStep === 0 && bias === null) ? "var(--color-ec-bg-elevated)" : "var(--color-ec-copper)",
-                    color: (currentStep === 0 && bias === null) ? "var(--color-ec-text-muted)" : "var(--color-ec-copper-text)",
+                    backgroundColor: isContinueDisabled ? "var(--color-ec-bg-elevated)" : "var(--color-ec-copper)",
+                    color: isContinueDisabled ? "var(--color-ec-text-muted)" : "var(--color-ec-copper-text)",
                     border: "none",
                     borderRadius: 5,
                     padding: "6px 16px",
@@ -6028,9 +6934,9 @@ export default function WizardStrategyBuilder({
                     fontWeight: 700,
                     textTransform: "uppercase",
                     letterSpacing: "0.05em",
-                    cursor: (currentStep === 0 && bias === null) ? "not-allowed" : "pointer",
+                    cursor: isContinueDisabled ? "not-allowed" : "pointer",
                     transition: "all 150ms ease",
-                    opacity: (currentStep === 0 && bias === null) ? 0.5 : 1,
+                    opacity: isContinueDisabled ? 0.5 : 1,
                   }}
                 >
                   Continuar
