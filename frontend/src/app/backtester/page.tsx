@@ -803,12 +803,7 @@ export default function Home() {
                       is_wizard: def.is_wizard || strategyData.is_wizard || false,
                     } as any);
                     
-                    const isWizard = def.is_wizard || strategyData.is_wizard || false;
-                    if (isWizard) {
-                      setMode('wizard');
-                    } else {
-                      setMode('builder');
-                    }
+                    setMode('builder_choice');
                   } catch (err) {
                     alert("Error al cargar la estrategia para configurar.");
                   }
