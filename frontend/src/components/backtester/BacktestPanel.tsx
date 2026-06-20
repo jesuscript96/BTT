@@ -352,7 +352,7 @@ export default function BacktestPanel({
   const stratDef = getStratDef() as any;
   const riskMgmt = stratDef?.risk_management;
   const sizeBySl = riskMgmt?.size_by_sl || false;
-  const isSelectedStratPartialTP = riskMgmt?.use_take_profit !== false && riskMgmt?.take_profit_mode === "Partial";
+  const isSelectedStratPartialTP = riskMgmt?.use_take_profit === true && riskMgmt?.take_profit_mode === "Partial";
   const selectedStratPartialCapital = (riskMgmt?.partial_take_profits || []).reduce((sum: number, p: any) => sum + (p.capital_pct || 0), 0);
   const isSelectedStratRiskInvalid = isSelectedStratPartialTP && Math.abs(selectedStratPartialCapital - 100) > 0.01;
 

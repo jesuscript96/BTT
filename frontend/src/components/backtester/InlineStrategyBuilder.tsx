@@ -485,7 +485,7 @@ export default function InlineStrategyBuilder({
     onTest(draft);
   };
 
-  const isPartialTPMode = riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === "Partial";
+  const isPartialTPMode = riskManagement.use_take_profit === true && riskManagement.take_profit_mode === "Partial";
   const totalPartialCapital = (riskManagement.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
   const isRiskInvalid = isPartialTPMode && Math.abs(totalPartialCapital - 100) > 0.01;
 

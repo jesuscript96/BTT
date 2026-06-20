@@ -1054,7 +1054,7 @@ export default function WizardStrategyBuilder({
       return;
     }
 
-    const isPartialTPMode = riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === "Partial";
+    const isPartialTPMode = riskManagement.use_take_profit === true && riskManagement.take_profit_mode === "Partial";
     const totalPartialCapital = (riskManagement.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
     const isRiskInvalid = isPartialTPMode && Math.abs(totalPartialCapital - 100) > 0.01;
 
@@ -4288,7 +4288,7 @@ export default function WizardStrategyBuilder({
 
   // Step 5: Gestión de riesgo (Risk Management) - Sub-step helpers
   const renderRiskSubStepStopLoss = () => {
-    const isStopOn = riskManagement.use_hard_stop !== false;
+    const isStopOn = riskManagement.use_hard_stop === true;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-in fade-in duration-200">
         <div>
@@ -4716,7 +4716,7 @@ export default function WizardStrategyBuilder({
   };
 
   const renderRiskSubStepTakeProfit = () => {
-    const isTpOn = riskManagement.use_take_profit !== false;
+    const isTpOn = riskManagement.use_take_profit === true;
     
     const addPartial = () => {
       const currentPartials = riskManagement.partial_take_profits || [];
@@ -5323,7 +5323,7 @@ export default function WizardStrategyBuilder({
   };
 
   const renderRiskSubStepReentries = () => {
-    const isReentriesAllowed = riskManagement.accept_reentries !== false;
+    const isReentriesAllowed = riskManagement.accept_reentries === true;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-in fade-in duration-200">
         <div>
@@ -5601,7 +5601,7 @@ export default function WizardStrategyBuilder({
     
     // 5. Gestión de Riesgo
     // Stop Loss
-    if (riskManagement.use_hard_stop !== false) {
+    if (riskManagement.use_hard_stop === true) {
       const label = riskManagement.hard_stop.type === RiskType.PERCENTAGE
         ? `Stop Loss: ${riskManagement.hard_stop.value}%`
         : `Stop Loss: ${riskManagement.hard_stop.value} ${(riskManagement.hard_stop.operator === '<' || riskManagement.hard_stop.operator === '<=') ? '-' : '+'} ${riskManagement.hard_stop.offset_pct ?? 0}%`;
@@ -5617,7 +5617,7 @@ export default function WizardStrategyBuilder({
     }
     
     // Take Profit
-    if (riskManagement.use_take_profit !== false) {
+    if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
           label: `Take Profit: ${riskManagement.take_profit.value}%`,
@@ -5655,7 +5655,7 @@ export default function WizardStrategyBuilder({
     
     // Reentries
     list.push({
-      label: riskManagement.accept_reentries !== false 
+      label: riskManagement.accept_reentries === true 
         ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
         : "Reentradas: Bloqueadas",
       stepName: "Gestión de Riesgo"
@@ -5945,7 +5945,7 @@ export default function WizardStrategyBuilder({
     const list = [];
     
     // Stop Loss
-    if (riskManagement.use_hard_stop !== false) {
+    if (riskManagement.use_hard_stop === true) {
       const label = riskManagement.hard_stop.type === RiskType.PERCENTAGE
         ? `Stop Loss: ${riskManagement.hard_stop.value}%`
         : `Stop Loss: ${riskManagement.hard_stop.value} ${(riskManagement.hard_stop.operator === '<' || riskManagement.hard_stop.operator === '<=') ? '-' : '+'} ${riskManagement.hard_stop.offset_pct ?? 0}%`;
@@ -5985,7 +5985,7 @@ export default function WizardStrategyBuilder({
     }
 
     // Take Profit
-    if (riskManagement.use_take_profit !== false) {
+    if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
           label: `Take Profit: ${riskManagement.take_profit.value}%`,
@@ -6047,7 +6047,7 @@ export default function WizardStrategyBuilder({
 
     // Re-entries
     list.push({
-      label: riskManagement.accept_reentries !== false 
+      label: riskManagement.accept_reentries === true 
         ? (riskManagement.max_reentries === undefined || riskManagement.max_reentries === -1 ? "Reentradas: Infinitas" : `Reentradas: Máx ${riskManagement.max_reentries}`)
         : "Reentradas: Bloqueadas",
       color: "var(--color-ec-copper)",
@@ -6588,7 +6588,7 @@ export default function WizardStrategyBuilder({
               ) : STEPS[currentStep]?.key === "risk" ? (
                 <button
                   onClick={() => {
-                    if (wizardRiskStep === 1 && riskManagement.use_take_profit !== false && riskManagement.take_profit_mode === TakeProfitMode.PARTIAL) {
+                    if (wizardRiskStep === 1 && riskManagement.use_take_profit === true && riskManagement.take_profit_mode === TakeProfitMode.PARTIAL) {
                       const totalPartialCapital = (riskManagement.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
                       if (Math.abs(totalPartialCapital - 100) > 0.01) {
                         alert("La suma del capital de los parciales de Take Profit debe ser exactamente 100% para continuar.");

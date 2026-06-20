@@ -94,8 +94,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    paddingBottom: (risk.use_hard_stop !== false) ? 12 : 0,
-                    borderBottom: (risk.use_hard_stop !== false) ? '0.5px solid var(--color-ec-border)' : 'none',
+                    paddingBottom: (risk.use_hard_stop === true) ? 12 : 0,
+                    borderBottom: (risk.use_hard_stop === true) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -129,18 +129,18 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             fontSize: 10,
                             fontWeight: 700,
                             color: 'var(--color-ec-text-muted)',
-                        }}>{risk.use_hard_stop !== false ? 'ON' : 'OFF'}</span>
+                        }}>{risk.use_hard_stop === true ? 'ON' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop !== false ? 'bg-ec-loss/70' : 'bg-muted'}`}
-                            onClick={() => onChange({ ...risk, use_hard_stop: risk.use_hard_stop === false })}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_hard_stop === true ? 'bg-ec-loss/70' : 'bg-muted'}`}
+                            onClick={() => onChange({ ...risk, use_hard_stop: !risk.use_hard_stop })}
                         >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_hard_stop !== false ? 'left-4.5' : 'left-0.5'}`}></div>
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_hard_stop === true ? 'left-4.5' : 'left-0.5'}`}></div>
                         </div>
                     </div>
                 </div>
 
                 {/* Body */}
-                {(risk.use_hard_stop !== false) && (
+                {(risk.use_hard_stop === true) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
                         <div className={`flex gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
                             <select
@@ -448,8 +448,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    paddingBottom: (risk.use_take_profit !== false) ? 12 : 0,
-                    borderBottom: (risk.use_take_profit !== false) ? '0.5px solid var(--color-ec-border)' : 'none',
+                    paddingBottom: (risk.use_take_profit === true) ? 12 : 0,
+                    borderBottom: (risk.use_take_profit === true) ? '0.5px solid var(--color-ec-border)' : 'none',
                 }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -483,18 +483,18 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             fontSize: 10,
                             fontWeight: 700,
                             color: 'var(--color-ec-text-muted)',
-                        }}>{risk.use_take_profit !== false ? 'ON' : 'OFF'}</span>
+                        }}>{risk.use_take_profit === true ? 'ON' : 'OFF'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit !== false ? 'bg-ec-profit/70' : 'bg-muted'}`}
-                            onClick={() => onChange({ ...risk, use_take_profit: risk.use_take_profit === false })}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.use_take_profit === true ? 'bg-ec-profit/70' : 'bg-muted'}`}
+                            onClick={() => onChange({ ...risk, use_take_profit: !risk.use_take_profit })}
                         >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_take_profit !== false ? 'left-4.5' : 'left-0.5'}`}></div>
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.use_take_profit === true ? 'left-4.5' : 'left-0.5'}`}></div>
                         </div>
                     </div>
                 </div>
 
                 {/* Body */}
-                {(risk.use_take_profit !== false) && (
+                {(risk.use_take_profit === true) && (
                     <div className="space-y-4 animate-in fade-in duration-200">
                         {/* Mode Toggle */}
                         <div style={{
@@ -852,16 +852,16 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             fontSize: 10,
                             fontWeight: 700,
                             color: 'var(--color-ec-text-muted)',
-                        }}>{risk.accept_reentries !== false ? 'YES' : 'NO'}</span>
+                        }}>{risk.accept_reentries === true ? 'YES' : 'NO'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries !== false ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
-                            onClick={() => onChange({ ...risk, accept_reentries: risk.accept_reentries === false, max_reentries: risk.accept_reentries === false ? -1 : 0 })}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.accept_reentries === true ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                            onClick={() => onChange({ ...risk, accept_reentries: !risk.accept_reentries, max_reentries: !risk.accept_reentries ? -1 : 0 })}
                         >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries !== false ? 'left-4.5' : 'left-0.5'}`}></div>
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.accept_reentries === true ? 'left-4.5' : 'left-0.5'}`}></div>
                         </div>
                     </div>
                 </div>
-                {risk.accept_reentries !== false && (
+                {risk.accept_reentries === true && (
                     <div 
                         className="flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-200"
                         style={{
