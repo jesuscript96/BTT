@@ -98,8 +98,8 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
       {hovered && (
         <span style={{
           position: 'fixed',
-          top: coords.y - 6,
-          left: coords.x + 6,
+          top: coords.y,
+          left: coords.x,
           transform: 'translate(0, -100%)',
           backgroundColor: 'var(--color-ec-bg-elevated)',
           border: '0.5px solid var(--color-ec-border)',

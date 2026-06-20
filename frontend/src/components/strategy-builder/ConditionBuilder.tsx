@@ -2829,8 +2829,8 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                     <div
                         style={{
                             position: "fixed",
-                            top: activeTooltip.y - 6,
-                            left: activeTooltip.x + 6,
+                            top: activeTooltip.y,
+                            left: activeTooltip.x,
                             transform: "translate(0, -100%)",
                             backgroundColor: "var(--color-ec-bg-elevated)",
                             color: "var(--color-ec-text-primary)",
