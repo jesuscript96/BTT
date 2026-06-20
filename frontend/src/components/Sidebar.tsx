@@ -194,7 +194,7 @@ export const Sidebar = () => {
                     }}
                 >
                     <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Trunk</span>
+                    <span style={labelFade(isCollapsed)}>Baúl</span>
                 </Link>
             </nav>
 
