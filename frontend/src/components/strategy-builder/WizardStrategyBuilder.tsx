@@ -5666,10 +5666,7 @@ export default function WizardStrategyBuilder({
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: 10,
-          maxHeight: 340,
-          overflowY: "auto",
           paddingRight: 6,
-          scrollbarWidth: "none",
         }}>
           {(() => {
             const categories: Record<string, string[]> = {
@@ -6415,14 +6412,19 @@ export default function WizardStrategyBuilder({
         {/* Right: Step Content */}
         <div style={{
           flex: 1,
-          overflowY: "auto",
+          overflow: "hidden",
           padding: "20px 22px 20px",
-          scrollbarWidth: "none",
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
         }}>
-          <div>
+          <div style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflowY: "auto",
+            scrollbarWidth: "none"
+          }}>
             <div style={{
               fontFamily: "var(--color-ec-sans)",
               fontSize: 8,
