@@ -25,7 +25,7 @@ import { RiskManagementComponent } from "@/components/strategy-builder/RiskManag
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import { getAllowedTargets } from "@/lib/indicatorValidation";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, INDICATOR_CATEGORIES, INDICATOR_DESCRIPTIONS, getDefaultParamsForIndicator } from "@/components/strategy-builder/ConditionBuilder";
-import { Clock, Plus, Trash2, Info, HelpCircle, Sparkles, Database, SlidersHorizontal } from "lucide-react";
+import { Clock, Plus, Trash2, Info, Sparkles, Database, SlidersHorizontal } from "lucide-react";
 
 export interface WizardDraft {
   id: string;
@@ -62,6 +62,80 @@ const MARKET_LEVEL_DESCRIPTIONS: Record<string, string> = {
   "Previous Min": "Mínimo Día Anterior (Previous Day Low). El precio más bajo de la sesión de ayer."
 };
 
+const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
+  const [hovered, setHovered] = useState(false);
+  const [coords, setCoords] = useState({ x: 0, y: 0 });
+
+  const handleMouseEnter = (e: React.MouseEvent) => {
+    setCoords({ x: e.clientX, y: e.clientY });
+    setHovered(true);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    setCoords({ x: e.clientX, y: e.clientY });
+  };
+
+  return (
+    <span 
+      onMouseEnter={handleMouseEnter}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 13,
+        height: 13,
+        borderRadius: '50%',
+        backgroundColor: 'var(--color-ec-bg-elevated)',
+        border: '0.5px solid var(--color-ec-border)',
+        color: 'var(--color-ec-text-muted)',
+        fontSize: 9,
+        fontWeight: 700,
+        cursor: 'help',
+        marginLeft: 4,
+        flexShrink: 0,
+        userSelect: 'none',
+      }}
+    >
+      ?
+      {hovered && (
+        <span style={{
+          position: 'fixed',
+          top: coords.y - 4,
+          left: coords.x + 4,
+          transform: 'translate(0, -100%)',
+          backgroundColor: 'var(--color-ec-bg-elevated)',
+          border: '0.5px solid var(--color-ec-border)',
+          borderRadius: 4,
+          padding: '6px 8px',
+          color: 'var(--color-ec-text-primary)',
+          fontSize: 9.5,
+          fontWeight: 400,
+          whiteSpace: 'normal',
+          width: 185,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+          zIndex: 100005,
+          textAlign: 'left',
+          pointerEvents: 'none',
+          lineHeight: '1.3',
+          fontFamily: 'var(--color-ec-sans)',
+        }}>
+          {title && (
+            <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
+              {title}
+            </strong>
+          )}
+          <span 
+            style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
+            dangerouslySetInnerHTML={{ __html: text }}
+          />
+        </span>
+      )}
+    </span>
+  );
+};
+
 interface WizardIndicatorSelectorProps {
   value: IndicatorType;
   onChange: (val: IndicatorType) => void;
@@ -85,9 +159,6 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
   const combinedExclude = [...exclude, ...wizardExclusions];
 
   const [isOpen, setIsOpen] = useState(false);
-  const [hoveredInd, setHoveredInd] = useState<IndicatorType | null>(null);
-  const [hoveredActiveInd, setHoveredActiveInd] = useState<IndicatorType | null>(null);
-  const [hoveredTop, setHoveredTop] = useState<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -108,7 +179,6 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
       <div
         onClick={() => {
           setIsOpen(!isOpen);
-          setHoveredInd(null);
         }}
         style={{
           width: "100%",
@@ -128,29 +198,11 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden", flex: 1 }}>
           <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{selectedLabel}</span>
-          <span
-            onMouseEnter={(e) => {
-              e.stopPropagation();
-              setHoveredActiveInd(value);
-            }}
-            onMouseLeave={() => setHoveredActiveInd(null)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 11,
-              height: 11,
-              borderRadius: "50%",
-              backgroundColor: "rgba(216, 122, 61, 0.12)",
-              border: "0.5px solid rgba(216, 122, 61, 0.35)",
-              color: "var(--color-ec-copper)",
-              fontSize: 7.5,
-              fontWeight: "bold",
-              cursor: "help",
-              flexShrink: 0
-            }}
-          >
-            ?
+          <span onClick={(e) => e.stopPropagation()} style={{ display: "inline-flex", alignItems: "center" }}>
+            <CustomTooltip
+              title={INDICATOR_LABELS[value] || value}
+              text={INDICATOR_DESCRIPTIONS[value] || ""}
+            />
           </span>
         </div>
         <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)" }}>
@@ -162,14 +214,6 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
         <div style={{ display: "flex", position: "absolute", top: "105%", left: 0, zIndex: 1000, width: "100%" }}>
           {/* Dropdown Menu */}
           <div 
-            onScroll={(e) => {
-              if (hoveredInd) {
-                const activeOption = e.currentTarget.querySelector(`[data-ind="${hoveredInd}"]`) as HTMLDivElement | null;
-                if (activeOption) {
-                  setHoveredTop(activeOption.offsetTop - e.currentTarget.scrollTop);
-                }
-              }
-            }}
             style={{
               width: "100%",
               maxHeight: 200,
@@ -208,7 +252,6 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
                     return (
                       <div
                         key={ind}
-                        data-ind={ind}
                         onClick={() => {
                           onChange(ind);
                           setIsOpen(false);
@@ -220,7 +263,7 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
                           fontWeight: isSelected ? 700 : 500,
                           cursor: "pointer",
                           display: "flex",
-                          justifyContent: "flex-start",
+                          justifyContent: "space-between",
                           alignItems: "center",
                           gap: 5,
                           backgroundColor: isSelected ? "rgba(216, 122, 61, 0.06)" : "transparent",
@@ -228,40 +271,22 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
                           transition: "all 100ms ease",
                         }}
                         onMouseEnter={(e) => {
-                          setHoveredInd(ind);
                           if (!isSelected) {
                             e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
                           }
-                          const listContainer = e.currentTarget.parentElement?.parentElement;
-                          if (listContainer) {
-                            const offsetTop = e.currentTarget.offsetTop;
-                            const scrollTop = listContainer.scrollTop;
-                            setHoveredTop(offsetTop - scrollTop);
-                          }
                         }}
                         onMouseLeave={(e) => {
-                          setHoveredInd(null);
                           if (!isSelected) {
                             e.currentTarget.style.backgroundColor = "transparent";
                           }
                         }}
                       >
-                        <span>{INDICATOR_LABELS[ind] || ind}</span>
-                        {/* Little question mark icon */}
-                        <span style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 12,
-                          height: 12,
-                          borderRadius: "50%",
-                          border: "0.5px solid var(--color-ec-border)",
-                          color: "var(--color-ec-text-muted)",
-                          fontSize: 8,
-                          fontWeight: "bold",
-                          cursor: "help"
-                        }}>
-                          ?
+                        <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{INDICATOR_LABELS[ind] || ind}</span>
+                        <span onClick={(e) => e.stopPropagation()} style={{ display: "inline-flex", alignItems: "center" }}>
+                          <CustomTooltip
+                            title={INDICATOR_LABELS[ind] || ind}
+                            text={INDICATOR_DESCRIPTIONS[ind] || ""}
+                          />
                         </span>
                       </div>
                     );
@@ -270,63 +295,6 @@ const WizardIndicatorSelector: React.FC<WizardIndicatorSelectorProps> = ({
               );
             })}
           </div>
-
-          {/* Floating Hover Tooltip Card for Option Items (Positioned Above the option row inside dropdown view) */}
-          {hoveredInd && INDICATOR_DESCRIPTIONS[hoveredInd] && (
-            <div style={{
-              position: "absolute",
-              top: hoveredTop - 45, // sit right above the hovered option row
-              left: "50%",
-              transform: "translateX(-50%)",
-              width: 180,
-              backgroundColor: "var(--color-ec-bg-elevated)",
-              border: "0.5px solid var(--color-ec-border)",
-              borderRadius: 6,
-              padding: "10px",
-              boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              zIndex: 1001,
-              animation: "wizTagSlideIn 150ms ease",
-              pointerEvents: "none"
-            }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase" }}>
-                {INDICATOR_LABELS[hoveredInd] || hoveredInd}
-              </span>
-              <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
-                {INDICATOR_DESCRIPTIONS[hoveredInd]}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Hover Tooltip Card for Active Selection */}
-      {hoveredActiveInd && INDICATOR_DESCRIPTIONS[hoveredActiveInd] && (
-        <div style={{
-          position: "absolute",
-          bottom: "110%",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: 180,
-          backgroundColor: "var(--color-ec-bg-elevated)",
-          border: "0.5px solid var(--color-ec-border)",
-          borderRadius: 6,
-          padding: "10px",
-          boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-          zIndex: 1001,
-          pointerEvents: "none"
-        }}>
-          <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase" }}>
-            {INDICATOR_LABELS[hoveredActiveInd] || hoveredActiveInd}
-          </span>
-          <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
-            {INDICATOR_DESCRIPTIONS[hoveredActiveInd]}
-          </span>
         </div>
       )}
     </div>
@@ -780,15 +748,7 @@ export default function WizardStrategyBuilder({
   const [wizardDistanceValue, setWizardDistanceValue] = useState<number>(0.5);
   const [wizardTargetOffset, setWizardTargetOffset] = useState<number>(0);
   const [wizardDistanceLevelOffset, setWizardDistanceLevelOffset] = useState<number>(0);
-  const [showOffsetComparisonTooltip, setShowOffsetComparisonTooltip] = useState(false);
-  const [showOffsetDistanceTooltip, setShowOffsetDistanceTooltip] = useState(false);
-  const [showSLPercentTooltip, setShowSLPercentTooltip] = useState(false);
-  const [showSLRefTooltip, setShowSLRefTooltip] = useState(false);
-  const [showSLOffsetTooltip, setShowSLOffsetTooltip] = useState(false);
   const [isLevelDropdownOpen, setIsLevelDropdownOpen] = useState(false);
-  const [hoveredLevel, setHoveredLevel] = useState<string | null>(null);
-  const [hoveredActiveLevel, setHoveredActiveLevel] = useState<string | null>(null);
-  const [hoveredLevelTop, setHoveredLevelTop] = useState<number>(0);
   const slLevelDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -801,9 +761,6 @@ export default function WizardStrategyBuilder({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
-  const [showTPPercentTooltip, setShowTPPercentTooltip] = useState(false);
-  const [showTPPartialsTooltip, setShowTPPartialsTooltip] = useState(false);
-  const [showTSBufferTooltip, setShowTSBufferTooltip] = useState(false);
   const [wizardSourceSession, setWizardSourceSession] = useState<"ap.PM" | "ap.RTH" | "ap.AM">("ap.RTH");
   const [wizardTargetSession, setWizardTargetSession] = useState<"ap.PM" | "ap.RTH" | "ap.AM">("ap.RTH");
   const [wizardDistanceLevelSession, setWizardDistanceLevelSession] = useState<"ap.PM" | "ap.RTH" | "ap.AM">("ap.RTH");
@@ -1177,71 +1134,7 @@ export default function WizardStrategyBuilder({
       rth_range_pct: "Rango de precio (Máximo - Mínimo) expresado como porcentaje del precio durante la sesión RTH.",
     };
 
-    const CustomTooltip = ({ title, text }: { title: string; text: string }) => {
-      const [hovered, setHovered] = useState(false);
-      const [coords, setCoords] = useState({ x: 0, y: 0 });
 
-      const handleMouseEnter = (e: React.MouseEvent) => {
-        setCoords({ x: e.clientX, y: e.clientY });
-        setHovered(true);
-      };
-
-      const handleMouseMove = (e: React.MouseEvent) => {
-        setCoords({ x: e.clientX, y: e.clientY });
-      };
-
-      return (
-        <span 
-          onMouseEnter={handleMouseEnter}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={() => setHovered(false)}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 13,
-            height: 13,
-            borderRadius: '50%',
-            backgroundColor: 'var(--color-ec-bg-elevated)',
-            border: '0.5px solid var(--color-ec-border)',
-            color: 'var(--color-ec-text-muted)',
-            fontSize: 9,
-            fontWeight: 700,
-            cursor: 'help',
-            marginLeft: 4,
-            flexShrink: 0,
-            userSelect: 'none',
-          }}
-        >
-          ?
-          {hovered && (
-            <span style={{
-              position: 'fixed',
-              top: coords.y - 4,
-              left: coords.x + 4,
-              transform: 'translate(0, -100%)',
-              backgroundColor: 'var(--color-ec-bg-elevated)',
-              border: '0.5px solid var(--color-ec-border)',
-              borderRadius: 4,
-              padding: '6px 8px',
-              color: 'var(--color-ec-text-primary)',
-              fontSize: 9.5,
-              fontWeight: 400,
-              whiteSpace: 'normal',
-              width: 185,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-              zIndex: 100005,
-              textAlign: 'left',
-              pointerEvents: 'none',
-              lineHeight: '1.3',
-            }}>
-              <strong style={{ display: 'block', color: 'var(--color-ec-copper)', marginBottom: 2 }}>{title}</strong>
-              {text}
-            </span>
-          )}
-        </span>
-      );
-    };
 
     const cardStyle = (active: boolean): React.CSSProperties => ({
       flex: 1,
@@ -3686,41 +3579,11 @@ export default function WizardStrategyBuilder({
                           >
                             ¿Offset a Variable de cruce?
                           </label>
-                          <span
-                            onMouseEnter={() => setShowOffsetComparisonTooltip(true)}
-                            onMouseLeave={() => setShowOffsetComparisonTooltip(false)}
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              width: 12,
-                              height: 12,
-                              borderRadius: "50%",
-                              border: "0.5px solid var(--color-ec-border)",
-                              color: "var(--color-ec-text-muted)",
-                              fontSize: 8,
-                              fontWeight: "bold",
-                              cursor: "help"
-                            }}
-                          >
-                            ?
-                          </span>
+                          <CustomTooltip
+                            title="¿Offset a Variable de cruce?"
+                            text="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual."
+                          />
                         </div>
-
-                        {showOffsetComparisonTooltip && (
-                          <div style={{
-                            backgroundColor: "var(--color-ec-bg-elevated)",
-                            border: "0.5px solid var(--color-ec-border)",
-                            borderRadius: 6,
-                            padding: 8,
-                            fontSize: 8,
-                            color: "var(--color-ec-text-muted)",
-                            lineHeight: 1.3,
-                            marginTop: 2
-                          }}>
-                            Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual.
-                          </div>
-                        )}
 
                         {wizardTargetOffset > 0 && (
                           <div style={{ 
@@ -3806,41 +3669,11 @@ export default function WizardStrategyBuilder({
                         >
                           ¿Offset a Variable de cruce?
                         </label>
-                        <span
-                          onMouseEnter={() => setShowOffsetDistanceTooltip(true)}
-                          onMouseLeave={() => setShowOffsetDistanceTooltip(false)}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            width: 12,
-                            height: 12,
-                            borderRadius: "50%",
-                            border: "0.5px solid var(--color-ec-border)",
-                            color: "var(--color-ec-text-muted)",
-                            fontSize: 8,
-                            fontWeight: "bold",
-                            cursor: "help"
-                          }}
-                        >
-                          ?
-                        </span>
+                        <CustomTooltip
+                          title="¿Offset a Variable de cruce?"
+                          text="Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual."
+                        />
                       </div>
-
-                      {showOffsetDistanceTooltip && (
-                        <div style={{
-                          backgroundColor: "var(--color-ec-bg-elevated)",
-                          border: "0.5px solid var(--color-ec-border)",
-                          borderRadius: 6,
-                          padding: 8,
-                          fontSize: 8,
-                          color: "var(--color-ec-text-muted)",
-                          lineHeight: 1.3,
-                          marginTop: 2
-                        }}>
-                          Compara la variable de entrada con el valor de la variable de cruce de X velas hacia atrás. Ejemplo: Si Bar Close &gt; SMA_30 y le indicamos un offset de 3 velas, el Bar Close Actual comparará si es mayor que el valor del SMA_30 de hace 3 velas y no del actual.
-                        </div>
-                      )}
 
                       {wizardDistanceLevelOffset > 0 && (
                         <div style={{ 
@@ -4554,40 +4387,12 @@ export default function WizardStrategyBuilder({
             {/* Inputs based on type */}
             {riskManagement.hard_stop.type === RiskType.PERCENTAGE ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", textAlign: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                   <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor del porcentaje</span>
-                  <div
-                    onMouseEnter={() => setShowSLPercentTooltip(true)}
-                    onMouseLeave={() => setShowSLPercentTooltip(false)}
-                    style={{ cursor: "help", display: "inline-flex", alignItems: "center" }}
-                  >
-                    <HelpCircle size={10} style={{ color: "var(--color-ec-text-muted)" }} />
-                  </div>
-                  {showSLPercentTooltip && (
-                    <div style={{
-                      position: "absolute",
-                      bottom: "125%",
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: 200,
-                      backgroundColor: "var(--color-ec-bg-elevated)",
-                      border: "0.5px solid var(--color-ec-border)",
-                      borderRadius: 6,
-                      padding: "8px 10px",
-                      boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                      fontSize: 8.5,
-                      color: "var(--color-ec-text-high)",
-                      lineHeight: 1.35,
-                      zIndex: 100,
-                      pointerEvents: "none",
-                      textAlign: "left",
-                    }}>
-                      <strong>Stop Loss fijo en %</strong>
-                      <div style={{ marginTop: 4 }}>
-                        Define la distancia porcentual máxima que permites que el precio se mueva en contra antes de cerrar la posición con pérdidas.
-                      </div>
-                    </div>
-                  )}
+                  <CustomTooltip
+                    title="Stop Loss fijo en %"
+                    text="Define la distancia porcentual máxima que permites que el precio se mueva en contra antes de cerrar la posición con pérdidas."
+                  />
                 </div>
                 <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>Ejemplo: 2.0% de distancia máxima de Stop Loss con respecto a tu precio de entrada.</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
@@ -4640,45 +4445,12 @@ export default function WizardStrategyBuilder({
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", textAlign: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                   <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Parámetros de estructura</span>
-                  <div
-                    onMouseEnter={() => setShowSLRefTooltip(true)}
-                    onMouseLeave={() => setShowSLRefTooltip(false)}
-                    style={{ cursor: "help", display: "inline-flex", alignItems: "center" }}
-                  >
-                    <HelpCircle size={10} style={{ color: "var(--color-ec-text-muted)" }} />
-                  </div>
-                  {showSLRefTooltip && (
-                    <div style={{
-                      position: "absolute",
-                      bottom: "125%",
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: 230,
-                      backgroundColor: "var(--color-ec-bg-elevated)",
-                      border: "0.5px solid var(--color-ec-border)",
-                      borderRadius: 6,
-                      padding: "10px 12px",
-                      boxShadow: "0 -4px 16px rgba(0,0,0,0.3)",
-                      fontSize: 9,
-                      color: "var(--color-ec-text-high)",
-                      lineHeight: 1.4,
-                      zIndex: 100,
-                      pointerEvents: "none",
-                      textAlign: "left",
-                    }}>
-                      <strong>Referencia de Estructura</strong>
-                      <div style={{ marginTop: 4 }}>
-                        Sitúa tu Stop Loss en base a precios clave (LOD, HOD, etc.) más un % de margen (offset).
-                      </div>
-                      <div style={{ marginTop: 6, borderTop: '0.5px solid var(--color-ec-border)', paddingTop: 6, fontSize: 8.5, color: 'var(--color-ec-text-secondary)' }}>
-                        <strong>Ejemplo de Dirección:</strong><br />
-                        • Si compras (Largo) y usas el <strong>LOD</strong> (mínimo), pon el Stop <strong>Por debajo</strong> (resta el % al LOD, ej: LOD - 1%).<br />
-                        • Si vendes corto y usas el <strong>HOD</strong> (máximo), pon el Stop <strong>Por encima</strong> (suma el % al HOD, ej: HOD + 1%).
-                      </div>
-                    </div>
-                  )}
+                  <CustomTooltip
+                    title="Referencia de Estructura"
+                    text="Sitúa tu Stop Loss en base a precios clave (LOD, HOD, etc.) más un % de margen (offset).<br/><br/><strong>Ejemplo de Dirección:</strong><br/>• Si compras (Largo) y usas el <strong>LOD</strong> (mínimo), pon el Stop <strong>Por debajo</strong> (resta el % al LOD, ej: LOD - 1%).<br/>• Si vendes corto y usas el <strong>HOD</strong> (máximo), pon el Stop <strong>Por encima</strong> (suma el % al HOD, ej: HOD + 1%)."
+                  />
                 </div>
                 <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>
                   Establece el Stop Loss en base a referencias clave del mercado (como el mínimo/máximo diario LOD/HOD) más un margen de holgura (offset).
@@ -4690,7 +4462,6 @@ export default function WizardStrategyBuilder({
                     <div
                       onClick={() => {
                         setIsLevelDropdownOpen(!isLevelDropdownOpen);
-                        setHoveredLevel(null);
                       }}
                       style={{
                         backgroundColor: 'var(--color-ec-bg-surface)',
@@ -4719,29 +4490,16 @@ export default function WizardStrategyBuilder({
                             return val;
                           })()}
                         </span>
-                        <span
-                          onMouseEnter={(e) => {
-                            e.stopPropagation();
-                            setHoveredActiveLevel(String(riskManagement.hard_stop.value || 'LOD'));
-                          }}
-                          onMouseLeave={() => setHoveredActiveLevel(null)}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            width: 11,
-                            height: 11,
-                            borderRadius: "50%",
-                            backgroundColor: "rgba(216, 122, 61, 0.12)",
-                            border: "0.5px solid rgba(216, 122, 61, 0.35)",
-                            color: "var(--color-ec-copper)",
-                            fontSize: 7.5,
-                            fontWeight: "bold",
-                            cursor: "help",
-                            flexShrink: 0
-                          }}
-                        >
-                          ?
+                        <span onClick={(e) => e.stopPropagation()} style={{ display: "inline-flex", alignItems: "center" }}>
+                          <CustomTooltip
+                            title={(() => {
+                              const val = riskManagement.hard_stop.value || 'LOD';
+                              if (val === 'Previous Max') return 'Prev. Max';
+                              if (val === 'Previous Min') return 'Prev. Min';
+                              return String(val);
+                            })()}
+                            text={MARKET_LEVEL_DESCRIPTIONS[String(riskManagement.hard_stop.value || 'LOD')] || ""}
+                          />
                         </span>
                       </div>
                       <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", marginLeft: 4 }}>
@@ -4780,7 +4538,6 @@ export default function WizardStrategyBuilder({
                                   hard_stop: { ...riskManagement.hard_stop, value: opt.val }
                                 });
                                 setIsLevelDropdownOpen(false);
-                                setHoveredLevel(null);
                               }}
                               style={{
                                 padding: "6px 8px",
@@ -4789,7 +4546,7 @@ export default function WizardStrategyBuilder({
                                 fontWeight: isSelected ? 700 : 500,
                                 cursor: "pointer",
                                 display: "flex",
-                                justifyContent: "flex-start",
+                                justifyContent: "space-between",
                                 alignItems: "center",
                                 gap: 5,
                                 backgroundColor: isSelected ? "rgba(216, 122, 61, 0.06)" : "transparent",
@@ -4797,99 +4554,26 @@ export default function WizardStrategyBuilder({
                                 transition: "all 100ms ease",
                               }}
                               onMouseEnter={(e) => {
-                                setHoveredLevel(opt.val);
                                 if (!isSelected) {
                                   e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
                                 }
-                                const listContainer = e.currentTarget.parentElement;
-                                if (listContainer) {
-                                  const offsetTop = e.currentTarget.offsetTop;
-                                  const scrollTop = listContainer.scrollTop;
-                                  setHoveredLevelTop(offsetTop - scrollTop);
-                                }
                               }}
                               onMouseLeave={(e) => {
-                                setHoveredLevel(null);
                                 if (!isSelected) {
                                   e.currentTarget.style.backgroundColor = "transparent";
                                 }
                               }}
                             >
                               <span>{opt.label}</span>
-                              <span style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                width: 12,
-                                height: 12,
-                                borderRadius: "50%",
-                                border: "0.5px solid var(--color-ec-border)",
-                                color: "var(--color-ec-text-muted)",
-                                fontSize: 8,
-                                fontWeight: "bold",
-                                cursor: "help"
-                              }}>
-                                ?
+                              <span onClick={(e) => e.stopPropagation()} style={{ display: "inline-flex", alignItems: "center" }}>
+                                <CustomTooltip
+                                  title={opt.label}
+                                  text={MARKET_LEVEL_DESCRIPTIONS[opt.val] || ""}
+                                />
                               </span>
                             </div>
                           );
                         })}
-
-                        {/* Hovered Option Tooltip */}
-                        {hoveredLevel && MARKET_LEVEL_DESCRIPTIONS[hoveredLevel] && (
-                          <div style={{
-                            position: "absolute",
-                            top: hoveredLevelTop - 45, // sits above or aligned to the hovered option row
-                            left: "105%", // sits to the right of the dropdown list
-                            width: 180,
-                            backgroundColor: "var(--color-ec-bg-elevated)",
-                            border: "0.5px solid var(--color-ec-border)",
-                            borderRadius: 6,
-                            padding: "10px",
-                            boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 6,
-                            zIndex: 1002,
-                            pointerEvents: "none",
-                            animation: "wizTagSlideIn 150ms ease",
-                          }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase" }}>
-                              {MARKET_LEVEL_LABELS[hoveredLevel] || hoveredLevel}
-                            </span>
-                            <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
-                              {MARKET_LEVEL_DESCRIPTIONS[hoveredLevel]}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Hover Tooltip Card for Active Level Selection */}
-                    {hoveredActiveLevel && MARKET_LEVEL_DESCRIPTIONS[hoveredActiveLevel] && (
-                      <div style={{
-                        position: "absolute",
-                        bottom: "120%",
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                        width: 180,
-                        backgroundColor: "var(--color-ec-bg-elevated)",
-                        border: "0.5px solid var(--color-ec-border)",
-                        borderRadius: 6,
-                        padding: "10px",
-                        boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                        zIndex: 1001,
-                        pointerEvents: "none"
-                      }}>
-                        <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase" }}>
-                          {MARKET_LEVEL_LABELS[hoveredActiveLevel] || hoveredActiveLevel}
-                        </span>
-                        <span style={{ fontSize: 8.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}>
-                          {MARKET_LEVEL_DESCRIPTIONS[hoveredActiveLevel]}
-                        </span>
                       </div>
                     )}
                   </div>
@@ -4920,71 +4604,49 @@ export default function WizardStrategyBuilder({
                     <option value="<=">Por debajo</option>
                   </select>
 
-                  <div 
-                    style={{ position: 'relative', width: '60px' }}
-                    onMouseEnter={() => setShowSLOffsetTooltip(true)}
-                    onMouseLeave={() => setShowSLOffsetTooltip(false)}
-                  >
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={riskManagement.hard_stop.offset_pct ?? 0.0}
-                      onChange={(e) => setRiskManagement({
-                        ...riskManagement,
-                        hard_stop: { ...riskManagement.hard_stop, offset_pct: parseFloat(e.target.value) || 0.0 }
-                      })}
-                      style={{
-                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5,
-                        padding: '6px 14px 6px 6px',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: 'var(--color-ec-text-primary)',
-                        fontFamily: 'var(--color-ec-sans)',
-                        outline: 'none',
-                        width: '100%',
-                        height: '32px',
-                        boxSizing: 'border-box',
-                        textAlign: 'right'
-                      }}
-                    />
-                    <span style={{
-                      position: 'absolute',
-                      right: 4,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      fontSize: 9,
-                      fontWeight: 700,
-                      color: 'var(--color-ec-text-muted)',
-                      pointerEvents: 'none',
-                    }}>
-                      %
-                    </span>
-                    {showSLOffsetTooltip && (
-                      <div style={{
-                        position: "absolute",
-                        bottom: "125%",
-                        right: 0,
-                        width: 180,
-                        backgroundColor: "var(--color-ec-bg-elevated)",
-                        border: "0.5px solid var(--color-ec-border)",
-                        borderRadius: 6,
-                        padding: "8px 10px",
-                        boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                        fontSize: 8.5,
-                        color: "var(--color-ec-text-high)",
-                        lineHeight: 1.35,
-                        zIndex: 100,
-                        pointerEvents: "none",
-                        textAlign: "left",
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ position: 'relative', width: '60px' }}>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={riskManagement.hard_stop.offset_pct ?? 0.0}
+                        onChange={(e) => setRiskManagement({
+                          ...riskManagement,
+                          hard_stop: { ...riskManagement.hard_stop, offset_pct: parseFloat(e.target.value) || 0.0 }
+                        })}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-sidebar)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 5,
+                          padding: '6px 14px 6px 6px',
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: 'var(--color-ec-text-primary)',
+                          fontFamily: 'var(--color-ec-sans)',
+                          outline: 'none',
+                          width: '100%',
+                          height: '32px',
+                          boxSizing: 'border-box',
+                          textAlign: 'right'
+                        }}
+                      />
+                      <span style={{
+                        position: 'absolute',
+                        right: 4,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: 'var(--color-ec-text-muted)',
+                        pointerEvents: 'none',
                       }}>
-                        <strong>Holgura (Offset)</strong>
-                        <div style={{ marginTop: 4 }}>
-                          Porcentaje de margen extra que se suma o resta a la referencia para evitar que barridos de precio temporales toquen tu stop.
-                        </div>
-                      </div>
-                    )}
+                        %
+                      </span>
+                    </div>
+                    <CustomTooltip
+                      title="Holgura (Offset)"
+                      text="Porcentaje de margen extra que se suma o resta a la referencia para evitar que barridos de precio temporales toquen tu stop."
+                    />
                   </div>
                 </div>
               </div>
@@ -5185,40 +4847,12 @@ export default function WizardStrategyBuilder({
             {/* Inputs based on mode */}
             {riskManagement.take_profit_mode === TakeProfitMode.FULL ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", textAlign: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                   <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor del porcentaje</span>
-                  <div
-                    onMouseEnter={() => setShowTPPercentTooltip(true)}
-                    onMouseLeave={() => setShowTPPercentTooltip(false)}
-                    style={{ cursor: "help", display: "inline-flex", alignItems: "center" }}
-                  >
-                    <HelpCircle size={10} style={{ color: "var(--color-ec-text-muted)" }} />
-                  </div>
-                  {showTPPercentTooltip && (
-                    <div style={{
-                      position: "absolute",
-                      bottom: "125%",
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: 200,
-                      backgroundColor: "var(--color-ec-bg-elevated)",
-                      border: "0.5px solid var(--color-ec-border)",
-                      borderRadius: 6,
-                      padding: "8px 10px",
-                      boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                      fontSize: 8.5,
-                      color: "var(--color-ec-text-high)",
-                      lineHeight: 1.35,
-                      zIndex: 100,
-                      pointerEvents: "none",
-                      textAlign: "left",
-                    }}>
-                      <strong>Take Profit fijo en %</strong>
-                      <div style={{ marginTop: 4 }}>
-                        Define el porcentaje de beneficio objetivo. Cuando el precio alcance esta distancia de subida (o bajada si es Short) desde tu entrada, se cerrará la operación asegurando las ganancias.
-                      </div>
-                    </div>
-                  )}
+                  <CustomTooltip
+                    title="Take Profit fijo en %"
+                    text="Define el porcentaje de beneficio objetivo. Cuando el precio alcance esta distancia de subida (o bajada si es Short) desde tu entrada, se cerrará la operación asegurando las ganancias."
+                  />
                 </div>
                 <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
@@ -5271,40 +4905,12 @@ export default function WizardStrategyBuilder({
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                   <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Parciales de salida</span>
-                  <div
-                    onMouseEnter={() => setShowTPPartialsTooltip(true)}
-                    onMouseLeave={() => setShowTPPartialsTooltip(false)}
-                    style={{ cursor: "help", display: "inline-flex", alignItems: "center" }}
-                  >
-                    <HelpCircle size={10} style={{ color: "var(--color-ec-text-muted)" }} />
-                  </div>
-                  {showTPPartialsTooltip && (
-                    <div style={{
-                      position: "absolute",
-                      bottom: "125%",
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: 210,
-                      backgroundColor: "var(--color-ec-bg-elevated)",
-                      border: "0.5px solid var(--color-ec-border)",
-                      borderRadius: 6,
-                      padding: "8px 10px",
-                      boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                      fontSize: 8.5,
-                      color: "var(--color-ec-text-high)",
-                      lineHeight: 1.35,
-                      zIndex: 100,
-                      pointerEvents: "none",
-                      textAlign: "left",
-                    }}>
-                      <strong>Salidas Parciales</strong>
-                      <div style={{ marginTop: 4 }}>
-                        Te permite cerrar una fracción de tu posición (ej: 50%) a un precio objetivo determinado, y el resto en otros niveles o al final del día (EOD).
-                      </div>
-                    </div>
-                  )}
+                  <CustomTooltip
+                    title="Salidas Parciales"
+                    text="Te permite cerrar una fracción de tu posición (ej: 50%) a un precio objetivo determinado, y el resto en otros niveles o al final del día (EOD)."
+                  />
                 </div>
                 <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>
                   Define múltiples niveles para salir de la operación por tramos. La suma del capital asignado debe ser exactamente 100%.
@@ -5617,40 +5223,12 @@ export default function WizardStrategyBuilder({
             className="animate-in fade-in duration-200"
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", textAlign: "center" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                 <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Distancia de activación (Trailing buffer %)</span>
-                <div
-                  onMouseEnter={() => setShowTSBufferTooltip(true)}
-                  onMouseLeave={() => setShowTSBufferTooltip(false)}
-                  style={{ cursor: "help", display: "inline-flex", alignItems: "center" }}
-                >
-                  <HelpCircle size={10} style={{ color: "var(--color-ec-text-muted)" }} />
-                </div>
-                {showTSBufferTooltip && (
-                  <div style={{
-                    position: "absolute",
-                    bottom: "125%",
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    width: 200,
-                    backgroundColor: "var(--color-ec-bg-elevated)",
-                    border: "0.5px solid var(--color-ec-border)",
-                    borderRadius: 6,
-                    padding: "8px 10px",
-                    boxShadow: "0 -4px 16px rgba(0,0,0,0.2)",
-                    fontSize: 8.5,
-                    color: "var(--color-ec-text-high)",
-                    lineHeight: 1.35,
-                    zIndex: 100,
-                    pointerEvents: "none",
-                    textAlign: "left",
-                  }}>
-                    <strong>Distancia del Trailing Stop</strong>
-                    <div style={{ marginTop: 4 }}>
-                      El Stop Loss dinámico seguirá al precio a esta distancia porcentual fija. Si el precio retrocede esta cantidad desde su punto más alto, se ejecutará el cierre.
-                    </div>
-                  </div>
-                )}
+                <CustomTooltip
+                  title="Distancia del Trailing Stop"
+                  text="El Stop Loss dinámico seguirá al precio a esta distancia porcentual fija. Si el precio retrocede esta cantidad desde su punto más alto, se ejecutará el cierre."
+                />
               </div>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>
                 Especifica la distancia máxima permitida en % que el precio puede retroceder antes de activar el Stop Loss.
