@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { AggregateMetrics } from "@/lib/api_backtester";
+import InfoTooltip from "./InfoTooltip";
 
 interface MetricsCardProps {
   metrics: AggregateMetrics;
@@ -69,52 +70,10 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
                 alignItems: 'center',
               }}>
                 {row.label}
-                <span
-                  onMouseEnter={() => setHoveredIdx(idx)}
-                  onMouseLeave={() => setHoveredIdx(null)}
-                  style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
-                >
-                  <span
-                    style={{
-                      cursor: 'help',
-                      marginLeft: '4px',
-                      opacity: 0.6,
-                      fontSize: '8px',
-                      color: 'var(--color-ec-text-secondary)',
-                      userSelect: 'none',
-                    }}
-                  >
-                    (?)
-                  </span>
-                  {hoveredIdx === idx && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        bottom: '140%',
-                        left: idx % 2 === 0 ? 0 : 'auto',
-                        right: idx % 2 === 1 ? 0 : 'auto',
-                        width: '240px',
-                        backgroundColor: 'var(--color-ec-bg-elevated)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        color: 'var(--color-ec-text-primary)',
-                        textAlign: 'left',
-                        padding: '8px 10px',
-                        borderRadius: '6px',
-                        fontFamily: 'var(--font-sans), sans-serif',
-                        fontSize: '11px',
-                        fontWeight: 500,
-                        lineHeight: '1.4',
-                        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.45)',
-                        zIndex: 100,
-                        pointerEvents: 'none',
-                        textTransform: 'none',
-                        letterSpacing: 'normal',
-                      }}
-                    >
-                      {row.tooltip}
-                    </span>
-                  )}
-                </span>
+                <InfoTooltip 
+                  text={row.tooltip} 
+                  position={idx % 2 === 0 ? "left" : "right"} 
+                />
               </span>
               <span style={{
                 fontFamily: 'var(--color-ec-sans)',
@@ -173,52 +132,10 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
               alignItems: 'center',
             }}>
               {row.label}
-              <span
-                onMouseEnter={() => setHoveredIdx(idx)}
-                onMouseLeave={() => setHoveredIdx(null)}
-                style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
-              >
-                <span
-                  style={{
-                    cursor: 'help',
-                    marginLeft: '4px',
-                    opacity: 0.6,
-                    fontSize: '8px',
-                    color: 'var(--color-ec-text-secondary)',
-                    userSelect: 'none',
-                  }}
-                >
-                  (?)
-                </span>
-                {hoveredIdx === idx && (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      bottom: '140%',
-                      left: idx % 4 < 2 ? 0 : 'auto',
-                      right: idx % 4 >= 2 ? 0 : 'auto',
-                      width: '240px',
-                      backgroundColor: 'var(--color-ec-bg-elevated)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      color: 'var(--color-ec-text-primary)',
-                      textAlign: 'left',
-                      padding: '8px 10px',
-                      borderRadius: '6px',
-                      fontFamily: 'var(--font-sans), sans-serif',
-                      fontSize: '11px',
-                      fontWeight: 500,
-                      lineHeight: '1.4',
-                      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.45)',
-                      zIndex: 100,
-                      pointerEvents: 'none',
-                      textTransform: 'none',
-                      letterSpacing: 'normal',
-                    }}
-                  >
-                    {row.tooltip}
-                  </span>
-                )}
-              </span>
+              <InfoTooltip 
+                text={row.tooltip} 
+                position={idx % 4 < 2 ? "left" : "right"} 
+              />
             </span>
             <span style={{
               fontFamily: 'var(--color-ec-sans)',

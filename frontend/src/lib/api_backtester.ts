@@ -106,6 +106,7 @@ export interface TradeRecord {
   entry_price: number;
   exit_price: number;
   pnl: number;
+  fees?: number;
   return_pct: number;
   direction: string;
   status: string;

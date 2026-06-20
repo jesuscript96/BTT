@@ -16,7 +16,104 @@ import {
 import type { GlobalEquityPoint, DrawdownPoint, TradeRecord, AggregateMetrics, WhatIfResult } from "@/lib/api_backtester";
 import { runWhatIf } from "@/lib/api_backtester";
 import OOSDegradationTab from "./OOSDegradationTab";
+import InfoTooltip from "../InfoTooltip";
 
+function computeR2FromEquity(eqPoints: any[]): number {
+  const N = eqPoints.length;
+  if (N < 3) return 0;
+  
+  const y = eqPoints.map(p => p.value);
+  
+  const meanX = (N + 1) / 2;
+  let sumY = 0;
+  for (let i = 0; i < N; i++) sumY += y[i];
+  const meanY = sumY / N;
+  
+  let num = 0;
+  let denX = 0;
+  for (let i = 0; i < N; i++) {
+    const x = i + 1;
+    num += (x - meanX) * (y[i] - meanY);
+    denX += (x - meanX) * (x - meanX);
+  }
+  
+  if (denX === 0) return 0;
+  const slope = num / denX;
+  const intercept = meanY - slope * meanX;
+  
+  let ssRes = 0;
+  let ssTot = 0;
+  for (let i = 0; i < N; i++) {
+    const x = i + 1;
+    const pred = slope * x + intercept;
+    ssRes += Math.pow(y[i] - pred, 2);
+    ssTot += Math.pow(y[i] - meanY, 2);
+  }
+  
+  if (ssTot === 0) return 0;
+  const r2 = 1 - (ssRes / ssTot);
+  return Math.max(0, r2);
+}
+
+function computeKRatio(trades: any[]): number {
+  const N = trades.length;
+  if (N < 3) return 0;
+  
+  let accum = 0;
+  const y: number[] = [];
+  for (let i = 0; i < N; i++) {
+    accum += (trades[i].r_multiple ?? 0);
+    y.push(accum);
+  }
+  
+  const meanX = (N + 1) / 2;
+  let sumY = 0;
+  for (let i = 0; i < N; i++) sumY += y[i];
+  const meanY = sumY / N;
+  
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < N; i++) {
+    const x = i + 1;
+    num += (x - meanX) * (y[i] - meanY);
+    den += (x - meanX) * (x - meanX);
+  }
+  
+  if (den === 0) return 0;
+  const slope = num / den;
+  const intercept = meanY - slope * meanX;
+  
+  let sumSquares = 0;
+  for (let i = 0; i < N; i++) {
+    const x = i + 1;
+    const pred = slope * x + intercept;
+    sumSquares += (y[i] - pred) * (y[i] - pred);
+  }
+  
+  const standardError = Math.sqrt(sumSquares / (N - 2));
+  if (standardError === 0 || isNaN(standardError)) return 0;
+  
+  return (slope * Math.sqrt(N)) / standardError;
+}
+
+function computeSQN(trades: any[]): number {
+  const N = trades.length;
+  if (N === 0) return 0;
+  
+  const rMultiples = trades.map(t => t.r_multiple ?? 0);
+  const sumR = rMultiples.reduce((s, r) => s + r, 0);
+  const meanR = sumR / N;
+  
+  if (N < 2) return 0;
+  
+  const sumSquares = rMultiples.reduce((s, r) => s + Math.pow(r - meanR, 2), 0);
+  const variance = sumSquares / (N - 1);
+  const stdR = Math.sqrt(variance);
+  
+  if (stdR === 0) return 0;
+  
+  return (meanR / stdR) * Math.sqrt(N);
+}
 
 interface EquityCurveTabProps {
   globalEquity: GlobalEquityPoint[];
@@ -49,6 +146,9 @@ export default function EquityCurveTab({
 }: EquityCurveTabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
+  const ddLabelRef = useRef<HTMLDivElement>(null);
+  const ddLineStartRef = useRef<HTMLDivElement>(null);
+  const ddLineEndRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const ddChartRef = useRef<IChartApi | null>(null);
 
@@ -60,6 +160,77 @@ export default function EquityCurveTab({
 
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
   const [showDrawdownExpenses, setShowDrawdownExpenses] = useState(false);
+  const [showMaxDDPeriod, setShowMaxDDPeriod] = useState(false);
+
+  // Calcular el período de drawdown más largo en base a duración temporal
+  const maxDrawdownPeriod = useMemo(() => {
+    if (!globalEquity || globalEquity.length < 2) return null;
+    
+    let maxVal = -Infinity;
+    let currentStreakStart: any = null;
+    const streaks: Array<{ start: number; end: number; duration: number }> = [];
+    
+    for (let i = 0; i < globalEquity.length; i++) {
+      const p = globalEquity[i];
+      const val = p.value;
+      
+      if (val >= maxVal) {
+        if (currentStreakStart !== null) {
+          streaks.push({
+            start: currentStreakStart.time as number,
+            end: p.time as number,
+            duration: (p.time as number) - (currentStreakStart.time as number)
+          });
+          currentStreakStart = null;
+        }
+        maxVal = val;
+      } else {
+        if (currentStreakStart === null && i > 0) {
+          currentStreakStart = globalEquity[i - 1];
+        }
+      }
+    }
+    
+    // Si la curva termina en drawdown (no recuperada al final del periodo)
+    if (currentStreakStart !== null) {
+      const lastPoint = globalEquity[globalEquity.length - 1];
+      streaks.push({
+        start: currentStreakStart.time as number,
+        end: lastPoint.time as number,
+        duration: (lastPoint.time as number) - (currentStreakStart.time as number)
+      });
+    }
+    
+    if (streaks.length === 0) return null;
+    
+    let maxStreak = streaks[0];
+    for (const s of streaks) {
+      if (s.duration > maxStreak.duration) {
+        maxStreak = s;
+      }
+    }
+    return maxStreak;
+  }, [globalEquity]);
+
+  // Calcular R2, K-Ratio y SQN basados únicamente en el In-Sample (IS)
+  const { isR2, isKRatio, isSQN } = useMemo(() => {
+    if (!fullGlobalEquity || fullGlobalEquity.length < 2 || !fullTrades || fullTrades.length === 0) {
+      return { isR2: 0, isKRatio: 0, isSQN: 0 };
+    }
+    const cutoffIdx = Math.max(
+      1,
+      Math.floor(fullGlobalEquity.length * (isPercent / 100)),
+    );
+    const cTime = fullGlobalEquity[cutoffIdx - 1].time;
+    const isTrades = fullTrades.filter((t) => t.entry_time_epoch <= cTime);
+    const isEq = fullGlobalEquity.slice(0, cutoffIdx);
+    
+    return {
+      isR2: computeR2FromEquity(isEq),
+      isKRatio: computeKRatio(isTrades),
+      isSQN: computeSQN(isTrades),
+    };
+  }, [fullGlobalEquity, fullTrades, isPercent]);
 
   // --- What If Simulation States ---
   const [excludeDays, setExcludeDays] = useState<number[]>([]); // 0=Mon, 4=Fri
@@ -402,8 +573,88 @@ export default function EquityCurveTab({
       });
     }
 
+    // --- Max Drawdown Period Overlay ---
+    if (showMaxDDPeriod && maxDrawdownPeriod) {
+      const ddPeriodSeries = chart.addSeries(AreaSeries, {
+        lineColor: "transparent",    // Elimina cualquier borde superior horizontal
+        topColor: "rgba(239, 68, 68, 0.16)",  // Relleno superior un poco más visible
+        bottomColor: "rgba(239, 68, 68, 0.04)", // Relleno inferior un poco más visible
+        lineWidth: 1,                // Grosor válido en TS, pero invisible por lineColor: transparent
+        priceScaleId: "dd_period_scale",
+        lastValueVisible: false,  // Evita mostrar cifra en el eje Y
+        priceLineVisible: false,   // Evita mostrar línea horizontal de precio
+      });
+      
+      chart.priceScale("dd_period_scale").applyOptions({
+        autoScale: true,          // Habilitar autoscale con los límites de la serie (0.0 y 1.0)
+        scaleMargins: { top: 0, bottom: 0 }, // Ocupar 100% de la altura
+        visible: false,          // No mostrar escala numérica
+      });
+
+      const startIndex = globalEquity.findIndex(p => (p.time as number) === maxDrawdownPeriod.start);
+      const endIndex = globalEquity.findIndex(p => (p.time as number) === maxDrawdownPeriod.end);
+      
+      const ddPeriodData: any[] = [];
+      if (startIndex >= 0 && endIndex >= 0) {
+        // Punto inicial en 0.0 para anclar la escala en la base
+        if (startIndex > 0) {
+          ddPeriodData.push({ time: globalEquity[startIndex - 1].time as Time, value: 0.0 });
+        }
+        // Puntos de la banda en 1.0
+        for (let i = startIndex; i <= endIndex; i++) {
+          ddPeriodData.push({ time: globalEquity[i].time as Time, value: 1.0 });
+        }
+        // Punto final en 0.0 para cerrar
+        if (endIndex < globalEquity.length - 1) {
+          ddPeriodData.push({ time: globalEquity[endIndex + 1].time as Time, value: 0.0 });
+        }
+      }
+
+      if (ddPeriodData.length > 0) {
+        ddPeriodSeries.setData(ddPeriodData);
+      }
+    }
+
+    const updateLabelPosition = () => {
+      if (!chartRef.current || !maxDrawdownPeriod) return;
+      const timeScale = chartRef.current.timeScale();
+      const containerWidth = equityContainer?.clientWidth || 0;
+
+      // Línea de Inicio
+      if (ddLineStartRef.current) {
+        const coordStart = timeScale.timeToCoordinate(maxDrawdownPeriod.start as Time);
+        if (coordStart !== null && coordStart >= 0 && coordStart <= containerWidth) {
+          ddLineStartRef.current.style.left = `${coordStart}px`;
+          ddLineStartRef.current.style.display = "block";
+        } else {
+          ddLineStartRef.current.style.display = "none";
+        }
+      }
+
+      // Línea de Fin y Etiqueta
+      const coordEnd = timeScale.timeToCoordinate(maxDrawdownPeriod.end as Time);
+      if (coordEnd !== null && coordEnd >= 0 && coordEnd <= containerWidth) {
+        if (ddLineEndRef.current) {
+          ddLineEndRef.current.style.left = `${coordEnd}px`;
+          ddLineEndRef.current.style.display = "block";
+        }
+        if (ddLabelRef.current) {
+          ddLabelRef.current.style.left = `${coordEnd - 6}px`; // Pegado a la línea derecha
+          ddLabelRef.current.style.display = "block";
+        }
+      } else {
+        if (ddLineEndRef.current) ddLineEndRef.current.style.display = "none";
+        if (ddLabelRef.current) ddLabelRef.current.style.display = "none";
+      }
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(updateLabelPosition);
+
     chart.timeScale().fitContent();
     if (ddChart) ddChart.timeScale().fitContent();
+
+    // Posicionar etiqueta flotante al inicio
+    setTimeout(updateLabelPosition, 50);
 
     const handleResize = () => {
       if (equityContainer) {
@@ -414,6 +665,7 @@ export default function EquityCurveTab({
         ddChart.applyOptions({ width: ddContainer.clientWidth });
         ddChart.timeScale().fitContent();
       }
+      updateLabelPosition();
     };
     window.addEventListener("resize", handleResize);
 
@@ -424,7 +676,7 @@ export default function EquityCurveTab({
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses]);
+  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod]);
 
   if (!globalEquity.length) {
     return <p className="text-sm text-[var(--muted)]">Sin datos de equity</p>;
@@ -622,6 +874,19 @@ export default function EquityCurveTab({
                       </span>
                     </label>
                   )}
+                  {maxDrawdownPeriod && (
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none ml-2">
+                      <input
+                        type="checkbox"
+                        checked={showMaxDDPeriod}
+                        onChange={(e) => setShowMaxDDPeriod(e.target.checked)}
+                        className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-mono text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">
+                        Max DD Period
+                      </span>
+                    </label>
+                  )}
                 </div>
 
                 <div className="flex items-center" style={{ marginRight: 22 }}>
@@ -660,26 +925,77 @@ export default function EquityCurveTab({
             )}
             <div style={{ position: "relative", width: "100%", height: 370 }}>
               <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
+              {showMaxDDPeriod && maxDrawdownPeriod && (
+                <>
+                  <div
+                    ref={ddLineStartRef}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      bottom: 26, // Para que se detenga arriba del eje de tiempo
+                      width: "1px",
+                      backgroundColor: "rgba(239, 68, 68, 0.45)", // Borde rojo más visible
+                      pointerEvents: "none",
+                      zIndex: 13,
+                      display: "none",
+                    }}
+                  />
+                  <div
+                    ref={ddLineEndRef}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      bottom: 26,
+                      width: "1px",
+                      backgroundColor: "rgba(239, 68, 68, 0.45)", // Borde rojo más visible
+                      pointerEvents: "none",
+                      zIndex: 13,
+                      display: "none",
+                    }}
+                  />
+                  <div
+                    ref={ddLabelRef}
+                    style={{
+                      position: "absolute",
+                      bottom: 45, // Distancia desde la escala de tiempo inferior
+                      left: 0,
+                      transform: "rotate(-90deg)",
+                      transformOrigin: "left bottom",
+                      fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: "8px",
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      color: "rgba(239, 68, 68, 0.75)",
+                      pointerEvents: "none",
+                      whiteSpace: "nowrap",
+                      zIndex: 14,
+                      display: "none",
+                    }}
+                  >
+                    MAX DRAWDOWN PERIOD
+                  </div>
+                </>
+              )}
               {/* Compact Terminal HUD Table for R-squared (R2) in the bottom-left corner (above TradingView logo / time scale) */}
               {metrics && metrics.r_squared !== undefined && (
                 <div
                   style={{
                     position: "absolute",
-                    bottom: 58,
+                    bottom: 32, // Bajar a la esquina inferior izquierda tras ocultar el logo de TradingView
                     left: 12,
                     backgroundColor: "transparent",
                     backdropFilter: "none",
                     border: "none",
                     borderRadius: 0,
                     padding: "0",
-                    pointerEvents: "none",
+                    pointerEvents: "auto",
                     zIndex: 15,
                     fontFamily: "'JetBrains Mono', monospace",
                     fontSize: "9px",
                     color: "var(--color-ec-text-primary)",
                     boxShadow: "none",
                     lineHeight: 1.3,
-                    minWidth: 120,
+                    minWidth: 150,
                   }}
                 >
                   <div style={{ fontWeight: 700, fontSize: "8px", color: "var(--color-ec-text-muted)", letterSpacing: "0.06em", marginBottom: 5, textTransform: "uppercase" }}>
@@ -694,11 +1010,43 @@ export default function EquityCurveTab({
                     </thead>
                     <tbody>
                       <tr style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
-                        <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff" }}>
-                          R²
+                        <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff", display: "flex", alignItems: "center" }}>
+                          <span>R² (IS)</span>
+                          <InfoTooltip 
+                            title="R² (In-Sample)"
+                            text={"¿Cómo de recta es la subida de tu dinero? Mide la consistencia del crecimiento. Si el gráfico subiera en una línea recta perfecta, el valor sería 1.00. Un valor alto significa que ganas de forma constante mes a mes, sin dar saltos locos ni quedarte estancado.\n\nBaremos: >0.90 Excelente (crecimiento lineal) | 0.75-0.90 Bueno | 0.60-0.75 Mediocre (baches y estancamientos) | <0.60 Malo (crecimiento caótico)."} 
+                            position="top-right-aligned" 
+                          />
                         </td>
                         <td style={{ textAlign: "right", padding: "4px 0", color: "#ffffff", fontWeight: 700, paddingLeft: 12 }}>
-                          {(metrics.r_squared ?? 0).toFixed(4)}
+                          {isR2.toFixed(4)}
+                        </td>
+                      </tr>
+                      <tr style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
+                        <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff", display: "flex", alignItems: "center" }}>
+                          <span>K-Ratio (IS)</span>
+                          <InfoTooltip 
+                            title="K-Ratio (In-Sample)"
+                            text={"Mide si la ganancia es constante en el tiempo y no se debe a un golpe de suerte. Es clave contra el overfit (sobreajuste): castiga los saltos irregulares o depender de un solo trade gigante. Es ideal para evaluar estrategias de 'Win Rate' (curvas suaves y lineales) pero menos representativo en estrategias de 'Risk Reward' (ganancias escalonadas con saltos bruscos).\n\nBaremos: >1.5 Excelente (regularidad legendaria) | 1.0-1.5 Bueno (consistencia sólida) | 0.5-1.0 Mediocre (periodos planos largos) | <0.5 Malo (errático)."} 
+                            position="top-right-aligned" 
+                            width="320px"
+                          />
+                        </td>
+                        <td style={{ textAlign: "right", padding: "4px 0", color: "#ffffff", fontWeight: 700, paddingLeft: 12 }}>
+                          {isKRatio.toFixed(4)}
+                        </td>
+                      </tr>
+                      <tr style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
+                        <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff", display: "flex", alignItems: "center" }}>
+                          <span>SQN (IS)</span>
+                          <InfoTooltip 
+                            title="SQN (In-Sample)"
+                            text={"¿Cómo de fácil y seguro es operar este sistema? Mide la relación entre lo que ganas por trade frente a la volatilidad de tus resultados, ajustado por cuántas operaciones haces. Te dice si puedes aumentar el tamaño de tus posiciones con confianza.\n\nBaremos: >3.0 Excelente (máquina de imprimir dinero) | 2.0-3.0 Bueno (muy operable) | 1.5-2.0 Mediocre (operable pero requiere precaución) | <1.5 Malo (difícil de operar)."} 
+                            position="top-right-aligned" 
+                          />
+                        </td>
+                        <td style={{ textAlign: "right", padding: "4px 0", color: "#ffffff", fontWeight: 700, paddingLeft: 12 }}>
+                          {isSQN.toFixed(2)}
                         </td>
                       </tr>
                     </tbody>

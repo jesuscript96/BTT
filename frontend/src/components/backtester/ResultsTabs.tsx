@@ -159,7 +159,12 @@ export default function ResultsTabs({
           />
         </div>
         <div style={{ display: activeTab === "calendar" ? "block" : "none" }}>
-          <CalendarTab dayResults={result.day_results} trades={result.trades} isDarkMode={isDarkMode} />
+          <CalendarTab
+            dayResults={result.day_results}
+            trades={result.trades}
+            isDarkMode={isDarkMode}
+            monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+          />
         </div>
         <div style={{ display: activeTab === "trades" ? "block" : "none" }}>
           <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade} />

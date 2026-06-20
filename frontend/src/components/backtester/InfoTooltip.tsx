@@ -4,16 +4,24 @@ import { useState } from "react";
 
 interface InfoTooltipProps {
   text: string;
-  position?: "left" | "right" | "top" | "bottom" | "top-left" | "top-right";
+  position?: "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "top-right-aligned";
   style?: React.CSSProperties;
   width?: string | number;
+  title?: string;
 }
 
-export default function InfoTooltip({ text, position = "top", style, width }: InfoTooltipProps) {
+export default function InfoTooltip({ text, position = "top", style, width, title }: InfoTooltipProps) {
   const [hovered, setHovered] = useState(false);
 
   const getPositionStyles = () => {
     switch (position) {
+      case "top-right-aligned":
+        return {
+          bottom: "110%",
+          left: 0,
+          right: "auto",
+          transform: "none",
+        };
       case "left":
         return {
           bottom: "140%",
@@ -105,10 +113,15 @@ export default function InfoTooltip({ text, position = "top", style, width }: In
             pointerEvents: "none",
             textTransform: "none",
             letterSpacing: "normal",
-            whiteSpace: "normal",
+            whiteSpace: "pre-line",
             ...getPositionStyles(),
           }}
         >
+          {title && (
+            <div style={{ color: "var(--color-ec-copper)", fontWeight: 700, marginBottom: "4px", fontSize: "11px" }}>
+              {title}
+            </div>
+          )}
           {text}
         </span>
       )}

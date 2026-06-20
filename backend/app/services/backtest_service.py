@@ -791,6 +791,7 @@ def _enrich_trades(
             "entry_price": t["entry_price"],
             "exit_price": t["exit_price"],
             "pnl": t["pnl"],
+            "fees": t.get("fees", 0.0),
             "return_pct": t["return_pct"],
             "direction": t["direction"],
             "status": t["status"],

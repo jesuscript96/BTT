@@ -427,6 +427,7 @@ def simulate(
                     "entry_price": round(entry_price, 6),
                     "exit_price": round(net_exit, 6),
                     "pnl": round(pnl, 4),
+                    "fees": round(fee_amount, 4),
                     "return_pct": round(ret_pct, 4),
                     "direction": "Long" if is_long else "Short",
                     "status": "Closed",
@@ -578,6 +579,7 @@ def simulate(
         for t in trades:
             if t["direction"] == "Short":
                 t["pnl"] = round(t["pnl"] - daily_locates_fee, 4)
+                t["fees"] = round(t.get("fees", 0.0) + daily_locates_fee, 4)
                 break
                 
         # Update equity curve retroactively downwards so it reflects the end of day state

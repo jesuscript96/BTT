@@ -177,8 +177,12 @@ input::placeholder {
   opacity: 1 !important;
 }
 
-
-
-
-
-
+/* Ocultar logotipo o enlace de atribución de TradingView en lightweight-charts */
+div[class*="tv-lightweight-charts"] a,
+div[class*="lightweight-charts"] a,
+a[href*="tradingview.com"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

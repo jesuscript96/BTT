@@ -93,6 +93,18 @@ function getQualityLevel(key: string, val: number): "very_good" | "good" | "medi
   }
 }
 
+function getCurveState(key: "profitFactor" | "sharpe", val: number): "asc" | "med" | "desc" {
+  if (key === "sharpe") {
+    if (val >= 1.0) return "asc";
+    if (val >= 0.0) return "med";
+    return "desc";
+  } else { // profitFactor
+    if (val >= 1.2) return "asc";
+    if (val >= 1.0) return "med";
+    return "desc";
+  }
+}
+
 export default function OOSDegradationTab({
   fullGlobalEquity,
   fullGlobalDrawdown,
@@ -696,7 +708,7 @@ export default function OOSDegradationTab({
           <div
             style={{
               position: "absolute",
-              bottom: 75, // Elevated slightly to fit Sharpe Ratio row
+              bottom: 32, // Bajar a la esquina inferior izquierda tras ocultar el logo de TradingView
               left: 12,
               backgroundColor: "transparent",
               backdropFilter: "none",
@@ -749,40 +761,50 @@ export default function OOSDegradationTab({
                   let ratioColor = "var(--color-ec-text-muted)";
                   let ratioLabel = "—";
 
-                  if (ratio !== null && isFinite(ratio)) {
-                    const isLevel = getQualityLevel(row.key, displayIsVal);
-                    const oosLevel = getQualityLevel(row.key, displayOosVal);
-
-                    const optThreshold = row.key === "sharpe" ? 0.70 : 0.90;
-                    const carefulThreshold = row.key === "sharpe" ? 0.50 : 0.65;
-
-                    const isGood = (isLevel === "good" || isLevel === "very_good");
-                    const oosGood = (oosLevel === "good" || oosLevel === "very_good");
-
-                    if (ratio >= optThreshold) {
-                      if ((isLevel === "mediocre" || isLevel === "bad") && oosGood) {
-                        ratioColor = "#e8a33a";
-                        ratioLabel = "Cuidado, edge no lineal";
+                  if (row.key === "winRate") {
+                    if (ratio !== null && isFinite(ratio)) {
+                      if (ratio >= 0.80 && ratio <= 1.20) {
+                        ratioColor = "var(--color-ec-profit)"; // Verde
+                        ratioLabel = "Lineal";
+                      } else if ((ratio >= 0.65 && ratio < 0.80) || (ratio > 1.20 && ratio <= 1.35)) {
+                        ratioColor = "#e8a33a"; // Amarillo
+                        ratioLabel = "No lineal";
                       } else {
-                        ratioColor = "var(--color-ec-profit)";
-                        ratioLabel = "Óptimo";
+                        ratioColor = "var(--color-ec-loss)"; // Rojo
+                        ratioLabel = "No lineal";
                       }
-                    } else if (ratio >= carefulThreshold) {
-                      if (isGood && oosLevel === "mediocre") {
-                        ratioColor = "#e8a33a";
-                        ratioLabel = "Cuidado, posible overfit";
-                      } else {
-                        ratioColor = "#e8a33a";
-                        ratioLabel = "Cuidado";
-                      }
-                    } else {
-                      if (isGood) {
-                        ratioColor = "var(--color-ec-loss)";
-                        ratioLabel = "Overfit/No Edge";
-                      } else {
-                        ratioColor = "var(--color-ec-loss)";
-                        ratioLabel = "Sin Edge";
-                      }
+                    }
+                  } else {
+                    const isState = getCurveState(row.key, displayIsVal);
+                    const oosState = getCurveState(row.key, displayOosVal);
+
+                    if (isState === "asc" && oosState === "asc") {
+                      ratioColor = "var(--color-ec-profit)";
+                      ratioLabel = "Óptimo";
+                    } else if (isState === "asc" && oosState === "med") {
+                      ratioColor = "#e8a33a";
+                      ratioLabel = "Cuidado, posible overfit";
+                    } else if (isState === "asc" && oosState === "desc") {
+                      ratioColor = "var(--color-ec-loss)";
+                      ratioLabel = "Overfit/No Edge";
+                    } else if (isState === "med" && oosState === "asc") {
+                      ratioColor = "#e8a33a";
+                      ratioLabel = "Cuidado/No lineal";
+                    } else if (isState === "med" && oosState === "med") {
+                      ratioColor = "#e8a33a";
+                      ratioLabel = "Cuidado";
+                    } else if (isState === "med" && oosState === "desc") {
+                      ratioColor = "var(--color-ec-loss)";
+                      ratioLabel = "Sin Edge";
+                    } else if (isState === "desc" && oosState === "asc") {
+                      ratioColor = "var(--color-ec-loss)";
+                      ratioLabel = "Sin Edge/No lineal";
+                    } else if (isState === "desc" && oosState === "desc") {
+                      ratioColor = "var(--color-ec-loss)";
+                      ratioLabel = "Sin Edge";
+                    } else if (isState === "desc" && oosState === "med") {
+                      ratioColor = "var(--color-ec-loss)";
+                      ratioLabel = "Sin Edge";
                     }
                   }
 
