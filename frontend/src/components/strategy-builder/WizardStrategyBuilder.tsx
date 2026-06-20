@@ -5666,7 +5666,7 @@ export default function WizardStrategyBuilder({
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: 10,
-          maxHeight: 280,
+          maxHeight: 420,
           overflowY: "auto",
           paddingRight: 6,
           scrollbarWidth: "none",
