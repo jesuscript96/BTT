@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import {
     ConditionGroup,
     AnyCondition,
@@ -2825,7 +2826,7 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
 
                 {children}
 
-                {activeTooltip && (
+                {activeTooltip && typeof document !== "undefined" && createPortal(
                     <div
                         style={{
                             position: "fixed",
@@ -2859,7 +2860,8 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                             style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
                             dangerouslySetInnerHTML={{ __html: activeTooltip.text }}
                         />
-                    </div>
+                    </div>,
+                    document.body
                 )}
             </div>
         </TooltipContext.Provider>

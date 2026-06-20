@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { fetchAvailableDateRange } from "@/lib/api_backtester";
 
 interface Props {
@@ -1053,7 +1054,7 @@ export default function InlineDatasetBuilder({
           </div>
         </div>
       )}
-      {activeTooltip && (
+      {activeTooltip && typeof document !== "undefined" && createPortal(
         <div
           style={{
             position: "fixed",
@@ -1077,7 +1078,8 @@ export default function InlineDatasetBuilder({
           }}
         >
           {activeTooltip.text}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import type {
   EntryLogic as EntryLogicType,
   ExitLogic as ExitLogicType,
@@ -95,7 +96,7 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
       }}
     >
       ?
-      {hovered && (
+      {hovered && typeof document !== "undefined" && createPortal(
         <span style={{
           position: 'fixed',
           top: coords.y,
@@ -126,7 +127,8 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
             style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
             dangerouslySetInnerHTML={{ __html: text }}
           />
-        </span>
+        </span>,
+        document.body
       )}
     </span>
   );
