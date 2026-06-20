@@ -25,7 +25,7 @@ import { RiskManagementComponent } from "@/components/strategy-builder/RiskManag
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import { getAllowedTargets } from "@/lib/indicatorValidation";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, INDICATOR_CATEGORIES, INDICATOR_DESCRIPTIONS, getDefaultParamsForIndicator } from "@/components/strategy-builder/ConditionBuilder";
-import { Clock, Plus, Trash2, Info, HelpCircle, Sparkles } from "lucide-react";
+import { Clock, Plus, Trash2, Info, HelpCircle, Sparkles, Database, SlidersHorizontal } from "lucide-react";
 
 export interface WizardDraft {
   id: string;
@@ -1149,18 +1149,18 @@ export default function WizardStrategyBuilder({
     const getDayWidth = (val: string) => {
       return val === 'gap_day' ? 110 : 105;
     };
-    
+
     const getParamWidth = (val: string) => {
       const widths: Record<string, number> = {
-        gap_pct: 75,
-        pm_volume: 120,
-        rth_volume: 125,
-        rth_close: 125,
-        pm_open: 125,
-        pmh_gap_pct: 125,
-        rth_range_pct: 115,
+        gap_pct: 95,
+        pm_volume: 135,
+        rth_volume: 140,
+        rth_close: 140,
+        pm_open: 140,
+        pmh_gap_pct: 145,
+        rth_range_pct: 130,
       };
-      return widths[val] || 115;
+      return widths[val] || 130;
     };
     
     const getOpWidth = (val: string) => {
@@ -1297,51 +1297,88 @@ export default function WizardStrategyBuilder({
           </p>
         </div>
 
-        {/* Choice Buttons */}
-        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--color-ec-border)", marginBottom: 16 }}>
+        {/* Choice Buttons/Areas */}
+        <div style={{ 
+          display: "flex", 
+          alignItems: "center", 
+          justifyContent: "center", 
+          gap: 0, 
+          borderBottom: "1px solid var(--color-ec-border)", 
+          marginBottom: 16,
+          paddingBottom: 16
+        }}>
           <button
             type="button"
             onClick={() => setCustomUniverse(false)}
             style={{
               flex: 1,
-              padding: "10px 0",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "12px 12px",
               border: "none",
-              borderBottom: !customUniverse ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
-              backgroundColor: !customUniverse ? "rgba(216, 122, 61, 0.05)" : "transparent",
+              background: !customUniverse ? "rgba(216, 122, 61, 0.04)" : "transparent",
+              borderRadius: 6,
               color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
               cursor: "pointer",
-              textAlign: "center",
-              fontFamily: "var(--color-ec-sans)",
-              fontSize: 11,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
               transition: "all 150ms ease",
             }}
           >
-            Dataset Guardado
+            <Database style={{ 
+              width: 22, 
+              height: 22, 
+              strokeWidth: 1.5, 
+              marginBottom: 6, 
+              color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
+            }} />
+            <span style={{
+              fontFamily: "var(--color-ec-sans)",
+              fontSize: 12,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}>
+              Dataset Guardado
+            </span>
           </button>
+          
+          <div style={{ width: 1, height: 40, backgroundColor: "var(--color-ec-border)", margin: "0 16px" }} />
+          
           <button
             type="button"
             onClick={() => setCustomUniverse(true)}
             style={{
               flex: 1,
-              padding: "10px 0",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "12px 12px",
               border: "none",
-              borderBottom: customUniverse ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
-              backgroundColor: customUniverse ? "rgba(216, 122, 61, 0.05)" : "transparent",
+              background: customUniverse ? "rgba(216, 122, 61, 0.04)" : "transparent",
+              borderRadius: 6,
               color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
               cursor: "pointer",
-              textAlign: "center",
-              fontFamily: "var(--color-ec-sans)",
-              fontSize: 11,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
               transition: "all 150ms ease",
             }}
           >
-            Personalizar
+            <SlidersHorizontal style={{ 
+              width: 22, 
+              height: 22, 
+              strokeWidth: 1.5, 
+              marginBottom: 6, 
+              color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
+            }} />
+            <span style={{
+              fontFamily: "var(--color-ec-sans)",
+              fontSize: 12,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}>
+              Personalizar
+            </span>
           </button>
         </div>
 
@@ -1413,14 +1450,30 @@ export default function WizardStrategyBuilder({
                       .map(([key, val]) => {
                         const lbl = formatFilterValue(key, val);
                         return lbl ? (
-                          <span key={key} style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 4, backgroundColor: 'rgba(216, 122, 61, 0.08)', color: 'var(--color-ec-copper)', border: '0.5px solid rgba(216, 122, 61, 0.2)' }}>
+                          <span key={key} style={{ 
+                            fontSize: 9.5, 
+                            fontWeight: 600,
+                            padding: '4px 8px', 
+                            borderRadius: 4, 
+                            backgroundColor: 'rgba(216, 122, 61, 0.08)', 
+                            color: 'var(--color-ec-copper)', 
+                            border: '0.5px solid rgba(216, 122, 61, 0.25)' 
+                          }}>
                             {lbl}
                           </span>
                         ) : null;
                       })}
                     {(currentDs.filters.rules || []).map((r: any, idx: number) => (
-                      <span key={idx} style={{ fontSize: 9.5, padding: '2px 6px', borderRadius: 4, backgroundColor: 'rgba(216, 122, 61, 0.08)', color: 'var(--color-ec-copper)', border: '0.5px solid rgba(216, 122, 61, 0.2)' }}>
-                        {formatRule(r)}
+                      <span key={idx} style={{ 
+                        fontSize: 9.5, 
+                        fontWeight: 600,
+                        padding: '4px 8px', 
+                        borderRadius: 4, 
+                        backgroundColor: 'rgba(216, 122, 61, 0.08)', 
+                        color: 'var(--color-ec-copper)', 
+                        border: '0.5px solid rgba(216, 122, 61, 0.25)' 
+                      }}>
+                        {formatUnivRule(r)}
                       </span>
                     ))}
                   </div>
@@ -1506,7 +1559,7 @@ export default function WizardStrategyBuilder({
                 </select>
               </div>
 
-              {/* Row 2: Filtro, Operador, Valor (Mín / Máx) */}
+              {/* Row 2: Filtro, Operador, Valor (Mín / Máx), + Añadir */}
               <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', width: '100%' }}>
                 {/* Custom dropdown for Filtro */}
                 <div 
@@ -1544,17 +1597,33 @@ export default function WizardStrategyBuilder({
                       height: 23,
                     }}
                   >
-                    <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                      {{
-                        gap_pct: "Gap (%)",
-                        pm_volume: "Volumen PM (M)",
-                        rth_volume: "Volumen RTH (M)",
-                        rth_close: "Apertura RTH ($)",
-                        pm_open: "Apertura PM ($)",
-                        pmh_gap_pct: "PM High Gap (%)",
-                        rth_range_pct: "Rango RTH (%)",
-                      }[tempUnivParam] || tempUnivParam}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden', flex: 1 }}>
+                      <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                        {{
+                          gap_pct: "Gap (%)",
+                          pm_volume: "Volumen PM (M)",
+                          rth_volume: "Volumen RTH (M)",
+                          rth_close: "Apertura RTH ($)",
+                          pm_open: "Apertura PM ($)",
+                          pmh_gap_pct: "PM High Gap (%)",
+                          rth_range_pct: "Rango RTH (%)",
+                        }[tempUnivParam] || tempUnivParam}
+                      </span>
+                      <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <CustomTooltip 
+                          title={{
+                            gap_pct: "Gap (%)",
+                            pm_volume: "Volumen Premarket (M)",
+                            rth_volume: "Volumen RTH (M)",
+                            rth_close: "Precio Apertura RTH ($)",
+                            pm_open: "Precio Apertura PM ($)",
+                            pmh_gap_pct: "PM High Gap (%)",
+                            rth_range_pct: "Rango Vela RTH (%)",
+                          }[tempUnivParam] || tempUnivParam} 
+                          text={FILTRO_DESCRIPTIONS[tempUnivParam] || ""} 
+                        />
+                      </span>
+                    </div>
                     <span style={{ fontSize: 7, color: 'var(--color-ec-text-muted)', marginLeft: 4 }}>
                       {isUnivFiltroOpen ? '▲' : '▼'}
                     </span>
@@ -1563,18 +1632,19 @@ export default function WizardStrategyBuilder({
                   {/* List */}
                   {isUnivFiltroOpen && (
                     <div style={{
-                      position: 'fixed',
-                      top: univFiltroDropdownRef.current ? univFiltroDropdownRef.current.getBoundingClientRect().bottom + 4 : 0,
-                      left: univFiltroDropdownRef.current ? univFiltroDropdownRef.current.getBoundingClientRect().left : 0,
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
                       width: 215,
                       maxHeight: 180,
                       overflowY: 'auto',
                       backgroundColor: 'var(--color-ec-bg-elevated)',
                       border: '0.5px solid var(--color-ec-border)',
                       borderRadius: 5,
-                      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
                       zIndex: 99999,
                       fontFamily: 'var(--color-ec-sans)',
+                      marginTop: 4,
                     }}>
                       {[
                         { value: "gap_pct", label: "Gap (%)" },
@@ -1592,7 +1662,8 @@ export default function WizardStrategyBuilder({
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              justifyContent: 'space-between',
+                              justifyContent: 'flex-start',
+                              gap: 6,
                               backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
                               borderLeft: isSelected ? '3px solid var(--color-ec-copper)' : '3px solid transparent',
                               padding: '5px 8px',
@@ -1623,7 +1694,6 @@ export default function WizardStrategyBuilder({
                               textOverflow: 'ellipsis',
                               overflow: 'hidden',
                               whiteSpace: 'nowrap',
-                              flex: 1,
                             }}>
                               {opt.label}
                             </span>
@@ -1709,10 +1779,8 @@ export default function WizardStrategyBuilder({
                     />
                   </div>
                 )}
-              </div>
 
-              {/* Row 3: + Añadir button lowered to its own row */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                {/* + Añadir button placed right next to Value */}
                 <button
                   type="button"
                   onClick={() => {
@@ -1790,11 +1858,15 @@ export default function WizardStrategyBuilder({
                     color: 'var(--color-ec-copper-text)',
                     border: 'none',
                     borderRadius: 4,
-                    padding: '5px 12px',
-                    fontSize: 10.5,
+                    padding: '0 12px',
+                    fontSize: 10,
                     fontWeight: 700,
                     cursor: 'pointer',
-                    height: 25,
+                    height: 23,
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
                   + Añadir
@@ -1816,11 +1888,12 @@ export default function WizardStrategyBuilder({
                     }}
                     style={{
                       fontSize: 9.5,
-                      padding: '2px 6px',
+                      fontWeight: 600,
+                      padding: '4px 6px 4px 8px',
                       borderRadius: 4,
                       backgroundColor: 'rgba(216, 122, 61, 0.08)',
                       color: 'var(--color-ec-copper)',
-                      border: '0.5px solid rgba(216, 122, 61, 0.2)',
+                      border: '0.5px solid rgba(216, 122, 61, 0.25)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 4,
@@ -1828,7 +1901,7 @@ export default function WizardStrategyBuilder({
                     }}
                   >
                     <span>{formatUnivRule(r)}</span>
-                    <span style={{ fontSize: 9, fontWeight: 700 }}>×</span>
+                    <span style={{ fontSize: 10, color: 'rgba(216, 122, 61, 0.6)', marginLeft: 4 }}>×</span>
                   </span>
                 ))}
               </div>
@@ -2444,19 +2517,16 @@ export default function WizardStrategyBuilder({
                         alignItems: 'center',
                         gap: 6,
                         backgroundColor: 'rgba(216, 122, 61, 0.08)',
-                        border: '0.5px solid var(--color-ec-copper)',
+                        border: '0.5px solid rgba(216, 122, 61, 0.25)',
                         borderRadius: 4,
-                        padding: '3px 6px',
+                        padding: '4px 6px 4px 8px',
                         fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9,
+                        fontSize: 9.5,
                         fontWeight: 600,
-                        color: 'var(--color-ec-text-secondary)',
+                        color: 'var(--color-ec-copper)',
                       }}
                     >
-                      <span style={{ color: 'var(--color-ec-copper)' }}>{dayLabel}</span>
-                      <span>•</span>
-                      <span>{metricLabel}:</span>
-                      <strong style={{ color: 'var(--color-ec-text-high)' }}>{valLabel}</strong>
+                      <span>{dayLabel} • {metricLabel}: {valLabel}</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -2465,7 +2535,8 @@ export default function WizardStrategyBuilder({
                         style={{
                           background: 'none',
                           border: 'none',
-                          color: 'var(--color-ec-text-muted)',
+                          color: 'var(--color-ec-copper)',
+                          opacity: 0.7,
                           cursor: 'pointer',
                           fontSize: 10,
                           lineHeight: 1,
@@ -2473,6 +2544,7 @@ export default function WizardStrategyBuilder({
                           marginLeft: 4,
                           display: 'inline-flex',
                           alignItems: 'center',
+                          justifyContent: 'center',
                         }}
                       >
                         ×
@@ -4105,17 +4177,18 @@ export default function WizardStrategyBuilder({
                         display: "inline-flex",
                         alignItems: "center",
                         gap: 6,
-                        padding: "4px 10px",
-                        backgroundColor: "rgba(216, 122, 61, 0.12)",
-                        border: "0.5px solid rgba(216, 122, 61, 0.35)",
-                        borderRadius: 6,
+                        padding: "4px 6px 4px 8px",
+                        backgroundColor: "rgba(216, 122, 61, 0.08)",
+                        border: "0.5px solid rgba(216, 122, 61, 0.25)",
+                        borderRadius: 4,
                         fontFamily: "var(--color-ec-sans)",
+                        fontSize: 9.5,
+                        fontWeight: 600,
+                        color: "var(--color-ec-copper)",
                         animation: "wizTagSlideIn 200ms ease"
                       }}
                     >
-                      <span style={{ fontSize: 10, color: "var(--color-ec-text-high)", fontWeight: 600 }}>
-                        {label}
-                      </span>
+                      <span>{label}</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -4131,7 +4204,8 @@ export default function WizardStrategyBuilder({
                         style={{
                           background: "none",
                           border: "none",
-                          color: "var(--color-ec-text-muted)",
+                          color: "var(--color-ec-copper)",
+                          opacity: 0.7,
                           cursor: "pointer",
                           display: "flex",
                           alignItems: "center",
@@ -6547,16 +6621,13 @@ export default function WizardStrategyBuilder({
           height: "100%",
           overflow: "hidden",
         }}>
-          {/* Top 1/3 Container: Steps Indicators */}
+          {/* Top Container: Steps Indicators */}
           <div style={{
-            height: "33%",
             flexShrink: 0,
             padding: "14px 8px 8px 8px",
             display: "flex",
             flexDirection: "column",
             gap: 2,
-            overflowY: "auto",
-            scrollbarWidth: "none",
           }}>
             {STEPS.map((step, idx) => {
               const isActive = idx === currentStep;
