@@ -771,6 +771,7 @@ export default function Home() {
                       : strategyData.definition || strategyData;
                     
                     setBuilderDraft({
+                      id: strategyData.id,
                       name: strategyData.name || "",
                       bias: def.bias || "long",
                       apply_day: def.apply_day || "gap_day",
@@ -799,9 +800,15 @@ export default function Home() {
                       },
                       dataset_id: def.dataset_id,
                       universe_filters: def.universe_filters,
+                      is_wizard: def.is_wizard || strategyData.is_wizard || false,
                     } as any);
                     
-                    setMode('builder_choice');
+                    const isWizard = def.is_wizard || strategyData.is_wizard || false;
+                    if (isWizard) {
+                      setMode('wizard');
+                    } else {
+                      setMode('builder');
+                    }
                   } catch (err) {
                     alert("Error al cargar la estrategia para configurar.");
                   }
@@ -1125,7 +1132,11 @@ export default function Home() {
                         entry_logic: strategyToSave.entry_logic,
                         exit_logic: strategyToSave.exit_logic,
                         risk_management: strategyToSave.risk_management,
-                      });
+                        is_wizard: strategyToSave.is_wizard ?? strategyToSave.id?.startsWith("wizard_draft") ?? false,
+                        apply_day: strategyToSave.apply_day,
+                        postgap_preconditions: strategyToSave.postgap_preconditions,
+                        universe_filters: strategyToSave.universe_filters,
+                      } as any);
                       const newStrategyId = savedStrategy.id;
 
                       // Persist the backtest run linked to the newly created strategy so

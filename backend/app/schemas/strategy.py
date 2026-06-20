@@ -312,6 +312,7 @@ class StrategyCreate(BaseModel):
     entry_logic: EntryLogic
     exit_logic: Optional[ExitLogic] = None
     risk_management: RiskManagement
+    is_wizard: Optional[bool] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

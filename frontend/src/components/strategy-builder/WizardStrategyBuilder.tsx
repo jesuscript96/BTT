@@ -31,6 +31,7 @@ export interface WizardDraft {
   id: string;
   name: string;
   bias: "long" | "short";
+  is_wizard?: boolean;
   apply_day?: "gap_day" | "gap_1_day" | "gap_2_day";
   postgap_preconditions?: PostGapPrecondition[];
   entry_logic: EntryLogicType;
@@ -1080,9 +1081,10 @@ export default function WizardStrategyBuilder({
 
     setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
 
-    const draft: WizardDraft & { dataset_id?: string; universe_filters?: any } = {
+    const draft: WizardDraft & { dataset_id?: string; universe_filters?: any; is_wizard?: boolean } = {
       id: `wizard_draft_${Date.now()}`,
       name: "Nueva Estrategia (Wizard)",
+      is_wizard: true,
       bias: bias || "long",
       apply_day: applyDay,
       postgap_preconditions: postgapPreconditions,

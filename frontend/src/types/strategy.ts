@@ -246,6 +246,7 @@ export interface Strategy {
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;
     risk_management: RiskManagement;
+    is_wizard?: boolean;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
     // and sometimes flat. Components read `strategy.definition?.x ?? strategy.x` to
     // support both shapes; keep this loose so those accesses type-check everywhere.

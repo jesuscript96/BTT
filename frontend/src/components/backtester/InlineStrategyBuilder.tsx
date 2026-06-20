@@ -128,6 +128,7 @@ export interface Draft {
   id: string;
   name: string;
   bias: "long" | "short";
+  is_wizard?: boolean;
   apply_day?: "gap_day" | "gap_1_day" | "gap_2_day";
   postgap_preconditions?: PostGapPrecondition[];
   entry_logic: EntryLogicType;
@@ -410,6 +411,7 @@ export default function InlineStrategyBuilder({
       id: "draft",
       name,
       bias,
+      is_wizard: false,
       apply_day: applyDay,
       postgap_preconditions: postgapPreconditions,
       entry_logic: entryLogic,
@@ -443,6 +445,7 @@ export default function InlineStrategyBuilder({
     id: `draft_${Date.now()}`,
     name,
     bias,
+    is_wizard: false,
     apply_day: applyDay,
     postgap_preconditions: postgapPreconditions,
     entry_logic: entryLogic,

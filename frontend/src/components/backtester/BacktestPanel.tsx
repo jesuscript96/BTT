@@ -5,6 +5,7 @@ import type { Dataset, Strategy, PrecacheStatus } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies, fetchPrecacheStatus } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
+import { Plus, Settings } from "lucide-react";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -718,14 +719,14 @@ export default function BacktestPanel({
       {/* CONFIGURACIÓN */}
       <h2 style={{
         fontFamily: 'var(--color-ec-sans)',
-        fontSize: 14,
+        fontSize: 9,
         fontWeight: 700,
         textTransform: 'uppercase',
-        letterSpacing: '0.12em',
-        color: 'var(--color-ec-text-high)',
+        letterSpacing: '0.15em',
+        color: 'var(--color-ec-text-muted)',
         marginBottom: 4,
       }}>
-        CONFIGURACIÓN
+        Estrategia
       </h2>
 
       {loadError && (
@@ -972,8 +973,8 @@ export default function BacktestPanel({
           )}
           
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
+            display: 'flex',
+            flexDirection: 'column',
             gap: 8,
             marginTop: 4,
             marginBottom: 8,
@@ -986,13 +987,15 @@ export default function BacktestPanel({
               onMouseDown={() => setActiveBtn("strategy")}
               onMouseUp={() => setActiveBtn(null)}
               style={{
-                padding: '8px 0',
+                padding: '8px 12px',
                 borderRadius: 5,
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '1px',
-                textTransform: 'uppercase',
+                fontSize: 11,
+                fontWeight: 600,
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
                 border: hoveredBtn === "strategy" ? '0.5px solid transparent' : '0.5px solid var(--color-ec-copper)',
                 backgroundColor: hoveredBtn === "strategy" ? 'var(--color-ec-copper)' : 'transparent',
                 color: hoveredBtn === "strategy" ? 'var(--color-ec-copper-text)' : 'var(--color-ec-copper)',
@@ -1002,7 +1005,8 @@ export default function BacktestPanel({
                 transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
               }}
             >
-              + Nueva
+              <Plus size={13} strokeWidth={2.5} />
+              Nueva Estrategia
             </button>
             <button
               type="button"
@@ -1013,13 +1017,15 @@ export default function BacktestPanel({
               onMouseDown={() => isConfigurable && setActiveBtn("config_strat")}
               onMouseUp={() => setActiveBtn(null)}
               style={{
-                padding: '8px 0',
+                padding: '8px 12px',
                 borderRadius: 5,
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '1.5px',
-                textTransform: 'uppercase',
+                fontSize: 11,
+                fontWeight: 600,
                 cursor: isConfigurable ? 'pointer' : 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
                 border: !isConfigurable
                   ? '0.5px solid var(--color-ec-border)'
                   : hoveredBtn === "config_strat"
@@ -1042,7 +1048,8 @@ export default function BacktestPanel({
                 transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
               }}
             >
-              ⚙ Configurar
+              <Settings size={13} strokeWidth={2} />
+              Configurar Estrategia
             </button>
           </div>
         </div>

@@ -33,6 +33,7 @@ def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(g
                 "entry_logic": strategy.entry_logic.model_dump() if strategy.entry_logic else None,
                 "exit_logic": strategy.exit_logic.model_dump() if strategy.exit_logic else None,
                 "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
+                "is_wizard": strategy.is_wizard,
             })
 
             con.execute(
