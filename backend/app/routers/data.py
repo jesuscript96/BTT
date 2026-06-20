@@ -371,35 +371,36 @@ def list_datasets(user_id: Optional[str] = Depends(get_current_user_id)):
             con = get_user_db_connection()
             try:
                 rows = con.execute(
-                    f"SELECT id, name, filters, created_at, updated_at FROM saved_queries "
-                    f"WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+                    f"""
+                    SELECT 
+                        q.id, 
+                        q.name, 
+                        q.filters, 
+                        q.created_at, 
+                        q.updated_at,
+                        COALESCE(dp.pair_count, 0) as pair_count,
+                        dp.min_date,
+                        dp.max_date
+                    FROM saved_queries q
+                    LEFT JOIN (
+                        SELECT 
+                            dataset_id, 
+                            COUNT(*) as pair_count, 
+                            CAST(MIN(date) AS VARCHAR) as min_date, 
+                            CAST(MAX(date) AS VARCHAR) as max_date
+                        FROM dataset_pairs
+                        GROUP BY dataset_id
+                    ) dp ON q.id = dp.dataset_id
+                    WHERE 1=1{scope_sql}
+                    ORDER BY q.created_at DESC
+                    """,
                     scope_params,
                 ).fetchall()
                 for row in rows:
                     filters = _json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})
-                    pair_count = 0
-                    try:
-                        pc_row = con.execute(
-                            "SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?",
-                            (row[0],)
-                        ).fetchone()
-                        pair_count = pc_row[0] if pc_row else 0
-                    except Exception as pc_err:
-                        print(f"[WARN] Could not query pair count for dataset {row[0]}: {pc_err}")
-                        pair_count = filters.get("pair_count", 0)
-
-                    # Calcular cobertura real desde dataset_pairs (Prioridad 4 IS-OOS)
-                    try:
-                        date_range = con.execute("""
-                            SELECT MIN(CAST(date AS VARCHAR)), MAX(CAST(date AS VARCHAR))
-                            FROM dataset_pairs
-                            WHERE dataset_id = ?
-                        """, [row[0]]).fetchone()
-                        min_date = date_range[0] if date_range and date_range[0] else (filters.get("start_date") or filters.get("date_from"))
-                        max_date = date_range[1] if date_range and date_range[1] else (filters.get("end_date") or filters.get("date_to"))
-                    except Exception:
-                        min_date = filters.get("start_date") or filters.get("date_from")
-                        max_date = filters.get("end_date") or filters.get("date_to")
+                    pair_count = row[5]
+                    min_date = row[6] if row[6] else (filters.get("start_date") or filters.get("date_from"))
+                    max_date = row[7] if row[7] else (filters.get("end_date") or filters.get("date_to"))
 
                     results.append({
                         "id": row[0],

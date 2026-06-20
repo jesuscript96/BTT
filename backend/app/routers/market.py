@@ -255,7 +255,7 @@ def get_latest_market_date():
     con = None
     try:
         con = get_db_connection(read_only=True)
-        latest = con.execute("SELECT MAX(CAST(timestamp AS VARCHAR)[:10]) FROM daily_metrics").fetchone()
+        latest = con.execute("SELECT CAST(MAX(timestamp) AS VARCHAR)[:10] FROM daily_metrics").fetchone()
         return {"date": str(latest[0])} if latest and latest[0] else {"date": None}
     finally:
         if con: con.close()
@@ -265,7 +265,7 @@ def get_available_date_range():
     con = None
     try:
         con = get_db_connection(read_only=True)
-        row = con.execute("SELECT MIN(CAST(timestamp AS VARCHAR)[:10]), MAX(CAST(timestamp AS VARCHAR)[:10]) FROM daily_metrics").fetchone()
+        row = con.execute("SELECT CAST(MIN(timestamp) AS VARCHAR)[:10], CAST(MAX(timestamp) AS VARCHAR)[:10] FROM daily_metrics").fetchone()
         if row and row[0] and row[1]:
             return {"min_date": str(row[0]), "max_date": str(row[1])}
         return {"min_date": "2022-01-01", "max_date": date.today().isoformat()}
