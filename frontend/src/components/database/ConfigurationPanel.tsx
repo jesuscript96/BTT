@@ -222,7 +222,7 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                                 type="date"
                                 value={config.dateFrom}
                                 min={dbDateRange.min_date}
-                                max={config.dateTo || dbDateRange.max_date}
+                                max={dbDateRange.max_date}
                                 onChange={(e) => onChange({ ...config, dateFrom: e.target.value })}
                                 className=""
                                 style={{
@@ -256,7 +256,7 @@ export default function ConfigurationPanel({ config, onChange }: ConfigurationPa
                             <input
                                 type="date"
                                 value={config.dateTo}
-                                min={config.dateFrom || dbDateRange.min_date}
+                                min={dbDateRange.min_date}
                                 max={dbDateRange.max_date}
                                 onChange={(e) => onChange({ ...config, dateTo: e.target.value })}
                                 className=""

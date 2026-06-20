@@ -404,7 +404,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
                 type="date"
                 value={dateFrom}
                 min={dbDateRange.min_date}
-                max={dateTo || dbDateRange.max_date}
+                max={dbDateRange.max_date}
                 onChange={(e) => setDateFrom(e.target.value)}
                 style={{
                   backgroundColor: "var(--color-ec-bg-elevated)",
@@ -423,7 +423,7 @@ export default function InlineDatasetBuilder({ onSave, onBack, isSaving = false 
               <input
                 type="date"
                 value={dateTo}
-                min={dateFrom || dbDateRange.min_date}
+                min={dbDateRange.min_date}
                 max={dbDateRange.max_date}
                 onChange={(e) => setDateTo(e.target.value)}
                 style={{

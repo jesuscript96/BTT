@@ -1395,7 +1395,7 @@ export default function WizardStrategyBuilder({
                   type="date"
                   value={universeFilters.date_from || ''}
                   min={dbDateRange.min_date}
-                  max={universeFilters.date_to || dbDateRange.max_date}
+                  max={dbDateRange.max_date}
                   onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_from: e.target.value }))}
                   style={{
                     backgroundColor: "var(--color-ec-bg-elevated)",
@@ -1413,7 +1413,7 @@ export default function WizardStrategyBuilder({
                 <input
                   type="date"
                   value={universeFilters.date_to || ''}
-                  min={universeFilters.date_from || dbDateRange.min_date}
+                  min={dbDateRange.min_date}
                   max={dbDateRange.max_date}
                   onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
                   style={{

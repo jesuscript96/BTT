@@ -128,7 +128,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                         <input
                             type="date" value={startDate}
                             min={dbDateRange.min_date}
-                            max={endDate || dbDateRange.max_date}
+                            max={dbDateRange.max_date}
                             onChange={(e) => { setStartDate(e.target.value); updateParent('start_date', e.target.value); }}
                             title="Start Date"
                             style={{ background: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 5, padding: '0 8px', height: 30, fontFamily: "'General Sans', sans-serif", fontSize: 12, color: 'var(--color-ec-text-primary)', outline: 'none', width: 110, colorScheme: 'dark' }}
@@ -136,7 +136,7 @@ export const AdvancedFilterPanel: React.FC<AdvancedFilterPanelProps> = React.mem
                         <span style={{ color: 'var(--color-ec-text-muted)', fontSize: 12, padding: '0 2px' }}>—</span>
                         <input
                             type="date" value={endDate}
-                            min={startDate || dbDateRange.min_date}
+                            min={dbDateRange.min_date}
                             max={dbDateRange.max_date}
                             onChange={(e) => { setEndDate(e.target.value); updateParent('end_date', e.target.value); }}
                             title="End Date"
