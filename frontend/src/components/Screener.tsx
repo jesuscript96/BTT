@@ -413,129 +413,56 @@ const COLUMNS: { key: SortField; label: string; align: "left" | "right"; width: 
 // ─── Mock Data for Blurred Screener ───
 const MOCK_SCREENER_DATA: ScreenerDailyResponse = {
   date: "2026-06-19",
-  total_records: 24,
+  total_records: 46,
   gainers: [
-    {
-      ticker: "SPCB",
-      name: "SuperCom Ltd.",
-      price: 3.42,
-      change_pct: 42.50,
-      return_pct: 38.10,
-      gap_pct: 3.10,
-      volume: 12450800,
-      prev_close: 2.40,
-      open: 2.47,
-      high: 3.65,
-      low: 2.45,
-      prev_volume: 850000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 50.0
-    },
-    {
-      ticker: "CNM",
-      name: "Core & Main, Inc.",
-      price: 48.75,
-      change_pct: 12.45,
-      return_pct: 9.30,
-      gap_pct: 2.88,
-      volume: 4820100,
-      prev_close: 43.35,
-      open: 44.60,
-      high: 49.20,
-      low: 44.50,
-      prev_volume: 1200000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 10.5
-    },
-    {
-      ticker: "NVDA",
-      name: "NVIDIA Corporation",
-      price: 127.40,
-      change_pct: 6.85,
-      return_pct: 5.20,
-      gap_pct: 1.57,
-      volume: 42500000,
-      prev_close: 119.23,
-      open: 121.10,
-      high: 128.50,
-      low: 120.80,
-      prev_volume: 38000000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 6.3
-    },
-    {
-      ticker: "TSLA",
-      name: "Tesla, Inc.",
-      price: 184.50,
-      change_pct: 4.12,
-      return_pct: 3.80,
-      gap_pct: 0.30,
-      volume: 82000000,
-      prev_close: 177.20,
-      open: 177.73,
-      high: 186.40,
-      low: 176.80,
-      prev_volume: 95000000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 5.4
-    },
-    {
-      ticker: "AAPL",
-      name: "Apple Inc.",
-      price: 214.30,
-      change_pct: 2.34,
-      return_pct: 1.95,
-      gap_pct: 0.38,
-      volume: 51200000,
-      prev_close: 209.40,
-      open: 210.20,
-      high: 215.10,
-      low: 209.80,
-      prev_volume: 48000000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 2.5
-    }
+    { ticker: "SPCB", name: "SuperCom Ltd.", price: 3.42, change_pct: 42.50, return_pct: 38.10, gap_pct: 3.10, volume: 12450800, prev_close: 2.40, open: 2.47, high: 3.65, low: 2.45, prev_volume: 850000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 50.0 },
+    { ticker: "CNM", name: "Core & Main, Inc.", price: 48.75, change_pct: 12.45, return_pct: 9.30, gap_pct: 2.88, volume: 4820100, prev_close: 43.35, open: 44.60, high: 49.20, low: 44.50, prev_volume: 1200000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 10.5 },
+    { ticker: "NVDA", name: "NVIDIA Corporation", price: 127.40, change_pct: 6.85, return_pct: 5.20, gap_pct: 1.57, volume: 42500000, prev_close: 119.23, open: 121.10, high: 128.50, low: 120.80, prev_volume: 38000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 6.3 },
+    { ticker: "TSLA", name: "Tesla, Inc.", price: 184.50, change_pct: 4.12, return_pct: 3.80, gap_pct: 0.30, volume: 82000000, prev_close: 177.20, open: 177.73, high: 186.40, low: 176.80, prev_volume: 95000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 5.4 },
+    { ticker: "AAPL", name: "Apple Inc.", price: 214.30, change_pct: 2.34, return_pct: 1.95, gap_pct: 0.38, volume: 51200000, prev_close: 209.40, open: 210.20, high: 215.10, low: 209.80, prev_volume: 48000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 2.5 },
+    { ticker: "MSFT", name: "Microsoft Corporation", price: 442.15, change_pct: 1.85, return_pct: 1.50, gap_pct: 0.25, volume: 22400000, prev_close: 434.12, open: 435.20, high: 443.50, low: 434.80, prev_volume: 20000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 2.0 },
+    { ticker: "AMZN", name: "Amazon.com, Inc.", price: 189.20, change_pct: 1.62, return_pct: 1.20, gap_pct: 0.42, volume: 38500000, prev_close: 186.18, open: 186.96, high: 189.80, low: 186.50, prev_volume: 35000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 1.8 },
+    { ticker: "META", name: "Meta Platforms, Inc.", price: 504.60, change_pct: 1.45, return_pct: 1.10, gap_pct: 0.35, volume: 18200000, prev_close: 497.39, open: 499.10, high: 506.20, low: 498.80, prev_volume: 16000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 1.5 },
+    { ticker: "GOOGL", name: "Alphabet Inc.", price: 176.45, change_pct: 1.28, return_pct: 0.95, gap_pct: 0.33, volume: 29400000, prev_close: 174.22, open: 174.80, high: 177.20, low: 174.50, prev_volume: 25000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 1.5 },
+    { ticker: "AMD", name: "Advanced Micro Devices", price: 161.80, change_pct: 3.82, return_pct: 2.90, gap_pct: 0.90, volume: 52400000, prev_close: 155.85, open: 157.25, high: 162.50, low: 156.80, prev_volume: 48000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 3.6 },
+    { ticker: "NFLX", name: "Netflix, Inc.", price: 685.20, change_pct: 2.15, return_pct: 1.80, gap_pct: 0.35, volume: 4100000, prev_close: 670.78, open: 673.10, high: 688.50, low: 672.40, prev_volume: 3800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 2.4 },
+    { ticker: "SMCI", name: "Super Micro Computer", price: 920.40, change_pct: 8.45, return_pct: 6.90, gap_pct: 1.55, volume: 9800000, prev_close: 848.70, open: 861.80, high: 932.00, low: 860.50, prev_volume: 8500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 8.3 },
+    { ticker: "AVGO", name: "Broadcom Inc.", price: 1645.20, change_pct: 4.88, return_pct: 4.10, gap_pct: 0.95, volume: 3200000, prev_close: 1568.60, open: 1583.50, high: 1650.00, low: 1580.00, prev_volume: 2900000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 4.4 },
+    { ticker: "PLTR", name: "Palantir Technologies", price: 25.84, change_pct: 5.12, return_pct: 4.80, gap_pct: 0.50, volume: 38200000, prev_close: 24.58, open: 24.70, high: 26.10, low: 24.62, prev_volume: 25000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 6.0 },
+    { ticker: "MU", name: "Micron Technology", price: 139.50, change_pct: 6.10, return_pct: 5.40, gap_pct: 1.10, volume: 18400000, prev_close: 131.48, open: 132.92, high: 141.20, low: 132.50, prev_volume: 14000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 6.5 },
+    { ticker: "ARM", name: "Arm Holdings plc", price: 158.20, change_pct: 7.25, return_pct: 6.80, gap_pct: 1.20, volume: 11200000, prev_close: 147.50, open: 149.27, high: 160.50, low: 149.00, prev_volume: 9800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 7.7 },
+    { ticker: "QCOM", name: "Qualcomm Incorporated", price: 212.40, change_pct: 3.15, return_pct: 2.80, gap_pct: 0.40, volume: 8900000, prev_close: 205.91, open: 206.73, high: 214.20, low: 206.50, prev_volume: 7200000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 3.7 },
+    { ticker: "MARA", name: "Marathon Digital", price: 19.85, change_pct: 11.20, return_pct: 9.80, gap_pct: 2.10, volume: 28400000, prev_close: 17.85, open: 18.22, high: 20.40, low: 18.15, prev_volume: 15000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 12.3 },
+    { ticker: "RIOT", name: "Riot Platforms, Inc.", price: 10.45, change_pct: 9.42, return_pct: 8.50, gap_pct: 1.80, volume: 19200000, prev_close: 9.55, open: 9.72, high: 10.75, low: 9.68, prev_volume: 11000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 11.0 },
+    { ticker: "ASTS", name: "AST SpaceMobile", price: 12.18, change_pct: 18.25, return_pct: 15.40, gap_pct: 3.50, volume: 15600000, prev_close: 10.30, open: 10.66, high: 12.75, low: 10.55, prev_volume: 4500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 20.8 },
+    { ticker: "LUNR", name: "Intuitive Machines", price: 5.62, change_pct: 14.70, return_pct: 12.10, gap_pct: 2.50, volume: 8400000, prev_close: 4.90, open: 5.02, high: 5.85, low: 5.00, prev_volume: 2100000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 17.0 },
+    { ticker: "DJT", name: "Trump Media & Tech", price: 34.50, change_pct: 8.15, return_pct: 7.20, gap_pct: 1.50, volume: 14500000, prev_close: 31.90, open: 32.38, high: 35.80, low: 32.20, prev_volume: 9800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 11.1 },
+    { ticker: "MSTR", name: "MicroStrategy Inc.", price: 1480.00, change_pct: 9.63, return_pct: 8.10, gap_pct: 2.00, volume: 2200000, prev_close: 1350.00, open: 1377.00, high: 1495.00, low: 1375.00, prev_volume: 1800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 8.7 },
+    { ticker: "TEM", name: "Tempus AI, Inc.", price: 36.42, change_pct: 16.36, return_pct: 14.10, gap_pct: 2.80, volume: 5400000, prev_close: 31.30, open: 32.18, high: 37.50, low: 32.10, prev_volume: 1500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 16.8 },
+    { ticker: "HOLO", name: "MicroCloud Hologram", price: 1.84, change_pct: 24.32, return_pct: 21.00, gap_pct: 4.10, volume: 38500000, prev_close: 1.48, open: 1.54, high: 1.98, low: 1.52, prev_volume: 4500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 30.2 },
+    { ticker: "SOUN", name: "SoundHound AI, Inc.", price: 4.88, change_pct: 8.44, return_pct: 7.50, gap_pct: 1.20, volume: 16200000, prev_close: 4.50, open: 4.55, high: 4.98, low: 4.53, prev_volume: 9800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 9.9 }
   ],
   losers: [
-    {
-      ticker: "GME",
-      name: "GameStop Corp.",
-      price: 24.15,
-      change_pct: -15.40,
-      return_pct: -14.20,
-      gap_pct: -1.40,
-      volume: 18500000,
-      prev_close: 28.55,
-      open: 28.15,
-      high: 28.30,
-      low: 23.80,
-      prev_volume: 32000000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 15.8
-    },
-    {
-      ticker: "AMC",
-      name: "AMC Entertainment Holdings",
-      price: 4.62,
-      change_pct: -8.70,
-      return_pct: -8.10,
-      gap_pct: -0.65,
-      volume: 9800000,
-      prev_close: 5.06,
-      open: 5.03,
-      high: 5.05,
-      low: 4.58,
-      prev_volume: 12000000,
-      high_spike_pct: 0,
-      low_spike_pct: 0,
-      range_pct: 9.3
-    }
+    { ticker: "GME", name: "GameStop Corp.", price: 24.15, change_pct: -15.40, return_pct: -14.20, gap_pct: -1.40, volume: 18500000, prev_close: 28.55, open: 28.15, high: 28.30, low: 23.80, prev_volume: 32000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 15.8 },
+    { ticker: "AMC", name: "AMC Entertainment Holdings", price: 4.62, change_pct: -8.70, return_pct: -8.10, gap_pct: -0.65, volume: 9800000, prev_close: 5.06, open: 5.03, high: 5.05, low: 4.58, prev_volume: 12000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 9.3 },
+    { ticker: "BABA", name: "Alibaba Group Holding", price: 74.80, change_pct: -3.12, return_pct: -2.80, gap_pct: -0.32, volume: 14200000, prev_close: 77.21, open: 76.96, high: 77.10, low: 74.50, prev_volume: 12000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 3.5 },
+    { ticker: "NIO", name: "NIO Inc.", price: 4.35, change_pct: -5.43, return_pct: -4.90, gap_pct: -0.53, volume: 32400000, prev_close: 4.60, open: 4.58, high: 4.59, low: 4.31, prev_volume: 25000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 6.1 },
+    { ticker: "INTC", name: "Intel Corporation", price: 30.25, change_pct: -2.85, return_pct: -2.30, gap_pct: -0.55, volume: 48000000, prev_close: 31.14, open: 30.97, high: 31.05, low: 30.15, prev_volume: 35000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 2.9 },
+    { ticker: "WBD", name: "Warner Bros. Discovery", price: 7.14, change_pct: -4.16, return_pct: -3.80, gap_pct: -0.36, volume: 28500000, prev_close: 7.45, open: 7.42, high: 7.44, low: 7.10, prev_volume: 2200000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 4.6 },
+    { ticker: "PFE", name: "Pfizer Inc.", price: 27.85, change_pct: -1.94, return_pct: -1.50, gap_pct: -0.44, volume: 19500000, prev_close: 28.40, open: 28.28, high: 28.35, low: 27.75, prev_volume: 18000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 2.1 },
+    { ticker: "COIN", name: "Coinbase Global, Inc.", price: 224.50, change_pct: -6.45, return_pct: -5.80, gap_pct: -0.65, volume: 8200000, prev_close: 239.98, open: 238.42, high: 239.00, low: 222.10, prev_volume: 7500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 7.1 },
+    { ticker: "UPST", name: "Upstart Holdings, Inc.", price: 21.40, change_pct: -12.15, return_pct: -11.00, gap_pct: -2.30, volume: 6400000, prev_close: 24.36, open: 23.80, high: 23.95, low: 21.15, prev_volume: 4500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 13.1 },
+    { ticker: "CVNA", name: "Carvana Co.", price: 108.50, change_pct: -7.42, return_pct: -6.80, gap_pct: -1.10, volume: 5800000, prev_close: 117.20, open: 115.90, high: 116.10, low: 107.80, prev_volume: 4800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 7.7 },
+    { ticker: "BYND", name: "Beyond Meat, Inc.", price: 6.84, change_pct: -9.80, return_pct: -8.90, gap_pct: -1.50, volume: 4100000, prev_close: 7.58, open: 7.47, high: 7.49, low: 6.78, prev_volume: 3200000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 10.5 },
+    { ticker: "SPCE", name: "Virgin Galactic", price: 1.15, change_pct: -14.18, return_pct: -12.50, gap_pct: -2.80, volume: 15400000, prev_close: 1.34, open: 1.30, high: 1.31, low: 1.12, prev_volume: 8500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 16.0 },
+    { ticker: "NKLA", name: "Nikola Corporation", price: 8.24, change_pct: -11.40, return_pct: -10.10, gap_pct: -1.90, volume: 11800000, prev_close: 9.30, open: 9.12, high: 9.15, low: 8.18, prev_volume: 9200000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 11.8 },
+    { ticker: "MULN", name: "Mullen Automotive", price: 2.10, change_pct: -18.60, return_pct: -16.40, gap_pct: -3.80, volume: 22400000, prev_close: 2.58, open: 2.48, high: 2.49, low: 2.05, prev_volume: 18500000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 21.0 },
+    { ticker: "RIVN", name: "Rivian Automotive", price: 10.82, change_pct: -5.18, return_pct: -4.60, gap_pct: -0.80, volume: 14500000, prev_close: 11.41, open: 11.32, high: 11.35, low: 10.75, prev_volume: 12000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 5.5 },
+    { ticker: "LCID", name: "Lucid Group, Inc.", price: 2.48, change_pct: -4.62, return_pct: -4.10, gap_pct: -0.50, volume: 16800000, prev_close: 2.60, open: 2.59, high: 2.60, low: 2.45, prev_volume: 14000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 5.7 },
+    { ticker: "HOOD", name: "Robinhood Markets", price: 20.15, change_pct: -3.59, return_pct: -3.10, gap_pct: -0.40, volume: 12400000, prev_close: 20.90, open: 20.82, high: 20.85, low: 20.02, prev_volume: 11000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 4.1 },
+    { ticker: "PLUG", name: "Plug Power Inc.", price: 2.34, change_pct: -8.23, return_pct: -7.50, gap_pct: -1.10, volume: 18900000, prev_close: 2.55, open: 2.52, high: 2.53, low: 2.31, prev_volume: 15000000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 8.7 },
+    { ticker: "RUN", name: "Sunrun Inc.", price: 12.40, change_pct: -6.41, return_pct: -5.90, gap_pct: -0.90, volume: 9200000, prev_close: 13.25, open: 13.13, high: 13.15, low: 12.32, prev_volume: 7800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 6.7 },
+    { ticker: "ENPH", name: "Enphase Energy", price: 114.50, change_pct: -5.84, return_pct: -5.20, gap_pct: -0.80, volume: 4500000, prev_close: 121.60, open: 120.63, high: 120.70, low: 113.80, prev_volume: 3800000, high_spike_pct: 0, low_spike_pct: 0, range_pct: 6.0 }
   ],
   premarket: [],
   aftermarket: []
@@ -682,75 +609,82 @@ const MOCK_GAP_STATS_CNM: GapStatsResponse = {
 const getMockDetail = (ticker: string): TickerDetail => {
   if (ticker === "CNM") return MOCK_TICKER_DETAIL_CNM;
   if (ticker === "SPCB") return MOCK_TICKER_DETAIL_SPCB;
-  
-  if (ticker === "AAPL") {
-    return {
-      profile: { name: "Apple Inc.", sector: "Technology", industry: "Consumer Electronics", exchange: "NASDAQ" },
-      market: { market_cap: 3280000000000, shares_outstanding: 15300000000, float_shares: 15200000000, held_percent_institutions: 61.2, held_percent_insiders: 0.08, price: 214.30 }
-    };
-  }
-  if (ticker === "NVDA") {
-    return {
-      profile: { name: "NVIDIA Corporation", sector: "Technology", industry: "Semiconductors", exchange: "NASDAQ" },
-      market: { market_cap: 3120000000000, shares_outstanding: 24500000000, float_shares: 24200000000, held_percent_institutions: 65.4, held_percent_insiders: 4.2, price: 127.40 }
-    };
-  }
-  if (ticker === "TSLA") {
-    return {
-      profile: { name: "Tesla, Inc.", sector: "Consumer Cyclical", industry: "Auto Manufacturers", exchange: "NASDAQ" },
-      market: { market_cap: 588000000000, shares_outstanding: 3190000000, float_shares: 2750000000, held_percent_institutions: 44.8, held_percent_insiders: 20.6, price: 184.50 }
-    };
-  }
-  
-  return MOCK_TICKER_DETAIL_SPCB;
+
+  const allRecords = [...MOCK_SCREENER_DATA.gainers, ...MOCK_SCREENER_DATA.losers];
+  const rec = allRecords.find(r => r.ticker === ticker);
+  const name = rec ? rec.name : `${ticker} Inc.`;
+  const price = rec ? rec.price : 10.0;
+
+  return {
+    profile: {
+      name: name,
+      sector: "Technology",
+      industry: "Software & Services",
+      exchange: ticker.length === 3 ? "NYSE" : "NASDAQ",
+      logo_url: ""
+    },
+    market: {
+      market_cap: price * 125000000,
+      shares_outstanding: 125000000,
+      float_shares: 98000000,
+      held_percent_institutions: 0.65,
+      held_percent_insiders: 0.12,
+      price: price
+    }
+  };
 };
 
 const getMockGapStats = (ticker: string): GapStatsResponse => {
   if (ticker === "CNM") return MOCK_GAP_STATS_CNM;
   if (ticker === "SPCB") return MOCK_GAP_STATS_SPCB;
-  
+
+  const allRecords = [...MOCK_SCREENER_DATA.gainers, ...MOCK_SCREENER_DATA.losers];
+  const rec = allRecords.find(r => r.ticker === ticker);
+  const change = rec ? rec.change_pct : 15.0;
+
   return {
     know_the_float: {
-      "Yahoo Finance": { float: "94.8%", short_percent: "2.0%", outstanding: "100%" },
-      "Finviz": { float: "95%", short_percent: "2.1%", outstanding: "100%" },
-      "Wall Street Journal": { float: "95%", short_percent: "2.0%", outstanding: "100%" },
-      "Dilution Tracker": { float: "—", short_percent: "—", outstanding: "—" }
+      "Yahoo Finance": { float: "95.2M", short_percent: "8.5%", outstanding: "125.0M" },
+      "Finviz": { float: "98.0M", short_percent: "8.2%", outstanding: "125.0M" },
+      "Wall Street Journal": { float: "98.0M", short_percent: "8.3%", outstanding: "125.0M" },
+      "Dilution Tracker": { float: "102.5M", short_percent: "—", outstanding: "130.0M" }
     },
     gap_stats: {
-      gap_days_count: 8,
-      high_rth_spike_avg: 5.4,
-      pm_fade_avg: -2.1,
-      low_rth_spike_avg: -0.8,
-      rthh_fade_avg: 4.2,
-      neg_close_freq: 42.0,
-      close_above_pmh_freq: 38.0,
-      close_below_vwap_freq: 35.0,
+      gap_days_count: 12,
+      high_rth_spike_avg: Math.abs(change) * 1.2,
+      pm_fade_avg: -Math.abs(change) * 0.4,
+      low_rth_spike_avg: -1.5,
+      rthh_fade_avg: Math.abs(change) * 0.8,
+      neg_close_freq: change > 0 ? 55.0 : 45.0,
+      close_above_pmh_freq: change > 0 ? 30.0 : 20.0,
+      close_below_vwap_freq: 52.0,
       price_change_chart: [
-        { bin: "09:30", avg_change_pct: 1.0, is_premarket: false },
-        { bin: "12:00", avg_change_pct: 3.2, is_premarket: false },
-        { bin: "16:00", avg_change_pct: 5.4, is_premarket: false }
+        { bin: "09:30", avg_change_pct: change * 0.2, is_premarket: false },
+        { bin: "10:00", avg_change_pct: change * 0.6, is_premarket: false },
+        { bin: "12:00", avg_change_pct: change * 0.8, is_premarket: false },
+        { bin: "16:00", avg_change_pct: change, is_premarket: false }
       ]
     },
     gap_stats_plus_1: {
-      gap_days_count: 8,
-      high_rth_spike_avg: 1.2,
-      pm_fade_avg: -0.5,
-      low_rth_spike_avg: -1.2,
-      rthh_fade_avg: 0.6,
-      neg_close_freq: 50.0,
+      gap_days_count: 12,
+      high_rth_spike_avg: 4.5,
+      pm_fade_avg: -2.0,
+      low_rth_spike_avg: -3.5,
+      rthh_fade_avg: 2.1,
+      neg_close_freq: 60.0,
       close_above_pmh_freq: 15.0,
-      close_below_vwap_freq: 55.0,
+      close_below_vwap_freq: 65.0,
       price_change_chart: []
     },
     gap_stats_plus_2: {
-      gap_days_count: 8,
-      high_rth_spike_avg: 0.8,
-      pm_fade_avg: -0.2,
-      low_rth_spike_avg: -2.1,
-      rthh_fade_avg: 0.2,
-      neg_close_freq: 52.0,
+      gap_days_count: 12,
+      high_rth_spike_avg: 2.1,
+      pm_fade_avg: -1.0,
+      low_rth_spike_avg: -5.0,
+      rthh_fade_avg: 0.8,
+      neg_close_freq: 62.0,
       close_above_pmh_freq: 10.0,
-      close_below_vwap_freq: 60.0,
+      close_below_vwap_freq: 70.0,
       price_change_chart: []
     }
   };
@@ -761,54 +695,31 @@ const getMockGapStats = (ticker: string): GapStatsResponse => {
 // ═══════════════════════════════════════════════════════════
 export default function Screener() {
   // ── Data state ──
-  const [data, setData] = useState<ScreenerDailyResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<ScreenerDailyResponse | null>(MOCK_SCREENER_DATA);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // ── UI state ──
   const [activeTab, setActiveTab] = useState<TabKey>("gainers");
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [selectedTicker, setSelectedTicker] = useState<string | null>("SPCB");
   const [sortField, setSortField] = useState<SortField>("change_pct");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   // ── Detail panel state ──
-  const [tickerDetail, setTickerDetail] = useState<TickerDetail | null>(null);
+  const [tickerDetail, setTickerDetail] = useState<TickerDetail | null>(MOCK_TICKER_DETAIL_SPCB);
   const [profileLoading, setProfileLoading] = useState(false);
   const [gapLoading, setGapLoading] = useState(false);
-  const [gapStatsResponse, setGapStatsResponse] = useState<GapStatsResponse | null>(null);
+  const [gapStatsResponse, setGapStatsResponse] = useState<GapStatsResponse | null>(MOCK_GAP_STATS_SPCB);
   const [activeSubTab, setActiveSubTab] = useState<"day0" | "day1" | "day2">("day0");
-  const [floatCollapsed, setFloatCollapsed] = useState(true);
+  const [floatCollapsed, setFloatCollapsed] = useState(false); // floats uncollapsed so they are visible
 
   // ── Fetch screener data ──
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+    // Usar directamente los mocks locales estáticos para que se renderice instantáneamente de forma completa
+    setData(MOCK_SCREENER_DATA);
+    setSelectedTicker("SPCB");
+    setLoading(false);
     setError(null);
-
-    getScreenerDaily(100)
-      .then((res) => {
-        if (!cancelled) {
-          if (res && res.gainers && res.gainers.length > 0) {
-            setData(res);
-            setSelectedTicker(res.gainers[0].ticker);
-          } else {
-            setData(MOCK_SCREENER_DATA);
-            setSelectedTicker("SPCB");
-          }
-        }
-      })
-      .catch((e) => {
-        console.error("Error loading screener data, falling back to mock:", e);
-        if (!cancelled) {
-          setData(MOCK_SCREENER_DATA);
-          setSelectedTicker("SPCB");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => { cancelled = true; };
   }, []);
 
   // ── Fetch ticker detail when selection changes ──
@@ -821,65 +732,11 @@ export default function Screener() {
       return;
     }
 
-    let cancelled = false;
-    setProfileLoading(true);
-    setGapLoading(true);
-
-    // Fetch analysis profile and market data (runs once)
-    getTickerAnalysis(selectedTicker)
-      .then((analysisData) => {
-        if (cancelled) return;
-        if (analysisData && (analysisData as any).profile) {
-          setTickerDetail(analysisData as TickerDetail);
-          setProfileLoading(false);
-        } else {
-          setTickerDetail(getMockDetail(selectedTicker));
-          setProfileLoading(false);
-        }
-      })
-      .catch((e) => {
-        console.error("Error fetching ticker analysis:", e);
-        if (!cancelled) {
-          setTickerDetail(getMockDetail(selectedTicker));
-          setProfileLoading(false);
-        }
-      });
-
-    // Fetch gap stats with SWR polling support
-    let pollTimer: NodeJS.Timeout;
-    
-    const fetchGapStats = () => {
-      getTickerGapStats(selectedTicker)
-        .then((v) => {
-          if (cancelled) return;
-          const res = v as any;
-          if (res && res.status === "calculating") {
-            // Stats are calculating in the background. Keep loading, retry in 3 seconds.
-            pollTimer = setTimeout(fetchGapStats, 3000);
-          } else if (res && res.gap_stats) {
-            // Finished calculating! Store gap stats response
-            setGapStatsResponse(res as GapStatsResponse);
-            setGapLoading(false);
-          } else {
-            setGapStatsResponse(getMockGapStats(selectedTicker));
-            setGapLoading(false);
-          }
-        })
-        .catch((e) => {
-          console.error("Error fetching ticker gap stats:", e);
-          if (!cancelled) {
-            setGapStatsResponse(getMockGapStats(selectedTicker));
-            setGapLoading(false);
-          }
-        });
-    };
-
-    fetchGapStats();
-
-    return () => {
-      cancelled = true;
-      if (pollTimer) clearTimeout(pollTimer);
-    };
+    // Usar datos mockeados dinámicos locales síncronamente
+    setTickerDetail(getMockDetail(selectedTicker));
+    setGapStatsResponse(getMockGapStats(selectedTicker));
+    setProfileLoading(false);
+    setGapLoading(false);
   }, [selectedTicker]);
 
   // ── Get current stats by active sub-tab ──
