@@ -259,44 +259,32 @@ const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorT
     const context = React.useContext(TooltipContext);
     if (!context) return null;
 
-    const { setActiveTooltip, containerRef } = context;
+    const { setActiveTooltip } = context;
     const description = customText || (indicatorName ? INDICATOR_DESCRIPTIONS[indicatorName] : undefined);
     if (!description) return null;
 
     return (
         <span
             onMouseEnter={(e) => {
-                if (!containerRef.current) return;
-                const containerRect = containerRef.current.getBoundingClientRect();
-                const rect = e.currentTarget.getBoundingClientRect();
-                
-                // Estimar el ancho del tooltip basado en el largo del texto
-                const estimatedWidth = Math.min(Math.max(description.length * 6.5 + 24, 100), 320);
-                const halfWidth = estimatedWidth / 2;
-                
-                let tooltipX = rect.left - containerRect.left + rect.width / 2;
-                const tooltipY = rect.top - containerRect.top - 6;
-                
-                const minMargin = 16;
-                if (tooltipX - halfWidth < minMargin) {
-                    tooltipX = minMargin + halfWidth;
-                }
-                
-                const maxRight = containerRect.width - minMargin;
-                if (tooltipX + halfWidth > maxRight) {
-                    tooltipX = maxRight - halfWidth;
-                }
-                
                 setActiveTooltip({
                     text: description,
-                    x: tooltipX,
-                    y: tooltipY,
-                    width: estimatedWidth,
+                    x: e.clientX,
+                    y: e.clientY,
+                    width: 185,
                     title: indicatorName ? (INDICATOR_LABELS[indicatorName] || indicatorName) : undefined
                 });
                 e.currentTarget.style.color = "var(--color-ec-text-primary)";
                 e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
                 e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
+            }}
+            onMouseMove={(e) => {
+                setActiveTooltip({
+                    text: description,
+                    x: e.clientX,
+                    y: e.clientY,
+                    width: 185,
+                    title: indicatorName ? (INDICATOR_LABELS[indicatorName] || indicatorName) : undefined
+                });
             }}
             onMouseLeave={(e) => {
                 setActiveTooltip(null);
@@ -2843,36 +2831,35 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                 {activeTooltip && (
                     <div
                         style={{
-                            position: "absolute",
-                            top: activeTooltip.y,
-                            left: activeTooltip.x,
-                            transform: "translate(-50%, -100%)",
+                            position: "fixed",
+                            top: activeTooltip.y - 4,
+                            left: activeTooltip.x + 4,
+                            transform: "translate(0, -100%)",
                             backgroundColor: "var(--color-ec-bg-elevated)",
                             color: "var(--color-ec-text-primary)",
                             border: "0.5px solid var(--color-ec-border)",
-                            borderRadius: 6,
-                            padding: "12px 14px",
-                            lineHeight: 1.4,
-                            width: "max-content",
-                            maxWidth: 320,
-                            zIndex: 9999,
+                            borderRadius: 4,
+                            padding: "6px 8px",
+                            lineHeight: 1.3,
+                            width: 185,
+                            zIndex: 100005,
                             pointerEvents: "none",
-                            boxShadow: "0 -4px 16px rgba(0,0,0,0.25)",
+                            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
                             fontFamily: "var(--color-ec-sans)",
-                            transition: "opacity 150ms ease",
                             whiteSpace: "normal",
                             display: "flex",
                             flexDirection: "column",
-                            gap: 6
+                            gap: 2,
+                            textAlign: 'left',
                         }}
                     >
                         {activeTooltip.title && (
-                            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--color-ec-copper)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                            <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
                                 {activeTooltip.title}
-                            </span>
+                            </strong>
                         )}
                         <span 
-                            style={{ fontSize: 11, color: "var(--color-ec-text-high)", lineHeight: 1.4 }}
+                            style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
                             dangerouslySetInnerHTML={{ __html: activeTooltip.text }}
                         />
                     </div>
