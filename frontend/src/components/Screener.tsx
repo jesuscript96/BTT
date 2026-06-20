@@ -410,6 +410,352 @@ const COLUMNS: { key: SortField; label: string; align: "left" | "right"; width: 
   { key: "low", label: "Low", align: "right", width: "9%" },
 ];
 
+// ─── Mock Data for Blurred Screener ───
+const MOCK_SCREENER_DATA: ScreenerDailyResponse = {
+  date: "2026-06-19",
+  total_records: 24,
+  gainers: [
+    {
+      ticker: "SPCB",
+      name: "SuperCom Ltd.",
+      price: 3.42,
+      change_pct: 42.50,
+      return_pct: 38.10,
+      gap_pct: 3.10,
+      volume: 12450800,
+      prev_close: 2.40,
+      open: 2.47,
+      high: 3.65,
+      low: 2.45,
+      prev_volume: 850000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 50.0
+    },
+    {
+      ticker: "CNM",
+      name: "Core & Main, Inc.",
+      price: 48.75,
+      change_pct: 12.45,
+      return_pct: 9.30,
+      gap_pct: 2.88,
+      volume: 4820100,
+      prev_close: 43.35,
+      open: 44.60,
+      high: 49.20,
+      low: 44.50,
+      prev_volume: 1200000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 10.5
+    },
+    {
+      ticker: "NVDA",
+      name: "NVIDIA Corporation",
+      price: 127.40,
+      change_pct: 6.85,
+      return_pct: 5.20,
+      gap_pct: 1.57,
+      volume: 42500000,
+      prev_close: 119.23,
+      open: 121.10,
+      high: 128.50,
+      low: 120.80,
+      prev_volume: 38000000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 6.3
+    },
+    {
+      ticker: "TSLA",
+      name: "Tesla, Inc.",
+      price: 184.50,
+      change_pct: 4.12,
+      return_pct: 3.80,
+      gap_pct: 0.30,
+      volume: 82000000,
+      prev_close: 177.20,
+      open: 177.73,
+      high: 186.40,
+      low: 176.80,
+      prev_volume: 95000000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 5.4
+    },
+    {
+      ticker: "AAPL",
+      name: "Apple Inc.",
+      price: 214.30,
+      change_pct: 2.34,
+      return_pct: 1.95,
+      gap_pct: 0.38,
+      volume: 51200000,
+      prev_close: 209.40,
+      open: 210.20,
+      high: 215.10,
+      low: 209.80,
+      prev_volume: 48000000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 2.5
+    }
+  ],
+  losers: [
+    {
+      ticker: "GME",
+      name: "GameStop Corp.",
+      price: 24.15,
+      change_pct: -15.40,
+      return_pct: -14.20,
+      gap_pct: -1.40,
+      volume: 18500000,
+      prev_close: 28.55,
+      open: 28.15,
+      high: 28.30,
+      low: 23.80,
+      prev_volume: 32000000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 15.8
+    },
+    {
+      ticker: "AMC",
+      name: "AMC Entertainment Holdings",
+      price: 4.62,
+      change_pct: -8.70,
+      return_pct: -8.10,
+      gap_pct: -0.65,
+      volume: 9800000,
+      prev_close: 5.06,
+      open: 5.03,
+      high: 5.05,
+      low: 4.58,
+      prev_volume: 12000000,
+      high_spike_pct: 0,
+      low_spike_pct: 0,
+      range_pct: 9.3
+    }
+  ],
+  premarket: [],
+  aftermarket: []
+};
+
+const MOCK_TICKER_DETAIL_SPCB: TickerDetail = {
+  profile: {
+    name: "SuperCom Ltd.",
+    sector: "Technology",
+    industry: "Security Software & Services",
+    exchange: "NASDAQ",
+    logo_url: ""
+  },
+  market: {
+    market_cap: 35200000,
+    shares_outstanding: 10290000,
+    float_shares: 8900000,
+    held_percent_institutions: 8.5,
+    held_percent_insiders: 12.4,
+    price: 3.42
+  }
+};
+
+const MOCK_GAP_STATS_SPCB: GapStatsResponse = {
+  know_the_float: {
+    "Yahoo Finance": { float: "8.85M", short_percent: "13.9%", outstanding: "10.29M" },
+    "Finviz": { float: "8.90M", short_percent: "14.2%", outstanding: "10.29M" },
+    "Wall Street Journal": { float: "8.90M", short_percent: "14.0%", outstanding: "10.29M" },
+    "Dilution Tracker": { float: "9.20M", short_percent: "—", outstanding: "11.10M" }
+  },
+  gap_stats: {
+    gap_days_count: 24,
+    high_rth_spike_avg: 42.50,
+    pm_fade_avg: -15.20,
+    low_rth_spike_avg: -2.10,
+    rthh_fade_avg: 35.80,
+    neg_close_freq: 65.0,
+    close_above_pmh_freq: 28.0,
+    close_below_vwap_freq: 58.0,
+    price_change_chart: [
+      { bin: "09:30", avg_change_pct: 12.4, is_premarket: false },
+      { bin: "10:00", avg_change_pct: 28.5, is_premarket: false },
+      { bin: "11:00", avg_change_pct: 35.2, is_premarket: false },
+      { bin: "12:00", avg_change_pct: 22.1, is_premarket: false },
+      { bin: "13:00", avg_change_pct: 18.4, is_premarket: false },
+      { bin: "14:00", avg_change_pct: 15.2, is_premarket: false },
+      { bin: "15:00", avg_change_pct: 25.8, is_premarket: false },
+      { bin: "16:00", avg_change_pct: 38.1, is_premarket: false }
+    ]
+  },
+  gap_stats_plus_1: {
+    gap_days_count: 24,
+    high_rth_spike_avg: 8.50,
+    pm_fade_avg: -5.10,
+    low_rth_spike_avg: -6.40,
+    rthh_fade_avg: 4.20,
+    neg_close_freq: 72.0,
+    close_above_pmh_freq: 12.0,
+    close_below_vwap_freq: 75.0,
+    price_change_chart: []
+  },
+  gap_stats_plus_2: {
+    gap_days_count: 24,
+    high_rth_spike_avg: 3.10,
+    pm_fade_avg: -2.30,
+    low_rth_spike_avg: -8.90,
+    rthh_fade_avg: 1.50,
+    neg_close_freq: 80.0,
+    close_above_pmh_freq: 5.0,
+    close_below_vwap_freq: 85.0,
+    price_change_chart: []
+  }
+};
+
+const MOCK_TICKER_DETAIL_CNM: TickerDetail = {
+  profile: {
+    name: "Core & Main, Inc.",
+    sector: "Industrials",
+    industry: "Industrial Distribution",
+    exchange: "NYSE",
+    logo_url: ""
+  },
+  market: {
+    market_cap: 10400000000,
+    shares_outstanding: 213000000,
+    float_shares: 185000000,
+    held_percent_institutions: 94.2,
+    held_percent_insiders: 1.8,
+    price: 48.75
+  }
+};
+
+const MOCK_GAP_STATS_CNM: GapStatsResponse = {
+  know_the_float: {
+    "Yahoo Finance": { float: "184.60M", short_percent: "4.5%", outstanding: "213.00M" },
+    "Finviz": { float: "185.00M", short_percent: "4.8%", outstanding: "213.00M" },
+    "Wall Street Journal": { float: "185.00M", short_percent: "4.7%", outstanding: "213.00M" },
+    "Dilution Tracker": { float: "192.00M", short_percent: "—", outstanding: "220.00M" }
+  },
+  gap_stats: {
+    gap_days_count: 15,
+    high_rth_spike_avg: 12.45,
+    pm_fade_avg: -4.30,
+    low_rth_spike_avg: -1.15,
+    rthh_fade_avg: 10.20,
+    neg_close_freq: 48.0,
+    close_above_pmh_freq: 35.0,
+    close_below_vwap_freq: 42.0,
+    price_change_chart: [
+      { bin: "09:30", avg_change_pct: 3.1, is_premarket: false },
+      { bin: "10:00", avg_change_pct: 6.4, is_premarket: false },
+      { bin: "11:00", avg_change_pct: 9.8, is_premarket: false },
+      { bin: "12:00", avg_change_pct: 8.5, is_premarket: false },
+      { bin: "13:00", avg_change_pct: 7.9, is_premarket: false },
+      { bin: "14:00", avg_change_pct: 8.2, is_premarket: false },
+      { bin: "15:00", avg_change_pct: 10.4, is_premarket: false },
+      { bin: "16:00", avg_change_pct: 12.45, is_premarket: false }
+    ]
+  },
+  gap_stats_plus_1: {
+    gap_days_count: 15,
+    high_rth_spike_avg: 3.20,
+    pm_fade_avg: -1.10,
+    low_rth_spike_avg: -2.30,
+    rthh_fade_avg: 1.80,
+    neg_close_freq: 55.0,
+    close_above_pmh_freq: 20.0,
+    close_below_vwap_freq: 60.0,
+    price_change_chart: []
+  },
+  gap_stats_plus_2: {
+    gap_days_count: 15,
+    high_rth_spike_avg: 1.50,
+    pm_fade_avg: -0.50,
+    low_rth_spike_avg: -3.80,
+    rthh_fade_avg: 0.80,
+    neg_close_freq: 58.0,
+    close_above_pmh_freq: 15.0,
+    close_below_vwap_freq: 65.0,
+    price_change_chart: []
+  }
+};
+
+const getMockDetail = (ticker: string): TickerDetail => {
+  if (ticker === "CNM") return MOCK_TICKER_DETAIL_CNM;
+  if (ticker === "SPCB") return MOCK_TICKER_DETAIL_SPCB;
+  
+  if (ticker === "AAPL") {
+    return {
+      profile: { name: "Apple Inc.", sector: "Technology", industry: "Consumer Electronics", exchange: "NASDAQ" },
+      market: { market_cap: 3280000000000, shares_outstanding: 15300000000, float_shares: 15200000000, held_percent_institutions: 61.2, held_percent_insiders: 0.08, price: 214.30 }
+    };
+  }
+  if (ticker === "NVDA") {
+    return {
+      profile: { name: "NVIDIA Corporation", sector: "Technology", industry: "Semiconductors", exchange: "NASDAQ" },
+      market: { market_cap: 3120000000000, shares_outstanding: 24500000000, float_shares: 24200000000, held_percent_institutions: 65.4, held_percent_insiders: 4.2, price: 127.40 }
+    };
+  }
+  if (ticker === "TSLA") {
+    return {
+      profile: { name: "Tesla, Inc.", sector: "Consumer Cyclical", industry: "Auto Manufacturers", exchange: "NASDAQ" },
+      market: { market_cap: 588000000000, shares_outstanding: 3190000000, float_shares: 2750000000, held_percent_institutions: 44.8, held_percent_insiders: 20.6, price: 184.50 }
+    };
+  }
+  
+  return MOCK_TICKER_DETAIL_SPCB;
+};
+
+const getMockGapStats = (ticker: string): GapStatsResponse => {
+  if (ticker === "CNM") return MOCK_GAP_STATS_CNM;
+  if (ticker === "SPCB") return MOCK_GAP_STATS_SPCB;
+  
+  return {
+    know_the_float: {
+      "Yahoo Finance": { float: "94.8%", short_percent: "2.0%", outstanding: "100%" },
+      "Finviz": { float: "95%", short_percent: "2.1%", outstanding: "100%" },
+      "Wall Street Journal": { float: "95%", short_percent: "2.0%", outstanding: "100%" },
+      "Dilution Tracker": { float: "—", short_percent: "—", outstanding: "—" }
+    },
+    gap_stats: {
+      gap_days_count: 8,
+      high_rth_spike_avg: 5.4,
+      pm_fade_avg: -2.1,
+      low_rth_spike_avg: -0.8,
+      rthh_fade_avg: 4.2,
+      neg_close_freq: 42.0,
+      close_above_pmh_freq: 38.0,
+      close_below_vwap_freq: 35.0,
+      price_change_chart: [
+        { bin: "09:30", avg_change_pct: 1.0, is_premarket: false },
+        { bin: "12:00", avg_change_pct: 3.2, is_premarket: false },
+        { bin: "16:00", avg_change_pct: 5.4, is_premarket: false }
+      ]
+    },
+    gap_stats_plus_1: {
+      gap_days_count: 8,
+      high_rth_spike_avg: 1.2,
+      pm_fade_avg: -0.5,
+      low_rth_spike_avg: -1.2,
+      rthh_fade_avg: 0.6,
+      neg_close_freq: 50.0,
+      close_above_pmh_freq: 15.0,
+      close_below_vwap_freq: 55.0,
+      price_change_chart: []
+    },
+    gap_stats_plus_2: {
+      gap_days_count: 8,
+      high_rth_spike_avg: 0.8,
+      pm_fade_avg: -0.2,
+      low_rth_spike_avg: -2.1,
+      rthh_fade_avg: 0.2,
+      neg_close_freq: 52.0,
+      close_above_pmh_freq: 10.0,
+      close_below_vwap_freq: 60.0,
+      price_change_chart: []
+    }
+  };
+};
+
 // ═══════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════
@@ -442,16 +788,21 @@ export default function Screener() {
     getScreenerDaily(100)
       .then((res) => {
         if (!cancelled) {
-          setData(res);
-          // Auto-select first ticker
-          const firstTab = res.gainers;
-          if (firstTab.length > 0) {
-            setSelectedTicker(firstTab[0].ticker);
+          if (res && res.gainers && res.gainers.length > 0) {
+            setData(res);
+            setSelectedTicker(res.gainers[0].ticker);
+          } else {
+            setData(MOCK_SCREENER_DATA);
+            setSelectedTicker("SPCB");
           }
         }
       })
       .catch((e) => {
-        if (!cancelled) setError(e.message || "Error loading screener data");
+        console.error("Error loading screener data, falling back to mock:", e);
+        if (!cancelled) {
+          setData(MOCK_SCREENER_DATA);
+          setSelectedTicker("SPCB");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -477,15 +828,19 @@ export default function Screener() {
     // Fetch analysis profile and market data (runs once)
     getTickerAnalysis(selectedTicker)
       .then((analysisData) => {
-        if (!cancelled) {
+        if (cancelled) return;
+        if (analysisData && (analysisData as any).profile) {
           setTickerDetail(analysisData as TickerDetail);
+          setProfileLoading(false);
+        } else {
+          setTickerDetail(getMockDetail(selectedTicker));
           setProfileLoading(false);
         }
       })
       .catch((e) => {
         console.error("Error fetching ticker analysis:", e);
         if (!cancelled) {
-          setTickerDetail(null);
+          setTickerDetail(getMockDetail(selectedTicker));
           setProfileLoading(false);
         }
       });
@@ -501,16 +856,19 @@ export default function Screener() {
           if (res && res.status === "calculating") {
             // Stats are calculating in the background. Keep loading, retry in 3 seconds.
             pollTimer = setTimeout(fetchGapStats, 3000);
-          } else {
+          } else if (res && res.gap_stats) {
             // Finished calculating! Store gap stats response
             setGapStatsResponse(res as GapStatsResponse);
+            setGapLoading(false);
+          } else {
+            setGapStatsResponse(getMockGapStats(selectedTicker));
             setGapLoading(false);
           }
         })
         .catch((e) => {
           console.error("Error fetching ticker gap stats:", e);
           if (!cancelled) {
-            setGapStatsResponse(null);
+            setGapStatsResponse(getMockGapStats(selectedTicker));
             setGapLoading(false);
           }
         });
