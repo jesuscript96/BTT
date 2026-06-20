@@ -159,43 +159,46 @@ def upload_user_db() -> bool:
         print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False
 
-    # Fold the WAL into the main file before uploading. DuckDB keeps recent
-    # writes in users.duckdb.wal; uploading only the main file ships a stale
-    # (often empty 12KB) database even when the live data is intact.
-    try:
-        import duckdb
-        con = duckdb.connect(local_file)
-        con.execute("FORCE CHECKPOINT")
-        con.close()
-    except Exception as e:
-        print(f"[WARN] Could not checkpoint users.duckdb before upload: {e}")
-
-    local_size = os.path.getsize(local_file) if os.path.exists(local_file) else 0
-    if local_size < 50_000 and not _startup_download_ok:
-        print(f"[WARN] Refusing to upload suspiciously small DB ({local_size} bytes) - startup download may have failed")
-        return False
-
-    bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
-    object_name = "users.duckdb"
-
-    for attempt in range(3):
+    from app.database import get_user_db_lock
+    lock = get_user_db_lock()
+    with lock:
+        # Fold the WAL into the main file before uploading. DuckDB keeps recent
+        # writes in users.duckdb.wal; uploading only the main file ships a stale
+        # (often empty 12KB) database even when the live data is intact.
         try:
-            client = _get_cached_client()
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(object_name)
-            blob.upload_from_filename(local_file, timeout=5)
-            print(f"[INFO] Successfully uploaded users.duckdb to GCS")
-            return True
-        except PermissionError:
-            if attempt < 2:
-                print(f"[WARN] users.duckdb locked, retrying in 2s...")
-                time.sleep(2)
-            else:
-                print(f"[ERROR] Could not upload users.duckdb after 3 attempts (file locked)")
-                return False
+            import duckdb
+            con = duckdb.connect(local_file)
+            con.execute("FORCE CHECKPOINT")
+            con.close()
         except Exception as e:
-            print(f"[ERROR] Error uploading to GCS: {e}")
+            print(f"[WARN] Could not checkpoint users.duckdb before upload: {e}")
+
+        local_size = os.path.getsize(local_file) if os.path.exists(local_file) else 0
+        if local_size < 50_000 and not _startup_download_ok:
+            print(f"[WARN] Refusing to upload suspiciously small DB ({local_size} bytes) - startup download may have failed")
             return False
+
+        bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+        object_name = "users.duckdb"
+
+        for attempt in range(3):
+            try:
+                client = _get_cached_client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(object_name)
+                blob.upload_from_filename(local_file, timeout=5)
+                print(f"[INFO] Successfully uploaded users.duckdb to GCS")
+                return True
+            except PermissionError:
+                if attempt < 2:
+                    print(f"[WARN] users.duckdb locked, retrying in 2s...")
+                    time.sleep(2)
+                else:
+                    print(f"[ERROR] Could not upload users.duckdb after 3 attempts (file locked)")
+                    return False
+            except Exception as e:
+                print(f"[ERROR] Error uploading to GCS: {e}")
+                return False
 
     return False
 
