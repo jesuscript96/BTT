@@ -87,6 +87,8 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
+        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
     ],
     "Behaviour & Patterns": [
         IndicatorType.CONSEC_HIGHER_HIGHS, IndicatorType.CONSEC_LOWER_LOWS,
@@ -139,6 +141,10 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.YESTERDAY_LOW]: "Yesterday Low",
     [IndicatorType.HIGH_X_DAYS]: "High of last X days",
     [IndicatorType.LOW_X_DAYS]: "Low of last X days",
+    [IndicatorType.PREV_BAR_CLOSE]: "Prev. Bar Close",
+    [IndicatorType.PREV_BAR_OPEN]: "Prev. Bar Open",
+    [IndicatorType.PREV_BAR_HIGH]: "Prev. Bar High",
+    [IndicatorType.PREV_BAR_LOW]: "Prev. Bar Low",
     [IndicatorType.ELAPSED_TIME_LAST_HIGH]: "Elapsed Time Last High",
     [IndicatorType.ELAPSED_TIME]: "Elapsed Time",
     // Behaviour & Patterns
@@ -198,6 +204,10 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.YESTERDAY_LOW]: "Precio mínimo de ayer.",
     [IndicatorType.HIGH_X_DAYS]: "El máximo más alto de los últimos X días (diario).",
     [IndicatorType.LOW_X_DAYS]: "El mínimo más bajo de los últimos X días (diario).",
+    [IndicatorType.PREV_BAR_CLOSE]: "El precio de cierre de la barra inmediatamente anterior",
+    [IndicatorType.PREV_BAR_OPEN]: "El precio de apertura de la barra inmediatamente anterior",
+    [IndicatorType.PREV_BAR_HIGH]: "El precio máximo de la barra inmediatamente anterior",
+    [IndicatorType.PREV_BAR_LOW]: "El precio mínimo de la barra inmediatamente anterior",
     
     // Behaviour & Patterns
     [IndicatorType.CONSEC_HIGHER_HIGHS]: "Número de máximos consecutivos más altos (velas consecutivas subiendo).",
@@ -1567,6 +1577,25 @@ export const GroupDisplay = ({
         const savedCondition = {
             ...formCondition
         };
+        // Clean up offset on comparison target if not allowed
+        if (savedCondition.type === 'indicator_comparison') {
+            if (typeof savedCondition.target !== 'number') {
+                if (!isOffsetAllowed(savedCondition.target.name)) {
+                    savedCondition.target = {
+                        ...savedCondition.target,
+                        offset: 0
+                    };
+                }
+            }
+        } else if (savedCondition.type === 'price_level_distance') {
+            if (!isOffsetAllowed(savedCondition.level.name)) {
+                savedCondition.level = {
+                    ...savedCondition.level,
+                    offset: 0
+                };
+            }
+        }
+
         if (editingIndex !== null) {
             const newConditions = [...group.conditions];
             newConditions[editingIndex] = savedCondition;

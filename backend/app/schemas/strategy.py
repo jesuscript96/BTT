@@ -64,6 +64,10 @@ class IndicatorType(str, Enum):
     MIN_X_DAYS = "Low of last X days"
     PREVIOUS_MAX = "Previous max"
     PREVIOUS_MIN = "Previous min"
+    PREV_BAR_CLOSE = "Prev. Bar Close"
+    PREV_BAR_OPEN = "Prev. Bar Open"
+    PREV_BAR_HIGH = "Prev. Bar High"
+    PREV_BAR_LOW = "Prev. Bar Low"
 
     # Behavior Variables
     CONSECUTIVE_HIGHER_HIGHS = "Consecutive Higher Highs"

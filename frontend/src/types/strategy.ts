@@ -21,6 +21,10 @@ export enum IndicatorType {
     YESTERDAY_LOW = "Yesterday Low",
     HIGH_X_DAYS = "High of last X days",
     LOW_X_DAYS = "Low of last X days",
+    PREV_BAR_CLOSE = "Prev. Bar Close",
+    PREV_BAR_OPEN = "Prev. Bar Open",
+    PREV_BAR_HIGH = "Prev. Bar High",
+    PREV_BAR_LOW = "Prev. Bar Low",
 
     // Behaviour & Patterns
     CONSEC_HIGHER_HIGHS = "Consecutive higher highs",

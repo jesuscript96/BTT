@@ -727,6 +727,10 @@ INDICATOR_NAME_MAP = {
     "Yesterday AM Low": "Yesterday AM Low",
     "High of last X days": "Max of last X days",
     "Low of last X days": "Min of last X days",
+    "Prev. Bar Close": "Prev. Close Bar",
+    "Prev. Bar Open": "Prev. Open Bar",
+    "Prev. Bar High": "Prev. High Bar",
+    "Prev. Bar Low": "Prev. Low Bar",
 
     # Behaviour & Patterns
     "Consecutive higher highs": "Consecutive Higher Highs",
@@ -892,6 +896,14 @@ def _compute_raw(
         return pd.Series(float(open_.iloc[0]) if len(open_) > 0 else np.nan, index=close.index)
     if name == "Bar Open":
         return open_
+    if name == "Prev. Close Bar" or name == "Prev. Bar Close":
+        return close.shift(1)
+    if name == "Prev. Open Bar" or name == "Prev. Bar Open":
+        return open_.shift(1)
+    if name == "Prev. High Bar" or name == "Prev. Bar High":
+        return high.shift(1)
+    if name == "Prev. Low Bar" or name == "Prev. Bar Low":
+        return low.shift(1)
     if name == "Yesterday Open":
         return pd.Series(_safe_float(ds.get("yesterday_open", ds.get("lag_rth_open_1", np.nan))), index=close.index)
     if name == "Yesterday Close" or name == "Previous Close":

@@ -13,6 +13,8 @@ const ALL_PRICE_VARIABLES = [
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
 
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
+    IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
 ];
 
 const ALL_BEHAVIOUR = [
@@ -38,6 +40,8 @@ const PM_RTH_YESTERDAY = [
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
 
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
+    IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
 ];
 
 const RTH_YESTERDAY_INDICATORS = [
@@ -46,6 +50,8 @@ const RTH_YESTERDAY_INDICATORS = [
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
 
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
+    IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
     ...ALL_INDICATORS,
 ];
 
@@ -59,7 +65,13 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.LOW_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // PM variables
-    [IndicatorType.PM_OPEN]: [...YESTERDAY_VARS],
+    [IndicatorType.PM_OPEN]: [
+        ...YESTERDAY_VARS,
+        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_OPEN,
+        IndicatorType.PREV_BAR_HIGH,
+        IndicatorType.PREV_BAR_LOW,
+    ],
     [IndicatorType.PM_HIGH]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
     [IndicatorType.PM_LOW]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
 
@@ -77,6 +89,10 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         ...ALL_INDICATORS,
+        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_OPEN,
+        IndicatorType.PREV_BAR_HIGH,
+        IndicatorType.PREV_BAR_LOW,
     ],
 
     // Solo aparecen como targets, no como source con cruces
@@ -106,6 +122,10 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.YESTERDAY_LOW]: [],
     [IndicatorType.HIGH_X_DAYS]: [],
     [IndicatorType.LOW_X_DAYS]: [],
+    [IndicatorType.PREV_BAR_CLOSE]: [],
+    [IndicatorType.PREV_BAR_OPEN]: [],
+    [IndicatorType.PREV_BAR_HIGH]: [],
+    [IndicatorType.PREV_BAR_LOW]: [],
 
     // Behaviour & Patterns — standalone (sin cruces)
     [IndicatorType.CONSEC_HIGHER_HIGHS]: [],
@@ -152,6 +172,7 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
     [IndicatorType.BAR_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.HIGH_BAR]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.LOW_BAR]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.PM_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PM_HIGH]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PM_LOW]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.RTH_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
