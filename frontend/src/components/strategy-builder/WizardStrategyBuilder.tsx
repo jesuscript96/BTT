@@ -5666,7 +5666,7 @@ export default function WizardStrategyBuilder({
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: 10,
-          maxHeight: 420,
+          maxHeight: 340,
           overflowY: "auto",
           paddingRight: 6,
           scrollbarWidth: "none",
@@ -6416,7 +6416,7 @@ export default function WizardStrategyBuilder({
         <div style={{
           flex: 1,
           overflowY: "auto",
-          padding: "20px 22px 80px",
+          padding: "20px 22px 20px",
           scrollbarWidth: "none",
           display: "flex",
           flexDirection: "column",
@@ -6470,7 +6470,7 @@ export default function WizardStrategyBuilder({
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginTop: 32,
+            marginTop: STEPS[currentStep]?.key === "summary" ? 8 : 32,
             paddingTop: 16,
             borderTop: "0.5px solid var(--color-ec-border)",
           }}>
