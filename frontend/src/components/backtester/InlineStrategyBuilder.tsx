@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
@@ -21,7 +22,7 @@ import type {
   PostGapPrecondition,
 } from "@/types/strategy";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
-import { Clock } from "lucide-react";
+import { Clock, Save } from "lucide-react";
 import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 
 /* ── Date range constants for dataset filter ── */
@@ -40,7 +41,7 @@ function formatDate(dStr: string): string {
   return dStr;
 }
 
-function formatFilterValue(key: string, value: any): string | null {
+function formatFilterValue(key: string, value: any): { label: string; value: string } | null {
   if (key === 'rules') return null;
   if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) return null;
   const labels: Record<string, string> = {
@@ -61,17 +62,17 @@ function formatFilterValue(key: string, value: any): string | null {
   };
   const label = labels[key] || key.replace(/_/g, " ").toLowerCase();
 
-  if (typeof value === 'boolean') return value ? label : null;
+  if (typeof value === 'boolean') return value ? { label, value: '' } : null;
   if (typeof value === 'number') {
     if (key.includes('market_cap')) {
-      if (value >= 1_000_000_000) return `${label}: $${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
-      if (value >= 1_000_000) return `${label}: $${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+      if (value >= 1_000_000_000) return { label: `${label}:`, value: `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B` };
+      if (value >= 1_000_000) return { label: `${label}:`, value: `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M` };
     }
-    if (value >= 1_000_000) return `${label}: ${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-    if (value >= 1_000) return `${label}: ${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
-    return `${label}: ${value}`;
+    if (value >= 1_000_000) return { label: `${label}:`, value: `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M` };
+    if (value >= 1_000) return { label: `${label}:`, value: `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K` };
+    return { label: `${label}:`, value: `${value}` };
   }
-  return `${label}: ${value}`;
+  return { label: `${label}:`, value: `${value}` };
 }
 
 function getFriendlyMetricLabel(metric: string): string {
@@ -103,8 +104,8 @@ function getFriendlyMetricLabel(metric: string): string {
   return m.replace(/_/g, " ").toLowerCase();
 }
 
-function formatRule(rule: any): string {
-  if (!rule || !rule.metric) return '';
+function formatRule(rule: any): { label: string; value: string } {
+  if (!rule || !rule.metric) return { label: '', value: '' };
   const opMap: Record<string, string> = {
     'GT': '>', 'LT': '<', 'GTE': '>=', 'LTE': '<=', 'EQUAL': '=', 'NEQ': '!=',
     'GREATER_THAN_OR_EQUAL': '>=', 'LESS_THAN_OR_EQUAL': '<=', 'GREATER_THAN': '>', 'LESS_THAN': '<',
@@ -121,7 +122,7 @@ function formatRule(rule: any): string {
     else if (rule.metric.includes('%') || rule.metric.toLowerCase().includes('pct')) friendlyVal = `${numVal}%`;
     else if (rule.metric.toLowerCase().includes('price') || rule.metric.toLowerCase().includes('close') || rule.metric.toLowerCase().includes('open')) friendlyVal = `$${numVal.toFixed(2).replace(/\.00$/, '')}`;
   }
-  return `${friendlyMetric} ${op} ${friendlyVal}`;
+  return { label: `${friendlyMetric}:`, value: `${op} ${friendlyVal}` };
 }
 
 export interface Draft {
@@ -175,6 +176,108 @@ function getGroupSummaryText(group: ConditionGroup): string {
   return parts.join(` ${group.operator} `);
 }
 
+function getLeafConditions(
+  group: ConditionGroup,
+  timeframe: string
+): { label: string; value: string }[] {
+  if (!group || !group.conditions || group.conditions.length === 0) return [];
+  const list: { label: string; value: string }[] = [];
+
+  group.conditions.forEach(c => {
+    if (c.type === 'group') {
+      list.push(...getLeafConditions(c, timeframe));
+    } else {
+      const tfStr = c.timeframe ? `[${c.timeframe}] ` : `[${timeframe}] `;
+      let label = '';
+      let value = '';
+      if (c.type === 'indicator_comparison') {
+        if (c.source.name === IndicatorType.ELAPSED_TIME) {
+          label = `${tfStr}Elapsed Time:`;
+          const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
+          value = `${opSymbol} ${c.target} mins`;
+        } else if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
+          label = `${tfStr}Elapsed Time Last High:`;
+          const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
+          value = `${opSymbol} ${c.target} mins`;
+        } else {
+          const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+          const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
+          let targetStr = '';
+          if (typeof c.target === 'number') {
+            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+              targetStr = `${c.target}%`;
+            } else {
+              targetStr = String(c.target);
+            }
+          } else {
+            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          }
+          label = `${tfStr}${sourceStr}:`;
+          value = `${compStr} ${targetStr}`;
+        }
+      } else if (c.type === 'price_level_distance') {
+        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
+        const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
+        const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
+        label = `${tfStr}Dist(${sourceStr}, ${levelStr}):`;
+        value = `${compStr} ${c.value_pct}%${posStr}`;
+      }
+      if (label) {
+        list.push({ label, value });
+      }
+    }
+  });
+
+  return list;
+}
+
+function formatPreconditionText(cond: PostGapPrecondition): { label: string; value: string } {
+  const dayLabel = cond.day === 'gap_day' ? 'Día del Gap' : 'Día Gap +1';
+  let metricLabel = 'Cierre';
+  let valLabel = '';
+  
+  if (cond.metric === 'volume') {
+    metricLabel = 'Volumen Total';
+    const volVal = cond.value ?? 0;
+    valLabel = `${cond.operator} ${volVal >= 1000000 ? `${volVal / 1000000}M` : volVal.toLocaleString()}`;
+  } else if (cond.metric === 'close_vs_open') {
+    valLabel = `${cond.operator} Apertura`;
+  } else if (cond.metric === 'close_vs_high') {
+    valLabel = `${cond.operator} High`;
+  } else if (cond.metric === 'close_vs_low') {
+    valLabel = `${cond.operator} Low`;
+  } else if (cond.metric === 'close_vs_pm_high') {
+    valLabel = `${cond.operator} PM High`;
+  } else if (cond.metric === 'close_vs_pm_low') {
+    valLabel = `${cond.operator} PM Low`;
+  } else if (cond.metric === 'close_vs_high_low') {
+    valLabel = cond.operator === '> High' ? '> High Previo' : '< Low Previo';
+  } else if (cond.metric === 'close_vs_vwap') {
+    valLabel = `${cond.operator} VWAP`;
+  } else if (cond.metric === 'close_vs_sma') {
+    valLabel = `${cond.operator} SMA ${cond.sma_period}`;
+  } else if (cond.metric === 'candle_range_pct') {
+    metricLabel = 'Rango de Vela %';
+    valLabel = `${cond.operator} ${cond.value}%`;
+  } else if (cond.metric === 'candle_range_ratio_gap_1_vs_gap') {
+    metricLabel = cond.day === 'gap_1_day' ? 'Rango vela Gap+1 vs Gap' : 'Rango vela vs Previo';
+    valLabel = `${cond.operator} ${cond.value}%`;
+  }
+  
+  return { label: `[${dayLabel}] ${metricLabel}:`, value: valLabel };
+}
+
+function getSessionsText(sessions: string[], startTime?: string, endTime?: string): string {
+  const sessionNames: Record<string, string> = {
+    pre: "Pre-Market",
+    rth: "Regular Hours (RTH)",
+    post: "After-Market",
+    custom: startTime && endTime ? `Personalizada (${startTime} - ${endTime})` : "Personalizada"
+  };
+  return sessions.map(s => sessionNames[s] || s).join(", ");
+}
+
 interface Props {
   onTest: (draft: Draft) => void;
   onBack: () => void;
@@ -199,6 +302,12 @@ export default function InlineStrategyBuilder({
   const [name, setName] = useState("Nueva Estrategia");
   const createdAtRef = useRef(new Date().toISOString());
   const lastLoadedStrategyRef = useRef<string>("");
+  const [activeTooltip, setActiveTooltip] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    title?: string;
+  } | null>(null);
 
   // Load strategy from prop when initialStrategy is provided
   useEffect(() => {
@@ -256,6 +365,33 @@ export default function InlineStrategyBuilder({
   const [loadingDatasets, setLoadingDatasets] = useState(true);
   const [selectedDataset, setSelectedDataset] = useState<string>("");
   const [customUniverse, setCustomUniverse] = useState<boolean>(false);
+  const [savingUnivNameMode, setSavingUnivNameMode] = useState(false);
+  const [newUnivName, setNewUnivName] = useState('');
+  const [savingUniv, setSavingUniv] = useState(false);
+
+  const handleSaveCustomUniverse = async () => {
+    if (!newUnivName.trim()) return;
+    setSavingUniv(true);
+    try {
+      const { createQuery } = await import("@/lib/api");
+      const saved = await createQuery({
+        name: newUnivName.trim(),
+        filters: universeFilters
+      });
+      const d = await fetchDatasets();
+      setDatasets(d);
+      setSelectedDataset(saved.id);
+      setCustomUniverse(false);
+      setSavingUnivNameMode(false);
+      setNewUnivName('');
+      alert("Universo guardado correctamente.");
+    } catch (err) {
+      console.error("Error saving universe:", err);
+      alert("Error al guardar el universo.");
+    } finally {
+      setSavingUniv(false);
+    }
+  };
   const [universeFilters, setUniverseFilters] = useState<any>({
     date_from: TWO_YEARS_AGO,
     date_to: MAX_DATE,
@@ -315,6 +451,7 @@ export default function InlineStrategyBuilder({
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
   const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap'>('cierre');
   const [tempOperator, setTempOperator] = useState<'>' | '<'>('>');
@@ -489,6 +626,24 @@ export default function InlineStrategyBuilder({
   const totalPartialCapital = (riskManagement.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
   const isRiskInvalid = isPartialTPMode && Math.abs(totalPartialCapital - 100) > 0.01;
 
+  // Count configured items for summary
+  const entryCount = getLeafConditions(entryLogic.root_condition, entryLogic.timeframe).length;
+  const exitCount = getLeafConditions(exitLogic.root_condition, exitLogic.timeframe).length;
+  const preconditionCount = postgapPreconditions.length;
+  const sessionCount = localMarketSessions.length;
+  const riskCount = 1 // Stop Loss is always configured
+    + (riskManagement.use_take_profit ? 1 : 0)
+    + (riskManagement.trailing_stop?.active ? 1 : 0)
+    + (riskManagement.accept_reentries ? 1 : 0);
+
+  const totalConfigCount = 1 // Bias is always configured
+    + 1 // Apply day is always configured
+    + preconditionCount
+    + (sessionCount > 0 ? 1 : 0)
+    + riskCount
+    + entryCount
+    + exitCount;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Header */}
@@ -570,412 +725,575 @@ export default function InlineStrategyBuilder({
             }}>Universo (Dataset)</h2>
           </div>
 
-          {/* Mode toggle */}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="button"
-              onClick={() => setCustomUniverse(false)}
-              style={{
-                flex: 1,
-                padding: '6px 0',
-                borderRadius: 5,
-                fontSize: 10,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                cursor: 'pointer',
-                border: `0.5px solid ${!customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-border)'}`,
-                backgroundColor: !customUniverse ? 'rgba(216, 122, 61, 0.07)' : 'transparent',
-                color: !customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
-                fontFamily: 'var(--color-ec-sans)',
-              }}
-            >
-              Dataset Guardado
-            </button>
-            <button
-              type="button"
-              onClick={() => setCustomUniverse(true)}
-              style={{
-                flex: 1,
-                padding: '6px 0',
-                borderRadius: 5,
-                fontSize: 10,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                cursor: 'pointer',
-                border: `0.5px solid ${customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-border)'}`,
-                backgroundColor: customUniverse ? 'rgba(216, 122, 61, 0.07)' : 'transparent',
-                color: customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
-                fontFamily: 'var(--color-ec-sans)',
-              }}
-            >
-              Personalizar
-            </button>
-          </div>
+          {/* Two-column layout: Left stacked buttons, Right content */}
+          <div style={{ display: 'flex', flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
+            {/* Left Column: Stacked toggle buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 130, flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => setCustomUniverse(false)}
+                style={{
+                  width: '100%',
+                  padding: '6px 0',
+                  borderRadius: 5,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  border: `0.5px solid ${!customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-border)'}`,
+                  backgroundColor: !customUniverse ? 'rgba(216, 122, 61, 0.07)' : 'transparent',
+                  color: !customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                  fontFamily: 'var(--color-ec-sans)',
+                }}
+              >
+                Cargar Dataset
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomUniverse(true)}
+                style={{
+                  width: '100%',
+                  padding: '6px 0',
+                  borderRadius: 5,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  cursor: 'pointer',
+                  border: `0.5px solid ${customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-border)'}`,
+                  backgroundColor: customUniverse ? 'rgba(216, 122, 61, 0.07)' : 'transparent',
+                  color: customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                  fontFamily: 'var(--color-ec-sans)',
+                }}
+              >
+                Personalizar
+              </button>
+            </div>
 
-          {!customUniverse ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {loadingDatasets ? (
-                <div style={{ height: 32, backgroundColor: 'var(--color-ec-bg-elevated)', borderRadius: 5, animation: 'pulse 1.5s infinite' }} />
+            {/* Right Column: Active selector and filters */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {!customUniverse ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {loadingDatasets ? (
+                    <div
+                      style={{
+                        height: 32,
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        color: 'var(--color-ec-text-muted)',
+                      }}
+                    >
+                      <svg
+                        className="animate-spin"
+                        style={{ width: 14, height: 14, color: 'var(--color-ec-copper)' }}
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          style={{ opacity: 0.25 }}
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                          fill="none"
+                        />
+                        <path
+                          style={{ opacity: 0.75 }}
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                        />
+                      </svg>
+                      <span>Cargando datasets guardados...</span>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedDataset}
+                      onChange={(e) => setSelectedDataset(e.target.value)}
+                      style={{
+                        backgroundColor: 'var(--color-ec-bg-elevated)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '6px 10px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11.5,
+                        color: 'var(--color-ec-text-primary)',
+                        outline: 'none',
+                        width: '100%',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {datasets.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : " (Pendiente)"}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {(() => {
+                    const currentDs = datasets.find(d => d.id === selectedDataset);
+                    if (!currentDs) return null;
+                    return (
+                      <div style={{
+                        backgroundColor: 'rgba(255, 255, 255, 0.01)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 5,
+                        padding: '8px 10px',
+                        fontSize: 10,
+                        fontFamily: 'var(--color-ec-sans)',
+                        color: 'var(--color-ec-text-secondary)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4
+                      }}>
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          <div>
+                            <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
+                            <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>{currentDs.pair_count > 0 ? currentDs.pair_count : "Pendiente"}</span>
+                          </div>
+                          <div>
+                            <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
+                            <span>{currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}</span>
+                          </div>
+                        </div>
+                        {currentDs.filters && Object.keys(currentDs.filters).length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                            {Object.entries(currentDs.filters)
+                              .filter(([k]) => k !== 'rules' && k !== 'date_from' && k !== 'date_to')
+                              .map(([key, val]) => {
+                                const lbl = formatFilterValue(key, val);
+                                return lbl ? (
+                                  <span key={key} style={{
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    padding: '4px 8px',
+                                    borderRadius: 4,
+                                    backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                                    color: 'var(--color-ec-text-secondary)',
+                                    border: '0.5px solid var(--color-ec-copper)',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                  }}>
+                                    <span>{lbl.label}</span>
+                                    {lbl.value && <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{lbl.value}</strong>}
+                                  </span>
+                                ) : null;
+                              })}
+                            {(currentDs.filters.rules || []).map((r: any, idx: number) => {
+                              const lbl = formatRule(r);
+                              return (
+                                <span key={idx} style={{
+                                  fontSize: 10,
+                                  fontWeight: 600,
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                                  color: 'var(--color-ec-text-secondary)',
+                                  border: '0.5px solid var(--color-ec-copper)',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                }}>
+                                  <span>{lbl.label}</span>
+                                  {lbl.value && <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{lbl.value}</strong>}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
               ) : (
-                <select
-                  value={selectedDataset}
-                  onChange={(e) => setSelectedDataset(e.target.value)}
-                  style={{
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    border: '0.5px solid var(--color-ec-border)',
-                    borderRadius: 5,
-                    padding: '6px 10px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11.5,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                    width: '100%',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {datasets.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} {d.pair_count > 0 ? `(${d.pair_count} pares)` : " (Pendiente)"}
-                    </option>
-                  ))}
-                </select>
-              )}
+                // Custom Universe filters
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Desde</label>
+                      <input
+                        type="date"
+                        value={universeFilters.date_from || ''}
+                        min={dbDateRange.min_date}
+                        max={dbDateRange.max_date}
+                        onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_from: e.target.value }))}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-surface)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 6px',
+                          color: 'var(--color-ec-text-primary)',
+                          fontSize: 10.5,
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Hasta</label>
+                      <input
+                        type="date"
+                        value={universeFilters.date_to || ''}
+                        min={universeFilters.date_from && universeFilters.date_from > dbDateRange.min_date ? universeFilters.date_from : dbDateRange.min_date}
+                        max={dbDateRange.max_date}
+                        onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
+                        style={{
+                          backgroundColor: 'var(--color-ec-bg-surface)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 6px',
+                          color: 'var(--color-ec-text-primary)',
+                          fontSize: 10.5,
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                  </div>
 
-              {(() => {
-                const currentDs = datasets.find(d => d.id === selectedDataset);
-                if (!currentDs) return null;
-                return (
+                  {/* Add Custom rules */}
                   <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    padding: 8,
                     backgroundColor: 'rgba(255, 255, 255, 0.01)',
                     border: '0.5px solid var(--color-ec-border)',
                     borderRadius: 5,
-                    padding: '8px 10px',
-                    fontSize: 10,
-                    fontFamily: 'var(--color-ec-sans)',
-                    color: 'var(--color-ec-text-secondary)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4
                   }}>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                      <div>
-                        <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
-                        <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>{currentDs.pair_count > 0 ? currentDs.pair_count : "Pendiente"}</span>
-                      </div>
-                      <div>
-                        <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
-                        <span>{currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}</span>
-                      </div>
+                    <div style={{ fontSize: 8.5, fontWeight: 700, color: 'var(--color-ec-copper)', borderBottom: '0.5px solid rgba(255,255,255,0.05)', paddingBottom: 2 }}>
+                      Añadir filtro de mercado
                     </div>
-                    {currentDs.filters && Object.keys(currentDs.filters).length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
-                        {Object.entries(currentDs.filters)
-                          .filter(([k]) => k !== 'rules' && k !== 'date_from' && k !== 'date_to')
-                          .map(([key, val]) => {
-                            const lbl = formatFilterValue(key, val);
-                            return lbl ? (
-                              <span key={key} style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)', border: '0.5px solid rgba(216, 122, 61, 0.15)' }}>
-                                {lbl}
-                              </span>
-                            ) : null;
-                          })}
-                        {(currentDs.filters.rules || []).map((r: any, idx: number) => (
-                          <span key={idx} style={{ fontSize: 9, padding: '1px 4px', borderRadius: 3, backgroundColor: 'rgba(216, 122, 61, 0.06)', color: 'var(--color-ec-copper)', border: '0.5px solid rgba(216, 122, 61, 0.15)' }}>
-                            {formatRule(r)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          ) : (
-            // Custom Universe filters
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Desde</label>
-                  <input
-                    type="date"
-                    value={universeFilters.date_from || ''}
-                    min={dbDateRange.min_date}
-                    max={dbDateRange.max_date}
-                    onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_from: e.target.value }))}
-                    style={{
-                      backgroundColor: 'var(--color-ec-bg-surface)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      borderRadius: 4,
-                      padding: '4px 6px',
-                      color: 'var(--color-ec-text-primary)',
-                      fontSize: 10.5,
-                      outline: 'none',
-                    }}
-                  />
-                </div>
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <label style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Hasta</label>
-                  <input
-                    type="date"
-                    value={universeFilters.date_to || ''}
-                    min={universeFilters.date_from && universeFilters.date_from > dbDateRange.min_date ? universeFilters.date_from : dbDateRange.min_date}
-                    max={dbDateRange.max_date}
-                    onChange={(e) => setUniverseFilters((prev: any) => ({ ...prev, date_to: e.target.value }))}
-                    style={{
-                      backgroundColor: 'var(--color-ec-bg-surface)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      borderRadius: 4,
-                      padding: '4px 6px',
-                      color: 'var(--color-ec-text-primary)',
-                      fontSize: 10.5,
-                      outline: 'none',
-                    }}
-                  />
-                </div>
-              </div>
 
-              {/* Add Custom rules */}
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-                padding: 8,
-                backgroundColor: 'rgba(255, 255, 255, 0.01)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 5,
-              }}>
-                <div style={{ fontSize: 8.5, fontWeight: 700, color: 'var(--color-ec-copper)', borderBottom: '0.5px solid rgba(255,255,255,0.05)', paddingBottom: 2 }}>
-                  Añadir filtro de mercado
-                </div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <select
+                        value={tempUnivDay}
+                        onChange={(e) => setTempUnivDay(e.target.value as any)}
+                        style={{
+                          background: 'var(--color-ec-bg-surface)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          color: 'var(--color-ec-text-primary)',
+                          fontSize: 10,
+                          padding: '3px 4px',
+                          borderRadius: 4,
+                          outline: 'none',
+                        }}
+                      >
+                        <option value="gap_day">Gap Day</option>
+                        <option value="gap_plus_1_day">Gap +1</option>
+                        <option value="gap_plus_2_day">Gap +2</option>
+                      </select>
 
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <select
-                    value={tempUnivDay}
-                    onChange={(e) => setTempUnivDay(e.target.value as any)}
-                    style={{
-                      background: 'var(--color-ec-bg-surface)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      color: 'var(--color-ec-text-primary)',
-                      fontSize: 10,
-                      padding: '3px 4px',
-                      borderRadius: 4,
-                      outline: 'none',
-                    }}
-                  >
-                    <option value="gap_day">Gap Day</option>
-                    <option value="gap_plus_1_day">Gap +1</option>
-                    <option value="gap_plus_2_day">Gap +2</option>
-                  </select>
-
-                  <select
-                    value={tempUnivParam}
-                    onChange={(e) => {
-                      const param = e.target.value;
-                      setTempUnivParam(param);
-                      if (param === 'pm_volume' || param === 'rth_volume') {
-                        setTempUnivVal1('1.0');
-                      } else if (param === 'gap_pct' || param === 'rth_range_pct') {
-                        setTempUnivVal1('2.0');
-                      } else {
-                        setTempUnivVal1('5.0');
-                      }
-                    }}
-                    style={{
-                      background: 'var(--color-ec-bg-surface)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      color: 'var(--color-ec-text-primary)',
-                      fontSize: 10,
-                      padding: '3px 4px',
-                      borderRadius: 4,
-                      outline: 'none',
-                    }}
-                  >
-                    <option value="gap_pct">Gap (%)</option>
-                    <option value="pm_volume">Vol. PM (M)</option>
-                    <option value="rth_volume">Vol. RTH (M)</option>
-                    <option value="rth_close">Precio RTH ($)</option>
-                    <option value="pm_open">Precio PM ($)</option>
-                    <option value="pmh_gap_pct">PM High Gap (%)</option>
-                    <option value="rth_range_pct">Rango RTH (%)</option>
-                  </select>
-
-                  <select
-                    value={tempUnivOp}
-                    onChange={(e) => setTempUnivOp(e.target.value)}
-                    style={{
-                      background: 'var(--color-ec-bg-surface)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      color: 'var(--color-ec-text-primary)',
-                      fontSize: 10,
-                      padding: '3px 4px',
-                      borderRadius: 4,
-                      outline: 'none',
-                    }}
-                  >
-                    <option value=">=">&gt;=</option>
-                    <option value="<=">&lt;=</option>
-                    <option value=">">&gt;</option>
-                    <option value="<">&lt;</option>
-                    <option value="between">Entre</option>
-                  </select>
-
-                   <input
-                    type="text"
-                    value={tempUnivVal1}
-                    onChange={(e) => setTempUnivVal1(e.target.value)}
-                    style={{
-                      background: 'var(--color-ec-bg-surface)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      color: 'var(--color-ec-text-primary)',
-                      fontSize: 10,
-                      padding: '3px 4px',
-                      borderRadius: 4,
-                      outline: 'none',
-                      width: 65,
-                    }}
-                  />
-
-                  {tempUnivOp === 'between' && (
-                    <input
-                      type="text"
-                      value={tempUnivVal2}
-                      onChange={(e) => setTempUnivVal2(e.target.value)}
-                      style={{
-                        background: 'var(--color-ec-bg-surface)',
-                        border: '0.5px solid var(--color-ec-border)',
-                        color: 'var(--color-ec-text-primary)',
-                        fontSize: 10,
-                        padding: '3px 4px',
-                        borderRadius: 4,
-                        outline: 'none',
-                        width: 65,
-                      }}
-                    />
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const val1 = parseFloat(tempUnivVal1);
-                      const val2 = tempUnivOp === 'between' ? parseFloat(tempUnivVal2) : undefined;
-                      if (isNaN(val1) || (tempUnivOp === 'between' && isNaN(val2 || 0))) return;
-
-                      let fieldName = "";
-                      const lagSuffix = tempUnivDay === "gap_day" ? "" : tempUnivDay === "gap_plus_1_day" ? "_1" : "_2";
-                      
-                      if (tempUnivDay === "gap_day") {
-                        if (tempUnivParam === "rth_close") fieldName = "Close Price";
-                        else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
-                        else if (tempUnivParam === "pmh_gap_pct") fieldName = "PMH Gap %";
-                        else if (tempUnivParam === "pm_volume") fieldName = "Premarket Volume";
-                        else if (tempUnivParam === "gap_pct") fieldName = "Open Gap %";
-                        else if (tempUnivParam === "rth_volume") fieldName = "EOD Volume";
-                        else if (tempUnivParam === "rth_range_pct") fieldName = "RTH Range %";
-                      } else {
-                        if (tempUnivParam === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
-                        else if (tempUnivParam === "pm_open") fieldName = `lead_open${lagSuffix}`;
-                        else if (tempUnivParam === "pmh_gap_pct") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
-                        else if (tempUnivParam === "pm_volume") fieldName = `lead_pm_volume${lagSuffix}`;
-                        else if (tempUnivParam === "gap_pct") fieldName = `lead_gap_pct${lagSuffix}`;
-                        else if (tempUnivParam === "rth_volume") fieldName = `lead_rth_volume${lagSuffix}`;
-                        else if (tempUnivParam === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
-                      }
-
-                      if (!fieldName) return;
-                      
-                      const isVol = tempUnivParam === "pm_volume" || tempUnivParam === "rth_volume";
-                      const multiplier = isVol ? 1000000 : 1;
-
-                      const newRules = [...(universeFilters.rules || [])];
-
-                      if (tempUnivOp === 'between') {
-                        newRules.push({
-                          metric: fieldName,
-                          operator: "GREATER_THAN_OR_EQUAL",
-                          valueType: "static",
-                          value: (val1 * multiplier).toString()
-                        });
-                        newRules.push({
-                          metric: fieldName,
-                          operator: "LESS_THAN_OR_EQUAL",
-                          valueType: "static",
-                          value: (val2! * multiplier).toString()
-                        });
-                      } else {
-                        let opName = "";
-                        if (tempUnivOp === ">=") opName = "GREATER_THAN_OR_EQUAL";
-                        else if (tempUnivOp === "<=") opName = "LESS_THAN_OR_EQUAL";
-                        else if (tempUnivOp === ">") opName = "GREATER_THAN";
-                        else if (tempUnivOp === "<") opName = "LESS_THAN";
-
-                        newRules.push({
-                          metric: fieldName,
-                          operator: opName,
-                          valueType: "static",
-                          value: (val1 * multiplier).toString()
-                        });
-                      }
-
-                      setUniverseFilters((prev: any) => ({ ...prev, rules: newRules }));
-                    }}
-                    style={{
-                      backgroundColor: 'var(--color-ec-copper)',
-                      color: 'var(--color-ec-copper-text)',
-                      border: 'none',
-                      borderRadius: 4,
-                      padding: '3px 8px',
-                      fontSize: 10,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    + Add
-                  </button>
-                </div>
-              </div>
-
-              {/* Rules list */}
-              {universeFilters.rules && universeFilters.rules.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
-                  {universeFilters.rules.map((r: any, idx: number) => {
-                    const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
-                    const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
-                    let friendlyVal = r.value;
-                    const numVal = parseFloat(r.value);
-                    if (!isNaN(numVal) && r.metric.toLowerCase().includes('volume')) {
-                      friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
-                    }
-                    return (
-                      <span
-                        key={idx}
-                        onClick={() => {
-                          setUniverseFilters((prev: any) => ({
-                            ...prev,
-                            rules: prev.rules.filter((_: any, i: number) => i !== idx)
-                          }));
+                      <select
+                        value={tempUnivParam}
+                        onChange={(e) => {
+                          const param = e.target.value;
+                          setTempUnivParam(param);
+                          if (param === 'pm_volume' || param === 'rth_volume') {
+                            setTempUnivVal1('1.0');
+                          } else if (param === 'gap_pct' || param === 'rth_range_pct') {
+                            setTempUnivVal1('2.0');
+                          } else {
+                            setTempUnivVal1('5.0');
+                          }
                         }}
                         style={{
-                          fontSize: 9,
-                          padding: '1px 4px',
-                          borderRadius: 3,
-                          backgroundColor: 'rgba(216, 122, 61, 0.06)',
-                          color: 'var(--color-ec-copper)',
-                          border: '0.5px solid rgba(216, 122, 61, 0.15)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 3,
+                          background: 'var(--color-ec-bg-surface)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          color: 'var(--color-ec-text-primary)',
+                          fontSize: 10,
+                          padding: '3px 4px',
+                          borderRadius: 4,
+                          outline: 'none',
+                        }}
+                      >
+                        <option value="gap_pct">Gap (%)</option>
+                        <option value="pm_volume">Vol. PM (M)</option>
+                        <option value="rth_volume">Vol. RTH (M)</option>
+                        <option value="rth_close">Precio RTH ($)</option>
+                        <option value="pm_open">Precio PM ($)</option>
+                        <option value="pmh_gap_pct">PM High Gap (%)</option>
+                        <option value="rth_range_pct">Rango RTH (%)</option>
+                      </select>
+
+                      <select
+                        value={tempUnivOp}
+                        onChange={(e) => setTempUnivOp(e.target.value)}
+                        style={{
+                          background: 'var(--color-ec-bg-surface)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          color: 'var(--color-ec-text-primary)',
+                          fontSize: 10,
+                          padding: '3px 4px',
+                          borderRadius: 4,
+                          outline: 'none',
+                        }}
+                      >
+                        <option value=">=">&gt;=</option>
+                        <option value="<=">&lt;=</option>
+                        <option value=">">&gt;</option>
+                        <option value="<">&lt;</option>
+                        <option value="between">Entre</option>
+                      </select>
+
+                       <input
+                        type="text"
+                        value={tempUnivVal1}
+                        onChange={(e) => setTempUnivVal1(e.target.value)}
+                        style={{
+                          background: 'var(--color-ec-bg-surface)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          color: 'var(--color-ec-text-primary)',
+                          fontSize: 10,
+                          padding: '3px 4px',
+                          borderRadius: 4,
+                          outline: 'none',
+                          width: 65,
+                        }}
+                      />
+
+                      {tempUnivOp === 'between' && (
+                        <input
+                          type="text"
+                          value={tempUnivVal2}
+                          onChange={(e) => setTempUnivVal2(e.target.value)}
+                          style={{
+                            background: 'var(--color-ec-bg-surface)',
+                            border: '0.5px solid var(--color-ec-border)',
+                            color: 'var(--color-ec-text-primary)',
+                            fontSize: 10,
+                            padding: '3px 4px',
+                            borderRadius: 4,
+                            outline: 'none',
+                            width: 65,
+                          }}
+                        />
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const val1 = parseFloat(tempUnivVal1);
+                          const val2 = tempUnivOp === 'between' ? parseFloat(tempUnivVal2) : undefined;
+                          if (isNaN(val1) || (tempUnivOp === 'between' && isNaN(val2 || 0))) return;
+
+                          let fieldName = "";
+                          const lagSuffix = tempUnivDay === "gap_day" ? "" : tempUnivDay === "gap_plus_1_day" ? "_1" : "_2";
+                          
+                          if (tempUnivDay === "gap_day") {
+                            if (tempUnivParam === "rth_close") fieldName = "Close Price";
+                            else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
+                            else if (tempUnivParam === "pmh_gap_pct") fieldName = "PMH Gap %";
+                            else if (tempUnivParam === "pm_volume") fieldName = "Premarket Volume";
+                            else if (tempUnivParam === "gap_pct") fieldName = "Open Gap %";
+                            else if (tempUnivParam === "rth_volume") fieldName = "EOD Volume";
+                            else if (tempUnivParam === "rth_range_pct") fieldName = "RTH Range %";
+                          } else {
+                            if (tempUnivParam === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
+                            else if (tempUnivParam === "pm_open") fieldName = `lead_open${lagSuffix}`;
+                            else if (tempUnivParam === "pmh_gap_pct") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
+                            else if (tempUnivParam === "pm_volume") fieldName = `lead_pm_volume${lagSuffix}`;
+                            else if (tempUnivParam === "gap_pct") fieldName = `lead_gap_pct${lagSuffix}`;
+                            else if (tempUnivParam === "rth_volume") fieldName = `lead_rth_volume${lagSuffix}`;
+                            else if (tempUnivParam === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
+                          }
+
+                          if (!fieldName) return;
+                          
+                          const isVol = tempUnivParam === "pm_volume" || tempUnivParam === "rth_volume";
+                          const multiplier = isVol ? 1000000 : 1;
+
+                          const newRules = [...(universeFilters.rules || [])];
+
+                          if (tempUnivOp === 'between') {
+                            newRules.push({
+                              metric: fieldName,
+                              operator: "GREATER_THAN_OR_EQUAL",
+                              valueType: "static",
+                              value: (val1 * multiplier).toString()
+                            });
+                            newRules.push({
+                              metric: fieldName,
+                              operator: "LESS_THAN_OR_EQUAL",
+                              valueType: "static",
+                              value: (val2! * multiplier).toString()
+                            });
+                          } else {
+                            let opName = "";
+                            if (tempUnivOp === ">=") opName = "GREATER_THAN_OR_EQUAL";
+                            else if (tempUnivOp === "<=") opName = "LESS_THAN_OR_EQUAL";
+                            else if (tempUnivOp === ">") opName = "GREATER_THAN";
+                            else if (tempUnivOp === "<") opName = "LESS_THAN";
+
+                            newRules.push({
+                              metric: fieldName,
+                              operator: opName,
+                              valueType: "static",
+                              value: (val1 * multiplier).toString()
+                            });
+                          }
+
+                          setUniverseFilters((prev: any) => ({ ...prev, rules: newRules }));
+                        }}
+                        style={{
+                          backgroundColor: 'var(--color-ec-copper)',
+                          color: 'var(--color-ec-copper-text)',
+                          border: 'none',
+                          borderRadius: 4,
+                          padding: '3px 8px',
+                          fontSize: 10,
+                          fontWeight: 700,
                           cursor: 'pointer',
                         }}
                       >
-                        <span>{friendlyName} {friendlyOp} {friendlyVal}</span>
-                        <span style={{ fontWeight: 700 }}>×</span>
-                      </span>
-                    );
-                  })}
+                        + Add
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Rules list */}
+                  {universeFilters.rules && universeFilters.rules.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                      {universeFilters.rules.map((r: any, idx: number) => {
+                        const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+                        const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
+                        let friendlyVal = r.value;
+                        const numVal = parseFloat(r.value);
+                        if (!isNaN(numVal) && r.metric.toLowerCase().includes('volume')) {
+                          friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+                        }
+                        return (
+                          <span
+                            key={idx}
+                            onClick={() => {
+                              setUniverseFilters((prev: any) => ({
+                                ...prev,
+                                rules: prev.rules.filter((_: any, i: number) => i !== idx)
+                              }));
+                            }}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              padding: '4px 8px',
+                              borderRadius: 4,
+                              backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                              color: 'var(--color-ec-text-secondary)',
+                              border: '0.5px solid var(--color-ec-copper)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <span>{friendlyName}:</span>
+                            <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{friendlyOp} {friendlyVal}</strong>
+                            <span style={{ fontWeight: 700, marginLeft: 3 }}>×</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Save Universe Button / Form */}
+                  <div style={{ marginTop: 12, borderTop: '0.5px dotted var(--color-ec-border)', paddingTop: 10 }}>
+                    {!savingUnivNameMode ? (
+                      <button
+                        type="button"
+                        onClick={() => setSavingUnivNameMode(true)}
+                        style={{
+                          backgroundColor: 'transparent',
+                          color: 'var(--color-ec-text-muted)',
+                          border: '0.5px solid var(--color-ec-border)',
+                          borderRadius: 4,
+                          padding: '4px 10px',
+                          fontSize: 10,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          textTransform: 'uppercase',
+                          transition: 'all 150ms ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = 'var(--color-ec-copper)';
+                          e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                          e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                        }}
+                      >
+                        <Save style={{ width: 11, height: 11 }} />
+                        Guardar nuevo universo
+                      </button>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <label style={{ fontSize: 8.5, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Nombre del nuevo universo</label>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <input
+                            type="text"
+                            value={newUnivName}
+                            onChange={(e) => setNewUnivName(e.target.value)}
+                            placeholder="Ej. Gap > 20% y Vol > 1M"
+                            style={{
+                              backgroundColor: 'var(--color-ec-bg-surface)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              borderRadius: 4,
+                              padding: '4px 6px',
+                              color: 'var(--color-ec-text-primary)',
+                              fontSize: 10.5,
+                              outline: 'none',
+                              flex: 1,
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={handleSaveCustomUniverse}
+                            disabled={!newUnivName.trim() || savingUniv}
+                            style={{
+                              backgroundColor: 'var(--color-ec-copper)',
+                              color: 'var(--color-ec-copper-text)',
+                              border: 'none',
+                              borderRadius: 4,
+                              padding: '4px 10px',
+                              fontSize: 10,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              opacity: (!newUnivName.trim() || savingUniv) ? 0.5 : 1,
+                            }}
+                          >
+                            {savingUniv ? 'Guardando...' : 'Guardar'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSavingUnivNameMode(false);
+                              setNewUnivName('');
+                            }}
+                            style={{
+                              backgroundColor: 'transparent',
+                              color: 'var(--color-ec-text-muted)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              borderRadius: 4,
+                              padding: '4px 10px',
+                              fontSize: 10,
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* SECTION: DIRECTION BIAS */}
@@ -986,17 +1304,22 @@ export default function InlineStrategyBuilder({
           padding: '20px 0',
           borderBottom: '0.5px solid var(--color-ec-border)',
         }}>
-          <div
-            style={{
-              fontSize: 8,
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 3,
+              height: 14,
+              borderRadius: 1,
+              backgroundColor: 'var(--color-ec-copper)',
+            }} />
+            <h2 style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 13,
               fontWeight: 700,
-              letterSpacing: 1.5,
-              textTransform: "uppercase",
-              color: "var(--color-ec-text-muted)",
-              fontFamily: "var(--color-ec-sans)",
-            }}
-          >
-            Direction Bias
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--color-ec-text-high)',
+              margin: 0,
+            }}>Direction Bias</h2>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             {(["long", "short"] as const).map((b) => (
@@ -1493,15 +1816,29 @@ export default function InlineStrategyBuilder({
         {/* SECTION: APPLY DAY SELECTOR */}
         <div style={{
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: 'column',
           gap: 12,
           padding: '20px 0',
           borderBottom: '0.5px solid var(--color-ec-border)',
-          fontSize: 11,
-          fontFamily: 'var(--color-ec-sans)'
         }}>
-            <span style={{ fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Aplicar en:</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 3,
+              height: 14,
+              borderRadius: 1,
+              backgroundColor: 'var(--color-ec-copper)',
+            }} />
+            <h2 style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 13,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--color-ec-text-high)',
+              margin: 0,
+            }}>Día de aplicación de la estrategia</h2>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontFamily: 'var(--color-ec-sans)' }}>
                 {(['gap_day', 'gap_1_day', 'gap_2_day'] as const).map((day, idx) => {
                     const isActive = applyDay === day;
                     const labels: Record<string, string> = {
@@ -1557,124 +1894,183 @@ export default function InlineStrategyBuilder({
           padding: '20px 0',
           borderBottom: '0.5px solid var(--color-ec-border)',
         }}>
-          <h2 style={{
-            fontFamily: 'var(--color-ec-sans)',
-            fontSize: 11,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: 'var(--color-ec-text-muted)',
-            marginBottom: 4,
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              width: 3,
+              height: 14,
+              borderRadius: 1,
+              backgroundColor: 'var(--color-ec-copper)',
+            }} />
+            <h2 style={{
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 13,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--color-ec-text-high)',
+              margin: 0,
+            }}>Sesión de ejecución de la estrategia</h2>
+          </div>
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            overflow: 'hidden',
+            marginTop: 4,
+            backgroundColor: 'transparent'
           }}>
-            Sesión de ejecución de la estrategia
-          </h2>
-          <div className="space-y-2">
             {[
               { id: "pre", label: "Pre-Market", time: "04:00 - 09:30 ET" },
               { id: "rth", label: "Regular Hours", time: "09:30 - 16:00 ET" },
               { id: "post", label: "After-Market", time: "16:00 - 20:00 ET" },
-              { id: "custom", label: "Horas personalizadas (ET)", time: "" },
-            ].map((session) => (
-              <div key={session.id} className="space-y-2">
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                }}>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={localMarketSessions.includes(session.id)}
-                      onChange={() => {
-                        setLocalMarketSessions(prev =>
-                          prev.includes(session.id)
-                            ? prev.filter(s => s !== session.id)
-                            : [...prev, session.id]
-                        );
-                      }}
-                      className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                    />
+              { id: "custom", label: "Horas personalizadas", time: "Personalizado ET" },
+            ].map((session, idx) => {
+              const isSelected = localMarketSessions.includes(session.id);
+              
+              // Cross lines borders
+              const borderRight = (idx === 0 || idx === 2) ? '2px dotted var(--color-ec-border)' : 'none';
+              const borderBottom = (idx === 0 || idx === 1) ? '2px dotted var(--color-ec-border)' : 'none';
+
+              return (
+                <div
+                  key={session.id}
+                  onClick={() => {
+                    setLocalMarketSessions(prev =>
+                      prev.includes(session.id)
+                        ? prev.filter(s => s !== session.id)
+                        : [...prev, session.id]
+                    );
+                  }}
+                  style={{
+                    backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
+                    borderRight,
+                    borderBottom,
+                    padding: '12px 14px',
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    minHeight: 58,
+                    boxSizing: 'border-box',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'rgba(216, 122, 61, 0.03)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
                     <span style={{
                       fontFamily: 'var(--color-ec-sans)',
                       fontSize: 11,
-                      fontWeight: 500,
-                      color: 'var(--color-ec-text-secondary)',
+                      fontWeight: 600,
+                      color: isSelected ? 'var(--color-ec-copper-bright)' : 'var(--color-ec-text-secondary)',
                     }}>{session.label}</span>
-                  </label>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      readOnly
+                      style={{
+                        cursor: 'pointer',
+                        accentColor: 'var(--color-ec-copper)',
+                        width: '12px',
+                        height: '12px'
+                      }}
+                    />
+                  </div>
                   {session.time && (
                     <span style={{
                       fontFamily: 'var(--color-ec-sans)',
-                      fontSize: 10,
+                      fontSize: 9,
                       fontWeight: 400,
-                      color: 'var(--color-ec-text-muted)',
+                      color: isSelected ? 'var(--color-ec-text-secondary)' : 'var(--color-ec-text-muted)',
+                      marginTop: 4,
                     }}>{session.time}</span>
                   )}
                 </div>
-
-                {session.id === "custom" && localMarketSessions.includes("custom") && (
-                  <div className="grid grid-cols-2 gap-2 mt-3 pl-6">
-                    <div>
-                      <label style={{
-                        display: "block",
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 11,
-                        fontWeight: 500,
-                        color: "var(--color-ec-text-secondary)",
-                        fontStyle: "italic",
-                        marginBottom: 4,
-                      }}>Desde</label>
-                      <input
-                        type="time"
-                        value={localCustomStartTime}
-                        onChange={(e) => setLocalCustomStartTime(e.target.value)}
-                        style={{
-                          backgroundColor: 'var(--color-ec-bg-elevated)',
-                          border: '0.5px solid var(--color-ec-border)',
-                          borderRadius: 5,
-                          padding: '6px 10px',
-                          fontFamily: 'var(--color-ec-sans)',
-                          fontSize: 11,
-                          fontWeight: 500,
-                          color: 'var(--color-ec-text-primary)',
-                          outline: 'none',
-                          width: '100%',
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{
-                        display: "block",
-                        fontFamily: "var(--color-ec-sans)",
-                        fontSize: 11,
-                        fontWeight: 500,
-                        color: "var(--color-ec-text-secondary)",
-                        fontStyle: "italic",
-                        marginBottom: 4,
-                      }}>Hasta</label>
-                      <input
-                        type="time"
-                        value={localCustomEndTime}
-                        onChange={(e) => setLocalCustomEndTime(e.target.value)}
-                        style={{
-                          backgroundColor: 'var(--color-ec-bg-elevated)',
-                          border: '0.5px solid var(--color-ec-border)',
-                          borderRadius: 5,
-                          padding: '6px 10px',
-                          fontFamily: 'var(--color-ec-sans)',
-                          fontSize: 11,
-                          fontWeight: 500,
-                          color: 'var(--color-ec-text-primary)',
-                          outline: 'none',
-                          width: '100%',
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
+
+          {localMarketSessions.includes("custom") && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: 10,
+              marginTop: 8,
+              padding: 12,
+              backgroundColor: 'rgba(255, 255, 255, 0.02)',
+              border: '0.5px solid var(--color-ec-border)',
+              borderRadius: 6,
+            }}>
+              <div>
+                <label style={{
+                  display: "block",
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--color-ec-text-secondary)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.03em",
+                  marginBottom: 4,
+                }}>Desde</label>
+                <input
+                  type="time"
+                  value={localCustomStartTime}
+                  onChange={(e) => setLocalCustomStartTime(e.target.value)}
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '6px 10px',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-primary)',
+                    outline: 'none',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{
+                  display: "block",
+                  fontFamily: "var(--color-ec-sans)",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--color-ec-text-secondary)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.03em",
+                  marginBottom: 4,
+                }}>Hasta</label>
+                <input
+                  type="time"
+                  value={localCustomEndTime}
+                  onChange={(e) => setLocalCustomEndTime(e.target.value)}
+                  style={{
+                    backgroundColor: 'var(--color-ec-bg-elevated)',
+                    border: '0.5px solid var(--color-ec-border)',
+                    borderRadius: 5,
+                    padding: '6px 10px',
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: 'var(--color-ec-text-primary)',
+                    outline: 'none',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
 
@@ -1700,7 +2096,38 @@ export default function InlineStrategyBuilder({
                   letterSpacing: '0.05em',
                   color: 'var(--color-ec-text-secondary)'
                 }}>
-                  Ventanas Horarias de Entrada
+                  Límites horarios de ejecución de variables de entrada
+                </span>
+                <span
+                  onMouseEnter={(e) => {
+                    setActiveTooltip({
+                      text: "Define ventanas de tiempo específicas dentro de la sesión de mercado en las cuales se pueden evaluar y ejecutar las condiciones de <strong>entrada</strong>. Las condiciones de <strong>salida</strong> (como Stop Loss, Take Profit y temporales) seguirán activas y se ejecutarán en cualquier momento durante toda la sesión activa de la estrategia, independientemente de estos límites.",
+                      x: e.clientX,
+                      y: e.clientY,
+                      title: "Límites horarios de ejecución"
+                    });
+                  }}
+                  onMouseLeave={() => setActiveTooltip(null)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 14,
+                    height: 14,
+                    borderRadius: "50%",
+                    backgroundColor: "var(--color-ec-bg-elevated)",
+                    border: "0.5px solid var(--color-ec-border)",
+                    color: "var(--color-ec-text-muted)",
+                    fontSize: 9,
+                    fontWeight: 700,
+                    cursor: "help",
+                    marginLeft: 4,
+                    flexShrink: 0,
+                    userSelect: "none",
+                    transition: "all 150ms ease",
+                  }}
+                >
+                  ?
                 </span>
               </div>
               <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
@@ -1830,9 +2257,9 @@ export default function InlineStrategyBuilder({
                         backgroundColor: overlapWarning ? 'rgba(235, 94, 85, 0.08)' : 'rgba(216, 122, 61, 0.08)',
                         border: `0.5px solid ${overlapWarning ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)'}`,
                         borderRadius: 4,
-                        padding: '3px 6px',
+                        padding: '4px 8px',
                         fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 9,
+                        fontSize: 10,
                         fontWeight: 600,
                         color: overlapWarning ? 'var(--color-ec-loss)' : 'var(--color-ec-text-secondary)',
                       }}
@@ -1876,33 +2303,324 @@ export default function InlineStrategyBuilder({
       </div>
 
       {/* Strategy Summary Panel */}
-      {(getGroupSummaryText(entryLogic.root_condition) || getGroupSummaryText(exitLogic.root_condition)) && (
-        <div style={{
-          padding: "12px 16px",
-          backgroundColor: "var(--color-ec-bg-surface)",
-          borderTop: "0.5px solid var(--color-ec-border)",
-          fontFamily: "var(--color-ec-sans)",
-          fontSize: 10,
-          color: "var(--color-ec-text-secondary)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-          flexShrink: 0,
-        }}>
-          {getGroupSummaryText(entryLogic.root_condition) && (
-            <div style={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.4 }}>
-              <span style={{ fontWeight: 700, color: "var(--color-ec-profit)", marginRight: 4 }}>ENTRY LOGIC:</span>
-              <code style={{ color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)", fontSize: 10 }}>{getGroupSummaryText(entryLogic.root_condition)}</code>
-            </div>
-          )}
-          {getGroupSummaryText(exitLogic.root_condition) && (
-            <div style={{ whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.4 }}>
-              <span style={{ fontWeight: 700, color: "var(--color-ec-loss)", marginRight: 4 }}>EXIT LOGIC:</span>
-              <code style={{ color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)", fontSize: 10 }}>{getGroupSummaryText(exitLogic.root_condition)}</code>
-            </div>
-          )}
+      <div style={{
+        borderTop: "0.5px solid var(--color-ec-border)",
+        backgroundColor: "var(--color-ec-bg-surface)",
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+      }}>
+        {/* Toggle Header */}
+        <div
+          onClick={() => setSummaryExpanded(!summaryExpanded)}
+          style={{
+            padding: "10px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            cursor: "pointer",
+            userSelect: "none",
+            backgroundColor: "rgba(255, 255, 255, 0.01)",
+            transition: "background-color 150ms ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.01)";
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              fontFamily: "var(--color-ec-sans)",
+              fontSize: 10,
+              fontWeight: 700,
+              color: "var(--color-ec-text-high)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}>
+              Resumen de Configuración
+            </span>
+            <span style={{
+              fontSize: 9,
+              fontWeight: 700,
+              backgroundColor: 'rgba(216, 122, 61, 0.1)',
+              color: 'var(--color-ec-copper-bright)',
+              padding: '1px 6px',
+              borderRadius: 10,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em'
+            }}>
+              {totalConfigCount} {totalConfigCount === 1 ? 'regla' : 'reglas'}
+            </span>
+          </div>
+          <span style={{
+            fontSize: 9,
+            fontWeight: 700,
+            color: "var(--color-ec-copper)",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}>
+            {summaryExpanded ? "Ocultar ▲" : "Ver Detalles ▼"}
+          </span>
         </div>
-      )}
+
+        {/* Collapsible Content */}
+        {summaryExpanded && (
+          <div style={{
+            padding: "0 16px 16px 16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            borderTop: "0.5px solid rgba(255, 255, 255, 0.03)",
+            maxHeight: 250,
+            overflowY: "auto",
+            scrollbarWidth: "none",
+          }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 12 }}>
+              {/* Left Column: General & Risk */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* General Config */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Configuración General</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {/* Bias */}
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 4,
+                      padding: '3px 6px',
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 9.5,
+                      fontWeight: 500,
+                    }}>
+                      <span style={{ color: 'var(--color-ec-text-secondary)' }}>Dirección:</span>
+                      <strong style={{
+                        color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                        marginLeft: 3
+                      }}>
+                        {bias === "long" ? "LONG" : "SHORT"}
+                      </strong>
+                    </span>
+
+                    {/* Apply Day */}
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 4,
+                      padding: '3px 6px',
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 9.5,
+                      fontWeight: 500,
+                    }}>
+                      <span style={{ color: 'var(--color-ec-text-secondary)' }}>Aplicar en:</span>
+                      <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>
+                        {applyDay === "gap_day" ? "Gap Day" : applyDay === "gap_1_day" ? "Gap +1 Day" : "Gap +2 Day"}
+                      </strong>
+                    </span>
+
+                    {/* Sessions */}
+                    {localMarketSessions.length > 0 && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 4,
+                        padding: '3px 6px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9.5,
+                        fontWeight: 500,
+                      }}>
+                        <span style={{ color: 'var(--color-ec-text-secondary)' }}>Sesión:</span>
+                        <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>
+                          {getSessionsText(localMarketSessions, localCustomStartTime, localCustomEndTime)}
+                        </strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Preconditions */}
+                {postgapPreconditions.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                    <span style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Condiciones Previas ({postgapPreconditions.length})</span>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {postgapPreconditions.map((cond, idx) => {
+                        const fmt = formatPreconditionText(cond);
+                        return (
+                          <span key={idx} style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            backgroundColor: 'rgba(216, 122, 61, 0.05)',
+                            border: '0.5px solid rgba(216, 122, 61, 0.3)',
+                            borderRadius: 4,
+                            padding: '3px 6px',
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 9.5,
+                            fontWeight: 500,
+                          }}>
+                            <span style={{ color: 'var(--color-ec-text-secondary)' }}>{fmt.label}</span>
+                            <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{fmt.value}</strong>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Risk Management */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Gestión de Riesgo</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {/* Stop Loss */}
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 4,
+                      padding: '3px 6px',
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 9.5,
+                      fontWeight: 500,
+                    }}>
+                      <span style={{ color: 'var(--color-ec-text-secondary)' }}>Stop Loss:</span>
+                      <strong style={{ color: 'var(--color-ec-loss)', marginLeft: 3 }}>{riskManagement.hard_stop.value}%</strong>
+                    </span>
+
+                    {/* Take Profit */}
+                    {riskManagement.use_take_profit && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 4,
+                        padding: '3px 6px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9.5,
+                        fontWeight: 500,
+                      }}>
+                        {riskManagement.take_profit_mode === 'Partial' ? (
+                          <>
+                            <span style={{ color: 'var(--color-ec-text-secondary)' }}>TP Parcial:</span>
+                            <strong style={{ color: 'var(--color-ec-profit)', marginLeft: 3 }}>
+                              {(riskManagement.partial_take_profits || []).map(tp => `${tp.distance_pct}% (${tp.capital_pct}%)`).join(" / ")}
+                            </strong>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{ color: 'var(--color-ec-text-secondary)' }}>Take Profit:</span>
+                            <strong style={{ color: 'var(--color-ec-profit)', marginLeft: 3 }}>{riskManagement.take_profit.value}%</strong>
+                          </>
+                        )}
+                      </span>
+                    )}
+
+                    {/* Trailing Stop */}
+                    {riskManagement.trailing_stop?.active && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 4,
+                        padding: '3px 6px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9.5,
+                        fontWeight: 500,
+                      }}>
+                        <span style={{ color: 'var(--color-ec-text-secondary)' }}>Trailing Stop:</span>
+                        <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{riskManagement.trailing_stop?.buffer_pct}%</strong>
+                      </span>
+                    )}
+
+                    {/* Reentries */}
+                    {riskManagement.accept_reentries && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 4,
+                        padding: '3px 6px',
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 9.5,
+                        fontWeight: 500,
+                      }}>
+                        <span style={{ color: 'var(--color-ec-text-secondary)' }}>Reentradas:</span>
+                        <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>Máx. {riskManagement.max_reentries}</strong>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Entry & Exit Logics */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Entry Logic */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Lógica de Entrada ({entryCount})</span>
+                  {entryCount === 0 ? (
+                    <span style={{ fontSize: 9.5, fontStyle: "italic", color: "var(--color-ec-text-muted)" }}>Sin condiciones de entrada.</span>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {getLeafConditions(entryLogic.root_condition, entryLogic.timeframe).map((cond, idx) => (
+                        <span key={idx} style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          backgroundColor: 'rgba(34, 197, 94, 0.04)',
+                          border: '0.5px solid rgba(34, 197, 94, 0.25)',
+                          borderRadius: 4,
+                          padding: '3px 6px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 9.5,
+                          fontWeight: 500,
+                        }}>
+                          <span style={{ color: 'var(--color-ec-text-secondary)' }}>{cond.label}</span>
+                          <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{cond.value}</strong>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Exit Logic */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Lógica de Salida ({exitCount})</span>
+                  {exitCount === 0 ? (
+                    <span style={{ fontSize: 9.5, fontStyle: "italic", color: "var(--color-ec-text-muted)" }}>Sin condiciones de salida.</span>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {getLeafConditions(exitLogic.root_condition, exitLogic.timeframe).map((cond, idx) => (
+                        <span key={idx} style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          backgroundColor: 'rgba(239, 68, 68, 0.04)',
+                          border: '0.5px solid rgba(239, 68, 68, 0.25)',
+                          borderRadius: 4,
+                          padding: '3px 6px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 9.5,
+                          fontWeight: 500,
+                        }}>
+                          <span style={{ color: 'var(--color-ec-text-secondary)' }}>{cond.label}</span>
+                          <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{cond.value}</strong>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Footer */}
       <div
@@ -1936,6 +2654,44 @@ export default function InlineStrategyBuilder({
           ▶ Probar
         </button>
       </div>
+
+      {activeTooltip && typeof document !== "undefined" && createPortal(
+        <div
+          style={{
+            position: "fixed",
+            top: activeTooltip.y,
+            left: activeTooltip.x,
+            transform: "translate(10px, -100%)",
+            backgroundColor: "var(--color-ec-bg-elevated)",
+            color: "var(--color-ec-text-primary)",
+            border: "0.5px solid var(--color-ec-border)",
+            borderRadius: 4,
+            padding: "6px 8px",
+            lineHeight: 1.3,
+            width: 220,
+            zIndex: 100005,
+            pointerEvents: "none",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+            fontFamily: "var(--color-ec-sans)",
+            whiteSpace: "normal",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            textAlign: 'left',
+          }}
+        >
+          {activeTooltip.title && (
+            <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
+              {activeTooltip.title}
+            </strong>
+          )}
+          <span 
+            style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
+            dangerouslySetInnerHTML={{ __html: activeTooltip.text }}
+          />
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

@@ -286,7 +286,7 @@ export default function StrategyModeSelector({ onSelectFree, onSelectWizard, onB
                 color: "var(--color-ec-text-muted)",
                 lineHeight: 1.55,
               }}>
-                Acceso total a todos los parámetros básicos y avanzados. Configura entradas, salidas y riesgo sin restricciones.
+                Acceso total a todos los parámetros básicos y avanzados. Sin restricciones y con acceso a funciones nuevas como desplazamientos de más de una barra previa (Offsets), agrupamiento lógico recursivo (subgrupos AND/OR), patrones de velas en triángulos (Ascendente/Descendente/Simétrico) y capacidad para <span style={{ textDecoration: "underline" }}>parametrizar patrones de acción del precio</span>, edición inline directa de reglas etc.
               </div>
               <div style={{
                 display: "inline-flex",

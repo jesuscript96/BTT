@@ -4,6 +4,7 @@ import type {
   BacktestResponse,
   BacktestResult,
 } from "@/types/backtest";
+import { clearDatasetsCache } from "./api_backtester";
 
 // ─── Base URL ───────────────────────────────────────────────
 const RAW_BASE =
@@ -207,20 +208,24 @@ export function getQueries(): Promise<SavedQuery[]> {
   return apiRequest<SavedQuery[]>(`/queries/?t=${Date.now()}`);
 }
 
-export function createQuery(
+export async function createQuery(
   data: { name: string; filters: Record<string, unknown> },
 ): Promise<SavedQuery> {
-  return apiRequest<SavedQuery>("/queries/", {
+  const res = await apiRequest<SavedQuery>("/queries/", {
     method: "POST",
     body: JSON.stringify(data),
     timeoutMs: 300_000, // dataset_pairs insert + GCS upload can take minutes in prod
   });
+  clearDatasetsCache();
+  return res;
 }
 
-export function deleteQuery(id: string): Promise<void> {
-  return apiRequest<void>(`/queries/${encodeURIComponent(id)}`, {
+export async function deleteQuery(id: string): Promise<void> {
+  const res = await apiRequest<void>(`/queries/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+  clearDatasetsCache();
+  return res;
 }
 
 // ─── Strategy Search ────────────────────────────────────────

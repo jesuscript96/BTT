@@ -63,6 +63,7 @@ interface TickerAnalysisData {
     gap_stats?: GapStats;
     gap_stats_plus_1?: GapStats;
     gap_stats_plus_2?: GapStats;
+    gap_dates?: string[];
 }
 
 interface FilingsData {
@@ -234,11 +235,13 @@ const getTimestamp = (t: any): number | null => {
 const DailyStockChart = ({ 
     dailyData,
     finvizNews,
-    filings
+    filings,
+    gapDates
 }: { 
     dailyData?: DailyDataPoint[];
     finvizNews?: FinvizNewsItem[];
     filings?: FilingsData | null;
+    gapDates?: string[];
 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -468,23 +471,45 @@ const DailyStockChart = ({
         chartRef.current = chart;
         candleSeriesRef.current = candleSeries;
 
-        // Set markers for gap days (gap_pct >= 20.0%)
-        const markers = [];
-        for (let i = 1; i < dailyData.length; i++) {
-            const prevClose = dailyData[i - 1].close;
-            const currentOpen = dailyData[i].open;
-            if (prevClose > 0) {
-                const gapPct = ((currentOpen - prevClose) / prevClose) * 100;
-                if (gapPct >= 20.0) {
-                    markers.push({
-                        time: dailyData[i].time,
-                        position: 'aboveBar' as const,
-                        color: '#D87A3D',
-                        shape: 'arrowDown' as const,
-                        text: `GAP (${gapPct.toFixed(0)}%)`,
-                        size: 2,
+        if (formattedCandles.length > 0) {
+            const lastCandle = formattedCandles[formattedCandles.length - 1];
+            const lastDate = new Date(lastCandle.time as string);
+            
+            // Calculate 6 months ago
+            const sixMonthsAgo = new Date(lastDate);
+            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+            const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
+            
+            // Find first candle date that is >= sixMonthsAgoStr
+            const fromCandle = formattedCandles.find(c => (c.time as string) >= sixMonthsAgoStr) || formattedCandles[0];
+            
+            setTimeout(() => {
+                try {
+                    chart.timeScale().setVisibleRange({
+                        from: fromCandle.time,
+                        to: lastCandle.time
                     });
+                } catch (e) {
+                    console.warn("Could not set initial chart visible range:", e);
                 }
+            }, 50);
+        }
+
+        // Set markers for gap days based on registered gapDates
+        const markers = [];
+        const gapDatesSet = new Set(gapDates || []);
+        
+        for (let i = 1; i < dailyData.length; i++) {
+            const dateStr = dailyData[i].time;
+            if (gapDatesSet.has(dateStr)) {
+                markers.push({
+                    time: dateStr,
+                    position: 'aboveBar' as const,
+                    color: '#D87A3D', // Opaque copper circle
+                    shape: 'circle' as const,
+                    size: 0.75,
+                    text: '', // No text
+                });
             }
         }
         if (markers.length > 0) {
@@ -553,7 +578,7 @@ const DailyStockChart = ({
             chartRef.current = null;
             candleSeriesRef.current = null;
         };
-    }, [dailyData]);
+    }, [dailyData, gapDates]);
 
     if (!dailyData || dailyData.length === 0) {
         return (
@@ -572,7 +597,7 @@ const DailyStockChart = ({
         );
     }
 
-    // Calculate gap days from dailyData (gap_pct >= 20.0%)
+    // Calculate gap days from dailyData based on registered gapDates
     const gaps: Array<{
         time: string;
         gapPct: number;
@@ -583,23 +608,23 @@ const DailyStockChart = ({
         isPositive: boolean;
     }> = [];
     
+    const gapDatesSet = new Set(gapDates || []);
+    
     if (dailyData && dailyData.length > 1) {
         for (let i = 1; i < dailyData.length; i++) {
             const prevClose = dailyData[i - 1].close;
             const d = dailyData[i];
-            if (prevClose > 0) {
-                const gapPct = ((d.open - prevClose) / prevClose) * 100;
-                if (gapPct >= 20.0) {
-                    gaps.push({
-                        time: d.time,
-                        gapPct,
-                        open: d.open,
-                        high: d.high,
-                        low: d.low,
-                        close: d.close,
-                        isPositive: d.close >= d.open
-                    });
-                }
+            if (gapDatesSet.has(d.time)) {
+                const gapPct = prevClose > 0 ? ((d.open - prevClose) / prevClose) * 100 : 0;
+                gaps.push({
+                    time: d.time,
+                    gapPct,
+                    open: d.open,
+                    high: d.high,
+                    low: d.low,
+                    close: d.close,
+                    isPositive: d.close >= d.open
+                });
             }
         }
     }
@@ -622,7 +647,7 @@ const DailyStockChart = ({
                 {/* Sub-tabs toggle */}
                 <div style={{ display: 'flex', gap: 4 }}>
                     {(['chart', 'gapList'] as const).map(tab => {
-                        const label = tab === 'chart' ? 'Chart' : 'Gap List';
+                        const label = tab === 'chart' ? 'Chart' : `Gap List (${gaps.length})`;
                         const isActive = activeTab === tab;
                         return (
                             <button
@@ -686,7 +711,7 @@ const DailyStockChart = ({
                             color: 'var(--color-ec-text-muted)',
                             fontSize: '11px'
                         }}>
-                            No gap days detected (gap &ge; 20.0%).
+                            No se encontraron gaps registrados para este ticker.
                         </div>
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: "'General Sans', sans-serif" }}>
@@ -752,7 +777,14 @@ const DailyStockChart = ({
                                                 }}
                                             >
                                                 <td style={{ padding: '6px 4px 6px 0', fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>{gap.time}</td>
-                                                <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600, color: 'var(--color-ec-copper-bright)' }}>+{gap.gapPct.toFixed(2)}%</td>
+                                                <td style={{
+                                                    padding: '6px 4px',
+                                                    textAlign: 'right',
+                                                    fontWeight: 600,
+                                                    color: gap.gapPct >= 0 ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)'
+                                                }}>
+                                                    {gap.gapPct >= 0 ? '+' : ''}{gap.gapPct.toFixed(2)}%
+                                                </td>
                                                 <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-high)' }}>${gap.open.toFixed(2)}</td>
                                                 <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.high.toFixed(2)}</td>
                                                 <td style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 500, color: 'var(--color-ec-text-secondary)' }}>${gap.low.toFixed(2)}</td>
@@ -2265,7 +2297,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 />
                             ) : (
                                 <>
-                                    <DailyStockChart dailyData={data?.daily_history} finvizNews={finvizNews} filings={filings} />
+                                    <DailyStockChart
+                                        dailyData={data?.daily_history}
+                                        finvizNews={finvizNews}
+                                        filings={filings}
+                                        gapDates={data?.gap_dates}
+                                    />
                                     
                                     {/* Latest News Banner rendered below the chart component */}
                                     {latestNews && (

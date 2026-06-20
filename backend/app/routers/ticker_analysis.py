@@ -94,29 +94,38 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
 
     if row is not None:
         payload, updated_at = row
-        stale = True
+        is_valid = True
         try:
-            stale = (datetime.now() - updated_at) > ttl
+            parsed = _json.loads(payload) if isinstance(payload, str) else payload
+            if endpoint == "gap_stats" and isinstance(parsed, dict) and "gap_dates" not in parsed:
+                is_valid = False
         except Exception:
-            pass
-        if stale:
-            key = (ticker, endpoint)
-            with _swr_inflight_lock:
-                already = key in _swr_inflight
+            is_valid = False
+
+        if is_valid:
+            stale = True
+            try:
+                stale = (datetime.now() - updated_at) > ttl
+            except Exception:
+                pass
+            if stale:
+                key = (ticker, endpoint)
+                with _swr_inflight_lock:
+                    already = key in _swr_inflight
+                    if not already:
+                        _swr_inflight.add(key)
                 if not already:
-                    _swr_inflight.add(key)
-            if not already:
-                def _refresh():
-                    try:
-                        _store(fetch_fn())
-                        print(f"[SWR] refreshed {ticker}/{endpoint}")
-                    except Exception as e:
-                        print(f"[SWR] refresh failed for {ticker}/{endpoint}: {e}")
-                    finally:
-                        with _swr_inflight_lock:
-                            _swr_inflight.discard(key)
-                threading.Thread(target=_refresh, daemon=True).start()
-        return _json.loads(payload) if isinstance(payload, str) else payload
+                    def _refresh():
+                        try:
+                            _store(fetch_fn())
+                            print(f"[SWR] refreshed {ticker}/{endpoint}")
+                        except Exception as e:
+                            print(f"[SWR] refresh failed for {ticker}/{endpoint}: {e}")
+                        finally:
+                            with _swr_inflight_lock:
+                                _swr_inflight.discard(key)
+                    threading.Thread(target=_refresh, daemon=True).start()
+            return _json.loads(payload) if isinstance(payload, str) else payload
 
     # Never seen
     if endpoint == "gap_stats":
@@ -132,7 +141,8 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
                 "know_the_float": None,
                 "gap_stats": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
                 "gap_stats_plus_1": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
-                "gap_stats_plus_2": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"}
+                "gap_stats_plus_2": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
+                "gap_dates": []
             }
             _store(placeholder)
             
@@ -164,7 +174,8 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
                 "know_the_float": None,
                 "gap_stats": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
                 "gap_stats_plus_1": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
-                "gap_stats_plus_2": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"}
+                "gap_stats_plus_2": {"gap_days_count": 0, "price_change_chart": [], "status": "calculating"},
+                "gap_dates": []
             }
     else:
         # Fetch synchronously for fast endpoints like balance_sheet
@@ -513,8 +524,13 @@ def get_gap_stats_all_days(ticker: str) -> dict:
         else:
             df['gap_pct'] = 0.0
 
-    # Locate Runner day indices (pmh_gap_pct >= 20.0)
-    gap_indices = df[df['pmh_gap_pct'] >= 20.0].index.tolist() if 'pmh_gap_pct' in df.columns else []
+    # Locate Runner day indices (pmh_gap_pct >= 20.0, fallback to gap_pct >= 20.0)
+    if 'pmh_gap_pct' in df.columns:
+        gap_indices = df[df['pmh_gap_pct'] >= 20.0].index.tolist()
+    elif 'gap_pct' in df.columns:
+        gap_indices = df[df['gap_pct'] >= 20.0].index.tolist()
+    else:
+        gap_indices = []
 
     # Map out the date and dataframes for the 3 offsets
     offset_data = {}
@@ -660,6 +676,7 @@ def get_gap_stats_all_days(ticker: str) -> dict:
             "price_change_chart": chart_data
         }
 
+    results["gap_dates"] = recent_target_dates_map.get(0, [])
     return results
 
 def get_yfinance_session():
@@ -794,17 +811,35 @@ def get_ticker_analysis(ticker: str):
             return stock.info
 
         def _fetch_db_profile():
-            from app.database import get_db_connection
-            con = get_db_connection()
-            ticker_df = con.execute(
-                "SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]
-            ).fetchdf()
-            if ticker_df.empty:
-                return {}
-            return {
-                "longName": ticker_df.iloc[0]['name'],
-                "exchange": ticker_df.iloc[0]['primary_exchange'],
-            }
+            try:
+                from app.services.cache_service import get_tickers_df
+                tickers_df = get_tickers_df()
+                if tickers_df is not None and not tickers_df.empty:
+                    match = tickers_df[tickers_df['ticker'] == ticker]
+                    if not match.empty:
+                        row = match.iloc[0]
+                        return {
+                            "longName": row.get('name') if pd.notna(row.get('name')) else None,
+                            "exchange": row.get('primary_exchange') if pd.notna(row.get('primary_exchange')) else None
+                        }
+            except Exception as e:
+                print(f"Error querying local tickers cache: {e}")
+            
+            # Fallback to direct DB query if not in cache
+            try:
+                from app.database import get_db_connection
+                con = get_db_connection()
+                ticker_df = con.execute(
+                    "SELECT name, primary_exchange FROM tickers WHERE ticker = ?", [ticker]
+                ).fetchdf()
+                if not ticker_df.empty:
+                    return {
+                        "longName": ticker_df.iloc[0]['name'] if pd.notna(ticker_df.iloc[0]['name']) else None,
+                        "exchange": ticker_df.iloc[0]['primary_exchange'] if pd.notna(ticker_df.iloc[0]['primary_exchange']) else None,
+                    }
+            except Exception as e:
+                print(f"Error querying DB profile fallback: {e}")
+            return {}
 
         # yfinance .info, Finviz scrape and DB lookup run in PARALLEL.
         # yfinance is capped at 4s: Finviz + DB already cover the primary
@@ -899,18 +934,31 @@ def get_ticker_analysis(ticker: str):
             print(f"[FALLBACK] Filled price from Finviz for {ticker}: {market['price']}")
         if market["price"] is None:
             try:
-                from app.database import get_db_connection
-                con = get_db_connection()
-                row = con.execute(
-                    "SELECT close FROM daily_metrics WHERE ticker = ? "
-                    "ORDER BY timestamp DESC LIMIT 1",
-                    [ticker]
-                ).fetchone()
-                if row and row[0] is not None:
-                    market["price"] = float(row[0])
-                    print(f"[FALLBACK] Filled price from DB daily close for {ticker}: {market['price']}")
+                from app.services.cache_service import get_hot_daily_cache
+                hot_df = get_hot_daily_cache()
+                if hot_df is not None and not hot_df.empty:
+                    match_df = hot_df[hot_df['ticker'] == ticker]
+                    if not match_df.empty:
+                        last_row = match_df.sort_values('timestamp').iloc[-1]
+                        market["price"] = float(last_row['close']) if pd.notna(last_row['close']) else None
+                        print(f"[FALLBACK] Filled price from hot daily cache for {ticker}: {market['price']}")
             except Exception as e:
-                print(f"[WARN] DB price fallback failed for {ticker}: {e}")
+                print(f"Error getting price from hot daily cache fallback: {e}")
+                
+            if market["price"] is None and os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
+                try:
+                    from app.database import get_db_connection
+                    con = get_db_connection()
+                    row = con.execute(
+                        "SELECT close FROM daily_metrics WHERE ticker = ? "
+                        "ORDER BY timestamp DESC LIMIT 1",
+                        [ticker]
+                    ).fetchone()
+                    if row and row[0] is not None:
+                        market["price"] = float(row[0])
+                        print(f"[FALLBACK] Filled price from DB daily close for {ticker}: {market['price']}")
+                except Exception as e:
+                    print(f"[WARN] DB price fallback failed for {ticker}: {e}")
 
         # --- Financials (Snapshot) ---
         financials = {
@@ -982,30 +1030,49 @@ def get_ticker_chart(ticker: str):
         # Fallback to database daily_metrics if yfinance returned empty
         if hist.empty:
             try:
-                from app.database import get_db_connection
-                con = get_db_connection()
-                db_df = con.execute("""
-                    SELECT timestamp, open, high, low, close, volume 
-                    FROM daily_metrics 
-                    WHERE ticker = ? 
-                    ORDER BY timestamp ASC
-                """, [ticker]).fetchdf()
-                if not db_df.empty:
-                    hist = db_df.rename(columns={
-                        'timestamp': 'Date',
-                        'open': 'Open',
-                        'high': 'High',
-                        'low': 'Low',
-                        'close': 'Close',
-                        'volume': 'Volume'
-                    })
-                    # Keep a DatetimeIndex (.dt.date produced an object Index
-                    # that broke hist.index.year in the YTD calc → 500)
-                    hist['Date'] = pd.to_datetime(hist['Date'])
-                    hist = hist.set_index('Date')
-                    print(f"[INFO] Loaded chart history from database for {ticker}: {len(hist)} rows")
+                from app.services.cache_service import get_hot_daily_cache
+                hot_df = get_hot_daily_cache()
+                if hot_df is not None and not hot_df.empty:
+                    match_df = hot_df[hot_df['ticker'] == ticker].copy()
+                    if not match_df.empty:
+                        db_df = match_df.rename(columns={
+                            'timestamp': 'Date',
+                            'open': 'Open',
+                            'high': 'High',
+                            'low': 'Low',
+                            'close': 'Close',
+                            'volume': 'Volume'
+                        })
+                        db_df['Date'] = pd.to_datetime(db_df['Date'])
+                        hist = db_df.set_index('Date')
+                        print(f"[INFO] Loaded chart history from hot daily cache for {ticker}: {len(hist)} rows")
             except Exception as e:
-                print(f"Error fetching daily_metrics chart fallback for {ticker}: {e}")
+                print(f"Error fetching hot daily cache chart fallback for {ticker}: {e}")
+                
+            if hist.empty and os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
+                try:
+                    from app.database import get_db_connection
+                    con = get_db_connection()
+                    db_df = con.execute("""
+                        SELECT timestamp, open, high, low, close, volume 
+                        FROM daily_metrics 
+                        WHERE ticker = ? 
+                        ORDER BY timestamp ASC
+                    """, [ticker]).fetchdf()
+                    if not db_df.empty:
+                        hist = db_df.rename(columns={
+                            'timestamp': 'Date',
+                            'open': 'Open',
+                            'high': 'High',
+                            'low': 'Low',
+                            'close': 'Close',
+                            'volume': 'Volume'
+                        })
+                        hist['Date'] = pd.to_datetime(hist['Date'])
+                        hist = hist.set_index('Date')
+                        print(f"[INFO] Loaded chart history from database for {ticker}: {len(hist)} rows")
+                except Exception as e:
+                    print(f"Error fetching daily_metrics chart fallback for {ticker}: {e}")
         
         perf = {}
         daily_history = []
@@ -1181,7 +1248,8 @@ def get_ticker_gap_stats(ticker: str):
             "know_the_float": know_the_float,
             "gap_stats": all_stats["gap_stats"],
             "gap_stats_plus_1": all_stats["gap_stats_plus_1"],
-            "gap_stats_plus_2": all_stats["gap_stats_plus_2"]
+            "gap_stats_plus_2": all_stats["gap_stats_plus_2"],
+            "gap_dates": all_stats.get("gap_dates", [])
         }
 
     try:

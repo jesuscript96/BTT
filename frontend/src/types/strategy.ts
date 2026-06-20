@@ -84,7 +84,8 @@ export enum RiskType {
     FIXED = "Fixed Amount",
     PERCENTAGE = "Percentage",
     ATR = "ATR Multiplier",
-    MARKET_STRUCTURE = "Market Structure (HOD/LOD)"
+    MARKET_STRUCTURE = "Market Structure (HOD/LOD)",
+    TIME = "Time"
 }
 
 export enum TakeProfitMode {
@@ -202,7 +203,7 @@ export interface RiskSettings {
 }
 
 export interface PartialTakeProfit {
-    distance_pct: number | 'EOD';
+    distance_pct: number | 'EOD' | string;
     capital_pct: number;
 }
 

@@ -28,6 +28,7 @@ def simulate(
     sl_stop: float | None = None,
     sl_trail: bool = False,
     tp_stop: float | None = None,
+    tp_time_limit: float | None = None,
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
@@ -47,6 +48,7 @@ def simulate(
     prev_lows: np.ndarray | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
+    elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -176,18 +178,26 @@ def simulate(
                                     exit_reason = "Trailing"
 
             # take-profit (full mode — only if partial TPs are NOT configured)
-            if not exit_triggered and tp_stop is not None and not partial_take_profits and not skip_exits:
-                if is_long:
-                    tp_level = entry_price * (1 + tp_stop)
-                    if price_for_tp >= tp_level:
+            if not exit_triggered and not partial_take_profits and not skip_exits:
+                if tp_stop is not None:
+                    if is_long:
+                        tp_level = entry_price * (1 + tp_stop)
+                        if price_for_tp >= tp_level:
+                            exit_triggered = True
+                            exit_price = min(tp_level, high[i])
+                            exit_reason = "TP"
+                    else:
+                        tp_level = entry_price * (1 - tp_stop)
+                        if price_for_tp <= tp_level:
+                            exit_triggered = True
+                            exit_price = max(tp_level, low[i])
+                            exit_reason = "TP"
+
+                if not exit_triggered and tp_time_limit is not None and timestamps is not None:
+                    elapsed_mins = (timestamps[i] - entry_time) / 6e10
+                    if elapsed_mins >= tp_time_limit:
                         exit_triggered = True
-                        exit_price = min(tp_level, high[i])
-                        exit_reason = "TP"
-                else:
-                    tp_level = entry_price * (1 - tp_stop)
-                    if price_for_tp <= tp_level:
-                        exit_triggered = True
-                        exit_price = max(tp_level, low[i])
+                        exit_price = close[i]
                         exit_reason = "TP"
 
             # --- Partial Take-Profits ---
@@ -244,6 +254,57 @@ def simulate(
                                     break
                         else:
                             # Not EOD yet, skip
+                            continue
+                    
+                    elif isinstance(dist_frac, str) and dist_frac.startswith("TIME:"):
+                        try:
+                            tp_mins = float(dist_frac.split(":")[1])
+                        except:
+                            tp_mins = 0.0
+                        elapsed_mins = (timestamps[i] - entry_time) / 6e10 if timestamps is not None else 0.0
+                        if elapsed_mins >= tp_mins:
+                            partial_tp_hits[pt_idx] = True
+                            pt_exit_price = close[i]
+                            
+                            slip = pt_exit_price * slippage
+                            net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
+                            pt_size = original_size * cap_frac
+                            pt_size = min(pt_size, size)
+                            if pt_size > 0:
+                                if is_long:
+                                    gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                else:
+                                    gross_pnl = (entry_price - net_pt_exit) * pt_size
+                                
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * 2
+                                else:
+                                    fee_amount = abs(gross_pnl) * fees
+                                pnl = gross_pnl - fee_amount
+                                realized_pnl += pnl
+                                capital_at_risk = entry_price * pt_size
+                                ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                                trades.append({
+                                    "entry_idx": entry_idx,
+                                    "exit_idx": i,
+                                    "entry_price": round(entry_price, 6),
+                                    "exit_price": round(net_pt_exit, 6),
+                                    "pnl": round(pnl, 4),
+                                    "return_pct": round(ret_pct, 4),
+                                    "direction": "Long" if is_long else "Short",
+                                    "status": "Closed",
+                                    "size": round(pt_size, 6),
+                                    "exit_reason": "Partial TP (Time)",
+                                    "mae": round(mae, 4),
+                                    "mfe": round(mfe, 4),
+                                    "stop_loss": round(trade_sl_price, 6),
+                                })
+                                size -= pt_size
+                                if size <= 0.0001:
+                                    in_position = False
+                                    size = 0.0
+                                    break
+                        else:
                             continue
                     
                     elif is_long:
@@ -374,7 +435,21 @@ def simulate(
             # elapsed time exit
             if not exit_triggered and elapsed_limit > 0 and timestamps is not None:
                 elapsed_mins = (timestamps[i] - entry_time) / 6e10
-                if elapsed_mins >= elapsed_limit:
+                trigger = False
+                if elapsed_operator in ("GREATER_THAN_OR_EQUAL", "GTE"):
+                    trigger = (elapsed_mins >= elapsed_limit)
+                elif elapsed_operator in ("GREATER_THAN", "GT"):
+                    trigger = (elapsed_mins > elapsed_limit)
+                elif elapsed_operator in ("LESS_THAN", "LT"):
+                    trigger = (elapsed_mins < elapsed_limit)
+                elif elapsed_operator in ("LESS_THAN_OR_EQUAL", "LTE"):
+                    trigger = (elapsed_mins <= elapsed_limit)
+                elif elapsed_operator in ("EQUAL", "EQ"):
+                    trigger = (elapsed_mins == elapsed_limit)
+                else:
+                    trigger = (elapsed_mins >= elapsed_limit)
+
+                if trigger:
                     exit_triggered = True
                     exit_price = close[i]
                     exit_reason = "Time Limit"

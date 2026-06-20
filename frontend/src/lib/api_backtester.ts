@@ -240,15 +240,26 @@ export async function runMonteCarlo(params: {
   const { data } = await api.post("/montecarlo", params);
   return data;
 }
-
 export interface AvailableDateRange {
   min_date: string;
   max_date: string;
 }
 
+let cachedDatasets: Dataset[] | null = null;
+let cachedDateRange: AvailableDateRange | null = null;
+
+export function clearDatasetsCache() {
+  cachedDatasets = null;
+  cachedDateRange = null;
+}
+
 export async function fetchAvailableDateRange(): Promise<AvailableDateRange> {
+  if (cachedDateRange) {
+    return cachedDateRange;
+  }
   try {
     const { data } = await api.get(`/market/available-date-range?t=${Date.now()}`);
+    cachedDateRange = data;
     return data;
   } catch (err) {
     console.error("Failed to fetch available date range, using fallbacks:", err);
@@ -260,7 +271,11 @@ export async function fetchAvailableDateRange(): Promise<AvailableDateRange> {
 }
 
 export async function fetchDatasets(): Promise<Dataset[]> {
+  if (cachedDatasets) {
+    return cachedDatasets;
+  }
   const { data } = await api.get(`/data/datasets?t=${Date.now()}`);
+  cachedDatasets = data;
   return data;
 }
 

@@ -4587,7 +4587,7 @@ export default function WizardStrategyBuilder({
       });
     };
 
-    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: number | 'EOD') => {
+    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: any) => {
       setRiskManagement({
         ...riskManagement,
         partial_take_profits: riskManagement.partial_take_profits.map((p, i) =>
@@ -4720,42 +4720,66 @@ export default function WizardStrategyBuilder({
             {riskManagement.take_profit_mode === TakeProfitMode.FULL ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center", textAlign: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor del porcentaje</span>
+                  <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Tipo de salida</span>
                   <CustomTooltip
-                    title="Take Profit fijo en %"
-                    text="Define el porcentaje de beneficio objetivo. Cuando el precio alcance esta distancia de subida (o bajada si es Short) desde tu entrada, se cerrará la operación asegurando las ganancias."
+                    title="Take Profit fijo"
+                    text="Define el objetivo de beneficio (porcentaje o tiempo de salida)."
                   />
                 </div>
-                <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.</span>
+                <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>
+                  {riskManagement.take_profit.type === RiskType.TIME ? 'Ejemplo: 30 minutos de tiempo antes de tomar ganancias.' : 'Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.'}
+                </span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
-                  <div
+                  <select
+                    value={riskManagement.take_profit.type || RiskType.PERCENTAGE}
+                    onChange={(e) => {
+                      const newType = e.target.value as RiskType;
+                      const defaultVal = newType === RiskType.TIME ? 30 : 6.0;
+                      setRiskManagement({
+                        ...riskManagement,
+                        take_profit: {
+                          ...riskManagement.take_profit,
+                          type: newType,
+                          value: defaultVal
+                        }
+                      });
+                    }}
                     style={{
                       backgroundColor: 'var(--color-ec-bg-sidebar)',
                       border: '0.5px solid var(--color-ec-border)',
                       borderRadius: 5,
-                      padding: '7px 14px',
+                      padding: '7px 10px',
                       fontSize: 12,
                       fontWeight: 600,
                       color: 'var(--color-ec-text-primary)',
                       fontFamily: 'var(--color-ec-sans)',
                       height: '36px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      userSelect: 'none',
+                      outline: 'none',
+                      cursor: 'pointer',
                     }}
                   >
-                    %
-                  </div>
+                    <option value={RiskType.PERCENTAGE}>% Distancia</option>
+                    <option value={RiskType.TIME}>Tiempo (minutos)</option>
+                  </select>
                   <div className="relative" style={{ width: '120px' }}>
                     <input
                       type="number"
-                      step="0.1"
-                      value={riskManagement.take_profit.value}
+                      step={riskManagement.take_profit.type === RiskType.TIME ? '1' : '0.1'}
+                      value={riskManagement.take_profit.value ?? ''}
                       onChange={(e) => setRiskManagement({
                         ...riskManagement,
-                        take_profit: { ...riskManagement.take_profit, value: Number(e.target.value) }
+                        take_profit: { ...riskManagement.take_profit, value: e.target.value === '' ? '' : e.target.value }
                       })}
+                      onBlur={() => {
+                        const val = parseFloat(String(riskManagement.take_profit.value));
+                        const isTime = riskManagement.take_profit.type === RiskType.TIME;
+                        const defaultVal = isTime ? 30 : 6.0;
+                        setRiskManagement({
+                          ...riskManagement,
+                          take_profit: { ...riskManagement.take_profit, value: isNaN(val) ? defaultVal : val }
+                        });
+                      }}
+                      onFocus={(e) => e.target.select()}
                       style={{
                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                         border: '0.5px solid var(--color-ec-border)',
@@ -4771,7 +4795,9 @@ export default function WizardStrategyBuilder({
                         textAlign: 'center',
                       }}
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                      {riskManagement.take_profit.type === RiskType.TIME ? 'min' : '%'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -4834,65 +4860,113 @@ export default function WizardStrategyBuilder({
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                           <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-muted)" }}>Nivel Objetivo:</span>
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <select
-                              value={partial.distance_pct === 'EOD' ? 'EOD' : 'PCT'}
-                              onChange={(e) => {
-                                if (e.target.value === 'EOD') {
-                                  updatePartial(idx, 'distance_pct', 'EOD');
-                                } else {
-                                  updatePartial(idx, 'distance_pct', 3.0);
-                                }
-                              }}
-                              style={{
-                                backgroundColor: 'var(--color-ec-bg-surface)',
-                                border: '0.5px solid var(--color-ec-border)',
-                                borderRadius: 4,
-                                padding: '4px 6px',
-                                fontSize: 10,
-                                fontWeight: 600,
-                                color: 'var(--color-ec-text-primary)',
-                                fontFamily: 'var(--color-ec-sans)',
-                                outline: 'none',
-                                cursor: 'pointer',
-                              }}
-                            >
-                              <option value="PCT">% Distancia</option>
-                              <option value="EOD">Fin del Día (EOD)</option>
-                            </select>
+                            {(() => {
+                              const valStr = String(partial.distance_pct);
+                              const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : 'PCT';
+                              
+                              return (
+                                <>
+                                  <select
+                                    value={mode}
+                                    onChange={(e) => {
+                                      const newMode = e.target.value;
+                                      if (newMode === 'EOD') {
+                                        updatePartial(idx, 'distance_pct', 'EOD');
+                                      } else if (newMode === 'TIME') {
+                                        updatePartial(idx, 'distance_pct', 'TIME:30');
+                                      } else {
+                                        updatePartial(idx, 'distance_pct', 3.0);
+                                      }
+                                    }}
+                                    style={{
+                                      backgroundColor: 'var(--color-ec-bg-surface)',
+                                      border: '0.5px solid var(--color-ec-border)',
+                                      borderRadius: 4,
+                                      padding: '4px 6px',
+                                      fontSize: 10,
+                                      fontWeight: 600,
+                                      color: 'var(--color-ec-text-primary)',
+                                      fontFamily: 'var(--color-ec-sans)',
+                                      outline: 'none',
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <option value="PCT">% Distancia</option>
+                                    <option value="TIME">Tiempo (minutos)</option>
+                                    <option value="EOD">Fin del Día (EOD)</option>
+                                  </select>
 
-                            {partial.distance_pct !== 'EOD' && (
-                              <div style={{ position: "relative", width: 55 }}>
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  value={partial.distance_pct}
-                                  onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                  style={{
-                                    width: '100%',
-                                    backgroundColor: 'var(--color-ec-bg-surface)',
-                                    border: '0.5px solid var(--color-ec-border)',
-                                    borderRadius: 4,
-                                    padding: '4px 14px 4px 4px',
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    color: 'var(--color-ec-text-primary)',
-                                    outline: 'none',
-                                    textAlign: 'right',
-                                    boxSizing: 'border-box',
-                                  }}
-                                />
-                                <span style={{
-                                  position: "absolute",
-                                  right: 4,
-                                  top: "50%",
-                                  transform: "translateY(-50%)",
-                                  fontSize: 8,
-                                  fontWeight: "bold",
-                                  color: "var(--color-ec-text-muted)",
-                                  pointerEvents: "none",
-                                }}>%</span>
-                              </div>
-                            )}
+                                  {mode !== 'EOD' ? (
+                                    <div style={{ position: "relative", width: 65 }}>
+                                      <input
+                                        type="number"
+                                        step={mode === 'TIME' ? '1' : '0.1'}
+                                        value={mode === 'TIME' ? (valStr.split(':')[1] || '') : (partial.distance_pct ?? '')}
+                                        onChange={(e) => {
+                                          const rawVal = e.target.value;
+                                          if (mode === 'TIME') {
+                                            updatePartial(idx, 'distance_pct', rawVal === '' ? 'TIME:' : `TIME:${rawVal}`);
+                                          } else {
+                                            updatePartial(idx, 'distance_pct', rawVal === '' ? '' : Number(rawVal));
+                                          }
+                                        }}
+                                        onBlur={() => {
+                                          if (mode === 'TIME') {
+                                            const rawMins = valStr.split(':')[1] || '';
+                                            const parsed = parseInt(rawMins);
+                                            updatePartial(idx, 'distance_pct', `TIME:${isNaN(parsed) ? 30 : parsed}`);
+                                          } else {
+                                            const val = parseFloat(valStr);
+                                            updatePartial(idx, 'distance_pct', isNaN(val) ? 3.0 : val);
+                                          }
+                                        }}
+                                        onFocus={(e) => e.target.select()}
+                                        style={{
+                                          width: '100%',
+                                          backgroundColor: 'var(--color-ec-bg-surface)',
+                                          border: '0.5px solid var(--color-ec-border)',
+                                          borderRadius: 4,
+                                          padding: '4px 14px 4px 4px',
+                                          fontSize: 10,
+                                          fontWeight: 700,
+                                          color: 'var(--color-ec-text-primary)',
+                                          outline: 'none',
+                                          textAlign: 'right',
+                                          boxSizing: 'border-box',
+                                        }}
+                                      />
+                                      <span style={{
+                                        position: "absolute",
+                                        right: 4,
+                                        top: "50%",
+                                        transform: "translateY(-50%)",
+                                        fontSize: 8,
+                                        fontWeight: "bold",
+                                        color: "var(--color-ec-text-muted)",
+                                        pointerEvents: "none",
+                                      }}>
+                                        {mode === 'TIME' ? 'm' : '%'}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div style={{
+                                      width: 65,
+                                      border: '0.5px solid var(--color-ec-border)',
+                                      borderRadius: 4,
+                                      padding: '4px 6px',
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      color: 'var(--color-ec-text-muted)',
+                                      textAlign: 'center',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                      boxSizing: 'border-box',
+                                    }}>
+                                      EOD
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
 
@@ -5014,7 +5088,7 @@ export default function WizardStrategyBuilder({
             {!isTpOn
               ? "Desactivado"
               : riskManagement.take_profit_mode === TakeProfitMode.FULL
-              ? `Take Profit: ${riskManagement.take_profit.value}%`
+              ? `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`
               : `Take Profit: ${riskManagement.partial_take_profits.length} parciales (Total ${totalPartialCapital}%)`}
           </span>
         </div>
@@ -5463,13 +5537,13 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
-          label: `Take Profit: ${riskManagement.take_profit.value}%`,
+          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`,
           stepName: "Gestión de Riesgo"
         });
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             stepName: "Gestión de Riesgo"
@@ -5831,7 +5905,7 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
-          label: `Take Profit: ${riskManagement.take_profit.value}%`,
+          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`,
           color: "var(--color-ec-copper)",
           onRemove: () => {
             setRiskManagement({
@@ -5843,7 +5917,7 @@ export default function WizardStrategyBuilder({
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             color: "var(--color-ec-copper)",
@@ -6085,11 +6159,9 @@ export default function WizardStrategyBuilder({
         overflow: "hidden",
         minHeight: 0,
       }}>
-        {/* Left: Step Rail (width auto with min/max limits to expand dynamically) */}
+        {/* Left: Step Rail (width 190px for full formulas) */}
         <div style={{
-          width: "auto",
-          minWidth: 190,
-          maxWidth: 270,
+          width: 190,
           flexShrink: 0,
           borderRight: "0.5px solid var(--color-ec-border)",
           display: "flex",

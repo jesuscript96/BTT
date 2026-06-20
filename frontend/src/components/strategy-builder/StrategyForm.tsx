@@ -81,9 +81,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap'>('cierre');
     const [tempOperator, setTempOperator] = useState<'>' | '<'>('>');
     const [tempTarget, setTempTarget] = useState<'apertura' | 'high_gap_day' | 'low_gap_day' | 'pm_high' | 'pm_low' | 'vwap' | 'sma'>('apertura');
-    const [tempValue, setTempValue] = useState<number>(1000000);
+    const [tempValue, setTempValue] = useState<number | string>(1000000);
     const [tempVolumeText, setTempVolumeText] = useState<string>("1.0");
-    const [tempSmaPeriod, setTempSmaPeriod] = useState<number>(20);
+    const [tempSmaPeriod, setTempSmaPeriod] = useState<number | string>(20);
 
     useEffect(() => {
         if (applyDay === 'gap_day') {
@@ -635,9 +635,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                             <input
                                                 type="number"
                                                 value={tempSmaPeriod}
-                                                min={2}
-                                                max={500}
-                                                onChange={(e) => setTempSmaPeriod(parseInt(e.target.value) || 20)}
+                                                onChange={(e) => setTempSmaPeriod(e.target.value === '' ? '' : e.target.value)}
+                                                onBlur={() => {
+                                                    const val = parseInt(tempSmaPeriod.toString());
+                                                    setTempSmaPeriod(isNaN(val) ? 20 : Math.max(2, Math.min(500, val)));
+                                                }}
+                                                onFocus={(e) => e.target.select()}
                                                 style={{
                                                     background: 'var(--color-ec-bg-surface)',
                                                     border: '0.5px solid var(--color-ec-border)',
@@ -697,10 +700,12 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                                 <input
                                                     type="number"
                                                     value={tempValue}
-                                                    onChange={(e) => {
-                                                        const val = parseFloat(e.target.value);
-                                                        setTempValue(isNaN(val) ? 0 : val);
+                                                    onChange={(e) => setTempValue(e.target.value === '' ? '' : e.target.value)}
+                                                    onBlur={() => {
+                                                        const val = parseFloat(tempValue.toString());
+                                                        setTempValue(isNaN(val) ? 0.0 : val);
                                                     }}
+                                                    onFocus={(e) => e.target.select()}
                                                     style={{
                                                         background: 'var(--color-ec-bg-surface)',
                                                         border: '0.5px solid var(--color-ec-border)',
@@ -748,7 +753,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                                 } else if (tempTarget === 'sma') {
                                                     metric = 'close_vs_sma';
                                                     operator = tempOperator;
-                                                    sma_period = tempSmaPeriod;
+                                                    sma_period = Number(tempSmaPeriod) || 20;
                                                 }
                                             } else if (tempSource === 'volume') {
                                                 metric = 'volume';
@@ -758,11 +763,11 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                                             } else if (tempSource === 'candle_range_pct') {
                                                 metric = 'candle_range_pct';
                                                 operator = tempOperator;
-                                                value = tempValue;
+                                                value = Number(tempValue) || 0.0;
                                             } else if (tempSource === 'candle_range_ratio_gap_1_vs_gap') {
                                                 metric = 'candle_range_ratio_gap_1_vs_gap';
                                                 operator = tempOperator;
-                                                value = tempValue;
+                                                value = Number(tempValue) || 0.0;
                                             }
 
                                             const newCond: PostGapPrecondition = {

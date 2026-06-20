@@ -639,7 +639,7 @@ export default function EquityCurveTab({
           ddLineEndRef.current.style.display = "block";
         }
         if (ddLabelRef.current) {
-          ddLabelRef.current.style.left = `${coordEnd - 6}px`; // Pegado a la línea derecha
+          ddLabelRef.current.style.left = `${coordEnd - 3}px`; // Pegado a la línea derecha
           ddLabelRef.current.style.display = "block";
         }
       } else {
@@ -957,7 +957,7 @@ export default function EquityCurveTab({
                     ref={ddLabelRef}
                     style={{
                       position: "absolute",
-                      bottom: 45, // Distancia desde la escala de tiempo inferior
+                      top: 110, // Posicionado en la parte alta
                       left: 0,
                       transform: "rotate(-90deg)",
                       transformOrigin: "left bottom",

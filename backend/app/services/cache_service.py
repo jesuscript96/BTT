@@ -16,17 +16,17 @@ def load_tickers_cache() -> None:
     con = get_db_connection()
     try:
         _tickers_cache = con.execute(
-            "SELECT ticker, type FROM massive.tickers "
+            "SELECT ticker, type, name, primary_exchange FROM massive.tickers "
             "WHERE type IN ('CS', 'ADRC', 'OS')"
         ).fetchdf()
         print(f"[CACHE] tickers loaded: {len(_tickers_cache)} rows")
     except Exception as e:
         print(f"[WARN] Failed to load tickers cache: {e}. Falling back to default list.")
         _tickers_cache = pd.DataFrame([
-            {'ticker': 'AAPL', 'type': 'CS'},
-            {'ticker': 'TSLA', 'type': 'CS'},
-            {'ticker': 'NVDA', 'type': 'CS'},
-            {'ticker': 'MSFT', 'type': 'CS'}
+            {'ticker': 'AAPL', 'type': 'CS', 'name': 'Apple Inc.', 'primary_exchange': 'NASDAQ'},
+            {'ticker': 'TSLA', 'type': 'CS', 'name': 'Tesla Inc.', 'primary_exchange': 'NASDAQ'},
+            {'ticker': 'NVDA', 'type': 'CS', 'name': 'NVIDIA Corp.', 'primary_exchange': 'NASDAQ'},
+            {'ticker': 'MSFT', 'type': 'CS', 'name': 'Microsoft Corp.', 'primary_exchange': 'NASDAQ'}
         ])
 
 def load_splits_cache() -> None:

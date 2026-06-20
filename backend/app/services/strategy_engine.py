@@ -133,7 +133,7 @@ def translate_strategy(
 
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
-    sl_stop, sl_trail, tp_stop, trail_pct, partial_tps = _parse_risk_management(risk, df, daily_stats, risk_cache)
+    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps = _parse_risk_management(risk, df, daily_stats, risk_cache)
 
     return {
         "entries": entries.astype(bool),
@@ -142,6 +142,7 @@ def translate_strategy(
         "sl_stop": sl_stop,
         "sl_trail": sl_trail,
         "tp_stop": tp_stop,
+        "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
@@ -445,10 +446,11 @@ def _parse_risk_management(
     df: pd.DataFrame,
     daily_stats: dict | None,
     cache: dict | None = None,
-) -> tuple[float | None, bool, float | None, float | None, list | None]:
+) -> tuple[float | None, bool, float | None, float | None, float | None, list | None]:
     sl_stop = None
     sl_trail = False
     tp_stop = None
+    tp_time_limit = None
     trail_pct = None
     partial_tps = None
 
@@ -488,14 +490,34 @@ def _parse_risk_management(
                 dist = pt.get("distance_pct", 0)
                 cap = pt.get("capital_pct", 0)
                 is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
-                if (is_eod_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
+                is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
+                if (is_eod_val or is_time_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
                     partial_tps.append({
-                        "distance_pct": "EOD" if is_eod_val else (dist / 100.0),
+                        "distance_pct": dist,
                         "capital_pct": cap / 100.0,
                     })
-            # Sort by distance ascending so nearest TP triggers first, and EOD goes last
+            
+            # Helper to sort partial TPs: numeric first, then TIME, then EOD
+            def _pt_sort_key(x):
+                d = x["distance_pct"]
+                if isinstance(d, str):
+                    if d.upper() == "EOD":
+                        return (2, 0.0)
+                    if d.startswith("TIME:"):
+                        try:
+                            t_val = float(d.split(":")[1])
+                        except:
+                            t_val = 0.0
+                        return (1, t_val)
+                return (0, float(d) / 100.0)
+
             if partial_tps:
-                partial_tps.sort(key=lambda x: float('inf') if isinstance(x["distance_pct"], str) and x["distance_pct"].upper() == "EOD" else x["distance_pct"])
+                # Divide numeric distance_pct values by 100.0 for simulation compat
+                for pt in partial_tps:
+                    d = pt["distance_pct"]
+                    if not isinstance(d, str):
+                        pt["distance_pct"] = float(d) / 100.0
+                partial_tps.sort(key=_pt_sort_key)
             else:
                 partial_tps = None
             # tp_stop stays None — partial mode doesn't use a single TP
@@ -503,5 +525,7 @@ def _parse_risk_management(
             tp = risk["take_profit"]
             if tp.get("type") == "Percentage":
                 tp_stop = tp.get("value", 0) / 100.0
+            elif tp.get("type") == "Time":
+                tp_time_limit = float(tp.get("value", 0))
 
-    return sl_stop, sl_trail, tp_stop, trail_pct, partial_tps
+    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps

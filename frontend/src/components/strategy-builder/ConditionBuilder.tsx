@@ -556,8 +556,9 @@ export const IndicatorParams = ({
                         return (
                             <input
                                 type="number"
-                                value={value.period || ''}
-                                onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                                value={value.period ?? ''}
+                                onChange={(e) => onChange({ ...value, period: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                onFocus={(e) => e.target.select()}
                                 placeholder="Period"
                                 style={{
                                     width: '100%',
@@ -580,8 +581,9 @@ export const IndicatorParams = ({
                             <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
                                 <input
                                     type="number"
-                                    value={value.period || ''}
-                                    onChange={(e) => onChange({ ...value, period: Number(e.target.value) })}
+                                    value={value.period ?? ''}
+                                    onChange={(e) => onChange({ ...value, period: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
                                     placeholder="Period"
                                     style={{
                                         flex: '1 1 70px',
@@ -601,8 +603,9 @@ export const IndicatorParams = ({
                                 {value.name === IndicatorType.BOLLINGER_BANDS && (
                                     <input
                                         type="number"
-                                        value={value.stdDev || ''}
-                                        onChange={(e) => onChange({ ...value, stdDev: Number(e.target.value) })}
+                                        value={value.stdDev ?? ''}
+                                        onChange={(e) => onChange({ ...value, stdDev: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                        onFocus={(e) => e.target.select()}
                                         placeholder="Std Dev"
                                         style={{
                                             flex: '1 1 70px',
@@ -653,8 +656,9 @@ export const IndicatorParams = ({
                                 <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Mins:</span>
                                 <input
                                     type="number"
-                                    value={value.orb_minutes || ''}
-                                    onChange={(e) => onChange({ ...value, orb_minutes: Number(e.target.value) })}
+                                    value={value.orb_minutes ?? ''}
+                                    onChange={(e) => onChange({ ...value, orb_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
                                     placeholder="Minutes"
                                     style={{
                                         flex: 1,
@@ -679,8 +683,9 @@ export const IndicatorParams = ({
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
                                 <input
                                     type="number"
-                                    value={value.days_lookback || ''}
-                                    onChange={(e) => onChange({ ...value, days_lookback: Number(e.target.value) })}
+                                    value={value.days_lookback ?? ''}
+                                    onChange={(e) => onChange({ ...value, days_lookback: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
                                     placeholder="Days"
                                     style={{
                                         flex: 1,
@@ -743,10 +748,17 @@ export const IndicatorParams = ({
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Pivot Win.</span>
                                             <input
                                                 type="number"
-                                                min={2}
-                                                max={20}
-                                                value={value.pivot_window ?? 5}
-                                                onChange={(e) => onChange({ ...value, pivot_window: Math.max(2, Number(e.target.value)) })}
+                                                value={value.pivot_window ?? ''}
+                                                onChange={(e) => onChange({ ...value, pivot_window: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                                onBlur={() => {
+                                                    const val = value.pivot_window;
+                                                    if (val === undefined || isNaN(val)) {
+                                                        onChange({ ...value, pivot_window: 5 });
+                                                    } else {
+                                                        onChange({ ...value, pivot_window: Math.max(2, Math.min(20, val)) });
+                                                    }
+                                                }}
+                                                onFocus={(e) => e.target.select()}
                                                 style={{
                                                     width: '100%',
                                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -766,10 +778,17 @@ export const IndicatorParams = ({
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Min Pivots</span>
                                             <input
                                                 type="number"
-                                                min={2}
-                                                max={50}
-                                                value={value.min_pivots ?? 2}
-                                                onChange={(e) => onChange({ ...value, min_pivots: Math.max(2, Number(e.target.value)) })}
+                                                value={value.min_pivots ?? ''}
+                                                onChange={(e) => onChange({ ...value, min_pivots: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                                onBlur={() => {
+                                                    const val = value.min_pivots;
+                                                    if (val === undefined || isNaN(val)) {
+                                                        onChange({ ...value, min_pivots: 2 });
+                                                    } else {
+                                                        onChange({ ...value, min_pivots: Math.max(2, Math.min(50, val)) });
+                                                    }
+                                                }}
+                                                onFocus={(e) => e.target.select()}
                                                 style={{
                                                     width: '100%',
                                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -789,10 +808,17 @@ export const IndicatorParams = ({
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Lookback</span>
                                             <input
                                                 type="number"
-                                                min={10}
-                                                max={200}
-                                                value={value.tri_lookback ?? 35}
-                                                onChange={(e) => onChange({ ...value, tri_lookback: Math.max(10, Number(e.target.value)) })}
+                                                value={value.tri_lookback ?? ''}
+                                                onChange={(e) => onChange({ ...value, tri_lookback: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                                onBlur={() => {
+                                                    const val = value.tri_lookback;
+                                                    if (val === undefined || isNaN(val)) {
+                                                        onChange({ ...value, tri_lookback: 35 });
+                                                    } else {
+                                                        onChange({ ...value, tri_lookback: Math.max(10, Math.min(200, val)) });
+                                                    }
+                                                }}
+                                                onFocus={(e) => e.target.select()}
                                                 style={{
                                                     width: '100%',
                                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -814,11 +840,17 @@ export const IndicatorParams = ({
                                             <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-ec-text-muted)', display: 'block', marginBottom: 2 }}>Slope Tol. (%)</span>
                                             <input
                                                 type="number"
-                                                min={0.01}
-                                                max={10.0}
-                                                step={0.1}
-                                                value={value.slope_tolerance ?? 1.5}
-                                                onChange={(e) => onChange({ ...value, slope_tolerance: Math.max(0.01, Number(e.target.value)) })}
+                                                value={value.slope_tolerance ?? ''}
+                                                onChange={(e) => onChange({ ...value, slope_tolerance: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                                onBlur={() => {
+                                                    const val = value.slope_tolerance;
+                                                    if (val === undefined || isNaN(val)) {
+                                                        onChange({ ...value, slope_tolerance: 1.5 });
+                                                    } else {
+                                                        onChange({ ...value, slope_tolerance: Math.max(0.01, Math.min(10.0, val)) });
+                                                    }
+                                                }}
+                                                onFocus={(e) => e.target.select()}
                                                 style={{
                                                     width: '100%',
                                                     backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -875,9 +907,15 @@ export const IndicatorParams = ({
                     }}>Bars Back (X):</span>
                     <input
                         type="number"
-                        min="0"
-                        value={value.offset || 0}
-                        onChange={(e) => onChange({ ...value, offset: Math.max(0, Number(e.target.value)) })}
+                        value={value.offset ?? ''}
+                        onChange={(e) => onChange({ ...value, offset: e.target.value === '' ? undefined : Number(e.target.value) })}
+                        onBlur={() => {
+                            const val = value.offset;
+                            if (val !== undefined && (isNaN(val) || val < 0)) {
+                                onChange({ ...value, offset: 0 });
+                            }
+                        }}
+                        onFocus={(e) => e.target.select()}
                         placeholder="0"
                         style={{
                             width: 52,
@@ -958,6 +996,7 @@ export const TargetInput = ({
     const isPercent = isFixed && sourceIndicatorName === IndicatorType.PM_HIGH_GAP;
 
     const [localText, setLocalText] = React.useState("");
+    const [isFocused, setIsFocused] = React.useState(false);
 
     React.useEffect(() => {
         if (!isFixed && allowedTargets) {
@@ -979,22 +1018,22 @@ export const TargetInput = ({
     }, [value, isFixed, allowedTargets, onChange]);
 
     React.useEffect(() => {
-        if (isFixed) {
+        if (isFixed && !isFocused) {
             if (isVol) {
                 const clean = localText.trim().toLowerCase();
                 const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
                 const parsedVal = parseFloat(numericStr) * 1000000;
                 if (isNaN(parsedVal) || parsedVal !== value || localText === "") {
-                    setLocalText((value / 1000000).toString());
+                    setLocalText(value === 0 && localText === "" ? "" : (value / 1000000).toString());
                 }
             } else {
                 const parsedVal = parseFloat(localText);
                 if (isNaN(parsedVal) || parsedVal !== value || localText === "") {
-                    setLocalText(value.toString());
+                    setLocalText(value === 0 && localText === "" ? "" : value.toString());
                 }
             }
         }
-    }, [value, isFixed, isVol]);
+    }, [value, isFixed, isVol, isFocused]);
 
     const handleTextChange = (txt: string) => {
         setLocalText(txt);
@@ -1008,6 +1047,29 @@ export const TargetInput = ({
         } else {
             const num = parseFloat(txt);
             if (!isNaN(num)) {
+                onChange(num);
+            }
+        }
+    };
+
+    const handleBlur = () => {
+        setIsFocused(false);
+        if (localText === "") {
+            onChange(0);
+        } else if (isVol) {
+            const clean = localText.trim().toLowerCase();
+            const numericStr = clean.endsWith('m') ? clean.slice(0, -1) : clean;
+            const num = parseFloat(numericStr);
+            if (isNaN(num)) {
+                onChange(0);
+            } else {
+                onChange(num * 1000000);
+            }
+        } else {
+            const num = parseFloat(localText);
+            if (isNaN(num)) {
+                onChange(0);
+            } else {
                 onChange(num);
             }
         }
@@ -1047,6 +1109,8 @@ export const TargetInput = ({
                             type="text"
                             value={localText}
                             onChange={(e) => handleTextChange(e.target.value)}
+                            onFocus={(e) => { setIsFocused(true); e.target.select(); }}
+                            onBlur={handleBlur}
                             placeholder="e.g. 1.5"
                             style={{
                                 width: '100%',
@@ -1083,6 +1147,8 @@ export const TargetInput = ({
                             step="any"
                             value={localText}
                             onChange={(e) => handleTextChange(e.target.value)}
+                            onFocus={(e) => { setIsFocused(true); e.target.select(); }}
+                            onBlur={handleBlur}
                             placeholder="e.g. 2.5"
                             style={{
                                 width: '100%',
@@ -1117,6 +1183,8 @@ export const TargetInput = ({
                         type="number"
                         value={localText}
                         onChange={(e) => handleTextChange(e.target.value)}
+                        onFocus={(e) => { setIsFocused(true); e.target.select(); }}
+                        onBlur={handleBlur}
                         placeholder="Value"
                         style={{
                             width: '100%',
@@ -1201,7 +1269,7 @@ export const ConditionRow = ({
         }
     };
 
-    const handleTargetChange = (newTarget: IndicatorConfig | number) => {
+    const handleTargetChange = (newTarget: any) => {
         if (condition.type === 'indicator_comparison') {
             onChange({ ...condition, target: newTarget });
         }
@@ -1224,12 +1292,26 @@ export const ConditionRow = ({
 
                         {isElapsed ? (
                             <div className="flex items-center gap-1">
-                                <span className="text-xs text-muted-foreground">≥</span>
+                                <select
+                                    value={condition.comparator}
+                                    onChange={(e) => onChange({ ...condition, comparator: e.target.value as Comparator })}
+                                    className="bg-muted/20 border border-border/50 rounded px-1.5 py-0.5 text-xs font-mono text-[var(--color-ec-copper)] outline-none"
+                                >
+                                    <option value={Comparator.EQ}>=</option>
+                                    <option value={Comparator.GT}>&gt;</option>
+                                    <option value={Comparator.LT}>&lt;</option>
+                                    <option value={Comparator.GTE}>&ge;</option>
+                                    <option value={Comparator.LTE}>&le;</option>
+                                </select>
                                 <input
                                     type="number"
-                                    min="1"
-                                    value={typeof condition.target === 'number' ? condition.target : 20}
-                                    onChange={(e) => handleTargetChange(Math.max(1, Number(e.target.value)))}
+                                    value={typeof condition.target === 'number' ? condition.target : ''}
+                                    onChange={(e) => handleTargetChange(e.target.value === '' ? '' : Number(e.target.value))}
+                                    onBlur={() => {
+                                        const val = Number(condition.target);
+                                        handleTargetChange(isNaN(val) || val < 1 ? 20 : Math.max(1, val));
+                                    }}
+                                    onFocus={(e) => e.target.select()}
                                     className="w-16 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-mono outline-none"
                                 />
                                 <span className="text-xs text-muted-foreground font-semibold">mins</span>
@@ -1251,9 +1333,13 @@ export const ConditionRow = ({
                                 {/* TARGET VALUE (Minutes) */}
                                 <input
                                     type="number"
-                                    min="0"
-                                    value={typeof condition.target === 'number' ? condition.target : 30}
-                                    onChange={(e) => handleTargetChange(Math.max(0, Number(e.target.value)))}
+                                    value={typeof condition.target === 'number' ? condition.target : ''}
+                                    onChange={(e) => handleTargetChange(e.target.value === '' ? '' : Number(e.target.value))}
+                                    onBlur={() => {
+                                        const val = Number(condition.target);
+                                        handleTargetChange(isNaN(val) || val < 0 ? 30 : Math.max(0, val));
+                                    }}
+                                    onFocus={(e) => e.target.select()}
                                     placeholder="Minutos"
                                     className="w-20 bg-muted/20 border border-border/50 rounded px-2 py-1 text-xs text-[var(--color-ec-copper)] font-mono outline-none"
                                 />
@@ -1473,16 +1559,18 @@ export const ConditionRow = ({
 // ----------------------------------------------------------------------
 // Recursive Group Component
 // ----------------------------------------------------------------------
-export const formatConditionText = (c: AnyCondition): string => {
-    const tfStr = c.timeframe ? `[${c.timeframe}]` : '';
+export const formatConditionText = (c: AnyCondition): { source: string; target: string } => {
+    const tfStr = c.timeframe ? `[${c.timeframe}] ` : '';
     if (c.type === 'indicator_comparison') {
         if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
             const mins = typeof c.target === 'number' ? c.target : 20;
-            return `${tfStr} Elapsed Time Last High ≥ ${mins} mins`;
+            const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
+            return { source: `${tfStr}Elapsed Time Last High:`, target: `${opSymbol} ${mins} mins` };
         }
         if (c.source.name === IndicatorType.ELAPSED_TIME) {
             const mins = typeof c.target === 'number' ? c.target : 60;
-            return `${tfStr} Elapsed Time = ${mins} mins`;
+            const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
+            return { source: `${tfStr}Elapsed Time:`, target: `${opSymbol} ${mins} mins` };
         }
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
@@ -1498,16 +1586,16 @@ export const formatConditionText = (c: AnyCondition): string => {
         } else {
             targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
         }
-        return `${tfStr} ${sourceStr} ${compStr} ${targetStr}`;
+        return { source: `${tfStr}${sourceStr}:`, target: `${compStr} ${targetStr}` };
     } else if (c.type === 'price_level_distance') {
         const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
         const pctStr = `${c.value_pct}%`;
         const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
-        return `${tfStr} Dist(${sourceStr}, ${levelStr}) ${compStr} ${pctStr}${posStr}`;
+        return { source: `${tfStr}Dist(${sourceStr}, ${levelStr}):`, target: `${compStr} ${pctStr}${posStr}` };
     }
-    return '';
+    return { source: '', target: '' };
 };
 
 export const GroupDisplay = ({
@@ -1527,7 +1615,7 @@ export const GroupDisplay = ({
 }) => {
     const [showForm, setShowForm] = React.useState(false);
     const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
-    const [formCondition, setFormCondition] = React.useState<AnyCondition>({
+    const [formCondition, setFormCondition] = React.useState<any>({
         type: 'indicator_comparison',
         source: { name: IndicatorType.BAR_CLOSE, offset: 0 },
         comparator: Comparator.GT,
@@ -2086,7 +2174,7 @@ export const GroupDisplay = ({
 
 
                             {/* relación */}
-                            {!isTriangle(formCondition.source.name) && formCondition.source.name !== IndicatorType.ELAPSED_TIME_LAST_HIGH && formCondition.source.name !== IndicatorType.ELAPSED_TIME && (
+                            {!isTriangle(formCondition.source.name) && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     <span style={labelStyle}>Relación</span>
                                     {formCondition.source.name?.toLowerCase() === 'range of time' ? (
@@ -2161,17 +2249,27 @@ export const GroupDisplay = ({
                                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                                         <input
                                             type="number"
-                                            min="1"
-                                            value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : (formCondition.source.name === IndicatorType.ELAPSED_TIME ? 60 : 20)}
+                                            value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : ''}
                                             onChange={(e) => {
                                                 if (compCondition) {
                                                     setFormCondition({
                                                         ...compCondition,
                                                         type: 'indicator_comparison',
-                                                        target: Math.max(1, Number(e.target.value))
+                                                        target: e.target.value === '' ? '' : Number(e.target.value)
                                                     });
                                                 }
                                             }}
+                                            onBlur={() => {
+                                                if (compCondition) {
+                                                    const val = Number(compCondition.target);
+                                                    setFormCondition({
+                                                        ...compCondition,
+                                                        type: 'indicator_comparison',
+                                                        target: isNaN(val) || val < 1 ? (formCondition.source.name === IndicatorType.ELAPSED_TIME ? 60 : 20) : Math.max(1, val)
+                                                    });
+                                                }
+                                            }}
+                                            onFocus={(e) => e.target.select()}
                                             style={{ ...inputStyle, width: '100%', paddingRight: 40 }}
                                         />
                                         <span style={{
@@ -2189,17 +2287,27 @@ export const GroupDisplay = ({
                                     <span style={labelStyle}>Minutos del rango</span>
                                     <input
                                         type="number"
-                                        min="0"
-                                        value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : 30}
+                                        value={compCondition && typeof compCondition.target === 'number' ? compCondition.target : ''}
                                         onChange={(e) => {
                                             if (compCondition) {
                                                 setFormCondition({
                                                     ...compCondition,
                                                     type: 'indicator_comparison',
-                                                    target: Math.max(0, Number(e.target.value))
+                                                    target: e.target.value === '' ? '' : Number(e.target.value)
                                                 });
                                             }
                                         }}
+                                        onBlur={() => {
+                                            if (compCondition) {
+                                                const val = Number(compCondition.target);
+                                                setFormCondition({
+                                                    ...compCondition,
+                                                    type: 'indicator_comparison',
+                                                    target: isNaN(val) || val < 0 ? 30 : Math.max(0, val)
+                                                });
+                                            }
+                                        }}
+                                        onFocus={(e) => e.target.select()}
                                         style={inputStyle}
                                     />
                                 </div>
@@ -2320,12 +2428,21 @@ export const GroupDisplay = ({
                                         <input
                                             type="number"
                                             step="0.1"
-                                            value={distCondition.value_pct}
+                                            value={distCondition.value_pct ?? ''}
                                             onChange={(e) => setFormCondition({
                                                 ...distCondition,
                                                 type: 'price_level_distance',
-                                                value_pct: Number(e.target.value)
+                                                value_pct: e.target.value === '' ? '' : Number(e.target.value)
                                             })}
+                                            onBlur={() => {
+                                                const val = parseFloat(String(distCondition.value_pct));
+                                                setFormCondition({
+                                                    ...distCondition,
+                                                    type: 'price_level_distance',
+                                                    value_pct: isNaN(val) ? 0.5 : val
+                                                });
+                                            }}
+                                            onFocus={(e) => e.target.select()}
                                             style={inputStyle}
                                         />
                                     </div>
@@ -2606,22 +2723,29 @@ export const GroupDisplay = ({
                                 style={{
                                     display: 'inline-flex',
                                     alignItems: 'center',
-                                    gap: 6,
                                     padding: '4px 8px',
-                                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                                    border: '0.5px solid var(--color-ec-border)',
+                                    backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                                    border: '0.5px solid transparent',
                                     borderRadius: 4,
                                     fontSize: 10,
                                     fontWeight: 600,
-                                    color: 'var(--color-ec-text-primary)',
+                                    color: 'var(--color-ec-text-secondary)',
                                     fontFamily: 'var(--color-ec-sans)',
                                     cursor: 'pointer',
                                     transition: 'border-color 150ms ease',
                                 }}
                                 onMouseEnter={(e) => e.currentTarget.style.borderColor = activeAccentColor}
-                                onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--color-ec-border)'}
-                            >
-                                <span>{formatConditionText(cond)}</span>
+                                  onMouseLeave={(e) => e.currentTarget.style.borderColor = 'transparent'}
+                              >
+                                {(() => {
+                                    const lbl = formatConditionText(cond);
+                                    return (
+                                        <>
+                                            <span>{lbl.source}</span>
+                                            {lbl.target && <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{lbl.target}</strong>}
+                                        </>
+                                    );
+                                })()}
                                 <button 
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -2772,9 +2896,9 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                         display: 'flex',
                         alignItems: 'center',
                         gap: 12,
-                        marginTop: -10,
-                        paddingTop: 6,
-                        borderTop: '0.5px dotted var(--color-ec-border)',
+                        marginTop: 0,
+                        paddingTop: 0,
+                        borderTop: 'none',
                         paddingLeft: 4,
                         paddingRight: 4,
                         width: '100%',

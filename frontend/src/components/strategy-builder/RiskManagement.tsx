@@ -48,7 +48,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
         });
     };
 
-    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: number | 'EOD') => {
+    const updatePartial = (index: number, field: keyof PartialTakeProfit, value: any) => {
         onChange({
             ...risk,
             partial_take_profits: risk.partial_take_profits.map((p, i) =>
@@ -229,8 +229,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         <input
                                             type="number"
                                             step="0.1"
-                                            value={risk.hard_stop.offset_pct ?? 0.0}
-                                            onChange={(e) => updateRiskSetting('hard_stop', 'offset_pct', parseFloat(e.target.value) || 0.0)}
+                                            value={risk.hard_stop.offset_pct ?? ''}
+                                            onChange={(e) => updateRiskSetting('hard_stop', 'offset_pct', e.target.value === '' ? '' : e.target.value)}
+                                            onBlur={() => {
+                                                const val = parseFloat(String(risk.hard_stop.offset_pct));
+                                                updateRiskSetting('hard_stop', 'offset_pct', isNaN(val) ? 0.0 : val);
+                                            }}
+                                            onFocus={(e) => e.target.select()}
                                             style={{
                                                 backgroundColor: 'var(--color-ec-bg-sidebar)',
                                                 border: '0.5px solid var(--color-ec-border)',
@@ -263,8 +268,14 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 <div className="relative" style={{ width: '120px' }}>
                                     <input
                                         type="number"
-                                        value={typeof risk.hard_stop.value === 'number' ? risk.hard_stop.value : 2.0}
-                                        onChange={(e) => updateRiskSetting('hard_stop', 'value', Number(e.target.value))}
+                                        step="0.1"
+                                        value={risk.hard_stop.value ?? ''}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value === '' ? '' : e.target.value)}
+                                        onBlur={() => {
+                                            const val = parseFloat(String(risk.hard_stop.value));
+                                            updateRiskSetting('hard_stop', 'value', isNaN(val) ? 2.0 : val);
+                                        }}
+                                        onFocus={(e) => e.target.select()}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
@@ -410,8 +421,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 <input
                                     type="number"
                                     step="0.1"
-                                    value={risk.trailing_stop.buffer_pct}
-                                    onChange={(e) => setTrailingField('buffer_pct', Number(e.target.value))}
+                                    value={risk.trailing_stop.buffer_pct ?? ''}
+                                    onChange={(e) => setTrailingField('buffer_pct', e.target.value === '' ? '' : e.target.value)}
+                                    onBlur={() => {
+                                        const val = parseFloat(String(risk.trailing_stop.buffer_pct));
+                                        setTrailingField('buffer_pct', isNaN(val) ? 0.5 : val);
+                                    }}
+                                    onFocus={(e) => e.target.select()}
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
@@ -573,35 +589,49 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
 
                         {risk.take_profit_mode === TakeProfitMode.FULL ? (
                             <div className="flex gap-2 items-center justify-center animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
-                                <div
+                                <select
+                                    value={risk.take_profit.type || RiskType.PERCENTAGE}
+                                    onChange={(e) => {
+                                        const newType = e.target.value as RiskType;
+                                        updateRiskSetting('take_profit', 'type', newType);
+                                        const defaultVal = newType === RiskType.TIME ? 30 : 6.0;
+                                        updateRiskSetting('take_profit', 'value', defaultVal);
+                                    }}
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 5,
-                                        padding: '7px 14px',
+                                        padding: '7px 10px',
                                         fontSize: 12,
                                         fontWeight: 600,
                                         color: 'var(--color-ec-text-primary)',
                                         fontFamily: 'var(--color-ec-sans)',
                                         height: '36px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        userSelect: 'none',
+                                        outline: 'none',
+                                        cursor: 'pointer',
                                     }}
                                 >
-                                    %
-                                </div>
+                                    <option value={RiskType.PERCENTAGE}>% Distancia</option>
+                                    <option value={RiskType.TIME}>Tiempo (minutos)</option>
+                                </select>
                                 <div className="relative" style={{ width: '120px' }}>
                                     <input
                                         type="number"
-                                        value={risk.take_profit.value}
-                                        onChange={(e) => updateRiskSetting('take_profit', 'value', Number(e.target.value))}
+                                        step={risk.take_profit.type === RiskType.TIME ? '1' : '0.1'}
+                                        value={risk.take_profit.value ?? ''}
+                                        onChange={(e) => updateRiskSetting('take_profit', 'value', e.target.value === '' ? '' : e.target.value)}
+                                        onBlur={() => {
+                                            const val = parseFloat(String(risk.take_profit.value));
+                                            const isTime = risk.take_profit.type === RiskType.TIME;
+                                            const defaultVal = isTime ? 30 : 6.0;
+                                            updateRiskSetting('take_profit', 'value', isNaN(val) ? defaultVal : val);
+                                        }}
+                                        onFocus={(e) => e.target.select()}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
-                                            padding: '7px 24px 7px 10px',
+                                            padding: '7px 30px 7px 10px',
                                             fontSize: 13,
                                             fontWeight: 600,
                                             color: 'var(--color-ec-text-primary)',
@@ -612,7 +642,9 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             textAlign: 'center',
                                         }}
                                     />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                                        {risk.take_profit.type === RiskType.TIME ? 'min' : '%'}
+                                    </span>
                                 </div>
                             </div>
                         ) : (
@@ -644,69 +676,102 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
 
                                             {/* Distance Input */}
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                                <select
-                                                    value={partial.distance_pct === 'EOD' ? 'EOD' : 'PCT'}
-                                                    onChange={(e) => {
-                                                        if (e.target.value === 'EOD') {
-                                                            updatePartial(idx, 'distance_pct', 'EOD');
-                                                        } else {
-                                                            updatePartial(idx, 'distance_pct', 3.0);
-                                                        }
-                                                    }}
-                                                    style={{
-                                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                        border: '0.5px solid var(--color-ec-border)',
-                                                        borderRadius: 4,
-                                                        padding: '4px 6px',
-                                                        fontSize: 10,
-                                                        fontWeight: 600,
-                                                        color: 'var(--color-ec-text-primary)',
-                                                        fontFamily: 'var(--color-ec-sans)',
-                                                        outline: 'none',
-                                                        cursor: 'pointer',
-                                                    }}
-                                                >
-                                                    <option value="PCT">% Distancia</option>
-                                                    <option value="EOD">Fin del Día (EOD)</option>
-                                                </select>
-                                                
-                                                {partial.distance_pct !== 'EOD' ? (
-                                                    <div className="relative" style={{ width: 65 }}>
-                                                        <input
-                                                            type="number"
-                                                            step="0.1"
-                                                            value={partial.distance_pct}
-                                                            onChange={(e) => updatePartial(idx, 'distance_pct', Number(e.target.value))}
-                                                            style={{
-                                                                width: '100%',
-                                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                                border: '0.5px solid var(--color-ec-border)',
-                                                                borderRadius: 4,
-                                                                padding: '4px 16px 4px 6px',
-                                                                fontSize: 11,
-                                                                fontWeight: 700,
-                                                                color: 'var(--color-ec-text-primary)',
-                                                                outline: 'none',
-                                                                textAlign: 'right',
-                                                            }}
-                                                        />
-                                                        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">%</span>
-                                                    </div>
-                                                ) : (
-                                                    <div style={{
-                                                        width: 65,
-                                                        border: '0.5px solid var(--color-ec-border)',
-                                                        borderRadius: 4,
-                                                        padding: '4px 6px',
-                                                        fontSize: 11,
-                                                        fontWeight: 700,
-                                                        color: 'var(--color-ec-text-muted)',
-                                                        textAlign: 'center',
-                                                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                                                    }}>
-                                                        EOD
-                                                    </div>
-                                                )}
+                                                {(() => {
+                                                    const valStr = String(partial.distance_pct);
+                                                    const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : 'PCT';
+                                                    
+                                                    return (
+                                                        <>
+                                                            <select
+                                                                value={mode}
+                                                                onChange={(e) => {
+                                                                    const newMode = e.target.value;
+                                                                    if (newMode === 'EOD') {
+                                                                        updatePartial(idx, 'distance_pct', 'EOD');
+                                                                    } else if (newMode === 'TIME') {
+                                                                        updatePartial(idx, 'distance_pct', 'TIME:30');
+                                                                    } else {
+                                                                        updatePartial(idx, 'distance_pct', 3.0);
+                                                                    }
+                                                                }}
+                                                                style={{
+                                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                    border: '0.5px solid var(--color-ec-border)',
+                                                                    borderRadius: 4,
+                                                                    padding: '4px 6px',
+                                                                    fontSize: 10,
+                                                                    fontWeight: 600,
+                                                                    color: 'var(--color-ec-text-primary)',
+                                                                    fontFamily: 'var(--color-ec-sans)',
+                                                                    outline: 'none',
+                                                                    cursor: 'pointer',
+                                                                }}
+                                                            >
+                                                                <option value="PCT">% Distancia</option>
+                                                                <option value="TIME">Tiempo (minutos)</option>
+                                                                <option value="EOD">Fin del Día (EOD)</option>
+                                                            </select>
+                                                            
+                                                            {mode !== 'EOD' ? (
+                                                                <div className="relative" style={{ width: 65 }}>
+                                                                    <input
+                                                                        type="number"
+                                                                        step={mode === 'TIME' ? '1' : '0.1'}
+                                                                        value={mode === 'TIME' ? (valStr.split(':')[1] || '') : (partial.distance_pct ?? '')}
+                                                                        onChange={(e) => {
+                                                                            const rawVal = e.target.value;
+                                                                            if (mode === 'TIME') {
+                                                                                updatePartial(idx, 'distance_pct', rawVal === '' ? 'TIME:' : `TIME:${rawVal}`);
+                                                                            } else {
+                                                                                updatePartial(idx, 'distance_pct', rawVal === '' ? '' : Number(rawVal));
+                                                                            }
+                                                                        }}
+                                                                        onBlur={() => {
+                                                                            if (mode === 'TIME') {
+                                                                                const rawMins = valStr.split(':')[1] || '';
+                                                                                const parsed = parseInt(rawMins);
+                                                                                updatePartial(idx, 'distance_pct', `TIME:${isNaN(parsed) ? 30 : parsed}`);
+                                                                            } else {
+                                                                                const val = parseFloat(valStr);
+                                                                                updatePartial(idx, 'distance_pct', isNaN(val) ? 3.0 : val);
+                                                                            }
+                                                                        }}
+                                                                        onFocus={(e) => e.target.select()}
+                                                                        style={{
+                                                                            width: '100%',
+                                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                            border: '0.5px solid var(--color-ec-border)',
+                                                                            borderRadius: 4,
+                                                                            padding: '4px 16px 4px 6px',
+                                                                            fontSize: 11,
+                                                                            fontWeight: 700,
+                                                                            color: 'var(--color-ec-text-primary)',
+                                                                            outline: 'none',
+                                                                            textAlign: 'right',
+                                                                        }}
+                                                                    />
+                                                                    <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">
+                                                                        {mode === 'TIME' ? 'm' : '%'}
+                                                                    </span>
+                                                                </div>
+                                                            ) : (
+                                                                <div style={{
+                                                                    width: 65,
+                                                                    border: '0.5px solid var(--color-ec-border)',
+                                                                    borderRadius: 4,
+                                                                    padding: '4px 6px',
+                                                                    fontSize: 11,
+                                                                    fontWeight: 700,
+                                                                    color: 'var(--color-ec-text-muted)',
+                                                                    textAlign: 'center',
+                                                                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                                                }}>
+                                                                    EOD
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    );
+                                                })()}
                                             </div>
 
                                             {/* Capital Slider */}
@@ -913,12 +978,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             {risk.max_reentries !== undefined && risk.max_reentries >= 0 && (
                                 <input
                                     type="number"
-                                    min="0"
-                                    value={risk.max_reentries}
-                                    onChange={(e) => {
-                                        const val = Math.max(0, parseInt(e.target.value) || 0);
-                                        onChange({ ...risk, max_reentries: val });
+                                    value={risk.max_reentries ?? ''}
+                                    onChange={(e) => onChange({ ...risk, max_reentries: (e.target.value === '' ? '' : Number(e.target.value)) as any })}
+                                    onBlur={() => {
+                                        const val = parseInt(String(risk.max_reentries));
+                                        onChange({ ...risk, max_reentries: isNaN(val) ? 2 : Math.max(0, val) });
                                     }}
+                                    onFocus={(e) => e.target.select()}
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                         border: '0.5px solid var(--color-ec-border)',

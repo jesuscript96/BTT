@@ -19,8 +19,9 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2 opacity-50">Min Market Cap</label>
                     <input
                         type="number"
-                        value={filters.min_market_cap || ''}
-                        onChange={(e) => handleChange('min_market_cap', e.target.value ? Number(e.target.value) : undefined)}
+                        value={filters.min_market_cap ?? ''}
+                        onChange={(e) => handleChange('min_market_cap', e.target.value !== '' ? Number(e.target.value) : undefined)}
+                        onFocus={(e) => e.target.select()}
                         className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 focus:border-green-500/50 transition-all placeholder:text-muted-foreground/20"
                         placeholder="No limit"
                     />
@@ -29,8 +30,9 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2 opacity-50">Max Market Cap</label>
                     <input
                         type="number"
-                        value={filters.max_market_cap || ''}
-                        onChange={(e) => handleChange('max_market_cap', e.target.value ? Number(e.target.value) : undefined)}
+                        value={filters.max_market_cap ?? ''}
+                        onChange={(e) => handleChange('max_market_cap', e.target.value !== '' ? Number(e.target.value) : undefined)}
+                        onFocus={(e) => e.target.select()}
                         className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 focus:border-green-500/50 transition-all placeholder:text-muted-foreground/20"
                         placeholder="No limit"
                     />
@@ -42,8 +44,9 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2 opacity-50">Min Price</label>
                     <input
                         type="number"
-                        value={filters.min_price || ''}
-                        onChange={(e) => handleChange('min_price', e.target.value ? Number(e.target.value) : undefined)}
+                        value={filters.min_price ?? ''}
+                        onChange={(e) => handleChange('min_price', e.target.value !== '' ? Number(e.target.value) : undefined)}
+                        onFocus={(e) => e.target.select()}
                         className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 focus:border-green-500/50 transition-all placeholder:text-muted-foreground/20"
                         placeholder="No limit"
                     />
@@ -52,8 +55,9 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2 opacity-50">Max Price</label>
                     <input
                         type="number"
-                        value={filters.max_price || ''}
-                        onChange={(e) => handleChange('max_price', e.target.value ? Number(e.target.value) : undefined)}
+                        value={filters.max_price ?? ''}
+                        onChange={(e) => handleChange('max_price', e.target.value !== '' ? Number(e.target.value) : undefined)}
+                        onFocus={(e) => e.target.select()}
                         className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 focus:border-green-500/50 transition-all placeholder:text-muted-foreground/20"
                         placeholder="No limit"
                     />
@@ -65,8 +69,9 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2 opacity-50">Min Volume</label>
                     <input
                         type="number"
-                        value={filters.min_volume || ''}
-                        onChange={(e) => handleChange('min_volume', e.target.value ? Number(e.target.value) : undefined)}
+                        value={filters.min_volume ?? ''}
+                        onChange={(e) => handleChange('min_volume', e.target.value !== '' ? Number(e.target.value) : undefined)}
+                        onFocus={(e) => e.target.select()}
                         className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 focus:border-green-500/50 transition-all placeholder:text-muted-foreground/20"
                         placeholder="No limit"
                     />
@@ -75,8 +80,9 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <label className="block text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2 opacity-50">Max Float</label>
                     <input
                         type="number"
-                        value={filters.max_shares_float || ''}
-                        onChange={(e) => handleChange('max_shares_float', e.target.value ? Number(e.target.value) : undefined)}
+                        value={filters.max_shares_float ?? ''}
+                        onChange={(e) => handleChange('max_shares_float', e.target.value !== '' ? Number(e.target.value) : undefined)}
+                        onFocus={(e) => e.target.select()}
                         className="w-full bg-muted/20 border border-border/50 rounded-lg px-3 py-2 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-green-500/30 focus:border-green-500/50 transition-all placeholder:text-muted-foreground/20"
                         placeholder="No limit"
                     />

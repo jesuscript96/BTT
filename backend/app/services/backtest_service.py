@@ -19,7 +19,7 @@ import pandas as pd
 
 from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
 from app.services.portfolio_sim import simulate
-from app.backtester.engine import find_elapsed_time_minutes
+from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_condition
 
 logger = logging.getLogger("backtester.engine")
 
@@ -216,7 +216,7 @@ def run_backtest(
     # Extract Elapsed Time exit limit once for the entire backtest
     exit_logic = strategy_def.get("exit_logic", {}) if strategy_def else {}
     root_condition = exit_logic.get("root_condition", {}) if exit_logic else {}
-    elapsed_limit = find_elapsed_time_minutes(root_condition)
+    elapsed_limit, elapsed_operator = find_elapsed_time_condition(root_condition)
 
     empty_result = {
         "aggregate_metrics": _aggregate_metrics([], [], [], [], init_cash, risk_r),
@@ -404,6 +404,7 @@ def run_backtest(
             sig_sl_stop = signals["sl_stop"]
             sig_sl_trail = signals["sl_trail"]
             sig_tp_stop = signals["tp_stop"]
+            sig_tp_time_limit = signals.get("tp_time_limit")
             sig_trail_pct = signals.get("trail_pct")
             sig_partial_tps = signals.get("partial_take_profits")
 
@@ -545,6 +546,7 @@ def run_backtest(
                 sl_stop=sig_sl_stop,
                 sl_trail=sig_sl_trail,
                 tp_stop=sig_tp_stop,
+                tp_time_limit=sig_tp_time_limit,
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
@@ -562,6 +564,7 @@ def run_backtest(
                 prev_lows=arrays.get("prev_low"),
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,
+                elapsed_operator=elapsed_operator,
             )
         except Exception as exc:
             logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")

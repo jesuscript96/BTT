@@ -69,6 +69,7 @@ RISK_FIXED = 0
 RISK_PERCENT = 1
 RISK_ATR = 2
 RISK_STRUCTURE = 3
+RISK_TIME = 4
 
 BIAS_LONG = 0
 BIAS_SHORT = 1
@@ -101,6 +102,7 @@ def _core_backtest_jit(
     strat_accept_reentries, # int32 array (0=no, 1=yes)
     strat_max_reentries,   # int32 array (-1=infinite, >=0 limit)
     strat_max_elapsed_minutes, # float64 array (n_strats)
+    strat_elapsed_comparators, # int32 array (n_strats)
     n_tickers,             # int64
     
     # Global Config
@@ -233,14 +235,40 @@ def _core_backtest_jit(
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 + slippage_pct/100)
                         reason_code = 5  # CUSTOM
-                
+
+                if not exit_signal_triggered and strat_use_take_profit[strat_idx] == 1 and strat_tp_types[strat_idx] == RISK_TIME:
+                    elapsed_mins = (current_ts - entry_time) / 6e10
+                    if elapsed_mins >= strat_tp_values[strat_idx]:
+                        exit_signal_triggered = True
+                        exit_px = bar_close * (1.0 - slippage_pct/100 if bias == BIAS_LONG else 1.0 + slippage_pct/100)
+                        reason_code = 1  # TP
+
                 # Time-based exits
                 if not exit_signal_triggered:
-                    if strat_max_elapsed_minutes[strat_idx] > 0 and (current_ts - entry_time) / 6e10 >= strat_max_elapsed_minutes[strat_idx]:
-                        exit_signal_triggered = True
-                        exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
-                        reason_code = 2 # TIME
-                    elif (current_ts - entry_time) / 1e9 >= max_holding_sec:
+                    if strat_max_elapsed_minutes[strat_idx] > 0:
+                        elapsed_mins = (current_ts - entry_time) / 6e10
+                        limit = strat_max_elapsed_minutes[strat_idx]
+                        op = strat_elapsed_comparators[strat_idx]
+                        trigger = False
+                        if op == 3:
+                            trigger = (elapsed_mins >= limit)
+                        elif op == 1:
+                            trigger = (elapsed_mins > limit)
+                        elif op == 2:
+                            trigger = (elapsed_mins < limit)
+                        elif op == 4:
+                            trigger = (elapsed_mins <= limit)
+                        elif op == 5:
+                            trigger = (elapsed_mins == limit)
+                        else:
+                            trigger = (elapsed_mins >= limit)
+                        if trigger:
+                            exit_signal_triggered = True
+                            exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
+                            reason_code = 2 # TIME
+
+                if not exit_signal_triggered:
+                    if (current_ts - entry_time) / 1e9 >= max_holding_sec:
                         exit_signal_triggered = True
                         exit_px = bar_close * (1 - slippage_pct/100 if bias == BIAS_LONG else 1 + slippage_pct/100)
                         reason_code = 2 # TIME
@@ -385,6 +413,8 @@ def _core_backtest_jit(
                             elif tp_type == RISK_STRUCTURE:
                                 val_vwap = vwaps[i] if vwaps[i] > 0 else entry_px * 1.05
                                 take_profit = val_vwap
+                            elif tp_type == RISK_TIME:
+                                take_profit = 1e18
                             else: take_profit = entry_px * 1.05
                             if strat_use_take_profit[s] == 0:
                                 take_profit = entry_px * 2.0
@@ -397,6 +427,8 @@ def _core_backtest_jit(
                             elif tp_type == RISK_STRUCTURE:
                                 val_vwap = vwaps[i] if vwaps[i] > 0 else entry_px * 0.95
                                 take_profit = val_vwap
+                            elif tp_type == RISK_TIME:
+                                take_profit = 0.0
                             else: take_profit = entry_px * 0.95
                             if strat_use_take_profit[s] == 0:
                                 take_profit = 0.0
@@ -469,9 +501,9 @@ def _core_backtest_jit(
         current_balance
     )
 
-def find_elapsed_time_minutes(group) -> float:
+def find_elapsed_time_condition(group) -> tuple[float, str]:
     if not group:
-        return -1.0
+        return -1.0, "GREATER_THAN_OR_EQUAL"
     
     conditions = []
     if isinstance(group, dict):
@@ -479,7 +511,7 @@ def find_elapsed_time_minutes(group) -> float:
     elif hasattr(group, "conditions"):
         conditions = group.conditions or []
     else:
-        return -1.0
+        return -1.0, "GREATER_THAN_OR_EQUAL"
         
     for cond in conditions:
         cond_type = None
@@ -489,9 +521,9 @@ def find_elapsed_time_minutes(group) -> float:
             cond_type = cond.type
             
         if cond_type == "group":
-            val = find_elapsed_time_minutes(cond)
+            val, comp = find_elapsed_time_condition(cond)
             if val > 0:
-                return val
+                return val, comp
         else:
             source = None
             if isinstance(cond, dict):
@@ -514,16 +546,31 @@ def find_elapsed_time_minutes(group) -> float:
                     elif hasattr(cond, "target"):
                         target = cond.target
                         
+                    comparator = "GREATER_THAN_OR_EQUAL"
+                    if isinstance(cond, dict):
+                        comparator = cond.get("comparator", "GREATER_THAN_OR_EQUAL")
+                    elif hasattr(cond, "comparator"):
+                        comparator = getattr(cond.comparator, "value", getattr(cond.comparator, "name", cond.comparator)) or "GREATER_THAN_OR_EQUAL"
+                    
+                    val = 60.0
                     if target is not None:
                         try:
-                            return float(target)
+                            val = float(target)
                         except (TypeError, ValueError):
                             if isinstance(target, dict):
-                                return float(target.get("elapsed_minutes", 60.0))
+                                val = float(target.get("elapsed_minutes", 60.0))
                             elif hasattr(target, "elapsed_minutes"):
-                                return float(target.elapsed_minutes or 60.0)
-                            return 60.0
-    return -1.0
+                                val = float(target.elapsed_minutes or 60.0)
+                    
+                    if hasattr(comparator, "value"):
+                        comparator = comparator.value
+                    return val, str(comparator)
+    return -1.0, "GREATER_THAN_OR_EQUAL"
+
+
+def find_elapsed_time_minutes(group) -> float:
+    val, _ = find_elapsed_time_condition(group)
+    return val
 
 
 class BacktestEngine:
@@ -1220,6 +1267,7 @@ class BacktestEngine:
                 "Percentage": RISK_PERCENT,
                 "ATR Multiplier": RISK_ATR,
                 "Market Structure (HOD/LOD)": RISK_STRUCTURE,
+                "Time": RISK_TIME,
             }.get(val, RISK_PERCENT)
         
         strat_risk_per_trade = []
@@ -1230,6 +1278,7 @@ class BacktestEngine:
         strat_accept_reentries = []
         strat_max_reentries = []
         strat_max_elapsed_minutes = []
+        strat_elapsed_comparators = []
         for s in self.strategies:
             strat_weights.append(self.weights.get(s.id, 0.0))
             strat_biases.append(BIAS_LONG if s.bias == 'long' else BIAS_SHORT)
@@ -1254,8 +1303,18 @@ class BacktestEngine:
             # Find maximum elapsed minutes from exit logic
             exit_logic = getattr(s, 'exit_logic', None)
             exit_group = getattr(exit_logic, 'root_condition', None) if exit_logic else None
-            max_el = find_elapsed_time_minutes(exit_group)
+            max_el, comp_str = find_elapsed_time_condition(exit_group)
             strat_max_elapsed_minutes.append(float(max_el))
+            
+            comp_map = {
+                "EQUAL": 5, "EQ": 5,
+                "GREATER_THAN": 1, "GT": 1,
+                "LESS_THAN": 2, "LT": 2,
+                "GREATER_THAN_OR_EQUAL": 3, "GTE": 3,
+                "LESS_THAN_OR_EQUAL": 4, "LTE": 4
+            }
+            comp_int = comp_map.get(comp_str, 3)
+            strat_elapsed_comparators.append(comp_int)
 
             ts = _get(rm, 'trailing_stop') or {}
             strat_trailing_active.append(1 if _get(ts, 'active', False) else 0)
@@ -1363,6 +1422,7 @@ class BacktestEngine:
             np.array(strat_accept_reentries, dtype=np.int32),
             np.array(strat_max_reentries, dtype=np.int32),
             np.array(strat_max_elapsed_minutes, dtype=np.float64),
+            np.array(strat_elapsed_comparators, dtype=np.int32),
             len(unique_tickers),
             self.initial_capital,
             self.commission,
