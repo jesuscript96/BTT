@@ -195,7 +195,7 @@ async def add_cors_headers_to_all_responses(request, call_next):
     return response
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
-from app.routers import optimization, users
+from app.routers import optimization, users, edgie
 from app.routers import screener
 import logging
 
@@ -215,6 +215,7 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(screener.router)
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
+app.include_router(edgie.router, prefix="/api/edgie", tags=["Edgie"])
 
 @app.get("/health")
 def read_health():
