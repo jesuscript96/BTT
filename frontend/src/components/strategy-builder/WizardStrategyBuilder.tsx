@@ -5916,6 +5916,7 @@ export default function WizardStrategyBuilder({
     color: "var(--color-ec-text-muted)",
     marginBottom: 4,
     display: "block",
+    whiteSpace: "nowrap",
   };
 
   // Render a tag with a custom separator and an X delete button with colored background
@@ -5940,12 +5941,22 @@ export default function WizardStrategyBuilder({
           fontWeight: 600,
           color: color,
           lineHeight: 1.3,
-          whiteSpace: "normal",
-          wordBreak: "break-word",
+          whiteSpace: "nowrap",
           animation: "wizTagSlideIn 200ms ease-out",
+          boxSizing: "border-box",
+          width: "100%",
+          minWidth: 0,
         }}
       >
-        <span style={{ flex: 1 }}>{label}</span>
+        <span style={{
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap"
+        }}>
+          {label}
+        </span>
         {onRemove && (
           <>
             <div
@@ -5953,6 +5964,7 @@ export default function WizardStrategyBuilder({
                 width: 1,
                 alignSelf: "stretch",
                 backgroundColor: `color-mix(in srgb, ${color} 25%, transparent)`,
+                flexShrink: 0,
               }}
             />
             <button
@@ -5977,6 +5989,7 @@ export default function WizardStrategyBuilder({
                 fontWeight: 700,
                 lineHeight: 1,
                 transition: "all 150ms ease",
+                flexShrink: 0,
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = `color-mix(in srgb, ${color} 35%, transparent)`;
@@ -6072,9 +6085,11 @@ export default function WizardStrategyBuilder({
         overflow: "hidden",
         minHeight: 0,
       }}>
-        {/* Left: Step Rail (width 190px for full formulas) */}
+        {/* Left: Step Rail (width auto with min/max limits to expand dynamically) */}
         <div style={{
-          width: 190,
+          width: "auto",
+          minWidth: 190,
+          maxWidth: 270,
           flexShrink: 0,
           borderRight: "0.5px solid var(--color-ec-border)",
           display: "flex",
