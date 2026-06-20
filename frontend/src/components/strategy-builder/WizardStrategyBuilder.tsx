@@ -5633,7 +5633,21 @@ export default function WizardStrategyBuilder({
     });
     
     return list;
-  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement]);
+  }, [
+    bias,
+    applyDay,
+    postgapPreconditions,
+    entryLogic,
+    exitLogic,
+    riskManagement,
+    customUniverse,
+    universeFilters,
+    selectedDataset,
+    datasets,
+    wizardMarketSessions,
+    wizardCustomStartTime,
+    wizardCustomEndTime
+  ]);
 
   // Step 6: Resumen de estrategia
   const renderSummaryStep = () => {
