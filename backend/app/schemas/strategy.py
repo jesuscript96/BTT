@@ -159,6 +159,8 @@ class TakeProfitMode(str, Enum):
 # --- Component Models ---
 
 class UniverseFilters(BaseModel):
+    model_config = {"extra": "allow"}
+
     min_market_cap: Optional[float] = Field(None, description="Min Market Cap in USD")
     max_market_cap: Optional[float] = Field(None, description="Max Market Cap in USD")
     min_price: Optional[float] = Field(None, description="Min Price")
@@ -168,6 +170,9 @@ class UniverseFilters(BaseModel):
     require_shortable: bool = Field(True, description="Must be HTB/ETB")
     exclude_dilution: bool = Field(True, description="Exclude active S-3/F-3")
     whitelist_sectors: List[str] = Field(default_factory=list)
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    rules: Optional[List[dict]] = None
 
 class IndicatorConfig(BaseModel):
     name: IndicatorType

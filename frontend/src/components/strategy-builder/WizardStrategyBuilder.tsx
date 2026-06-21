@@ -598,6 +598,8 @@ export default function WizardStrategyBuilder({
   const [currentStep, setCurrentStep] = useState(0);
   const createdAtRef = useRef(new Date().toISOString());
   const lastLoadedStrategyRef = useRef<string>("");
+  const loadedDatasetIdRef = useRef<string>("");
+  const initialFiltersRef = useRef<string>("");
 
   // Load strategy from prop when initialStrategy is provided
   useEffect(() => {
@@ -638,25 +640,52 @@ export default function WizardStrategyBuilder({
     }
     if (stratObj.custom_start_time) setWizardCustomStartTime(stratObj.custom_start_time);
     if (stratObj.custom_end_time) setWizardCustomEndTime(stratObj.custom_end_time);
-    if (stratObj.dataset_id) {
-      setSelectedDataset(stratObj.dataset_id);
-      setCustomUniverse(false);
-    } else if (stratObj.universe_filters) {
+    
+    loadedDatasetIdRef.current = stratObj.dataset_id || "";
+    if (stratObj.universe_filters) {
       setUniverseFilters(stratObj.universe_filters);
-      setCustomUniverse(true);
+      initialFiltersRef.current = JSON.stringify(stratObj.universe_filters);
+    } else {
+      const defaultFilters = {
+        date_from: TWO_YEARS_AGO,
+        date_to: MAX_DATE,
+        rules: []
+      };
+      setUniverseFilters(defaultFilters);
+      initialFiltersRef.current = JSON.stringify(defaultFilters);
     }
+    setCustomUniverse(true);
   }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
 
   // Universe (Dataset) States
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loadingDatasets, setLoadingDatasets] = useState(true);
   const [selectedDataset, setSelectedDataset] = useState<string>("");
-  const [customUniverse, setCustomUniverse] = useState<boolean>(false);
+  const [customUniverse, setCustomUniverse] = useState<boolean>(true);
   const [universeFilters, setUniverseFilters] = useState<any>({
     date_from: TWO_YEARS_AGO,
     date_to: MAX_DATE,
     rules: []
   });
+
+  // Legacy strategy dataset resolver effect
+  useEffect(() => {
+    if (datasets.length > 0 && initialStrategy) {
+      const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+      if (stratObj.dataset_id && !stratObj.universe_filters) {
+        const currentDs = datasets.find(d => d.id === stratObj.dataset_id);
+        if (currentDs) {
+          const filters = {
+            date_from: currentDs.min_date || TWO_YEARS_AGO,
+            date_to: currentDs.max_date || MAX_DATE,
+            rules: currentDs.filters?.rules || []
+          };
+          setUniverseFilters(filters);
+          initialFiltersRef.current = JSON.stringify(filters);
+        }
+      }
+    }
+  }, [datasets, initialStrategy]);
   const [dbDateRange, setDbDateRange] = useState<any>({
     min_date: "2022-01-01",
     max_date: new Date().toISOString().split("T")[0]
@@ -944,6 +973,9 @@ export default function WizardStrategyBuilder({
 
   // Update parent with latest draft strategy
   useEffect(() => {
+    const isFiltersUnchanged = JSON.stringify(universeFilters) === initialFiltersRef.current;
+    const resolvedDatasetId = isFiltersUnchanged ? (loadedDatasetIdRef.current || undefined) : undefined;
+
     const draft: any = {
       id: "wizard_draft",
       name: "Nueva Estrategia (Wizard)",
@@ -957,8 +989,8 @@ export default function WizardStrategyBuilder({
       market_sessions: wizardMarketSessions,
       custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
       custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
-      dataset_id: customUniverse ? undefined : selectedDataset,
-      universe_filters: customUniverse ? universeFilters : undefined,
+      dataset_id: resolvedDatasetId,
+      universe_filters: universeFilters,
     };
     
     // Sync lastLoadedStrategyRef to prevent initialStrategy reload loops
@@ -972,12 +1004,12 @@ export default function WizardStrategyBuilder({
       market_sessions: wizardMarketSessions,
       custom_start_time: wizardCustomStartTime,
       custom_end_time: wizardCustomEndTime,
-      dataset_id: customUniverse ? undefined : selectedDataset,
-      universe_filters: customUniverse ? universeFilters : undefined,
+      dataset_id: resolvedDatasetId,
+      universe_filters: universeFilters,
     });
 
     onDraftChange?.(draft);
-  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, selectedDataset, customUniverse, universeFilters, onDraftChange]);
+  }, [bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, wizardMarketSessions, wizardCustomStartTime, wizardCustomEndTime, universeFilters, onDraftChange]);
 
   // Actions handlers
   const handleBiasSelect = (b: "long" | "short") => {
@@ -1080,6 +1112,9 @@ export default function WizardStrategyBuilder({
 
     setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
 
+    const isFiltersUnchanged = JSON.stringify(universeFilters) === initialFiltersRef.current;
+    const resolvedDatasetId = isFiltersUnchanged ? (loadedDatasetIdRef.current || undefined) : undefined;
+
     const draft: WizardDraft & { id: string; dataset_id?: string; universe_filters?: any; is_wizard?: boolean } = {
       id: initialStrategy?.id && !initialStrategy.id.startsWith("draft") && !initialStrategy.id.startsWith("wizard_draft")
         ? initialStrategy.id
@@ -1096,8 +1131,8 @@ export default function WizardStrategyBuilder({
       market_sessions: wizardMarketSessions,
       custom_start_time: wizardMarketSessions.includes("custom") ? wizardCustomStartTime : undefined,
       custom_end_time: wizardMarketSessions.includes("custom") ? wizardCustomEndTime : undefined,
-      dataset_id: customUniverse ? undefined : selectedDataset,
-      universe_filters: customUniverse ? universeFilters : undefined,
+      dataset_id: resolvedDatasetId,
+      universe_filters: universeFilters,
     };
 
     onTest(draft);
@@ -1218,93 +1253,10 @@ export default function WizardStrategyBuilder({
           </p>
         </div>
 
-        {/* Choice Buttons/Areas */}
-        <div style={{ 
-          display: "flex", 
-          alignItems: "center", 
-          justifyContent: "center", 
-          gap: 0, 
-          borderBottom: "1px solid var(--color-ec-border)", 
-          marginBottom: 16,
-          paddingBottom: 12
-        }}>
-          <button
-            type="button"
-            onClick={() => setCustomUniverse(false)}
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              padding: "8px 12px",
-              border: "none",
-              background: !customUniverse ? "rgba(216, 122, 61, 0.04)" : "transparent",
-              borderRadius: 6,
-              color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
-              cursor: "pointer",
-              transition: "all 150ms ease",
-            }}
-          >
-            <Database style={{ 
-              width: 15, 
-              height: 15, 
-              strokeWidth: 1.5, 
-              color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
-            }} />
-            <span style={{
-              fontFamily: "General Sans, sans-serif",
-              fontSize: 10.5,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}>
-              Dataset Guardado
-            </span>
-          </button>
-          
-          <div style={{ width: 1, height: 18, backgroundColor: "var(--color-ec-border)", margin: "0 12px" }} />
-          
-          <button
-            type="button"
-            onClick={() => setCustomUniverse(true)}
-            style={{
-              flex: 1,
-              display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              padding: "8px 12px",
-              border: "none",
-              background: customUniverse ? "rgba(216, 122, 61, 0.04)" : "transparent",
-              borderRadius: 6,
-              color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
-              cursor: "pointer",
-              transition: "all 150ms ease",
-            }}
-          >
-            <SlidersHorizontal style={{ 
-              width: 15, 
-              height: 15, 
-              strokeWidth: 1.5, 
-              color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
-            }} />
-            <span style={{
-              fontFamily: "General Sans, sans-serif",
-              fontSize: 10.5,
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}>
-              Personalizar
-            </span>
-          </button>
-        </div>
-
-        {/* Conditionally render content */}
-        {!customUniverse ? (
+        {/* Choice Buttons/Areas hidden */}
+        
+        {/* Render content directly */}
+        {false ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <label style={{ fontSize: 'var(--ec-fs-label)', fontWeight: 500, textTransform: "uppercase", color: "var(--color-ec-text-muted)" }}>
               Seleccionar Dataset
@@ -5436,33 +5388,25 @@ export default function WizardStrategyBuilder({
     const list: { label: string; stepName: string }[] = [];
     
     // 0. Universo
-    if (customUniverse) {
-      list.push({
-        label: `Personalizado: Desde ${universeFilters.date_from || '?'} hasta ${universeFilters.date_to || '?'}`,
-        stepName: "Universo"
-      });
-      (universeFilters.rules || []).forEach((r: any) => {
-        const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
-        const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
-        let friendlyVal = r.value;
-        const numVal = parseFloat(r.value);
-        if (!isNaN(numVal)) {
-          if (r.metric.toLowerCase().includes('volume')) {
-            friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
-          }
+    list.push({
+      label: `Desde ${universeFilters.date_from || '?'} hasta ${universeFilters.date_to || '?'}`,
+      stepName: "Universo"
+    });
+    (universeFilters.rules || []).forEach((r: any) => {
+      const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+      const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
+      let friendlyVal = r.value;
+      const numVal = parseFloat(r.value);
+      if (!isNaN(numVal)) {
+        if (r.metric.toLowerCase().includes('volume')) {
+          friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
         }
-        list.push({
-          label: `${friendlyName} ${friendlyOp} ${friendlyVal}`,
-          stepName: "Universo"
-        });
-      });
-    } else if (selectedDataset) {
-      const currentDs = datasets.find(d => d.id === selectedDataset);
+      }
       list.push({
-        label: `Dataset: ${currentDs ? currentDs.name : (loadingDatasets ? "Cargando..." : selectedDataset)}`,
+        label: `${friendlyName} ${friendlyOp} ${friendlyVal}`,
         stepName: "Universo"
       });
-    }
+    });
 
     // 1. Bias
     if (bias) {
@@ -6099,7 +6043,7 @@ export default function WizardStrategyBuilder({
   const isContinueDisabled = (() => {
     const stepKey = STEPS[currentStep]?.key;
     if (stepKey === "universo") {
-      return !customUniverse && !selectedDataset;
+      return !universeFilters.date_from || !universeFilters.date_to;
     }
     if (stepKey === "bias") {
       return bias === null;

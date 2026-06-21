@@ -794,17 +794,20 @@ export default function BacktestPanel({
   }, [selectedStrategy, strategies, activeStrategy]);
 
   const handleRun = () => {
-    if (!selectedDataset || !selectedStrategy) return;
     if (isSelectedStratRiskInvalid) {
       alert("La suma del capital de los parciales de Take Profit debe ser exactamente 100%.");
       return;
     }
+    if (!selectedStrategy) return;
+    const stratDef = getStratDef();
+    const hasUniverse = !!(selectedDataset || stratDef?.universe_filters);
+    if (!hasUniverse) return;
     if (precacheStatus?.status === "running") {
       alert(`Espera a que se cargue el dataset (progreso: ${precacheStatus.percent}%)`);
       return;
     }
     onRun({
-      dataset_id: selectedDataset,
+      dataset_id: selectedDataset || "",
       strategy_id: selectedStrategy,
       init_cash: initCash,
       risk_r: riskR,
@@ -1595,7 +1598,7 @@ export default function BacktestPanel({
 
       <button
         onClick={handleRun}
-        disabled={loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid}
+        disabled={loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)}
         onMouseEnter={() => setHoveredBtn("run")}
         onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
         onMouseDown={() => setActiveBtn("run")}
@@ -1611,12 +1614,12 @@ export default function BacktestPanel({
             fontWeight: 700,
             letterSpacing: '1.2px',
             textTransform: 'uppercase',
-            cursor: loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid ? 'not-allowed' : 'pointer',
+            cursor: (loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)) ? 'not-allowed' : 'pointer',
             width: '100%',
             marginTop: 8,
-            opacity: loading || !selectedDataset || !selectedStrategy || isSelectedStratRiskInvalid ? 0.35 : 1,
-            boxShadow: hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
-            transform: activeBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? 'scale(0.98)' : hoveredBtn === "run" && !loading && selectedDataset && selectedStrategy && !isSelectedStratRiskInvalid ? 'scale(1.015)' : 'scale(1)',
+            opacity: (loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)) ? 0.35 : 1,
+            boxShadow: hoveredBtn === "run" && !(loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)) ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+            transform: activeBtn === "run" && !(loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)) ? 'scale(0.98)' : hoveredBtn === "run" && !(loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)) ? 'scale(1.015)' : 'scale(1)',
             transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
       >

@@ -409,7 +409,70 @@ export default function Home() {
                       params.strategy_id === "wizard_draft" || 
                       params.strategy_id.startsWith("draft_") || 
                       params.strategy_id.startsWith("wizard_draft_");
-    const targetDraft = builderDraft || activeStrategy;
+    
+    let targetDraft = builderDraft || activeStrategy;
+    
+    // Resolve saved strategy to a draft if it has integrated universe_filters or is missing a dataset ID
+    if (!isDraftId) {
+      try {
+        const strategyData = await getStrategy(params.strategy_id);
+        const def = typeof strategyData.definition === 'string' 
+          ? JSON.parse(strategyData.definition) 
+          : strategyData.definition || strategyData;
+        
+        if (def && (def.universe_filters || !params.dataset_id)) {
+          let resolvedDatasetId = params.dataset_id || def.dataset_id;
+          
+          if (!resolvedDatasetId && def.universe_filters) {
+            setLoading(true);
+            setError(null);
+            try {
+              const uniqueName = `Universo_${strategyData.name.replace(/\s+/g, "_")}_${Date.now().toString().slice(-4)}`;
+              const newQuery = await createQuery({ name: uniqueName, filters: def.universe_filters });
+              resolvedDatasetId = newQuery.id;
+              
+              // Update strategy in chest with the generated dataset_id so it is persistent!
+              await updateStrategy(strategyData.id, {
+                ...def,
+                dataset_id: resolvedDatasetId,
+              });
+              setStrategiesRefresh((prev) => prev + 1);
+            } catch (err: any) {
+              setError(err.message || "Error al crear el universo para la estrategia.");
+              setLoading(false);
+              return;
+            }
+          }
+
+          const draft = {
+            id: strategyData.id,
+            name: strategyData.name || "",
+            bias: def.bias || "long",
+            apply_day: def.apply_day || "gap_day",
+            postgap_preconditions: def.postgap_preconditions || [],
+            entry_logic: def.entry_logic || {
+              root_condition: { type: "group", operator: "AND", conditions: [] },
+              entry_time_windows: []
+            },
+            exit_logic: def.exit_logic || {
+              root_condition: { type: "group", operator: "AND", conditions: [] }
+            },
+            risk_management: def.risk_management || {},
+            universe_filters: def.universe_filters,
+            is_wizard: def.is_wizard || strategyData.is_wizard || false,
+            dataset_id: resolvedDatasetId,
+            market_sessions: def.market_sessions || params.market_sessions || ["rth"],
+            custom_start_time: def.custom_start_time || params.custom_start_time,
+            custom_end_time: def.custom_end_time || params.custom_end_time,
+          } as any;
+          await handleRunWithDraft(draft);
+          return;
+        }
+      } catch (err) {
+        console.warn("Could not auto-resolve saved strategy details:", err);
+      }
+    }
+
     if (isDraftId && targetDraft) {
       const draft = {
         id: targetDraft.id || params.strategy_id,

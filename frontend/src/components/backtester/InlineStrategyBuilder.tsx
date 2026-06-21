@@ -369,6 +369,8 @@ export default function InlineStrategyBuilder({
 
   const createdAtRef = useRef(new Date().toISOString());
   const lastLoadedStrategyRef = useRef<string>("");
+  const loadedDatasetIdRef = useRef<string>("");
+  const initialFiltersRef = useRef<string>("");
   const [activeTooltip, setActiveTooltip] = useState<{
     text: string;
     x: number;
@@ -418,20 +420,47 @@ export default function InlineStrategyBuilder({
     }
     if (stratObj.custom_start_time) setLocalCustomStartTime(stratObj.custom_start_time);
     if (stratObj.custom_end_time) setLocalCustomEndTime(stratObj.custom_end_time);
-    if (stratObj.dataset_id) {
-      setSelectedDataset(stratObj.dataset_id);
-      setCustomUniverse(false);
-    } else if (stratObj.universe_filters) {
+    
+    loadedDatasetIdRef.current = stratObj.dataset_id || "";
+    if (stratObj.universe_filters) {
       setUniverseFilters(stratObj.universe_filters);
-      setCustomUniverse(true);
+      initialFiltersRef.current = JSON.stringify(stratObj.universe_filters);
+    } else {
+      const defaultFilters = {
+        date_from: TWO_YEARS_AGO,
+        date_to: MAX_DATE,
+        rules: []
+      };
+      setUniverseFilters(defaultFilters);
+      initialFiltersRef.current = JSON.stringify(defaultFilters);
     }
+    setCustomUniverse(true);
   }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
 
   // Universe (Dataset) States
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loadingDatasets, setLoadingDatasets] = useState(true);
   const [selectedDataset, setSelectedDataset] = useState<string>("");
-  const [customUniverse, setCustomUniverse] = useState<boolean>(false);
+  const [customUniverse, setCustomUniverse] = useState<boolean>(true);
+
+  // Legacy strategy dataset resolver effect
+  useEffect(() => {
+    if (datasets.length > 0 && initialStrategy) {
+      const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+      if (stratObj.dataset_id && !stratObj.universe_filters) {
+        const currentDs = datasets.find(d => d.id === stratObj.dataset_id);
+        if (currentDs) {
+          const filters = {
+            date_from: currentDs.min_date || TWO_YEARS_AGO,
+            date_to: currentDs.max_date || MAX_DATE,
+            rules: currentDs.filters?.rules || []
+          };
+          setUniverseFilters(filters);
+          initialFiltersRef.current = JSON.stringify(filters);
+        }
+      }
+    }
+  }, [datasets, initialStrategy]);
   const [savingUnivNameMode, setSavingUnivNameMode] = useState(false);
   const [newUnivName, setNewUnivName] = useState('');
   const [savingUniv, setSavingUniv] = useState(false);
@@ -611,6 +640,9 @@ export default function InlineStrategyBuilder({
   }, [applyDay]);
 
   useEffect(() => {
+    const isFiltersUnchanged = JSON.stringify(universeFilters) === initialFiltersRef.current;
+    const resolvedDatasetId = isFiltersUnchanged ? (loadedDatasetIdRef.current || undefined) : undefined;
+
     onDraftChange?.({
       id: "draft",
       name,
@@ -625,10 +657,10 @@ export default function InlineStrategyBuilder({
       market_sessions: localMarketSessions,
       custom_start_time: localMarketSessions.includes("custom") ? localCustomStartTime : undefined,
       custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
-      dataset_id: customUniverse ? undefined : selectedDataset,
-      universe_filters: customUniverse ? universeFilters : undefined,
+      dataset_id: resolvedDatasetId,
+      universe_filters: universeFilters,
     });
-  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, localMarketSessions, localCustomStartTime, localCustomEndTime, selectedDataset, customUniverse, universeFilters, onDraftChange]);
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
 
   const resetForm = () => {
     setName("Nueva Estrategia");
@@ -645,25 +677,30 @@ export default function InlineStrategyBuilder({
     setTempToTime("16:00");
   };
 
-  const buildDraft = (): Draft => ({
-    id: initialStrategy?.id && !initialStrategy.id.startsWith("draft") && !initialStrategy.id.startsWith("wizard_draft")
-      ? initialStrategy.id
-      : `draft_${Date.now()}`,
-    name,
-    bias,
-    is_wizard: false,
-    apply_day: applyDay,
-    postgap_preconditions: postgapPreconditions,
-    entry_logic: entryLogic,
-    exit_logic: exitLogic,
-    risk_management: riskManagement,
-    created_at: new Date().toISOString(),
-    market_sessions: localMarketSessions,
-    custom_start_time: localMarketSessions.includes("custom") ? localCustomStartTime : undefined,
-    custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
-    dataset_id: customUniverse ? undefined : selectedDataset,
-    universe_filters: customUniverse ? universeFilters : undefined,
-  } as any);
+  const buildDraft = (): Draft => {
+    const isFiltersUnchanged = JSON.stringify(universeFilters) === initialFiltersRef.current;
+    const resolvedDatasetId = isFiltersUnchanged ? (loadedDatasetIdRef.current || undefined) : undefined;
+
+    return {
+      id: initialStrategy?.id && !initialStrategy.id.startsWith("draft") && !initialStrategy.id.startsWith("wizard_draft")
+        ? initialStrategy.id
+        : `draft_${Date.now()}`,
+      name,
+      bias,
+      is_wizard: false,
+      apply_day: applyDay,
+      postgap_preconditions: postgapPreconditions,
+      entry_logic: entryLogic,
+      exit_logic: exitLogic,
+      risk_management: riskManagement,
+      created_at: new Date().toISOString(),
+      market_sessions: localMarketSessions,
+      custom_start_time: localMarketSessions.includes("custom") ? localCustomStartTime : undefined,
+      custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
+      dataset_id: resolvedDatasetId,
+      universe_filters: universeFilters,
+    } as any;
+  };
 
   const handleTest = () => {
     if (isRiskInvalid) {
@@ -711,7 +748,9 @@ export default function InlineStrategyBuilder({
     + (sessionCount > 0 ? 1 : 0)
     + riskCount
     + entryCount
-    + exitCount;
+    + exitCount
+    + (universeFilters.rules || []).length
+    + (universeFilters.date_from || universeFilters.date_to ? 1 : 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -794,53 +833,11 @@ export default function InlineStrategyBuilder({
             }}>Universo (Dataset)</h2>
           </div>
 
-          {/* Two-column layout: Left stacked buttons, Right content */}
+          {/* Universe configuration content */}
           <div style={{ display: 'flex', flexDirection: 'row', gap: 16, alignItems: 'flex-start' }}>
-            {/* Left Column: Stacked toggle buttons */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: 130, flexShrink: 0 }}>
-              <button
-                type="button"
-                onClick={() => setCustomUniverse(false)}
-                style={{
-                  width: '100%',
-                  padding: '6px 0',
-                  borderRadius: 5,
-                  fontSize: 10,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  cursor: 'pointer',
-                  border: `0.5px solid ${!customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-border)'}`,
-                  backgroundColor: !customUniverse ? 'rgba(216, 122, 61, 0.07)' : 'transparent',
-                  color: !customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
-                  fontFamily: 'var(--color-ec-sans)',
-                }}
-              >
-                Cargar Dataset
-              </button>
-              <button
-                type="button"
-                onClick={() => setCustomUniverse(true)}
-                style={{
-                  width: '100%',
-                  padding: '6px 0',
-                  borderRadius: 5,
-                  fontSize: 10,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  cursor: 'pointer',
-                  border: `0.5px solid ${customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-border)'}`,
-                  backgroundColor: customUniverse ? 'rgba(216, 122, 61, 0.07)' : 'transparent',
-                  color: customUniverse ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
-                  fontFamily: 'var(--color-ec-sans)',
-                }}
-              >
-                Personalizar
-              </button>
-            </div>
-
             {/* Right Column: Active selector and filters */}
             <div style={{ flex: 1, minWidth: 0 }}>
-              {!customUniverse ? (
+              {false ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {loadingDatasets ? (
                     <div
@@ -1265,100 +1262,8 @@ export default function InlineStrategyBuilder({
                     </div>
                   )}
 
-                  {/* Save Universe Button / Form */}
-                  <div style={{ marginTop: 12, borderTop: '0.5px dotted var(--color-ec-border)', paddingTop: 10 }}>
-                    {!savingUnivNameMode ? (
-                      <button
-                        type="button"
-                        onClick={() => setSavingUnivNameMode(true)}
-                        style={{
-                          backgroundColor: 'transparent',
-                          color: 'var(--color-ec-text-muted)',
-                          border: '0.5px solid var(--color-ec-border)',
-                          borderRadius: 4,
-                          padding: '4px 10px',
-                          fontSize: 10,
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          textTransform: 'uppercase',
-                          transition: 'all 150ms ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 4
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.color = 'var(--color-ec-copper)';
-                          e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.color = 'var(--color-ec-text-muted)';
-                          e.currentTarget.style.borderColor = 'var(--color-ec-border)';
-                        }}
-                      >
-                        <Save style={{ width: 11, height: 11 }} />
-                        Guardar nuevo universo
-                      </button>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <label style={{ fontSize: 8.5, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase' }}>Nombre del nuevo universo</label>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <input
-                            type="text"
-                            value={newUnivName}
-                            onChange={(e) => setNewUnivName(e.target.value)}
-                            placeholder="Ej. Gap > 20% y Vol > 1M"
-                            style={{
-                              backgroundColor: 'var(--color-ec-bg-surface)',
-                              border: '0.5px solid var(--color-ec-border)',
-                              borderRadius: 4,
-                              padding: '4px 6px',
-                              color: 'var(--color-ec-text-primary)',
-                              fontSize: 10.5,
-                              outline: 'none',
-                              flex: 1,
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={handleSaveCustomUniverse}
-                            disabled={!newUnivName.trim() || savingUniv}
-                            style={{
-                              backgroundColor: 'var(--color-ec-copper)',
-                              color: 'var(--color-ec-copper-text)',
-                              border: 'none',
-                              borderRadius: 4,
-                              padding: '4px 10px',
-                              fontSize: 10,
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                              opacity: (!newUnivName.trim() || savingUniv) ? 0.5 : 1,
-                            }}
-                          >
-                            {savingUniv ? 'Guardando...' : 'Guardar'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSavingUnivNameMode(false);
-                              setNewUnivName('');
-                            }}
-                            style={{
-                              backgroundColor: 'transparent',
-                              color: 'var(--color-ec-text-muted)',
-                              border: '0.5px solid var(--color-ec-border)',
-                              borderRadius: 4,
-                              padding: '4px 10px',
-                              fontSize: 10,
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Cancelar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  {/* Save Universe Button disabled under strategy-integrated rules */}
+                  <div style={{ display: 'none' }} />
                 </div>
               )}
             </div>
@@ -2511,6 +2416,55 @@ export default function InlineStrategyBuilder({
                         </strong>
                       </span>
                     )}
+                  </div>
+                </div>
+
+                {/* Universo Config */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ fontSize: 8.5, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Universo de la Estrategia</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      borderRadius: 4,
+                      padding: '3px 6px',
+                      fontFamily: 'var(--color-ec-sans)',
+                      fontSize: 9.5,
+                      fontWeight: 500,
+                    }}>
+                      <span style={{ color: 'var(--color-ec-text-secondary)' }}>Rango:</span>
+                      <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>
+                        {formatDate(universeFilters.date_from)} - {formatDate(universeFilters.date_to)}
+                      </strong>
+                    </span>
+
+                    {(universeFilters.rules || []).map((r: any, idx: number) => {
+                      const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+                      const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
+                      let friendlyVal = r.value;
+                      const numVal = parseFloat(r.value);
+                      if (!isNaN(numVal) && r.metric.toLowerCase().includes('volume')) {
+                        friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+                      }
+                      return (
+                        <span key={idx} style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          backgroundColor: 'rgba(216, 122, 61, 0.05)',
+                          border: '0.5px solid rgba(216, 122, 61, 0.3)',
+                          borderRadius: 4,
+                          padding: '3px 6px',
+                          fontFamily: 'var(--color-ec-sans)',
+                          fontSize: 9.5,
+                          fontWeight: 500,
+                        }}>
+                          <span style={{ color: 'var(--color-ec-text-secondary)' }}>{friendlyName}:</span>
+                          <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{friendlyOp} {friendlyVal}</strong>
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
 
