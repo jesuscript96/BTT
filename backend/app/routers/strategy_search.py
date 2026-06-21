@@ -1,7 +1,7 @@
 """
 Strategy Search API Endpoints - Database View
 """
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
@@ -50,7 +50,7 @@ class SavedStrategyResponse(BaseModel):
 
 
 @router.post("/", response_model=dict)
-def save_backtest_result(data: dict, user_id: Optional[str] = Depends(get_current_user_id)):
+def save_backtest_result(data: dict, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Persist a backtest run into backtest_results so it shows up in the Baul
     linked to the corresponding strategy via strategy_ids.
@@ -108,10 +108,10 @@ def save_backtest_result(data: dict, user_id: Optional[str] = Depends(get_curren
 
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
-        print(f"[GCS] users.duckdb uploaded after backtest save {new_id}")
+        background_tasks.add_task(upload_user_db)
+        print(f"[GCS] users.duckdb upload scheduled in background after backtest save {new_id}")
     except Exception as e:
-        print(f"[WARN] GCS upload failed after save_backtest_result: {e}")
+        print(f"[WARN] GCS upload background scheduling failed after save_backtest_result: {e}")
 
     return {"id": new_id, "status": "saved"}
 
@@ -289,7 +289,7 @@ def list_all_strategies(
 
 
 @router.post("/{backtest_id}/toggle-validation")
-def toggle_validation(backtest_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+def toggle_validation(backtest_id: str, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Toggle the is_validated flag inside results_json for a backtest result.
     """
@@ -332,17 +332,17 @@ def toggle_validation(backtest_id: str, user_id: Optional[str] = Depends(get_cur
             
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
-        print(f"[GCS] users.duckdb uploaded after toggling validation for {backtest_id}")
+        background_tasks.add_task(upload_user_db)
+        print(f"[GCS] users.duckdb upload scheduled in background after toggling validation for {backtest_id}")
     except Exception as e:
-        print(f"[WARN] GCS upload failed after toggle_validation: {e}")
+        print(f"[WARN] GCS upload background scheduling failed after toggle_validation: {e}")
         
     return {"status": "success", "is_validated": new_status}
 
 
 
 @router.delete("/{strategy_id}")
-def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+def delete_strategy(strategy_id: str, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     """
     Delete a saved strategy
     """
@@ -368,9 +368,9 @@ def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_curre
             
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
+        background_tasks.add_task(upload_user_db)
     except Exception as e:
-        print(f"[WARN] GCS upload failed after delete_strategy: {e}")
+        print(f"[WARN] GCS upload background scheduling failed after delete_strategy: {e}")
         
     return {"status": "success", "message": "Strategy deleted"}
 

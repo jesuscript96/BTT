@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from typing import List, Optional
 from pydantic import BaseModel
 from uuid import uuid4
@@ -340,7 +340,7 @@ def get_saved_query(query_id: str, user_id: Optional[str] = Depends(get_current_
         con.close()
 
 @router.delete("/{query_id}")
-def delete_saved_query(query_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+def delete_saved_query(query_id: str, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     lock = get_user_db_lock()
     scope_sql, scope_params = scope_clause(user_id)
     with lock:
@@ -364,8 +364,8 @@ def delete_saved_query(query_id: str, user_id: Optional[str] = Depends(get_curre
     # users.duckdb from GCS and resurrects the deleted dataset
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
+        background_tasks.add_task(upload_user_db)
     except Exception as e:
-        print(f"[WARN] GCS upload after delete failed: {e}")
+        print(f"[WARN] GCS upload after delete background scheduling failed: {e}")
 
     return {"status": "success"}

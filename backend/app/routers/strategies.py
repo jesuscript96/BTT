@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from typing import List, Optional
 import json
 from uuid import uuid4
@@ -11,7 +11,7 @@ from app.schemas.strategy import Strategy, StrategyCreate
 router = APIRouter()
 
 @router.post("/", response_model=Strategy)
-def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(get_current_user_id)):
+def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
@@ -57,15 +57,15 @@ def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(g
 
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
-        print("[GCS] users.duckdb uploaded after strategy save")
+        background_tasks.add_task(upload_user_db)
+        print("[GCS] users.duckdb upload scheduled in background after strategy save")
     except Exception as e:
-        print(f"[WARN] GCS upload failed: {e}")
+        print(f"[WARN] GCS upload background scheduling failed: {e}")
 
     return full_strategy
 
 @router.put("/{strategy_id}", response_model=Strategy)
-def update_strategy(strategy_id: str, strategy: StrategyCreate, user_id: Optional[str] = Depends(get_current_user_id)):
+def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
@@ -108,10 +108,10 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, user_id: Optiona
 
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
-        print("[GCS] users.duckdb uploaded after strategy update")
+        background_tasks.add_task(upload_user_db)
+        print("[GCS] users.duckdb upload scheduled in background after strategy update")
     except Exception as e:
-        print(f"[WARN] GCS upload failed: {e}")
+        print(f"[WARN] GCS upload background scheduling failed: {e}")
 
     return Strategy(
         **strategy.model_dump(),
@@ -234,7 +234,7 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
     raise HTTPException(status_code=404, detail="Strategy not found")
 
 @router.delete("/{strategy_id}")
-def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+def delete_strategy(strategy_id: str, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     # NOTE: DELETE only works for local strategies.
     # Strategies that only exist in GCS parquet cannot be deleted from here.
     # GCS parquet is read-only from the backend.
@@ -258,9 +258,9 @@ def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_curre
 
     try:
         from app.gcs_sync import upload_user_db
-        upload_user_db()
-        print("[GCS] users.duckdb uploaded after strategy delete")
+        background_tasks.add_task(upload_user_db)
+        print("[GCS] users.duckdb upload scheduled in background after strategy delete")
     except Exception as e:
-        print(f"[WARN] GCS upload failed: {e}")
+        print(f"[WARN] GCS upload background scheduling failed: {e}")
 
     return {"status": "success", "message": "Strategy deleted"}
