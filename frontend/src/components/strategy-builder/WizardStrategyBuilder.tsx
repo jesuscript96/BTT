@@ -714,11 +714,8 @@ export default function WizardStrategyBuilder({
   const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
 
   useEffect(() => {
-    if (onExpandedChange) {
-      const isUnivStep = STEPS[currentStep]?.key === 'universo';
-      const isBetween = tempUnivOp === 'between';
-      onExpandedChange(isUnivStep && isBetween);
-    }
+    // Disable expanding the drawer when 'between' is selected in Wizard mode
+    onExpandedChange?.(false);
     return () => {
       onExpandedChange?.(false);
     };

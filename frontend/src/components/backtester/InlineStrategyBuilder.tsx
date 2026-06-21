@@ -506,9 +506,8 @@ export default function InlineStrategyBuilder({
   const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
 
   useEffect(() => {
-    if (onExpandedChange) {
-      onExpandedChange(tempUnivOp === 'between');
-    }
+    // Disable expanding the drawer when 'between' is selected
+    onExpandedChange?.(false);
     return () => {
       onExpandedChange?.(false);
     };
