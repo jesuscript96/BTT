@@ -441,9 +441,16 @@ export default function BacktestPanel({
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
+  const isDraft = !!selectedStrategy && (
+    selectedStrategy === "draft" ||
+    selectedStrategy === "wizard_draft" ||
+    selectedStrategy.startsWith("draft_") ||
+    selectedStrategy.startsWith("wizard_draft_")
+  );
+
   const getStratDef = () => {
     let rawDef: any = null;
-    if ((selectedStrategy === "draft" || selectedStrategy === "wizard_draft") && activeStrategy) {
+    if (isDraft && activeStrategy) {
       rawDef = activeStrategy.definition || activeStrategy;
     } else {
       const strat = strategies.find((s) => s.id === selectedStrategy);
@@ -607,21 +614,32 @@ export default function BacktestPanel({
 
   useEffect(() => {
     if (!selectedStrategy) return;
-    const currentStrat = (selectedStrategy === "draft" || selectedStrategy === "wizard_draft")
+    const currentStrat = isDraft
       ? activeStrategy
       : strategies.find((s) => s.id === selectedStrategy);
     if (currentStrat) {
       const stratDef = currentStrat.definition || currentStrat;
       if (stratDef.market_sessions) {
-        setMarketSessions(stratDef.market_sessions);
+        const nextSessions = stratDef.market_sessions;
+        setMarketSessions((prev) => {
+          if (prev.length === nextSessions.length && prev.every((v, i) => v === nextSessions[i])) {
+            return prev;
+          }
+          return nextSessions;
+        });
       } else {
-        setMarketSessions(["rth"]);
+        setMarketSessions((prev) => {
+          if (prev.length === 1 && prev[0] === "rth") {
+            return prev;
+          }
+          return ["rth"];
+        });
       }
       if (stratDef.custom_start_time) {
-        setCustomStartTime(stratDef.custom_start_time);
+        setCustomStartTime((prev) => prev === stratDef.custom_start_time ? prev : stratDef.custom_start_time);
       }
       if (stratDef.custom_end_time) {
-        setCustomEndTime(stratDef.custom_end_time);
+        setCustomEndTime((prev) => prev === stratDef.custom_end_time ? prev : stratDef.custom_end_time);
       }
     }
   }, [selectedStrategy, activeStrategy, strategies]);
@@ -757,7 +775,7 @@ export default function BacktestPanel({
   useEffect(() => {
     if (!selectedStrategy) return;
     let rawDef: any = null;
-    if ((selectedStrategy === "draft" || selectedStrategy === "wizard_draft") && activeStrategy) {
+    if (isDraft && activeStrategy) {
       rawDef = activeStrategy.definition || activeStrategy;
     } else {
       const strat = strategies.find((s) => s.id === selectedStrategy);
@@ -817,7 +835,7 @@ export default function BacktestPanel({
   };
 
   // getStratDef was moved to the top of the component to avoid rendering loop issues.
-  const isConfigurable = !!(selectedStrategy && selectedStrategy !== "draft" && selectedStrategy !== "wizard_draft");
+  const isConfigurable = !!selectedStrategy;
 
 
 
@@ -897,7 +915,7 @@ export default function BacktestPanel({
                 cursor: 'pointer',
               }}
             >
-              {(selectedStrategy === "draft" || selectedStrategy === "wizard_draft") && activeStrategy && (
+              {isDraft && activeStrategy && (
                 <option value={selectedStrategy}>
                   [Borrador] {activeStrategy.name}
                 </option>
@@ -910,7 +928,7 @@ export default function BacktestPanel({
             </select>
           )}
           {selectedStrategy && (() => {
-            const currentStrat = (selectedStrategy === "draft" || selectedStrategy === "wizard_draft") ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
+            const currentStrat = isDraft ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
             if (!currentStrat) return null;
             const cleanDesc = (currentStrat.description || "")
               .replace(/\[What-if:[\s\S]*\]/g, "")

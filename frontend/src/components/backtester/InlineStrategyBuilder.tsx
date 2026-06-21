@@ -287,6 +287,7 @@ interface Props {
   onDraftChange?: (draft: Draft) => void;
   initialStrategy?: any;
   onExpandedChange?: (expanded: boolean) => void;
+  defaultDatasetId?: string;
 }
 
 export default function InlineStrategyBuilder({
@@ -298,6 +299,7 @@ export default function InlineStrategyBuilder({
   onDraftChange,
   initialStrategy,
   onExpandedChange,
+  defaultDatasetId,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
@@ -493,7 +495,7 @@ export default function InlineStrategyBuilder({
         ]);
         setDatasets(d);
         if (d.length > 0) {
-          setSelectedDataset(prev => prev || d[0].id);
+          setSelectedDataset(prev => prev || defaultDatasetId || d[0].id);
         }
         if (range) {
           setDbDateRange(range);
@@ -505,7 +507,7 @@ export default function InlineStrategyBuilder({
       }
     };
     loadDatasetsList();
-  }, []);
+  }, [defaultDatasetId]);
 
   const [bias, setBias] = useState<"long" | "short">("long");
   const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');

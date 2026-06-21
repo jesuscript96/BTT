@@ -1,6 +1,6 @@
 
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Union, Literal
+from typing import List, Optional, Union, Literal, Annotated
 from uuid import uuid4
 from enum import Enum
 from datetime import datetime
@@ -259,12 +259,20 @@ class CandleCondition(BaseModel):
     calc_on_heikin: Optional[bool] = False
 
 # Recursive Entry Logic
-AnyCondition = Union[ComparisonCondition, PriceLevelDistanceCondition, CandleCondition]
+AnyCondition = Annotated[
+    Union[ComparisonCondition, PriceLevelDistanceCondition, CandleCondition],
+    Field(discriminator="type")
+]
 
 class ConditionGroup(BaseModel):
     type: Literal["group"] = "group"
     operator: Literal["AND", "OR"] = "AND"
-    conditions: List[Union['ConditionGroup', AnyCondition]]
+    conditions: List[
+        Annotated[
+            Union['ConditionGroup', ComparisonCondition, PriceLevelDistanceCondition, CandleCondition],
+            Field(discriminator="type")
+        ]
+    ]
 
 class EntryTimeWindow(BaseModel):
     from_time: str

@@ -252,5 +252,30 @@ async def global_exception_handler(request: Request, exc: Exception):
         }
     )
 
+from fastapi.exceptions import RequestValidationError
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print("VALIDATION ERROR DETAILS:")
+    import pprint
+    pprint.pprint(exc.errors())
+    try:
+        body = await request.json()
+        print("REQUEST JSON PAYLOAD:")
+        pprint.pprint(body)
+    except Exception:
+        body_bytes = await request.body()
+        print("REQUEST BODY BYTES:", body_bytes)
+    
+    origin = request.headers.get("origin")
+    allow_origin = origin if origin else "https://www.mystrategybuilder.fun"
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+        headers={
+            "Access-Control-Allow-Origin": allow_origin,
+            "Access-Control-Allow-Credentials": "true"
+        }
+    )
+
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

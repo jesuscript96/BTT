@@ -308,6 +308,7 @@ interface Props {
   customEndTime?: string;
   initialStrategy?: any;
   onExpandedChange?: (expanded: boolean) => void;
+  defaultDatasetId?: string;
 }
 
 /* ── Date range constants for dataset filter ── */
@@ -592,6 +593,7 @@ export default function WizardStrategyBuilder({
   customEndTime = "16:00",
   initialStrategy,
   onExpandedChange,
+  defaultDatasetId,
 }: Props) {
   const [currentStep, setCurrentStep] = useState(0);
   const createdAtRef = useRef(new Date().toISOString());
@@ -702,7 +704,7 @@ export default function WizardStrategyBuilder({
         ]);
         setDatasets(d);
         if (d.length > 0) {
-          setSelectedDataset(prev => prev || d[0].id);
+          setSelectedDataset(prev => prev || defaultDatasetId || d[0].id);
         }
         if (range) {
           setDbDateRange(range);
@@ -714,7 +716,7 @@ export default function WizardStrategyBuilder({
       }
     };
     loadDatasetsList();
-  }, []);
+  }, [defaultDatasetId]);
 
   // Strategy Builder States
   const [bias, setBias] = useState<"long" | "short" | null>(null);
