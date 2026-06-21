@@ -28,6 +28,7 @@ import type { TradeRecord, DayResult, GlobalEquityPoint, DrawdownPoint, Aggregat
 import { runWhatIf } from "@/lib/api_backtester";
 import RollingEVChart from "@/components/backtester/RollingEVChart";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
+import { Zap, Shield, Loader2 } from "lucide-react";
 
 interface ChartsTabProps {
   trades: TradeRecord[];
@@ -408,7 +409,7 @@ export default function ChartsTab({
       {/* ── SECTION: WHAT IF SIMULATOR ── */}
       <div className="pb-0 mb-0">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <span style={{ fontSize: 16 }}>⚡</span>
+          <Zap className="w-4 h-4 text-[var(--color-ec-text-high)]" strokeWidth={2} />
           <h3 style={{
             fontFamily: "Fraunces, serif",
             fontSize: 16,
@@ -453,7 +454,7 @@ export default function ChartsTab({
                   </div>
                 </div>
 
-                <div>
+                <div style={{ marginTop: "12px" }}>
                   <label className="text-[11px] font-semibold text-[var(--color-ec-text-secondary)] mb-2 block uppercase tracking-wider">Excluir Meses del Año</label>
                   <div className="grid grid-cols-4 gap-2 max-w-[358px] mt-2.5">
                     {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => (
@@ -475,7 +476,7 @@ export default function ChartsTab({
                   </div>
                 </div>
 
-                <div>
+                <div style={{ marginTop: "12px" }}>
                   <label className="text-[11px] font-semibold text-[var(--color-ec-text-secondary)] mb-2 block uppercase tracking-wider">Excluir Rango de Horas</label>
                   <div className="flex items-center gap-4 max-w-[358px] mt-2.5">
                     <div className="flex-1">
@@ -502,14 +503,14 @@ export default function ChartsTab({
             </div>
 
             {/* Simulation button */}
-            <div className="max-w-[358px] mt-5 pb-5 border-b border-[var(--color-ec-border)]">
+            <div className="max-w-[358px] mt-7 pb-5 border-b border-[var(--color-ec-border)]">
               <button
                 type="button"
                 onClick={handleRunWhatIf}
                 disabled={simLoading}
                 className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-2.5 rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                <span className="text-sm">{simLoading ? "⏳" : "⚡"}</span>
+                {simLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" strokeWidth={2} />}
                 {simLoading ? "Simulando..." : "Ejecutar Simulación What-if"}
               </button>
               <p className="text-center text-[8px] text-[var(--color-ec-text-muted)] mt-2 italic opacity-60">
@@ -520,7 +521,7 @@ export default function ChartsTab({
             {/* ── SECTION: BASIC STRESS TEST ── */}
             <div className="max-w-[358px] mt-6 flex flex-col" style={{ gap: "16px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 16 }}>🛡️</span>
+                <Shield className="w-4 h-4 text-[var(--color-ec-text-high)]" strokeWidth={2} />
                 <h4 style={{
                   fontFamily: "Fraunces, serif",
                   fontSize: 15,
@@ -544,7 +545,7 @@ export default function ChartsTab({
                     <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
                     Límite de Operaciones
                   </h5>
-                  <div className="space-y-2">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Máx. trades/día:</span>
                       <input
@@ -585,7 +586,7 @@ export default function ChartsTab({
                     <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
                     Peor Escenario y Black Swan
                   </h5>
-                  <div className="space-y-2">
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Omitir mejores trades (%):</span>
                       <input
@@ -606,8 +607,8 @@ export default function ChartsTab({
                       />
                     </div>
                     
-                    <div className="border-t border-[var(--color-ec-border)] pt-2.5">
-                      <div className="flex items-center justify-between mb-2">
+                    <div className="border-t border-[var(--color-ec-border)] pt-3.5 flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
                         <span className="text-[10px] text-[var(--color-ec-text-muted)] font-medium">Black Swans (Eventos):</span>
                         <input
                           type="number"
@@ -659,7 +660,7 @@ export default function ChartsTab({
                   disabled={simLoading}
                   className="w-full bg-[var(--color-ec-loss)] text-white hover:bg-[color-mix(in_srgb,var(--color-ec-loss)_85%,white)] py-2.5 rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  <span className="text-sm">{simLoading ? "⏳" : "🛡️"}</span>
+                  {simLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" strokeWidth={2} />}
                   {simLoading ? "Simular Basic Stress..." : "Ejecutar simulación de basic stress"}
                 </button>
                 <p className="text-center text-[8px] text-[var(--color-ec-text-muted)] mt-2 italic opacity-60">
@@ -1054,7 +1055,7 @@ function WhatIfEquityChart({
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 320,
+      height: 380,
       handleScale: {
         mouseWheel: false,
         pinch: false,
@@ -1127,7 +1128,7 @@ function WhatIfEquityChart({
     const ddContainer = ddContainerRef.current;
     const ddChart = createChart(ddContainer, {
       width: ddContainer.clientWidth,
-      height: 110,
+      height: 120,
       handleScale: {
         mouseWheel: false,
         pinch: false,
@@ -1266,8 +1267,8 @@ function WhatIfEquityChart({
           ))}
         </div>
       </div>
-      <div ref={chartContainerRef} className="h-[320px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
-      <div ref={ddContainerRef} className="h-[110px] w-full rounded-b border border-[var(--color-ec-border)]" />
+      <div ref={chartContainerRef} className="h-[380px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
+      <div ref={ddContainerRef} className="h-[120px] w-full rounded-b border border-[var(--color-ec-border)]" />
     </div>
   );
 }
