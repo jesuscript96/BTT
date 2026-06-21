@@ -257,7 +257,7 @@ export default function ResultsTabs({
             display: "flex",
             alignItems: "center",
             borderBottom: "1px solid var(--color-ec-border)",
-            marginBottom: 20,
+            marginBottom: 8,
             paddingTop: 8,
           }}>
             <button
