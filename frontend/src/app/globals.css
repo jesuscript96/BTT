@@ -45,6 +45,15 @@
   --color-ec-text-high: #E4E2DF;
   --color-ec-profit: #4A9D7F;
   --color-ec-loss: #C94D3F;
+
+  /* Typography scale for config-guided panels (Alvaro Build Spec v1.0) */
+  --ec-fs-panel-title: 26px;
+  --ec-fs-hint: 14px;
+  --ec-fs-label: 14px;
+  --ec-fs-select: 14px;
+  --ec-fs-step-tag: 12px;
+  --ec-dot-size: 8px;
+  --ec-dot-gap: 7px;
 }
 
 * {

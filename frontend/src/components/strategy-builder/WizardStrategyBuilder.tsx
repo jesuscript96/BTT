@@ -1193,8 +1193,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -1204,7 +1204,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: 0,
             lineHeight: 1.5,
@@ -1301,7 +1302,7 @@ export default function WizardStrategyBuilder({
         {/* Conditionally render content */}
         {!customUniverse ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <label style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: "var(--color-ec-text-muted)" }}>
+            <label style={{ fontSize: 'var(--ec-fs-label)', fontWeight: 500, textTransform: "uppercase", color: "var(--color-ec-text-muted)" }}>
               Seleccionar Dataset
             </label>
             {loadingDatasets ? (
@@ -1316,7 +1317,7 @@ export default function WizardStrategyBuilder({
                   borderRadius: 5,
                   padding: '8px 10px',
                   fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 12,
+                  fontSize: 'var(--ec-fs-select)',
                   fontWeight: 500,
                   color: 'var(--color-ec-text-primary)',
                   outline: 'none',
@@ -1881,8 +1882,8 @@ export default function WizardStrategyBuilder({
     return (
       <div>
         <h3 style={{
-          fontFamily: "var(--color-ec-serif)",
-          fontSize: 14,
+          fontFamily: 'Fraunces, serif',
+          fontSize: 'var(--ec-fs-panel-title)',
           fontWeight: 600,
           color: "var(--color-ec-text-high)",
           margin: "0 0 4px 0",
@@ -1892,7 +1893,8 @@ export default function WizardStrategyBuilder({
         </h3>
         <p style={{
           fontFamily: "var(--color-ec-sans)",
-          fontSize: 10,
+          fontSize: 'var(--ec-fs-hint)',
+          fontWeight: 400,
           color: "var(--color-ec-text-muted)",
           margin: "0 0 14px 0",
           lineHeight: 1.5,
@@ -2044,8 +2046,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -2055,7 +2057,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 0 0",
             lineHeight: 1.5,
@@ -2552,8 +2555,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -2563,7 +2566,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 10px 0",
             lineHeight: 1.5,
@@ -3259,7 +3263,7 @@ export default function WizardStrategyBuilder({
         case 0:
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 1: Temporalidad de la condición</span>
+              <span style={{ fontSize: 'var(--ec-fs-step-tag)', fontWeight: 600, letterSpacing: '1.2px', color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 1: Temporalidad de la condición</span>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
                 Determina la temporalidad de las velas. Indica cada cuánto tiempo se actualizarán los datos de tu gráfico para calcular esta condición. Temporalidades cortas (como 1m o 5m) reaccionan rápido al precio, mientras que temporalidades más largas (como 15m, 1h o 1d) filtran el ruido del mercado.
               </span>
@@ -3294,7 +3298,7 @@ export default function WizardStrategyBuilder({
         case 1:
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 2: Variable de Entrada</span>
+              <span style={{ fontSize: 'var(--ec-fs-step-tag)', fontWeight: 600, letterSpacing: '1.2px', color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 2: Variable de Entrada</span>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
                 Elige el elemento principal que quieres analizar. Puede ser el precio del activo ("Cierre de vela" / Bar Close) o un indicador técnico matemático (como medias móviles SMA/EMA o VWAP) calculado sobre los datos históricos.
               </span>
@@ -3319,7 +3323,7 @@ export default function WizardStrategyBuilder({
         case 2:
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 3: Modo de Evaluación</span>
+              <span style={{ fontSize: 'var(--ec-fs-step-tag)', fontWeight: 600, letterSpacing: '1.2px', color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 3: Modo de Evaluación</span>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
                 Define cómo se evaluará la variable principal. Puedes compararla directamente con un objetivo (ej: Cierre mayor que SMA) o medir el porcentaje de separación (distancia) que hay entre ambos (ej. precio a menos de 1% de distancia de la SMA).
               </span>
@@ -3374,7 +3378,7 @@ export default function WizardStrategyBuilder({
         case 3:
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 4: Relación de activación</span>
+              <span style={{ fontSize: 'var(--ec-fs-step-tag)', fontWeight: 600, letterSpacing: '1.2px', color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 4: Relación de activación</span>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
                 Selecciona la relación lógica que debe cumplirse. Un cruce (ej: cruza por encima) ocurre únicamente en el momento exacto en que una línea atraviesa a la otra. Una comparación simple (ej: mayor que) se mantiene activa mientras la variable esté por encima de la referencia.
               </span>
@@ -3421,7 +3425,7 @@ export default function WizardStrategyBuilder({
           const showToggle = allowedCompTargets.length > 0;
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 5: Objetivo / Cruce</span>
+              <span style={{ fontSize: 'var(--ec-fs-step-tag)', fontWeight: 600, letterSpacing: '1.2px', color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 5: Objetivo / Cruce</span>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
                 {wizardMode === "comparison" 
                   ? "Define contra qué valor o indicador comparamos nuestra variable de entrada. Puedes elegir un valor fijo (un precio exacto en dólares) o un indicador técnico dinámico (como el VWAP o una media móvil)." 
@@ -3641,8 +3645,8 @@ export default function WizardStrategyBuilder({
     return (
       <div>
         <h3 style={{
-          fontFamily: "var(--color-ec-serif)",
-          fontSize: 14,
+          fontFamily: 'Fraunces, serif',
+          fontSize: 'var(--ec-fs-panel-title)',
           fontWeight: 600,
           color: "var(--color-ec-text-high)",
           margin: "0 0 4px 0",
@@ -3654,7 +3658,8 @@ export default function WizardStrategyBuilder({
         </h3>
         <p style={{
           fontFamily: "var(--color-ec-sans)",
-          fontSize: 10,
+          fontSize: 'var(--ec-fs-hint)',
+          fontWeight: 400,
           color: "var(--color-ec-text-muted)",
           margin: "0 0 16px 0",
           lineHeight: 1.5,
@@ -3736,7 +3741,7 @@ export default function WizardStrategyBuilder({
                   Condición
                 </span>
                 {/* Step indicators dots */}
-                <div style={{ display: "flex", gap: 4 }}>
+                <div style={{ display: "flex", gap: 'var(--ec-dot-gap)' }}>
                   {condStepsList.map((stepNum, idx) => {
                     const isActiveStep = stepNum === wizardCondStep;
                     const isPassedStep = condStepsList.indexOf(stepNum) < currentIndicatorStepNum;
@@ -3744,8 +3749,8 @@ export default function WizardStrategyBuilder({
                       <div
                         key={stepNum}
                         style={{
-                          width: 6,
-                          height: 6,
+                          width: 'var(--ec-dot-size)',
+                          height: 'var(--ec-dot-size)',
                           borderRadius: "50%",
                           backgroundColor: isActiveStep
                             ? "var(--color-ec-copper)"
@@ -4136,8 +4141,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-in fade-in duration-200">
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -4147,7 +4152,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 12px 0",
             lineHeight: 1.5,
@@ -4602,8 +4608,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-in fade-in duration-200">
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -4613,7 +4619,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 12px 0",
             lineHeight: 1.5,
@@ -5102,8 +5109,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-in fade-in duration-200">
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -5113,7 +5120,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 12px 0",
             lineHeight: 1.5,
@@ -5245,8 +5253,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="animate-in fade-in duration-200">
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -5256,7 +5264,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 12px 0",
             lineHeight: 1.5,
@@ -5602,8 +5611,8 @@ export default function WizardStrategyBuilder({
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }} className="animate-in fade-in duration-300">
         <div>
           <h3 style={{
-            fontFamily: "var(--color-ec-serif)",
-            fontSize: 14,
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
             fontWeight: 600,
             color: "var(--color-ec-text-high)",
             margin: "0 0 4px 0",
@@ -5613,7 +5622,8 @@ export default function WizardStrategyBuilder({
           </h3>
           <p style={{
             fontFamily: "var(--color-ec-sans)",
-            fontSize: 10,
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
             color: "var(--color-ec-text-muted)",
             margin: "0 0 12px 0",
             lineHeight: 1.5,
@@ -6130,8 +6140,8 @@ export default function WizardStrategyBuilder({
           }}
         >←</button>
         <span style={{
-          fontFamily: "var(--color-ec-serif)",
-          fontSize: 14, fontWeight: 600,
+          fontFamily: 'Fraunces, serif',
+          fontSize: 'var(--ec-fs-panel-title)', fontWeight: 600,
           color: "var(--color-ec-text-high)",
           letterSpacing: "-0.2px",
         }}>Config. guiada</span>
