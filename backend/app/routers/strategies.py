@@ -34,6 +34,7 @@ def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(g
                 "exit_logic": strategy.exit_logic.model_dump() if strategy.exit_logic else None,
                 "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
                 "is_wizard": strategy.is_wizard,
+                "dataset_id": strategy.dataset_id,
             })
 
             con.execute(
@@ -62,6 +63,62 @@ def create_strategy(strategy: StrategyCreate, user_id: Optional[str] = Depends(g
         print(f"[WARN] GCS upload failed: {e}")
 
     return full_strategy
+
+@router.put("/{strategy_id}", response_model=Strategy)
+def update_strategy(strategy_id: str, strategy: StrategyCreate, user_id: Optional[str] = Depends(get_current_user_id)):
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            # Check if strategy exists
+            row = con.execute("SELECT created_at FROM strategies WHERE id = ?", [strategy_id]).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            created_at = row[0]
+            now = datetime.now()
+
+            definition_json = json.dumps({
+                "bias": strategy.bias,
+                "apply_day": strategy.apply_day,
+                "postgap_preconditions": [p.model_dump() for p in strategy.postgap_preconditions] if strategy.postgap_preconditions else None,
+                "universe_filters": strategy.universe_filters.model_dump() if strategy.universe_filters else None,
+                "entry_logic": strategy.entry_logic.model_dump() if strategy.entry_logic else None,
+                "exit_logic": strategy.exit_logic.model_dump() if strategy.exit_logic else None,
+                "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
+                "is_wizard": strategy.is_wizard,
+                "dataset_id": strategy.dataset_id,
+            })
+
+            con.execute(
+                """
+                UPDATE strategies
+                SET name = ?, description = ?, updated_at = ?, definition = ?
+                WHERE id = ?
+                """,
+                (
+                    strategy.name,
+                    strategy.description,
+                    now,
+                    definition_json,
+                    strategy_id,
+                )
+            )
+        finally:
+            con.close()
+
+    try:
+        from app.gcs_sync import upload_user_db
+        upload_user_db()
+        print("[GCS] users.duckdb uploaded after strategy update")
+    except Exception as e:
+        print(f"[WARN] GCS upload failed: {e}")
+
+    return Strategy(
+        **strategy.model_dump(),
+        id=strategy_id,
+        created_at=str(created_at),
+        updated_at=now.isoformat()
+    )
 
 @router.get("/")
 def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):

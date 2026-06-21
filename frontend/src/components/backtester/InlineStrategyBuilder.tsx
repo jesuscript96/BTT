@@ -644,7 +644,9 @@ export default function InlineStrategyBuilder({
   };
 
   const buildDraft = (): Draft => ({
-    id: `draft_${Date.now()}`,
+    id: initialStrategy?.id && !initialStrategy.id.startsWith("draft") && !initialStrategy.id.startsWith("wizard_draft")
+      ? initialStrategy.id
+      : `draft_${Date.now()}`,
     name,
     bias,
     is_wizard: false,

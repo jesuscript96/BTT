@@ -11,7 +11,7 @@ import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
 import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
-import { createStrategy, createQuery, getStrategy, saveBacktest } from "@/lib/api";
+import { createStrategy, createQuery, getStrategy, saveBacktest, updateStrategy } from "@/lib/api";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
   runBacktest,
@@ -74,6 +74,7 @@ export default function Home() {
   const [isSavingDataset, setIsSavingDataset] = useState(false);
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showRewriteModal, setShowRewriteModal] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [builderDraft, setBuilderDraft] = useState<Draft | null>(null);
   const [strategiesRefresh, setStrategiesRefresh] = useState(0);
@@ -91,6 +92,7 @@ export default function Home() {
   const handleSaveToBaulClick = async () => {
     if (draftStrategy) {
       setStrategyToSave({
+        id: draftStrategy.id,
         name: draftStrategy.name,
         bias: draftStrategy.bias,
         apply_day: draftStrategy.apply_day,
@@ -98,20 +100,21 @@ export default function Home() {
         entry_logic: draftStrategy.entry_logic,
         exit_logic: draftStrategy.exit_logic,
         risk_management: draftStrategy.risk_management,
+        dataset_id: draftStrategy.dataset_id,
+        universe_filters: (draftStrategy as any).universe_filters,
+        is_wizard: draftStrategy.is_wizard,
+        description: (draftStrategy as any).description || activeStrategy?.description || "",
       });
-      setSaveName(draftStrategy.name);
-      setShowSaveModal(true);
-    } else if (strategyIdRef.current && strategyIdRef.current !== "draft") {
-      try {
-        const existing = await getStrategy(strategyIdRef.current);
-        setStrategyToSave(existing);
-        setSaveName(`${existing.name} (Copia)`);
+
+      const isExisting = draftStrategy.id && !draftStrategy.id.startsWith("draft") && !draftStrategy.id.startsWith("wizard_draft");
+      if (isExisting) {
+        setShowRewriteModal(true);
+      } else {
+        setSaveName(draftStrategy.name);
         setShowSaveModal(true);
-      } catch (err) {
-        alert("Error al cargar la estrategia para guardar.");
       }
     } else {
-      alert("No hay ninguna estrategia activa para guardar.");
+      alert("No hay ninguna estrategia modificada activa para guardar.");
     }
   };
   const initCashRef = useRef(10000);
@@ -229,7 +232,7 @@ export default function Home() {
     setDayCandles(null);
     setMultiDayCandles(null);
     setActiveStrategy({
-      id: "draft",
+      id: draft.id,
       name: draft.name,
       description: "",
       definition: {
@@ -250,7 +253,7 @@ export default function Home() {
     initCashRef.current = p?.init_cash ?? 10000;
     riskRRef.current = p?.risk_r ?? 100;
     datasetIdRef.current = activeDatasetId;
-    strategyIdRef.current = "draft";
+    strategyIdRef.current = draft.id;
     backtestParamsRef.current = {
       init_cash: p?.init_cash ?? 10000,
       risk_r: p?.risk_r ?? 100,
@@ -1001,9 +1004,10 @@ export default function Home() {
                     <div style={{ padding: '12px 4px 4px 4px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                       <button
                         onClick={handleSaveToBaulClick}
-                        onMouseEnter={() => setHoveredSaveBtn(true)}
+                        disabled={!draftStrategy}
+                        onMouseEnter={() => { if (draftStrategy) setHoveredSaveBtn(true); }}
                         onMouseLeave={() => { setHoveredSaveBtn(false); setActiveSaveBtn(false); }}
-                        onMouseDown={() => setActiveSaveBtn(true)}
+                        onMouseDown={() => { if (draftStrategy) setActiveSaveBtn(true); }}
                         onMouseUp={() => setActiveSaveBtn(false)}
                         style={{
                           width: '100%',
@@ -1017,9 +1021,10 @@ export default function Home() {
                           textTransform: 'uppercase',
                           letterSpacing: '1.2px',
                           color: 'var(--color-ec-copper-text)',
-                          cursor: 'pointer',
-                          boxShadow: hoveredSaveBtn ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
-                          transform: activeSaveBtn ? 'scale(0.98)' : hoveredSaveBtn ? 'scale(1.015)' : 'scale(1)',
+                          cursor: draftStrategy ? 'pointer' : 'not-allowed',
+                          opacity: draftStrategy ? 1 : 0.4,
+                          boxShadow: (hoveredSaveBtn && draftStrategy) ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
+                          transform: (activeSaveBtn && draftStrategy) ? 'scale(0.98)' : (hoveredSaveBtn && draftStrategy) ? 'scale(1.015)' : 'scale(1)',
                           transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
                         }}
                       >
@@ -1165,6 +1170,7 @@ export default function Home() {
                         apply_day: strategyToSave.apply_day,
                         postgap_preconditions: strategyToSave.postgap_preconditions,
                         universe_filters: strategyToSave.universe_filters,
+                        dataset_id: strategyToSave.dataset_id,
                       } as any);
                       const newStrategyId = savedStrategy.id;
 
@@ -1201,6 +1207,127 @@ export default function Home() {
                     }}
                   >
                     Guardar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal — reescribir estrategia existente */}
+          {showRewriteModal && (
+            <div style={{
+              position: 'fixed', inset: 0, zIndex: 100,
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <div style={{
+                backgroundColor: 'var(--color-ec-bg-surface)',
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 7,
+                padding: 24,
+                width: 360,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-serif)' }}>
+                  ¿Desea reescribir la estrategia?
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--color-ec-text-secondary)', fontFamily: 'var(--color-ec-sans)', lineHeight: 1.5 }}>
+                  Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con los cambios actuales.
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => setShowRewriteModal(false)}
+                    style={{
+                      flex: 1, padding: '7px 0', borderRadius: 5,
+                      fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                      textTransform: 'uppercase', cursor: 'pointer',
+                      backgroundColor: 'var(--color-ec-bg-elevated)',
+                      border: '0.5px solid var(--color-ec-border)',
+                      color: 'var(--color-ec-text-muted)',
+                      fontFamily: 'var(--color-ec-sans)',
+                    }}
+                  >
+                    No
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!strategyToSave || !strategyToSave.id) return;
+                      const logicErrors = validateStrategyLogic(
+                        strategyToSave.entry_logic,
+                        strategyToSave.exit_logic,
+                      );
+                      if (logicErrors.length > 0) {
+                        alert("Hay condiciones incompletas:\n" + logicErrors.join("\n"));
+                        return;
+                      }
+                      let description = strategyToSave.description || "";
+                      if (includeWhatIfInSave) {
+                        const stored = localStorage.getItem("current_whatif_params");
+                        if (stored) {
+                          try {
+                            const parsed = JSON.parse(stored);
+                            const whatifDesc = `[What-if: ${Object.entries(parsed).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}]`;
+                            description = description ? `${description}\n${whatifDesc}` : whatifDesc;
+                          } catch {
+                            description = description ? `${description}\n[What-if: ${stored}]` : `[What-if: ${stored}]`;
+                          }
+                        }
+                      }
+                      
+                      try {
+                        const updated = await updateStrategy(strategyToSave.id, {
+                          name: strategyToSave.name,
+                          description,
+                          bias: strategyToSave.bias,
+                          entry_logic: strategyToSave.entry_logic,
+                          exit_logic: strategyToSave.exit_logic,
+                          risk_management: strategyToSave.risk_management,
+                          is_wizard: strategyToSave.is_wizard ?? strategyToSave.id.startsWith("wizard_draft") ?? false,
+                          apply_day: strategyToSave.apply_day,
+                          postgap_preconditions: strategyToSave.postgap_preconditions,
+                          universe_filters: strategyToSave.universe_filters,
+                          dataset_id: strategyToSave.dataset_id,
+                        } as any);
+
+                        // Persist backtest results linked to this strategy
+                        if (result) {
+                          try {
+                            await saveBacktest({
+                              strategy_ids: [strategyToSave.id],
+                              results_json: {
+                                ...result,
+                                backtest_params: backtestParamsRef.current
+                              } as unknown as Record<string, unknown>,
+                            });
+                          } catch (e) {
+                            console.warn("No se pudieron guardar los resultados del backtest:", e);
+                          }
+                        }
+
+                        // Update the active strategy in the state with the returned/updated strategy
+                        setActiveStrategy(updated);
+                        
+                        setStrategiesRefresh((prev) => prev + 1);
+                        setShowRewriteModal(false);
+                        setDraftStrategy(null);
+                        setStrategyToSave(null);
+                      } catch (err: any) {
+                        alert(err.message || "Error al actualizar la estrategia.");
+                      }
+                    }}
+                    style={{
+                      flex: 2, padding: '7px 0', borderRadius: 5,
+                      fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                      textTransform: 'uppercase', cursor: 'pointer',
+                      backgroundColor: 'var(--color-ec-copper)',
+                      border: 'none',
+                      color: 'var(--color-ec-copper-text)',
+                      fontFamily: 'var(--color-ec-sans)',
+                    }}
+                  >
+                    Sí
                   </button>
                 </div>
               </div>

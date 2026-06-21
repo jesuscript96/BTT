@@ -317,6 +317,7 @@ class StrategyCreate(BaseModel):
     exit_logic: Optional[ExitLogic] = None
     risk_management: RiskManagement
     is_wizard: Optional[bool] = None
+    dataset_id: Optional[str] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

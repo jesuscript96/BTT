@@ -1078,8 +1078,10 @@ export default function WizardStrategyBuilder({
 
     setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));
 
-    const draft: WizardDraft & { dataset_id?: string; universe_filters?: any; is_wizard?: boolean } = {
-      id: `wizard_draft_${Date.now()}`,
+    const draft: WizardDraft & { id: string; dataset_id?: string; universe_filters?: any; is_wizard?: boolean } = {
+      id: initialStrategy?.id && !initialStrategy.id.startsWith("draft") && !initialStrategy.id.startsWith("wizard_draft")
+        ? initialStrategy.id
+        : `wizard_draft_${Date.now()}`,
       name: "Nueva Estrategia (Wizard)",
       is_wizard: true,
       bias: bias || "long",

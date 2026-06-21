@@ -189,6 +189,16 @@ export function createStrategy(
   });
 }
 
+export function updateStrategy(
+  id: string,
+  data: Strategy,
+): Promise<Strategy> {
+  return apiRequest<Strategy>(`/strategies/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 export function deleteStrategy(id: string): Promise<void> {
   return apiRequest<void>(`/strategies/${encodeURIComponent(id)}`, {
     method: "DELETE",
