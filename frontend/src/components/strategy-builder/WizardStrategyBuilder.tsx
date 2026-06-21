@@ -978,7 +978,7 @@ export default function WizardStrategyBuilder({
 
     const draft: any = {
       id: "wizard_draft",
-      name: "Nueva Estrategia (Wizard)",
+      name: initialStrategy?.name || "Nueva Estrategia (Wizard)",
       bias: bias || "long",
       apply_day: applyDay,
       postgap_preconditions: postgapPreconditions,
@@ -1119,7 +1119,7 @@ export default function WizardStrategyBuilder({
       id: initialStrategy?.id && !initialStrategy.id.startsWith("draft") && !initialStrategy.id.startsWith("wizard_draft")
         ? initialStrategy.id
         : `wizard_draft_${Date.now()}`,
-      name: "Nueva Estrategia (Wizard)",
+      name: initialStrategy?.name || "Nueva Estrategia (Wizard)",
       is_wizard: true,
       bias: bias || "long",
       apply_day: applyDay,
