@@ -1803,63 +1803,75 @@ export default function WizardStrategyBuilder({
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 12,
-        padding: "20px 14px",
-        borderRadius: 10,
+        gap: 16,
+        padding: "24px 16px",
+        borderRadius: 12,
         border: isSelected
-          ? `1.5px solid ${accentColor}`
+          ? `2px solid ${accentColor}`
           : isHovered
-            ? `1.5px solid rgba(${rawRgb}, 0.35)`
-            : "1px solid var(--color-ec-border)",
+            ? `2px solid rgba(${rawRgb}, 0.35)`
+            : "1.5px solid var(--color-ec-border)",
         backgroundColor: isSelected
-          ? `rgba(${rawRgb}, 0.07)`
+          ? `rgba(${rawRgb}, 0.09)`
           : isHovered
-            ? `rgba(${rawRgb}, 0.025)`
+            ? `rgba(${rawRgb}, 0.03)`
             : "var(--color-ec-bg-surface)",
         cursor: "pointer",
         transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
         transform: isSelected
-          ? "scale(1.02)"
+          ? "scale(1.03)"
           : isHovered
-            ? "translateY(-2px)"
+            ? "translateY(-3px)"
             : "translateY(0)",
         boxShadow: isSelected
-          ? `0 4px 16px rgba(${rawRgb}, 0.15)`
+          ? `0 6px 20px rgba(${rawRgb}, 0.2)`
           : isHovered
-            ? "0 4px 16px rgba(0, 0, 0, 0.15)"
-            : "0 1px 3px rgba(0, 0, 0, 0.05)",
+            ? "0 6px 20px rgba(0, 0, 0, 0.15)"
+            : "0 2px 4px rgba(0, 0, 0, 0.05)",
         outline: "none",
         overflow: "hidden",
-        width: 150,
-        height: 150,
+        width: 190,
+        height: 190,
         boxSizing: "border-box",
       };
     };
 
     return (
-      <div>
+      <div style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        padding: "40px 20px",
+        flex: 1,
+        width: "100%",
+        boxSizing: "border-box",
+      }}>
         <h3 style={{
           fontFamily: 'Fraunces, serif',
-          fontSize: 'var(--ec-fs-panel-title)',
+          fontSize: '24px',
           fontWeight: 600,
           color: "var(--color-ec-text-high)",
-          margin: "0 0 4px 0",
+          margin: "0 0 8px 0",
           letterSpacing: "-0.2px",
+          textAlign: "center",
         }}>
           ¿Qué dirección tomará tu estrategia?
         </h3>
         <p style={{
           fontFamily: "General Sans, sans-serif",
-          fontSize: 'var(--ec-fs-hint)',
+          fontSize: '13.5px',
           fontWeight: 400,
           color: "var(--color-ec-text-muted)",
-          margin: "0 0 14px 0",
+          margin: "0 0 28px 0",
           lineHeight: 1.5,
+          textAlign: "center",
         }}>
           Selecciona si operarás a favor de la tendencia alcista o bajista
         </p>
 
-        <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ display: "flex", gap: 20, justifyContent: "center", padding: "20px 0", width: "100%" }}>
           {/* Long */}
           <button
             onClick={() => handleBiasSelect("long")}
@@ -1869,48 +1881,48 @@ export default function WizardStrategyBuilder({
           >
             <div style={{
               position: "absolute", top: 0, left: 0, right: 0,
-              height: bias === "long" ? 3 : 0,
+              height: bias === "long" ? 4 : 0,
               background: "var(--color-ec-profit)",
               transition: "height 250ms ease",
-              borderRadius: "10px 10px 0 0",
+              borderRadius: "12px 12px 0 0",
             }} />
             <div style={{
-              width: 36, height: 36, borderRadius: "50%",
+              width: 48, height: 48, borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
               backgroundColor: bias === "long" ? "rgba(34, 197, 94, 0.12)" : "var(--color-ec-bg-elevated)",
-              border: bias === "long" ? "1px solid rgba(34, 197, 94, 0.25)" : "1px solid var(--color-ec-border)",
+              border: bias === "long" ? "1.5px solid rgba(34, 197, 94, 0.25)" : "1.5px solid var(--color-ec-border)",
               transition: "all 200ms ease", flexShrink: 0,
             }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
                 stroke={bias === "long" || hoveredBias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-text-muted)"}
                 strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                 style={{ transition: "stroke 200ms ease" }}>
                 <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
               </svg>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center", textAlign: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center", textAlign: "center" }}>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 13, fontWeight: 700,
+                fontFamily: "General Sans, sans-serif", fontSize: 20, fontWeight: 700,
                 color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-text-high)",
                 transition: "color 200ms ease",
               }}>Long</span>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 9.5,
+                fontFamily: "General Sans, sans-serif", fontSize: 12.5,
                 color: "var(--color-ec-text-muted)", lineHeight: 1.3,
               }}>Posiciones alcistas</span>
             </div>
             {bias === "long" && (
               <div style={{
                 position: "absolute",
-                top: 10,
-                right: 10,
-                width: 18, height: 18, borderRadius: "50%",
+                top: 12,
+                right: 12,
+                width: 22, height: 22, borderRadius: "50%",
                 backgroundColor: "var(--color-ec-profit)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 animation: "wizCheckPop 250ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                 flexShrink: 0,
               }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
                   stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
@@ -1927,48 +1939,48 @@ export default function WizardStrategyBuilder({
           >
             <div style={{
               position: "absolute", top: 0, left: 0, right: 0,
-              height: bias === "short" ? 3 : 0,
+              height: bias === "short" ? 4 : 0,
               background: "var(--color-ec-loss)",
               transition: "height 250ms ease",
-              borderRadius: "10px 10px 0 0",
+              borderRadius: "12px 12px 0 0",
             }} />
             <div style={{
-              width: 36, height: 36, borderRadius: "50%",
+              width: 48, height: 48, borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
               backgroundColor: bias === "short" ? "rgba(239, 68, 68, 0.12)" : "var(--color-ec-bg-elevated)",
-              border: bias === "short" ? "1px solid rgba(239, 68, 68, 0.25)" : "1px solid var(--color-ec-border)",
+              border: bias === "short" ? "1.5px solid rgba(239, 68, 68, 0.25)" : "1.5px solid var(--color-ec-border)",
               transition: "all 200ms ease", flexShrink: 0,
             }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
                 stroke={bias === "short" || hoveredBias === "short" ? "var(--color-ec-loss)" : "var(--color-ec-text-muted)"}
                 strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                 style={{ transition: "stroke 200ms ease" }}>
                 <path d="M12 5v14" /><path d="M19 12l-7 7-7-7" />
               </svg>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center", textAlign: "center" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center", textAlign: "center" }}>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 13, fontWeight: 700,
+                fontFamily: "General Sans, sans-serif", fontSize: 20, fontWeight: 700,
                 color: bias === "short" ? "var(--color-ec-loss)" : "var(--color-ec-text-high)",
                 transition: "color 200ms ease",
               }}>Short</span>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 9.5,
+                fontFamily: "General Sans, sans-serif", fontSize: 12.5,
                 color: "var(--color-ec-text-muted)", lineHeight: 1.3,
               }}>Posiciones bajistas</span>
             </div>
             {bias === "short" && (
               <div style={{
                 position: "absolute",
-                top: 10,
-                right: 10,
-                width: 18, height: 18, borderRadius: "50%",
+                top: 12,
+                right: 12,
+                width: 22, height: 22, borderRadius: "50%",
                 backgroundColor: "var(--color-ec-loss)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 animation: "wizCheckPop 250ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                 flexShrink: 0,
               }}>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
                   stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
