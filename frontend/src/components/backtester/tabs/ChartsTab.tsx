@@ -436,10 +436,10 @@ export default function ChartsTab({
                 Espacios Temporales
               </h4>
               
-              <div className="space-y-8">
+              <div className="space-y-12">
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--color-ec-text-secondary)] mb-3 block uppercase tracking-wider">Excluir Días de la Semana</label>
-                  <div className="flex gap-2 max-w-[358px]">
+                  <div className="flex gap-2 max-w-[358px] mt-[10px]">
                     {["L", "M", "X", "J", "V"].map((day, idx) => (
                       <button
                         key={day}
@@ -461,7 +461,7 @@ export default function ChartsTab({
 
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--color-ec-text-secondary)] mb-3 block uppercase tracking-wider">Excluir Meses del Año</label>
-                  <div className="grid grid-cols-4 gap-2 max-w-[358px]">
+                  <div className="grid grid-cols-4 gap-2 max-w-[358px] mt-[10px]">
                     {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => (
                       <button
                         key={month}
@@ -483,7 +483,7 @@ export default function ChartsTab({
 
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--color-ec-text-secondary)] mb-3 block uppercase tracking-wider">Excluir Rango de Horas</label>
-                  <div className="flex items-center gap-4 max-w-[358px]">
+                  <div className="flex items-center gap-4 max-w-[358px] mt-[10px]">
                     <div className="flex-1">
                       <label className="text-[9px] font-medium text-[var(--color-ec-text-muted)] mb-2 block uppercase opacity-70">Desde:</label>
                       <input
@@ -618,142 +618,148 @@ export default function ChartsTab({
           </div>
 
           <div className="flex flex-col lg:flex-row gap-8 items-stretch">
-            {/* Box 1: Límite de Operaciones */}
-            <div className="flex-grow min-w-0 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 flex flex-col justify-start">
-              <h4 className="text-[11px] font-bold uppercase text-[var(--color-ec-text-primary)] mb-4 font-mono tracking-[0.12em] flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
-                Límite de Operaciones
-              </h4>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Máx. trades/día:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={dailyMaxTrades}
-                    onChange={(e) => setDailyMaxTrades(Number(e.target.value))}
-                    className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Máx trades expuestos/día:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    value={maxConcurrentTrades}
-                    onChange={(e) => setMaxConcurrentTrades(Number(e.target.value))}
-                    className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                  />
-                </div>
-                <div className="flex items-center justify-between border-t border-[var(--color-ec-border)] pt-4">
-                  <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Excluir días aleatorios/mes:</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="31"
-                    value={randomMonthlyDays}
-                    onChange={(e) => setRandomMonthlyDays(Number(e.target.value))}
-                    className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] focus:border-[var(--color-ec-copper)] outline-none"
-                  />
-                </div>
-              </div>
-            </div>
+            {/* Spacer to align with the left margin of the chart (width of left column 390px) */}
+            <div className="hidden lg:block w-[390px] flex-shrink-0" />
 
-            {/* Box 2: Peor Escenario y Black Swan */}
-            <div className="flex-grow min-w-0 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 flex flex-col justify-start">
-              <h4 className="text-[11px] font-bold uppercase text-[var(--color-ec-text-primary)] mb-4 font-mono tracking-[0.12em] flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
-                Peor Escenario y Black Swan
-              </h4>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Omitir mejores trades (%):</span>
-                  <input
-                    type="number"
-                    value={skipTopPct}
-                    onChange={(e) => setSkipTopPct(Number(e.target.value))}
-                    className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Deslizamiento extra (%):</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={extraSlippage}
-                    onChange={(e) => setExtraSlippage(Number(e.target.value))}
-                    className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
-                  />
-                </div>
-                
-                <div className="border-t border-[var(--color-ec-border)] pt-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] text-[var(--color-ec-text-muted)] font-medium">Black Swans (Eventos):</span>
+            {/* Combined wrapper for the 3 columns of Basic Stress Test */}
+            <div className="flex-grow flex flex-col lg:flex-row gap-8 items-stretch">
+              {/* Box 1: Límite de Operaciones */}
+              <div className="flex-grow min-w-0 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 flex flex-col justify-start">
+                <h4 className="text-[11px] font-bold uppercase text-[var(--color-ec-text-primary)] mb-4 font-mono tracking-[0.12em] flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
+                  Límite de Operaciones
+                </h4>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Máx. trades/día:</span>
                     <input
                       type="number"
-                      value={blackSwanCount}
-                      onChange={(e) => setBlackSwanCount(Number(e.target.value))}
-                      className="w-16 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-2 py-1 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
+                      min="0"
+                      value={dailyMaxTrades}
+                      onChange={(e) => setDailyMaxTrades(Number(e.target.value))}
+                      className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] text-[var(--color-ec-text-muted)] font-medium">Pérdida:</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Máx trades expuestos/día:</span>
                     <input
-                      type="range"
-                      min="50"
-                      max="5000"
-                      step="50"
-                      value={blackSwanSize}
-                      onChange={(e) => setBlackSwanSize(Number(e.target.value))}
-                      className="flex-grow accent-[var(--color-ec-loss)] h-1.5 bg-[var(--color-ec-bg-elevated)] rounded-lg appearance-none cursor-pointer"
+                      type="number"
+                      min="0"
+                      value={maxConcurrentTrades}
+                      onChange={(e) => setMaxConcurrentTrades(Number(e.target.value))}
+                      className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
                     />
-                    <span className="text-[11px] font-bold text-[var(--color-ec-loss)] w-12 text-right">{blackSwanSize}%</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-[var(--color-ec-border)] pt-4">
+                    <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Excluir días aleatorios/mes:</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="31"
+                      value={randomMonthlyDays}
+                      onChange={(e) => setRandomMonthlyDays(Number(e.target.value))}
+                      className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] focus:border-[var(--color-ec-copper)] outline-none"
+                    />
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Box 3: Ejecución de Stress Test */}
-            <div className="w-full lg:w-[360px] flex-shrink-0 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 flex flex-col justify-between">
-              <div>
-                <h4 className="text-[11px] font-bold uppercase text-[var(--color-ec-text-primary)] mb-3 font-mono tracking-[0.12em] flex items-center gap-2">
+              {/* Box 2: Peor Escenario y Black Swan */}
+              <div className="flex-grow min-w-0 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 flex flex-col justify-start">
+                <h4 className="text-[11px] font-bold uppercase text-[var(--color-ec-text-primary)] mb-4 font-mono tracking-[0.12em] flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
-                  Costes y Ejecución
+                  Peor Escenario y Black Swan
                 </h4>
-                {!!monthlyExpenses && monthlyExpenses > 0 ? (
-                  <div className="mb-4">
-                    <label className="flex items-center gap-2.5 cursor-pointer group">
-                      <input
-                        type="checkbox"
-                        checked={includeExpensesInWhatIf}
-                        onChange={(e) => setIncludeExpensesInWhatIf(e.target.checked)}
-                        className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
-                      />
-                      <span className="text-[10px] text-[var(--color-ec-text-secondary)] group-hover:text-[var(--color-ec-text-primary)] transition-colors">
-                        Costes fijos (${monthlyExpenses}/mes)
-                      </span>
-                    </label>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Omitir mejores trades (%):</span>
+                    <input
+                      type="number"
+                      value={skipTopPct}
+                      onChange={(e) => setSkipTopPct(Number(e.target.value))}
+                      className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
+                    />
                   </div>
-                ) : (
-                  <p className="text-[10px] text-[var(--color-ec-text-muted)] mb-4 italic opacity-75">
-                    Sin costes fijos configurados.
-                  </p>
-                )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Deslizamiento extra (%):</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={extraSlippage}
+                      onChange={(e) => setExtraSlippage(Number(e.target.value))}
+                      className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
+                    />
+                  </div>
+                  
+                  <div className="border-t border-[var(--color-ec-border)] pt-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] text-[var(--color-ec-text-muted)] font-medium">Black Swans (Eventos):</span>
+                      <input
+                        type="number"
+                        value={blackSwanCount}
+                        onChange={(e) => setBlackSwanCount(Number(e.target.value))}
+                        className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[10px] text-[var(--color-ec-text-muted)] font-medium">Pérdida:</span>
+                      <input
+                        type="range"
+                        min="50"
+                        max="5000"
+                        step="50"
+                        value={blackSwanSize}
+                        onChange={(e) => setBlackSwanSize(Number(e.target.value))}
+                        className="flex-grow accent-[var(--color-ec-loss)] h-1.5 bg-[var(--color-ec-bg-elevated)] rounded-lg appearance-none cursor-pointer"
+                      />
+                      <span className="text-[11px] font-bold text-[var(--color-ec-loss)] w-12 text-right">{blackSwanSize}%</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-              
-              <div>
-                <button
-                  type="button"
-                  onClick={handleRunStressTest}
-                  disabled={simLoading}
-                  className="w-full bg-[var(--color-ec-loss)] text-white hover:bg-[color-mix(in_srgb,var(--color-ec-loss)_85%,white)] py-2.5 rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <span className="text-sm">{simLoading ? "⏳" : "🛡️"}</span>
-                  {simLoading ? "Simular Basic Stress..." : "Ejecutar simulación de basic stress"}
-                </button>
-                <p className="text-center text-[8px] text-[var(--color-ec-text-muted)] mt-2.5 italic opacity-60">
-                  * Solo simulará límites y peores escenarios
-                </p>
+
+              {/* Box 3: Ejecución de Stress Test */}
+              <div className="w-full lg:w-[360px] flex-shrink-0 bg-[var(--color-ec-bg-surface)] border border-[var(--color-ec-border)] rounded-lg p-5 flex flex-col justify-between">
+                <div>
+                  <h4 className="text-[11px] font-bold uppercase text-[var(--color-ec-text-primary)] mb-3 font-mono tracking-[0.12em] flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
+                    Costes y Ejecución
+                  </h4>
+                  {!!monthlyExpenses && monthlyExpenses > 0 ? (
+                    <div className="mb-4">
+                      <label className="flex items-center gap-2.5 cursor-pointer group">
+                        <input
+                          type="checkbox"
+                          checked={includeExpensesInWhatIf}
+                          onChange={(e) => setIncludeExpensesInWhatIf(e.target.checked)}
+                          className="accent-[var(--color-ec-copper)] w-3.5 h-3.5 cursor-pointer"
+                        />
+                        <span className="text-[10px] text-[var(--color-ec-text-secondary)] group-hover:text-[var(--color-ec-text-primary)] transition-colors">
+                          Costes fijos (${monthlyExpenses}/mes)
+                        </span>
+                      </label>
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-[var(--color-ec-text-muted)] mb-4 italic opacity-75">
+                      Sin costes fijos configurados.
+                    </p>
+                  )}
+                </div>
+                
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleRunStressTest}
+                    disabled={simLoading}
+                    className="w-full bg-[var(--color-ec-loss)] text-white hover:bg-[color-mix(in_srgb,var(--color-ec-loss)_85%,white)] py-2.5 rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <span className="text-sm">{simLoading ? "⏳" : "🛡️"}</span>
+                    {simLoading ? "Simular Basic Stress..." : "Ejecutar simulación de basic stress"}
+                  </button>
+                  <p className="text-center text-[8px] text-[var(--color-ec-text-muted)] mt-2.5 italic opacity-60">
+                    * Solo simulará límites y peores escenarios
+                  </p>
+                </div>
               </div>
             </div>
           </div>
