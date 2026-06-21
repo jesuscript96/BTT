@@ -6,6 +6,7 @@ import {
   LineSeries,
   HistogramSeries,
   ColorType,
+  createSeriesMarkers,
   type IChartApi,
   type Time,
 } from "lightweight-charts";
@@ -297,19 +298,46 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       leftPriceScale: {
         borderVisible: false,
         visible: true,
-        scaleMargins: { top: 0.6, bottom: 0 },
+        scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: { borderVisible: false, timeVisible: true },
       crosshair: { mode: 0 },
     });
     chartRef.current = chart;
 
-    // Series 1: Trades (Left Axis, Histogram)
+    // Series 1: Trades (Hidden Axis, Histogram)
     const trSeries = chart.addSeries(HistogramSeries, {
-      priceScaleId: 'left',
+      priceScaleId: 'tradesScale',
       color: isDarkMode ? 'rgba(148,163,184,0.4)' : 'rgba(120,113,108,0.35)',
     });
+    chart.priceScale('tradesScale').applyOptions({
+      visible: false,
+      scaleMargins: { top: 0.7, bottom: 0 }
+    });
     trSeries.setData(chartData.trData);
+
+    // Invisible helper LineSeries to display text markers since HistogramSeries does not support setMarkers
+    const markerSeries = chart.addSeries(LineSeries, {
+      priceScaleId: 'tradesScale',
+      color: 'rgba(0,0,0,0)',
+      lineWidth: 0,
+      crosshairMarkerVisible: false,
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    markerSeries.setData(chartData.trData);
+
+    // Subtle inline markers above the histogram bars showing the number of trades
+    const markers = chartData.trData.map(item => ({
+      time: item.time,
+      position: 'aboveBar' as const,
+      color: isDarkMode ? '#A0A3A8' : '#78716c',
+      shape: 'text' as const,
+      text: String(item.value),
+      size: 1
+    }));
+    const markersApi = createSeriesMarkers(markerSeries);
+    markersApi.setMarkers(markers);
 
     // Series 2: Win Rate (Right Axis, Line)
     const wrSeries = chart.addSeries(LineSeries, {
@@ -319,15 +347,11 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
     });
     wrSeries.setData(chartData.wrData);
 
-    // Series 3: Profit Factor
+    // Series 3: Profit Factor (Left Axis, Line)
     const pfSeries = chart.addSeries(LineSeries, {
-      priceScaleId: 'pfScale',
+      priceScaleId: 'left',
       color: '#d97706',
       lineWidth: 2,
-    });
-    chart.priceScale('pfScale').applyOptions({
-      visible: false,
-      scaleMargins: { top: 0.1, bottom: 0.1 }
     });
     pfSeries.setData(chartData.pfData);
 
@@ -471,7 +495,51 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
             <span className="text-[10px] font-bold font-mono min-w-[28px] text-right" style={{ color: 'var(--color-ec-text-high)' }}>{rollingWindow}</span>
           </div>
         </div>
-        <div ref={chartContainerRef} style={{ width: "100%", height: "280px", marginTop: 8 }} />
+        <div style={{ position: "relative", width: "100%", height: "280px", marginTop: 8 }}>
+          {/* Label PF vertical a la izquierda */}
+          <div
+            style={{
+              position: "absolute",
+              left: "-8px",
+              top: "50%",
+              transform: "translateY(-50%) rotate(-90deg)",
+              transformOrigin: "center",
+              zIndex: 10,
+              fontSize: "14px",
+              fontWeight: "900",
+              color: "#d97706",
+              fontFamily: "var(--font-mono), monospace",
+              pointerEvents: "none",
+              letterSpacing: "0.1em",
+              opacity: 0.9
+            }}
+          >
+            PF
+          </div>
+
+          {/* Label WR vertical a la derecha */}
+          <div
+            style={{
+              position: "absolute",
+              right: "-8px",
+              top: "50%",
+              transform: "translateY(-50%) rotate(90deg)",
+              transformOrigin: "center",
+              zIndex: 10,
+              fontSize: "14px",
+              fontWeight: "900",
+              color: "#10b981",
+              fontFamily: "var(--font-mono), monospace",
+              pointerEvents: "none",
+              letterSpacing: "0.1em",
+              opacity: 0.9
+            }}
+          >
+            WR
+          </div>
+
+          <div ref={chartContainerRef} style={{ width: "100%", height: "100%" }} />
+        </div>
       </div>
 
     </div>
