@@ -927,7 +927,7 @@ export default function TrunkPage() {
       let bParams: any = null
       let isValidated = realBt.is_validated !== undefined && realBt.is_validated !== null
         ? realBt.is_validated
-        : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5)
+        : false
       
       try {
         const results = typeof realBt.results_json === 'string' 
@@ -1823,131 +1823,7 @@ export default function TrunkPage() {
               {renderStrategyTable(incubatorStrategies, true)}
             </div>
 
-            {/* 2. Datasets Section (Placed BELOW Strategies, also in table rows, straight edges, thin padding) */}
-            <div style={{ padding: '0 20px 20px 20px' }}>
-              <div 
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 10,
-                  borderBottom: '0.5px solid rgba(44, 47, 51, 0.4)',
-                  paddingBottom: 6
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Layers size={12} color="var(--color-ec-copper)" />
-                  <h2 style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--color-ec-text-high)', margin: 0 }}>
-                    Datasets Cohorts
-                  </h2>
-                </div>
-                <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 0, backgroundColor: 'var(--color-ec-bg-surface)', border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-muted)' }}>
-                  {datasets.length} Saved
-                </span>
-              </div>
 
-              {/* Scrollable datasets list box - STRAIGHT EDGES */}
-              <div 
-                style={{ 
-                  maxHeight: '280px', 
-                  overflowY: 'auto',
-                  border: '0.5px solid var(--color-ec-border)',
-                  borderRadius: 0, // Straight corners
-                  backgroundColor: 'var(--color-ec-bg-surface)',
-                  marginBottom: 10
-                }}
-              >
-                {datasets.length === 0 ? (
-                  <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--color-ec-text-muted)' }}>
-                    <p style={{ fontSize: 11, margin: 0 }}>No datasets created yet</p>
-                  </div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                    <thead>
-                      <tr style={{ borderBottom: '0.5px solid var(--color-ec-border)', backgroundColor: 'rgba(28, 30, 33, 0.3)' }}>
-                        <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Name</th>
-                        <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Created Date</th>
-                        <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Conditions / Filters</th>
-                        <th style={{ padding: '6px 10px', textAlign: 'right' }} />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {datasets.map(ds => {
-                        const tags = parseFiltersToTags(ds.filters)
-                        return (
-                          <tr
-                            key={ds.id}
-                            style={{
-                              borderBottom: '0.5px solid rgba(44, 47, 51, 0.25)',
-                              transition: 'background-color 150ms ease'
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.01)'}
-                            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
-                          >
-                            {/* Dataset Name */}
-                            <td style={{ padding: '6px 10px', fontWeight: 600, fontSize: 12, color: 'var(--color-ec-text-high)' }}>
-                              {ds.name}
-                            </td>
-                            {/* Created Date */}
-                            <td style={{ padding: '6px 10px', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>
-                              {ds.created_at ? new Date(ds.created_at).toLocaleDateString() : 'N/A'}
-                            </td>
-                            {/* Active Filters tag pills */}
-                            <td style={{ padding: '6px 10px' }}>
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                {tags.length === 0 ? (
-                                  <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>No active filters</span>
-                                ) : (
-                                  tags.map((t, idx) => (
-                                    <div 
-                                      key={idx}
-                                      style={{
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 2,
-                                        backgroundColor: 'var(--color-ec-bg-elevated)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 0, // Straight corners
-                                        padding: '1px 5px',
-                                        fontSize: 8,
-                                        fontWeight: 600,
-                                        color: 'var(--color-ec-text-secondary)'
-                                      }}
-                                    >
-                                      <span>{t.icon}</span>
-                                      <span style={{ color: 'var(--color-ec-text-muted)' }}>{t.label}:</span>
-                                      <span style={{ color: 'var(--color-ec-text-high)' }}>{t.value}</span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </td>
-                            {/* Action Button */}
-                            <td style={{ padding: '6px 10px', textAlign: 'right' }}>
-                              <button
-                                disabled={deletingId === ds.id}
-                                onClick={(e) => handleDelete(e, ds.id, 'dataset')}
-                                style={{
-                                  background: 'transparent',
-                                  border: 'none',
-                                  padding: 2,
-                                  cursor: 'pointer',
-                                  color: 'var(--color-ec-text-muted)',
-                                }}
-                                onMouseEnter={e => e.currentTarget.style.color = 'var(--color-ec-loss)'}
-                                onMouseLeave={e => e.currentTarget.style.color = 'var(--color-ec-text-muted)'}
-                              >
-                                <Trash2 size={10} />
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* Right-Hand Pane: Selected Strategy Details Panel (No container card, side-by-side metrics/chart) */}
