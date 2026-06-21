@@ -6183,7 +6183,7 @@ export default function WizardStrategyBuilder({
               {idx < STEPS.length - 1 && (
                 <div style={{
                   position: "absolute",
-                  top: 10, // Center of the 20px circle
+                  top: 14, // Center of the 28px circle
                   left: "50%",
                   width: "100%", // Extends to the center of the next step!
                   height: 1.5,
@@ -6216,8 +6216,8 @@ export default function WizardStrategyBuilder({
               >
                 {/* Circle */}
                 <div style={{
-                  width: 20,
-                  height: 20,
+                  width: 28,
+                  height: 28,
                   borderRadius: "50%",
                   display: "flex",
                   alignItems: "center",
@@ -6231,20 +6231,21 @@ export default function WizardStrategyBuilder({
                   border: isCompleted
                     ? "none"
                     : isActive
-                      ? "1.5px solid var(--color-ec-copper)"
+                      ? "2px solid var(--color-ec-copper)"
                       : "1px solid var(--color-ec-border)",
+                  boxShadow: isActive ? "0 0 0 4px rgba(216, 122, 61, 0.15)" : "none",
                   transition: "all 250ms ease",
                   zIndex: 3,
                 }}>
                   {isCompleted ? (
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
                       stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
                   ) : (
                     <span style={{
                       fontFamily: "General Sans, sans-serif",
-                      fontSize: 8,
+                      fontSize: 10,
                       fontWeight: 700,
                       color: isActive ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
                     }}>
