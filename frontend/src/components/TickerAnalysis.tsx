@@ -13,6 +13,8 @@ import {
     getTickerGapStats,
     getTickerFinvizNews,
     getTickerLogo,
+    API_BASE,
+    getAuthHeaders,
     type TickerLogoData
 } from '@/lib/api';
 import { ChatBot } from './ChatBot';
@@ -1796,6 +1798,11 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [data, setData] = useState<TickerAnalysisData | null>(null);
     const [filings, setFilings] = useState<FilingsData | null>(null);
     const [finvizNews, setFinvizNews] = useState<FinvizNewsItem[]>([]);
+    // Edgie AI — Dilution & Runner Assessment (manual trigger via button)
+    const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+    const [aiLoading, setAiLoading] = useState<boolean>(false);
+    const [aiError, setAiError] = useState<string | null>(null);
+    const [aiMetrics, setAiMetrics] = useState<any | null>(null);
     const [showFullDesc, setShowFullDesc] = useState(false);
     const [logoFailed, setLogoFailed] = useState(false);
     const [logoUrlIndex, setLogoUrlIndex] = useState(0);
@@ -1956,6 +1963,293 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             },
         }));
     }, [selectedTicker, data, filings, finvizNews]);
+
+    // ── Edgie AI — Dilution & Runner Assessment ──────────────────
+    // Builds a quantitative prompt from the loaded ticker data and asks the
+    // backend AI Gateway (/api/assistant/chat, key server-side) for a dilution
+    // report. Manual trigger (button) so the LLM call only fires on demand.
+    const triggerAiAnalysis = async (
+        tickerName: string,
+        combinedData: TickerAnalysisData,
+        resolvedFilings: FilingsData | null,
+        resolvedNews: FinvizNewsItem[],
+        resolvedSecFacts: any
+    ) => {
+        if (!tickerName) return;
+
+        setAiLoading(true);
+        setAiError(null);
+        setAiAnalysis(null);
+        setAiMetrics(null);
+
+        try {
+            // Build the quantitative user prompt
+            let userPrompt = `Generate a Dilution Risk & Runner Assessment report for ticker: ${tickerName.toUpperCase()}.\n`;
+
+            const profile = combinedData.profile || {};
+            const market = combinedData.market || {};
+            const financials = (combinedData as any).financials || {};
+            const gapStats = ((combinedData as any).gap_stats || {}) as any;
+            const gapStats1 = ((combinedData as any).gap_stats_plus_1 || {}) as any;
+            const gapStats2 = ((combinedData as any).gap_stats_plus_2 || {}) as any;
+
+            userPrompt += `\n### Profile: Name: ${profile.name}, Sector: ${profile.sector}, Industry: ${profile.industry}\n`;
+            userPrompt += `\n### Market Metrics: Price: $${market.price}, Market Cap: $${market.market_cap}, Outstanding Shares: ${market.shares_outstanding}, Float Shares: ${market.float_shares}, Insiders: ${(market as any).held_percent_insiders}, Institutions: ${(market as any).held_percent_institutions}\n`;
+            userPrompt += `\n### Balance Sheet: Enterprise Value: $${financials.enterprise_value}, Cash: $${financials.cash}, Debt: $${financials.total_debt}, EBITDA: $${financials.ebitda}, EPS: ${financials.eps}, Working Capital: $${financials.working_capital}\n`;
+
+            // Add Gap Stats
+            userPrompt += `\n### Gap Stats:\n- Offset 0: Gap days count: ${gapStats.gap_days_count || 0}, High Spike Avg: ${gapStats.high_rth_spike_avg}%, Low Spike Avg: ${gapStats.low_rth_spike_avg}%, Neg Close Freq: ${gapStats.neg_close_freq}%\n`;
+            userPrompt += `- Offset +1: High Spike Avg: ${gapStats1.high_rth_spike_avg}%, Neg Close Freq: ${gapStats1.neg_close_freq}%\n`;
+            userPrompt += `- Offset +2: High Spike Avg: ${gapStats2.high_rth_spike_avg}%, Neg Close Freq: ${gapStats2.neg_close_freq}%\n`;
+
+            // Add Filings
+            if (resolvedFilings) {
+                userPrompt += `\n### Recent Filings:\n`;
+                Object.entries(resolvedFilings).forEach(([cat, items]) => {
+                    if (Array.isArray(items) && items.length > 0) {
+                        const fileLines = items.slice(0, 5).map((item: any) => `- [${item.type}] ${item.title} (${item.date})`).join('\n');
+                        userPrompt += `${cat.toUpperCase()}:\n${fileLines}\n`;
+                    }
+                });
+            }
+
+            // Add SEC Facts (optional — not available in this build, guarded)
+            if (resolvedSecFacts && resolvedSecFacts.facts) {
+                userPrompt += `\n### SEC EDGAR XBRL Facts:\n`;
+                userPrompt += `CIK: ${resolvedSecFacts.cik}, Company: ${resolvedSecFacts.company_name}\n`;
+                Object.entries(resolvedSecFacts.facts).forEach(([conceptName, factObj]: [string, any]) => {
+                    const label = factObj.label || conceptName;
+                    const history = factObj.history || [];
+                    if (history.length > 0) {
+                        const historyStr = history.map((h: any) => `${h.date} (${h.form}): ${h.value} ${h.unit}`).join(' | ');
+                        userPrompt += `- ${conceptName} (${label}): ${historyStr}\n`;
+                    }
+                });
+            }
+
+            const systemPrompt =
+                "You are Edgie AI, an expert quantitative data processor integrated into a professional short-selling trading terminal.\n" +
+                "Your task is to analyze the provided financial metrics, SEC filings history (especially S-1, S-3 shelf registrations, and 424B offerings), and SEC EDGAR XBRL facts for the ticker.\n" +
+                "You must construct a highly dense, structured, raw data report focused on Dilution Risk, Share Structure, Cash Runway, and Squeeze probability.\n\n" +
+                "CRITICAL OUTPUT FORMATTING:\n" +
+                "You MUST prepend your response with a structured JSON block enclosed in <edgie_metrics>...</edgie_metrics> XML tags.\n" +
+                "The JSON must have the following keys and type values:\n" +
+                "{\n" +
+                "  \"dilution_rating\": \"LOW\" | \"MEDIUM\" | \"HIGH\" | \"CRITICAL\",\n" +
+                "  \"dilution_score\": number (0 to 100 representing the probability of immediate dilution),\n" +
+                "  \"cash_runway_months\": number | null (estimated cash runway in months),\n" +
+                "  \"float_percentage\": number | null (float shares as % of outstanding shares, from 0 to 100),\n" +
+                "  \"runner_assessment\": \"FADER\" | \"SQUEEZE\" | \"NEUTRAL\",\n" +
+                "  \"shelf_capacity_usd\": number | null (remaining shelf capacity in USD, or null),\n" +
+                "  \"pending_s1\": boolean (true if there is a pending S-1 registration, false otherwise)\n" +
+                "}\n\n" +
+                "After the </edgie_metrics> tag, output your detailed qualitative analysis in clean Spanish Markdown, using headers, bullet lists, and tables.\n\n" +
+                "CRITICAL CONTENT RULES:\n" +
+                "1. NO CHATTY INTRODUCTIONS OR GREETINGS. Do NOT say 'Hola', 'Aquí tienes...', 'Espero que te sirva...', etc. Start immediately with the <edgie_metrics> tag.\n" +
+                "2. NO FRIENDLY CONCLUSIONS OR SUMMARY PARAGRAPHS. Keep the style technical, objective, and data-focused.\n" +
+                "3. ALWAYS format key data comparisons into Markdown Tables. Avoid giant paragraphs of text. Use bulleted lists for key bullet statistics.\n" +
+                "4. Assess and list:\n" +
+                "   - Active/Pending Offerings: List any registrations (S-1, S-3) or recent 424B filings with dates and details.\n" +
+                "   - Cash Burn & Runway: Estimate how many months of cash runway the company has based on Cash vs Cash Burn Rate.\n" +
+                "   - Dilution Probability Rating: Assess as LOW, MEDIUM, HIGH, or CRITICAL based on necessity (low cash/high debt) and capacity (active shelf registration).\n" +
+                "   - Runner Squeezability: Classify if a price spike makes it an 'All-Day Fader' (high dilution probability) or a 'Mega Squeeze Candidate' (low float, no active dilution mechanisms).\n" +
+                "5. Always respond in Spanish (the markdown part), matching the language of the application. Make sure the numbers are exact as given in the facts.";
+
+            // Via the backend AI Gateway (/api/assistant/chat) — provider key stays server-side.
+            const response = await fetch(`${API_BASE}/assistant/chat`, {
+                method: 'POST',
+                headers: await getAuthHeaders(),
+                body: JSON.stringify({
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    temperature: 0.1,
+                    stream: false,
+                    page: '/ticker-analysis/ai-report',
+                }),
+            });
+            if (response.status === 503) {
+                const e: any = new Error('NO_KEY');
+                e.name = 'NoKeyError';
+                throw e;
+            }
+            if (!response.ok) {
+                let msg = `HTTP ${response.status}`;
+                try { const ed = await response.json(); msg = ed.detail || msg; } catch { /* ignore */ }
+                throw new Error(msg);
+            }
+            const respData = await response.json();
+            const reply = respData.choices?.[0]?.message?.content || 'No received analysis.';
+
+            let parsedMetrics = null;
+            let displayReply = reply;
+
+            const regex = /<edgie_metrics>([\s\S]*?)<\/edgie_metrics>/;
+            const match = reply.match(regex);
+            if (match) {
+                try {
+                    parsedMetrics = JSON.parse(match[1].trim());
+                    displayReply = reply.replace(regex, '').trim();
+                } catch (e) {
+                    console.error("Failed to parse edgie_metrics JSON", e);
+                }
+            }
+
+            setAiAnalysis(displayReply);
+            setAiMetrics(parsedMetrics);
+        } catch (err: any) {
+            console.error("AI processing error:", err);
+            if (err.name === 'NoKeyError') {
+                setAiError("NO_KEY");
+            } else {
+                setAiError(err.message || "Error al conectar con el gateway de IA.");
+            }
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
+    const renderAiContent = (content: string) => {
+        if (!content) return null;
+
+        const lines = content.split('\n');
+        let insideTable = false;
+        let tableHeaders: string[] = [];
+        let tableRows: string[][] = [];
+
+        const elements: React.ReactNode[] = [];
+
+        const parseLineWithBolds = (text: string) => {
+            const parts = text.split('**');
+            return parts.map((part, index) => {
+                if (index % 2 === 1) {
+                    return <strong key={index} style={{ color: 'var(--color-ec-text-high)', fontWeight: 700 }}>{part}</strong>;
+                }
+                return part;
+            });
+        };
+
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i];
+
+            // Handle Table
+            if (line.trim().startsWith('|')) {
+                if (!insideTable) {
+                    insideTable = true;
+                    tableHeaders = line.split('|').map(s => s.trim()).filter(Boolean);
+                    tableRows = [];
+                    if (i + 1 < lines.length && lines[i + 1].includes('---')) {
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    continue;
+                } else {
+                    const row = line.split('|').map(s => s.trim()).filter(Boolean);
+                    if (row.length > 0) {
+                        tableRows.push(row);
+                    }
+                    i++;
+                    continue;
+                }
+            } else {
+                if (insideTable) {
+                    const tableKey = `table-${i}`;
+                    elements.push(
+                        <div key={tableKey} style={{ overflowX: 'auto', margin: '14px 0', border: '1px solid var(--color-ec-border)', borderRadius: '6px', backgroundColor: 'var(--color-ec-bg-sidebar)' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '1.5px solid var(--color-ec-border)', backgroundColor: 'rgba(216, 122, 61, 0.05)' }}>
+                                        {tableHeaders.map((h, hIdx) => (
+                                            <th key={hIdx} style={{ padding: '8px 12px', color: 'var(--color-ec-text-secondary)', fontWeight: 600, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {tableRows.map((r, rIdx) => (
+                                        <tr key={rIdx} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
+                                            {r.map((cell, cIdx) => (
+                                                <td key={cIdx} style={{ padding: '8px 12px', color: 'var(--color-ec-text-primary)' }}>{parseLineWithBolds(cell)}</td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    );
+                    insideTable = false;
+                }
+            }
+
+            if (line.startsWith('### ')) {
+                elements.push(
+                    <h4 key={i} style={{ color: 'var(--color-ec-copper-bright)', fontSize: '12px', fontWeight: 700, margin: '18px 0 6px 0', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        {line.replace('### ', '')}
+                    </h4>
+                );
+            } else if (line.startsWith('## ')) {
+                elements.push(
+                    <h3 key={i} style={{ color: 'var(--color-ec-copper-bright)', fontSize: '13px', fontWeight: 700, margin: '22px 0 10px 0', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        {line.replace('## ', '')}
+                    </h3>
+                );
+            } else if (line.startsWith('# ')) {
+                elements.push(
+                    <h2 key={i} style={{ color: 'var(--color-ec-text-high)', fontSize: '15px', fontWeight: 700, margin: '26px 0 12px 0', fontFamily: "'Fraunces', serif" }}>
+                        {line.replace('# ', '')}
+                    </h2>
+                );
+            } else if (line.startsWith('- ') || line.startsWith('* ')) {
+                const listText = line.substring(2);
+                elements.push(
+                    <ul key={i} style={{ margin: '4px 0 4px 16px', paddingLeft: 0, listStyleType: 'disc' }}>
+                        <li style={{ fontSize: '11px', color: 'var(--color-ec-text-primary)', lineHeight: 1.5 }}>
+                            {parseLineWithBolds(listText)}
+                        </li>
+                    </ul>
+                );
+            } else if (line.trim() === '') {
+                elements.push(<div key={i} style={{ height: '4px' }} />);
+            } else {
+                elements.push(
+                    <p key={i} style={{ fontSize: '11px', color: 'var(--color-ec-text-primary)', lineHeight: 1.5, margin: '6px 0' }}>
+                        {parseLineWithBolds(line)}
+                    </p>
+                );
+            }
+
+            i++;
+        }
+
+        if (insideTable) {
+            elements.push(
+                <div key="table-end" style={{ overflowX: 'auto', margin: '14px 0', border: '1px solid var(--color-ec-border)', borderRadius: '6px', backgroundColor: 'var(--color-ec-bg-sidebar)' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
+                        <thead>
+                            <tr style={{ borderBottom: '1.5px solid var(--color-ec-border)', backgroundColor: 'rgba(216, 122, 61, 0.05)' }}>
+                                {tableHeaders.map((h, hIdx) => (
+                                    <th key={hIdx} style={{ padding: '8px 12px', color: 'var(--color-ec-text-secondary)', fontWeight: 600, fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {tableRows.map((r, rIdx) => (
+                                <tr key={rIdx} style={{ borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 20%, transparent)' }}>
+                                    {r.map((cell, cIdx) => (
+                                        <td key={cIdx} style={{ padding: '8px 12px', color: 'var(--color-ec-text-primary)' }}>{parseLineWithBolds(cell)}</td>
+                                    ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        }
+
+        return elements;
+    };
 
     // Empty state - Clean, centered search box
     if (!selectedTicker) {
@@ -2575,6 +2869,342 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                             <FilingList title="Ownership (13G/D, 3/4)" items={filings?.ownership} />
                             <FilingList title="Proxies (14A)" items={filings?.proxies} />
                             <FilingList title="Other Forms" items={filings?.others} />
+                        </div>
+                    </div>
+
+                    {/* Edgie AI Dilution & Runner Assessment Section */}
+                    <div style={{
+                        borderTop: '1px solid var(--color-ec-border)',
+                        paddingTop: 24,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 16
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 12
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <rect x="6" y="9" width="20" height="15" rx="3.5" fill="#1C1E21" stroke="var(--color-ec-copper)" strokeWidth="1.5"/>
+                                    <rect x="3" y="14" width="3" height="5" rx="1.5" fill="#2C2F33" stroke="var(--color-ec-copper)" strokeWidth="1"/>
+                                    <rect x="26" y="14" width="3" height="5" rx="1.5" fill="#2C2F33" stroke="var(--color-ec-copper)" strokeWidth="1"/>
+                                    <path d="M16 9V5M16 5C17.1046 5 18 4.10457 18 3C18 1.89543 17.1046 1 16 1C14.8954 1 14 1.89543 14 3C14 4.10457 14.8954 5 16 5Z" fill="var(--color-ec-copper-bright)"/>
+                                    <circle cx="11" cy="15" r="2" fill="var(--color-ec-copper-bright)"/>
+                                    <circle cx="21" cy="15" r="2" fill="var(--color-ec-copper-bright)"/>
+                                    <rect x="11" y="19" width="10" height="1.5" rx="0.75" fill="var(--color-ec-copper)"/>
+                                </svg>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+                                        Edgie AI Processing
+                                    </span>
+                                    <h3 style={{
+                                        fontFamily: "'Fraunces', serif",
+                                        fontSize: 18,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-high)',
+                                        margin: 0
+                                    }}>Dilution &amp; Runner Assessment</h3>
+                                </div>
+                            </div>
+
+                            {/* Manual Refresh Button */}
+                            <button
+                                onClick={() => triggerAiAnalysis(selectedTicker, data!, filings, finvizNews, null)}
+                                disabled={aiLoading || !data}
+                                style={{
+                                    backgroundColor: aiLoading ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                                    border: '1px solid var(--color-ec-border)',
+                                    borderRadius: '4px',
+                                    color: aiLoading ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)',
+                                    fontSize: '10px',
+                                    fontWeight: 600,
+                                    padding: '6px 12px',
+                                    cursor: aiLoading || !data ? 'default' : 'pointer',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                    transition: 'all 150ms ease'
+                                }}
+                                className="hover:bg-[var(--color-ec-bg-sidebar)] hover:text-white"
+                            >
+                                {aiLoading ? 'Procesando...' : 'Re-procesar datos'}
+                            </button>
+                        </div>
+
+                        {/* Main Report Container */}
+                        <div style={{
+                            minHeight: '160px',
+                            border: '1px solid var(--color-ec-border)',
+                            borderRadius: '8px',
+                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                            padding: '20px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: aiLoading || aiError || !aiAnalysis ? 'center' : 'flex-start',
+                            position: 'relative'
+                        }}>
+                            {aiLoading && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}>
+                                    <div style={{ display: 'flex', gap: 4 }}>
+                                        <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--color-ec-copper)', animation: 'dot-blink 1.2s infinite' }} />
+                                        <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--color-ec-copper)', animation: 'dot-blink 1.2s infinite 0.3s' }} />
+                                        <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--color-ec-copper)', animation: 'dot-blink 1.2s infinite 0.6s' }} />
+                                    </div>
+                                    <span style={{ fontSize: '11px', color: 'var(--color-ec-text-muted)', fontStyle: 'italic' }}>
+                                        Edgie está procesando métricas financieras, filings históricos y hechos XBRL de la SEC para {selectedTicker}...
+                                    </span>
+                                </div>
+                            )}
+
+                            {aiError === "NO_KEY" && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center', maxWidth: '400px', margin: '0 auto' }}>
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--color-ec-copper)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <line x1="12" y1="8" x2="12" y2="12"/>
+                                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                                    </svg>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-ec-text-high)' }}>Clave API de DeepSeek Faltante</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--color-ec-text-muted)', lineHeight: 1.4 }}>
+                                        El servidor no tiene configurada la clave de DeepSeek (DEEPSEEK_API_KEY). Configúrala en el servidor para activar el procesado de Edgie en esta sección.
+                                    </span>
+                                </div>
+                            )}
+
+                            {aiError && aiError !== "NO_KEY" && (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, textAlign: 'center', color: 'var(--color-ec-loss)' }}>
+                                    <span style={{ fontSize: '11px', fontWeight: 600 }}>Error al procesar el análisis de Edgie AI:</span>
+                                    <span style={{ fontSize: '10px', opacity: 0.8 }}>{aiError}</span>
+                                    <button
+                                        onClick={() => triggerAiAnalysis(selectedTicker, data!, filings, finvizNews, null)}
+                                        style={{
+                                            backgroundColor: 'transparent',
+                                            border: '1px solid var(--color-ec-loss)',
+                                            borderRadius: '4px',
+                                            color: 'var(--color-ec-loss)',
+                                            fontSize: '9px',
+                                            padding: '4px 10px',
+                                            marginTop: 6,
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Intentar de nuevo
+                                    </button>
+                                </div>
+                            )}
+
+                            {!aiLoading && !aiError && !aiAnalysis && (
+                                <div style={{ textAlign: 'center', color: 'var(--color-ec-text-muted)', fontSize: '11px', fontStyle: 'italic' }}>
+                                    Ningún reporte procesado. Haz clic en &quot;Re-procesar datos&quot; para iniciar.
+                                </div>
+                            )}
+
+                            {!aiLoading && !aiError && aiAnalysis && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                                    {/* Visual Infographics Dashboard */}
+                                    {aiMetrics && (
+                                        <div style={{
+                                            display: 'grid',
+                                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                            gap: 16,
+                                            borderBottom: '1.5px solid var(--color-ec-border)',
+                                            paddingBottom: 20,
+                                            marginBottom: 8
+                                        }}>
+                                            {/* Card 1: Dilution Score Gauge */}
+                                            <div style={{
+                                                backgroundColor: 'var(--color-ec-bg-base)',
+                                                border: '1px solid var(--color-ec-border)',
+                                                borderRadius: '6px',
+                                                padding: '16px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: 10
+                                            }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                        Probabilidad de Dilución
+                                                    </span>
+                                                    <span style={{
+                                                        fontSize: 9,
+                                                        fontWeight: 800,
+                                                        color: aiMetrics.dilution_rating === 'LOW' ? 'var(--color-ec-profit)' :
+                                                               aiMetrics.dilution_rating === 'MEDIUM' ? 'var(--color-ec-copper-bright)' :
+                                                               'var(--color-ec-loss)',
+                                                        backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                                                        padding: '2px 6px',
+                                                        borderRadius: '3px',
+                                                        border: `0.5px solid color-mix(in srgb, ${
+                                                            aiMetrics.dilution_rating === 'LOW' ? 'var(--color-ec-profit)' :
+                                                            aiMetrics.dilution_rating === 'MEDIUM' ? 'var(--color-ec-copper-bright)' :
+                                                            'var(--color-ec-loss)'
+                                                        } 40%, transparent)`
+                                                    }}>
+                                                        {aiMetrics.dilution_rating}
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                                                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
+                                                        {aiMetrics.dilution_score}%
+                                                    </span>
+                                                    <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>score</span>
+                                                </div>
+                                                <div style={{ height: '6px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                    <div style={{
+                                                        height: '100%',
+                                                        width: `${aiMetrics.dilution_score}%`,
+                                                        backgroundColor: aiMetrics.dilution_score < 40 ? 'var(--color-ec-profit)' :
+                                                                         aiMetrics.dilution_score < 75 ? 'var(--color-ec-copper)' :
+                                                                         'var(--color-ec-loss)',
+                                                        borderRadius: '3px',
+                                                        transition: 'width 800ms cubic-bezier(0.16, 1, 0.3, 1)'
+                                                    }} />
+                                                </div>
+                                            </div>
+
+                                            {/* Card 2: Cash Runway Status */}
+                                            <div style={{
+                                                backgroundColor: 'var(--color-ec-bg-base)',
+                                                border: '1px solid var(--color-ec-border)',
+                                                borderRadius: '6px',
+                                                padding: '16px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: 10
+                                            }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                        Supervivencia de Caja
+                                                    </span>
+                                                    <span style={{
+                                                        fontSize: 9,
+                                                        fontWeight: 800,
+                                                        color: aiMetrics.cash_runway_months === null ? 'var(--color-ec-text-muted)' :
+                                                               aiMetrics.cash_runway_months > 12 ? 'var(--color-ec-profit)' :
+                                                               aiMetrics.cash_runway_months >= 6 ? 'var(--color-ec-copper-bright)' :
+                                                               'var(--color-ec-loss)'
+                                                    }}>
+                                                        {aiMetrics.cash_runway_months === null ? 'N/A' :
+                                                         aiMetrics.cash_runway_months > 12 ? 'SEGURO' :
+                                                         aiMetrics.cash_runway_months >= 6 ? 'PREVENCIÓN' : 'CRÍTICO'}
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                                                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
+                                                        {aiMetrics.cash_runway_months !== null ? `${aiMetrics.cash_runway_months} m` : 'N/A'}
+                                                    </span>
+                                                    <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>de runway</span>
+                                                </div>
+                                                <div style={{ height: '6px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                    {aiMetrics.cash_runway_months !== null && (
+                                                        <div style={{
+                                                            height: '100%',
+                                                            width: `${Math.min((aiMetrics.cash_runway_months / 18) * 100, 100)}%`,
+                                                            backgroundColor: aiMetrics.cash_runway_months < 6 ? 'var(--color-ec-loss)' :
+                                                                             aiMetrics.cash_runway_months < 12 ? 'var(--color-ec-copper)' :
+                                                                             'var(--color-ec-profit)',
+                                                            borderRadius: '3px',
+                                                            transition: 'width 800ms cubic-bezier(0.16, 1, 0.3, 1)'
+                                                        }} />
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Card 3: Float Structure Comparison */}
+                                            <div style={{
+                                                backgroundColor: 'var(--color-ec-bg-base)',
+                                                border: '1px solid var(--color-ec-border)',
+                                                borderRadius: '6px',
+                                                padding: '16px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: 10
+                                            }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                        Estructura del Float
+                                                    </span>
+                                                    <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--color-ec-copper-bright)' }}>
+                                                        {aiMetrics.float_percentage !== null ? `${aiMetrics.float_percentage.toFixed(0)}% float` : 'N/A'}
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                                                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
+                                                        {aiMetrics.float_percentage !== null ? `${(100 - aiMetrics.float_percentage).toFixed(0)}%` : 'N/A'}
+                                                    </span>
+                                                    <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>locked/insiders</span>
+                                                </div>
+                                                <div style={{ height: '6px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden', display: 'flex' }}>
+                                                    {aiMetrics.float_percentage !== null && (
+                                                        <>
+                                                            <div style={{ height: '100%', width: `${aiMetrics.float_percentage}%`, backgroundColor: 'var(--color-ec-copper-bright)' }} title="Float Shares" />
+                                                            <div style={{ height: '100%', width: `${100 - aiMetrics.float_percentage}%`, backgroundColor: 'rgba(255, 255, 255, 0.2)' }} title="Locked/Insider Shares" />
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Card 4: Runner Squeezability assessment */}
+                                            <div style={{
+                                                backgroundColor: 'var(--color-ec-bg-base)',
+                                                border: '1px solid var(--color-ec-border)',
+                                                borderRadius: '6px',
+                                                padding: '16px',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'space-between',
+                                                gap: 8
+                                            }}>
+                                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                    Runner Bias &amp; Squeezability
+                                                </span>
+                                                <div style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: 8,
+                                                    padding: '8px 12px',
+                                                    borderRadius: '4px',
+                                                    backgroundColor: aiMetrics.runner_assessment === 'SQUEEZE' ? 'rgba(74, 157, 127, 0.06)' :
+                                                                   aiMetrics.runner_assessment === 'FADER' ? 'rgba(201, 77, 63, 0.06)' :
+                                                                   'rgba(255, 255, 255, 0.02)',
+                                                    border: `1px solid color-mix(in srgb, ${
+                                                        aiMetrics.runner_assessment === 'SQUEEZE' ? 'var(--color-ec-profit)' :
+                                                        aiMetrics.runner_assessment === 'FADER' ? 'var(--color-ec-loss)' :
+                                                        'var(--color-ec-border)'
+                                                    } 30%, transparent)`
+                                                }}>
+                                                    {aiMetrics.runner_assessment === 'SQUEEZE' ? (
+                                                        <>
+                                                            <span style={{ fontSize: '14px' }}>🚀</span>
+                                                            <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-ec-profit)', letterSpacing: '0.5px' }}>MEGA SQUEEZE</span>
+                                                        </>
+                                                    ) : aiMetrics.runner_assessment === 'FADER' ? (
+                                                        <>
+                                                            <span style={{ fontSize: '14px' }}>🛡️</span>
+                                                            <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-ec-loss)', letterSpacing: '0.5px' }}>ALL-DAY FADER</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <span style={{ fontSize: '14px' }}>⚖️</span>
+                                                            <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--color-ec-text-primary)', letterSpacing: '0.5px' }}>NEUTRAL</span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                                <span style={{ fontSize: '9px', color: 'var(--color-ec-text-muted)', lineHeight: 1.3 }}>
+                                                    {aiMetrics.runner_assessment === 'SQUEEZE' ? 'Float ajustado, sin registro activo. Peligro de squeeze.' :
+                                                     aiMetrics.runner_assessment === 'FADER' ? 'Presión vendedora garantizada. Registro shelf o S-1 activo.' :
+                                                     'Estructura mixta o balanceada.'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                        {renderAiContent(aiAnalysis)}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </>

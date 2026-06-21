@@ -62,6 +62,12 @@
   padding: 0;
 }
 
+/* Loading dots for Edgie AI assessment (and ChatBot) */
+@keyframes dot-blink {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+
 body {
   background-color: #16181A;
   color: #D4D2CF;

@@ -197,6 +197,7 @@ async def add_cors_headers_to_all_responses(request, call_next):
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
 from app.routers import optimization, users, edgie
 from app.routers import screener
+from app.routers import assistant
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -216,6 +217,8 @@ app.include_router(screener.router)
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
 app.include_router(edgie.router, prefix="/api/edgie", tags=["Edgie"])
+# assistant.router already declares prefix="/api/assistant" (Edgie AI Gateway: streaming + function calling)
+app.include_router(assistant.router)
 
 @app.get("/health")
 def read_health():
