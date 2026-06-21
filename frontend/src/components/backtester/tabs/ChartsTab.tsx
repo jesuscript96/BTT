@@ -1058,7 +1058,7 @@ function WhatIfEquityChart({
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 580,
+      height: 480,
       handleScale: {
         mouseWheel: false,
         pinch: false,
@@ -1270,7 +1270,7 @@ function WhatIfEquityChart({
           ))}
         </div>
       </div>
-      <div ref={chartContainerRef} className="h-[580px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
+      <div ref={chartContainerRef} className="h-[480px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
       <div ref={ddContainerRef} className="h-[120px] w-full rounded-b border border-[var(--color-ec-border)]" />
     </div>
   );
