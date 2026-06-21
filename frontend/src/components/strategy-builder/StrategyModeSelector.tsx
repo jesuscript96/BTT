@@ -186,7 +186,7 @@ export default function StrategyModeSelector({ onSelectFree, onSelectWizard, onB
                 color: "var(--color-ec-text-muted)",
                 lineHeight: 1.55,
               }}>
-                Un asistente paso a paso para configurar condiciones básicas que te guía por cada sección de la estrategia. Ideal si prefieres ir con calma.
+                Un asistente paso a paso para configurar condiciones básicas que te guía por cada sección de la estrategia. Ideal si prefieres ir con calma, sin complicaciones y con los indicadores y funciones más sencillos.
               </div>
               <div style={{
                 display: "inline-flex",
