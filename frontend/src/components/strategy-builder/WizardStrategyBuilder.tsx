@@ -2733,7 +2733,7 @@ export default function WizardStrategyBuilder({
       }
     };
     
-    const timeframes = ["1m", "5m", "15m", "30m", "1h", "1d"];
+    const timeframes = ["1m", "5m", "15m", "30m", "1h"];
     
     const comparatorOptions = [
       { value: Comparator.GT, label: "Mayor que (>)" },
@@ -3238,7 +3238,7 @@ export default function WizardStrategyBuilder({
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <span style={{ fontSize: 'var(--ec-fs-step-tag)', fontWeight: 600, letterSpacing: '1.2px', color: "var(--color-ec-text-muted)", textTransform: "uppercase" }}>Paso 1: Temporalidad de la condición</span>
               <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
-                Determina la temporalidad de las velas. Indica cada cuánto tiempo se actualizarán los datos de tu gráfico para calcular esta condición. Temporalidades cortas (como 1m o 5m) reaccionan rápido al precio, mientras que temporalidades más largas (como 15m, 1h o 1d) filtran el ruido del mercado.
+                Determina la temporalidad de las velas. Indica cada cuánto tiempo se actualizarán los datos de tu gráfico para calcular esta condición. Temporalidades cortas (como 1m o 5m) reaccionan rápido al precio, mientras que temporalidades más largas (como 15m o 1h) filtran el ruido del mercado.
               </span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
                 {timeframes.map((tf) => {
