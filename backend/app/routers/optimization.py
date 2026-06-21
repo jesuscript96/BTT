@@ -65,25 +65,32 @@ class SurfaceRequest(BaseModel):
 @router.post("/optimization/parameters")
 def get_optimization_parameters(req: ParametersRequest):
     logger.info(f"Extracting parameters for strategy {req.strategy_id}")
-    # Mock and draft strategies have no optimizable parameters
-    if req.strategy_id in ("mock_strat_1", "draft") or req.strategy_id is None:
-        if req.strategy_id == "draft" and req.strategy_definition:
-            try:
-                params = extract_parameters(req.strategy_definition)
-                logger.info(f"Found {len(params)} parameters for draft strategy")
-                return {"parameters": params, "strategy_name": "Draft Strategy"}
-            except Exception as e:
-                logger.error(f"Error extracting parameters for draft: {e}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+    
+    # 1. If strategy_definition is provided in request, prioritize extracting parameters from it directly
+    if req.strategy_definition:
+        try:
+            params = extract_parameters(req.strategy_definition)
+            strategy_name = req.strategy_definition.get("name") or "Draft Strategy"
+            logger.info(f"Found {len(params)} parameters from request strategy definition")
+            return {"parameters": params, "strategy_name": strategy_name}
+        except Exception as e:
+            logger.error(f"Error extracting parameters from request definition: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+    # 2. Mock and draft strategies with no definition
+    is_draft = req.strategy_id is None or req.strategy_id in ("mock_strat_1", "draft") or req.strategy_id.startswith("draft_") or req.strategy_id.startswith("wizard_draft_")
+    if is_draft:
         return {"parameters": [], "strategy_name": "Draft Strategy"}
+
+    # 3. DB lookup fallback
     strategy = get_strategy(req.strategy_id)
     if not strategy:
-        logger.error(f"Strategy {req.strategy_id} not found")
+        logger.error(f"Strategy {req.strategy_id} not found in database and no strategy_definition provided")
         raise HTTPException(status_code=404, detail="Strategy not found")
 
     try:
         params = extract_parameters(strategy["definition"])
-        logger.info(f"Found {len(params)} parameters for strategy {strategy['name']}")
+        logger.info(f"Found {len(params)} parameters for strategy {strategy['name']} from database")
         return {"parameters": params, "strategy_name": strategy["name"]}
     except Exception as e:
         logger.error(f"Error extracting parameters: {e}", exc_info=True)

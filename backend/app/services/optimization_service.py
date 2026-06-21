@@ -535,7 +535,7 @@ def run_optimization_grid(
     """
     t0 = time.time()
 
-    if strategy_id == "draft" and strategy_definition:
+    if strategy_definition:
         base_def = strategy_definition
     else:
         strategy = get_strategy(strategy_id)

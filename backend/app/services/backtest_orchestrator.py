@@ -104,11 +104,19 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
     if req.strategy_id:
         strategy = get_strategy(req.strategy_id)
         if not strategy:
-            raise HTTPException(status_code=404, detail="Strategy not found")
+            if req.strategy_definition:
+                logger.info(f"Strategy {req.strategy_id} not found in database; using provided strategy_definition as fallback")
+                strategy = {
+                    "id": req.strategy_id,
+                    "name": req.strategy_definition.get("name") or "Draft",
+                    "definition": req.strategy_definition,
+                }
+            else:
+                raise HTTPException(status_code=404, detail="Strategy not found")
     elif req.strategy_definition:
         strategy = {
             "id": "draft",
-            "name": req.strategy_definition.get("name", "Draft"),
+            "name": req.strategy_definition.get("name") or "Draft",
             "definition": req.strategy_definition,
         }
     else:
