@@ -14,8 +14,7 @@ const TABS = [
   { id: "calendar", label: "Calendar" },
   { id: "trades", label: "Trades" },
   { id: "analysis", label: "Análisis por trade" },
-  { id: "charts", label: "Charts" },
-  { id: "optimization", label: "Op. Surface" },
+  { id: "charts_optimization", label: "Charts + Optimization" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -56,6 +55,7 @@ export default function ResultsTabs({
   onSelectDay,
 }: ResultsTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("performance");
+  const [chartsSubTab, setChartsSubTab] = useState<"charts" | "optimization">("charts");
 
   const handleSelectTrade = (ticker: string, date: string) => {
     const dayIdx = result.day_results.findIndex(
@@ -251,17 +251,86 @@ export default function ResultsTabs({
             )}
           </div>
         </div>
-        <div style={{ display: activeTab === "charts" ? "block" : "none" }}>
-          <ChartsTab trades={result.trades} dayResults={result.day_results} riskR={riskR} isDarkMode={isDarkMode} />
-        </div>
-        <div style={{ display: activeTab === "optimization" ? "block" : "none" }}>
-          <OptimizationSurfaceTab
-            strategyId={strategyId}
-            strategyDefinition={strategyDefinition}
-            datasetId={datasetId}
-            isDarkMode={isDarkMode}
-            backtestParams={backtestParams}
-          />
+        <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
+          {/* Sub-navigation tabs */}
+          <div style={{
+            display: "flex",
+            gap: 16,
+            borderBottom: "1px solid var(--color-ec-border)",
+            marginBottom: 20,
+            paddingTop: 8,
+          }}>
+            <button
+              onClick={() => setChartsSubTab("charts")}
+              style={{
+                paddingBottom: 8,
+                fontFamily: "var(--color-ec-sans)",
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                color: chartsSubTab === "charts" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+                borderBottom: chartsSubTab === "charts" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                background: "transparent",
+                borderTop: "none",
+                borderLeft: "none",
+                borderRight: "none",
+                cursor: "pointer",
+                transition: "all 150ms ease",
+              }}
+              onMouseEnter={(e) => { if (chartsSubTab !== "charts") e.currentTarget.style.color = "var(--color-ec-text-secondary)"; }}
+              onMouseLeave={(e) => { if (chartsSubTab !== "charts") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
+            >
+              Charts
+            </button>
+            <button
+              onClick={() => setChartsSubTab("optimization")}
+              style={{
+                paddingBottom: 8,
+                fontFamily: "var(--color-ec-sans)",
+                fontSize: 11,
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                color: chartsSubTab === "optimization" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+                borderBottom: chartsSubTab === "optimization" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                background: "transparent",
+                borderTop: "none",
+                borderLeft: "none",
+                borderRight: "none",
+                cursor: "pointer",
+                transition: "all 150ms ease",
+              }}
+              onMouseEnter={(e) => { if (chartsSubTab !== "optimization") e.currentTarget.style.color = "var(--color-ec-text-secondary)"; }}
+              onMouseLeave={(e) => { if (chartsSubTab !== "optimization") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
+            >
+              Optimization Surface
+            </button>
+          </div>
+
+          {/* Sub-tab content */}
+          <div style={{ display: chartsSubTab === "charts" ? "block" : "none" }}>
+            <ChartsTab
+              trades={result.trades}
+              dayResults={result.day_results}
+              globalEquity={result.global_equity}
+              globalDrawdown={result.global_drawdown}
+              metrics={result.aggregate_metrics}
+              initCash={initCash}
+              riskR={riskR}
+              monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+              isDarkMode={isDarkMode}
+            />
+          </div>
+          <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>
+            <OptimizationSurfaceTab
+              strategyId={strategyId}
+              strategyDefinition={strategyDefinition}
+              datasetId={datasetId}
+              isDarkMode={isDarkMode}
+              backtestParams={backtestParams}
+            />
+          </div>
         </div>
       </div>
     </div>
