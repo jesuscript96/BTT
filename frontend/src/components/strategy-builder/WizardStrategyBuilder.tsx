@@ -116,7 +116,7 @@ const CustomTooltip = ({ title, text }: { title?: string; text: string }) => {
           textAlign: 'left',
           pointerEvents: 'none',
           lineHeight: '1.3',
-          fontFamily: 'var(--color-ec-sans)',
+          fontFamily: 'General Sans, sans-serif',
         }}>
           {title && (
             <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
@@ -1203,7 +1203,7 @@ export default function WizardStrategyBuilder({
             Configura el Universo del Dataset
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -1250,7 +1250,7 @@ export default function WizardStrategyBuilder({
               color: !customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
             }} />
             <span style={{
-              fontFamily: "var(--color-ec-sans)",
+              fontFamily: "General Sans, sans-serif",
               fontSize: 10.5,
               fontWeight: 700,
               textTransform: "uppercase",
@@ -1288,7 +1288,7 @@ export default function WizardStrategyBuilder({
               color: customUniverse ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)" 
             }} />
             <span style={{
-              fontFamily: "var(--color-ec-sans)",
+              fontFamily: "General Sans, sans-serif",
               fontSize: 10.5,
               fontWeight: 700,
               textTransform: "uppercase",
@@ -1316,7 +1316,7 @@ export default function WizardStrategyBuilder({
                   border: '0.5px solid var(--color-ec-border)',
                   borderRadius: 5,
                   padding: '8px 10px',
-                  fontFamily: 'var(--color-ec-sans)',
+                  fontFamily: 'General Sans, sans-serif',
                   fontSize: 'var(--ec-fs-select)',
                   fontWeight: 500,
                   color: 'var(--color-ec-text-primary)',
@@ -1344,7 +1344,7 @@ export default function WizardStrategyBuilder({
                 flexDirection: 'column',
                 gap: 6
               }}>
-                <div style={{ display: 'flex', gap: 16, fontSize: 10.5, fontFamily: 'var(--color-ec-sans)' }}>
+                <div style={{ display: 'flex', gap: 16, fontSize: 10.5, fontFamily: 'General Sans, sans-serif' }}>
                   <div>
                     <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
                     <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
@@ -1507,7 +1507,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 10,
                       fontWeight: 500,
                       color: 'var(--color-ec-text-primary)',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       width: '100%',
                       cursor: 'pointer',
                       display: 'flex',
@@ -1564,7 +1564,7 @@ export default function WizardStrategyBuilder({
                       borderRadius: 5,
                       boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
                       zIndex: 99999,
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       marginTop: 4,
                     }}>
                       {[
@@ -1815,7 +1815,7 @@ export default function WizardStrategyBuilder({
                       backgroundColor: 'rgba(216, 122, 61, 0.12)',
                       border: '0.5px solid rgba(216, 122, 61, 0.35)',
                       borderRadius: 6,
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       fontSize: 10,
                       fontWeight: 600,
                       color: 'var(--color-ec-text-high)',
@@ -1892,7 +1892,7 @@ export default function WizardStrategyBuilder({
           ¿Qué dirección tomará tu estrategia?
         </h3>
         <p style={{
-          fontFamily: "var(--color-ec-sans)",
+          fontFamily: "General Sans, sans-serif",
           fontSize: 'var(--ec-fs-hint)',
           fontWeight: 400,
           color: "var(--color-ec-text-muted)",
@@ -1933,12 +1933,12 @@ export default function WizardStrategyBuilder({
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
               <span style={{
-                fontFamily: "var(--color-ec-sans)", fontSize: 12, fontWeight: 700,
+                fontFamily: "General Sans, sans-serif", fontSize: 12, fontWeight: 700,
                 color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-text-high)",
                 transition: "color 200ms ease",
               }}>Long</span>
               <span style={{
-                fontFamily: "var(--color-ec-sans)", fontSize: 9,
+                fontFamily: "General Sans, sans-serif", fontSize: 9,
                 color: "var(--color-ec-text-muted)", lineHeight: 1.3,
               }}>Posiciones alcistas</span>
             </div>
@@ -1989,12 +1989,12 @@ export default function WizardStrategyBuilder({
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
               <span style={{
-                fontFamily: "var(--color-ec-sans)", fontSize: 12, fontWeight: 700,
+                fontFamily: "General Sans, sans-serif", fontSize: 12, fontWeight: 700,
                 color: bias === "short" ? "var(--color-ec-loss)" : "var(--color-ec-text-high)",
                 transition: "color 200ms ease",
               }}>Short</span>
               <span style={{
-                fontFamily: "var(--color-ec-sans)", fontSize: 9,
+                fontFamily: "General Sans, sans-serif", fontSize: 9,
                 color: "var(--color-ec-text-muted)", lineHeight: 1.3,
               }}>Posiciones bajistas</span>
             </div>
@@ -2056,7 +2056,7 @@ export default function WizardStrategyBuilder({
             ¿En qué día deseas aplicar la estrategia?
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -2071,24 +2071,24 @@ export default function WizardStrategyBuilder({
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: "100%" }}>
           {/* Gap Day */}
           <button onClick={() => handleApplyDaySelect("gap_day")} style={dayCard("gap_day")}>
-            <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: applyDay === "gap_day" ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}>Gap Day</span>
-            <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.2 }}>Mismo día del Gap</span>
+            <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: applyDay === "gap_day" ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}>Gap Day</span>
+            <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.2 }}>Mismo día del Gap</span>
           </button>
           {/* Gap +1 Day */}
           <button onClick={() => handleApplyDaySelect("gap_1_day")} style={dayCard("gap_1_day")}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: applyDay === "gap_1_day" ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}>Gap +1 Day</span>
+              <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: applyDay === "gap_1_day" ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}>Gap +1 Day</span>
               <span style={{ fontSize: 7, fontWeight: 700, padding: "1px 4px", borderRadius: 3, backgroundColor: "rgba(216, 122, 61, 0.15)", color: "var(--color-ec-copper-bright)" }}>BETA</span>
             </div>
-            <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.2 }}>Día siguiente al Gap</span>
+            <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.2 }}>Día siguiente al Gap</span>
           </button>
           {/* Gap +2 Day */}
           <button onClick={() => handleApplyDaySelect("gap_2_day")} style={dayCard("gap_2_day")}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: applyDay === "gap_2_day" ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}>Gap +2 Day</span>
+              <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: applyDay === "gap_2_day" ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}>Gap +2 Day</span>
               <span style={{ fontSize: 7, fontWeight: 700, padding: "1px 4px", borderRadius: 3, backgroundColor: "rgba(216, 122, 61, 0.15)", color: "var(--color-ec-copper-bright)" }}>BETA</span>
             </div>
-            <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.2 }}>Segundo día tras el Gap</span>
+            <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 9, color: "var(--color-ec-text-muted)", lineHeight: 1.2 }}>Segundo día tras el Gap</span>
           </button>
 
           {/* Gap +X Days Placeholder */}
@@ -2109,7 +2109,7 @@ export default function WizardStrategyBuilder({
             boxSizing: "border-box",
           }}>
             <span style={{
-              fontFamily: "var(--color-ec-sans)",
+              fontFamily: "General Sans, sans-serif",
               fontSize: 10,
               fontWeight: 500,
               letterSpacing: "0.2px",
@@ -2126,7 +2126,7 @@ export default function WizardStrategyBuilder({
             animation: "wizCheckPop 250ms ease-out",
           }}>
             <h4 style={{
-              fontFamily: "var(--color-ec-sans)",
+              fontFamily: "General Sans, sans-serif",
               fontSize: 11,
               fontWeight: 700,
               color: "var(--color-ec-text-high)",
@@ -2137,7 +2137,7 @@ export default function WizardStrategyBuilder({
               Condiciones previas (Post-Gap)
             </h4>
             <p style={{
-              fontFamily: "var(--color-ec-sans)",
+              fontFamily: "General Sans, sans-serif",
               fontSize: 9,
               color: "var(--color-ec-text-muted)",
               margin: "0 0 12px 0",
@@ -2176,7 +2176,7 @@ export default function WizardStrategyBuilder({
                       padding: '4px 8px',
                       borderRadius: 4,
                       outline: 'none',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       width: 'fit-content',
                       cursor: 'pointer',
                     }}
@@ -2218,7 +2218,7 @@ export default function WizardStrategyBuilder({
                       padding: '4px 4px',
                       borderRadius: 4,
                       outline: 'none',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       cursor: 'pointer',
                       width: '100%',
                       textOverflow: 'ellipsis',
@@ -2246,7 +2246,7 @@ export default function WizardStrategyBuilder({
                       padding: '4px 4px',
                       borderRadius: 4,
                       outline: 'none',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       cursor: 'pointer',
                       width: '100%',
                     }}
@@ -2270,7 +2270,7 @@ export default function WizardStrategyBuilder({
                         padding: '4px 4px',
                         borderRadius: 4,
                         outline: 'none',
-                        fontFamily: 'var(--color-ec-sans)',
+                        fontFamily: 'General Sans, sans-serif',
                         cursor: 'pointer',
                         width: '100%',
                         textOverflow: 'ellipsis',
@@ -2304,7 +2304,7 @@ export default function WizardStrategyBuilder({
                         padding: '4px 4px',
                         borderRadius: 4,
                         outline: 'none',
-                        fontFamily: 'var(--color-ec-sans)',
+                        fontFamily: 'General Sans, sans-serif',
                         width: '100%',
                         textAlign: 'center',
                       }}
@@ -2335,7 +2335,7 @@ export default function WizardStrategyBuilder({
                             padding: '4px 14px 4px 4px',
                             borderRadius: 4,
                             outline: 'none',
-                            fontFamily: 'var(--color-ec-sans)',
+                            fontFamily: 'General Sans, sans-serif',
                             width: '100%',
                           }}
                         />
@@ -2364,7 +2364,7 @@ export default function WizardStrategyBuilder({
                           padding: '4px 4px',
                           borderRadius: 4,
                           outline: 'none',
-                          fontFamily: 'var(--color-ec-sans)',
+                          fontFamily: 'General Sans, sans-serif',
                           width: '100%',
                         }}
                       />
@@ -2444,7 +2444,7 @@ export default function WizardStrategyBuilder({
                         border: '0.5px solid rgba(216, 122, 61, 0.35)',
                         borderRadius: 6,
                         padding: '4px 10px',
-                        fontFamily: 'var(--color-ec-sans)',
+                        fontFamily: 'General Sans, sans-serif',
                         fontSize: 10,
                         fontWeight: 600,
                         color: 'var(--color-ec-text-high)',
@@ -2565,7 +2565,7 @@ export default function WizardStrategyBuilder({
             ¿En qué sesión deseas ejecutar la estrategia?
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -3152,7 +3152,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 10,
                       fontWeight: 500,
                       color: "var(--color-ec-text-primary)",
-                      fontFamily: "var(--color-ec-sans)",
+                      fontFamily: "General Sans, sans-serif",
                       outline: "none",
                     }}
                     title="Pivot Window: candles to left and right required to confirm a Swing High/Low"
@@ -3175,7 +3175,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 10,
                       fontWeight: 500,
                       color: "var(--color-ec-text-primary)",
-                      fontFamily: "var(--color-ec-sans)",
+                      fontFamily: "General Sans, sans-serif",
                       outline: "none",
                     }}
                     title="Min Pivots: minimum swing highs and lows required to fit trend lines (min 2)"
@@ -3198,7 +3198,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 10,
                       fontWeight: 500,
                       color: "var(--color-ec-text-primary)",
-                      fontFamily: "var(--color-ec-sans)",
+                      fontFamily: "General Sans, sans-serif",
                       outline: "none",
                     }}
                     title="Lookback: how many bars back to search for pivots"
@@ -3224,7 +3224,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 10,
                       fontWeight: 500,
                       color: "var(--color-ec-text-primary)",
-                      fontFamily: "var(--color-ec-sans)",
+                      fontFamily: "General Sans, sans-serif",
                       outline: "none",
                     }}
                     title="Slope Tolerance (%): max total price change over the lookback window to consider a trend line 'flat'"
@@ -3233,7 +3233,7 @@ export default function WizardStrategyBuilder({
                 <div style={{ flex: "1 2 110px", minWidth: "110px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
                     <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-ec-text-muted)" }}>Min R²</span>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--color-ec-text-primary)", fontFamily: "var(--color-ec-sans)" }}>{Number(getVal("min_r_squared") ?? 0.65).toFixed(2)}</span>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: "var(--color-ec-text-primary)", fontFamily: "General Sans, sans-serif" }}>{Number(getVal("min_r_squared") ?? 0.65).toFixed(2)}</span>
                   </div>
                   <input
                     type="range"
@@ -3278,7 +3278,7 @@ export default function WizardStrategyBuilder({
                       style={{
                         padding: "6px 12px",
                         borderRadius: 5,
-                        fontFamily: "var(--color-ec-sans)",
+                        fontFamily: "General Sans, sans-serif",
                         fontSize: 10,
                         fontWeight: 700,
                         cursor: "pointer",
@@ -3338,7 +3338,7 @@ export default function WizardStrategyBuilder({
                     flex: 1,
                     padding: "8px 12px",
                     borderRadius: 5,
-                    fontFamily: "var(--color-ec-sans)",
+                    fontFamily: "General Sans, sans-serif",
                     fontSize: 10,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -3360,7 +3360,7 @@ export default function WizardStrategyBuilder({
                     flex: 1,
                     padding: "8px 12px",
                     borderRadius: 5,
-                    fontFamily: "var(--color-ec-sans)",
+                    fontFamily: "General Sans, sans-serif",
                     fontSize: 10,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -3442,7 +3442,7 @@ export default function WizardStrategyBuilder({
                           flex: 1,
                           padding: "6px 12px",
                           borderRadius: 4,
-                          fontFamily: "var(--color-ec-sans)",
+                          fontFamily: "General Sans, sans-serif",
                           fontSize: 9,
                           fontWeight: 700,
                           cursor: "pointer",
@@ -3461,7 +3461,7 @@ export default function WizardStrategyBuilder({
                           flex: 1,
                           padding: "6px 12px",
                           borderRadius: 4,
-                          fontFamily: "var(--color-ec-sans)",
+                          fontFamily: "General Sans, sans-serif",
                           fontSize: 9,
                           fontWeight: 700,
                           cursor: "pointer",
@@ -3504,7 +3504,7 @@ export default function WizardStrategyBuilder({
                             fontSize: 11,
                             fontWeight: 700,
                             color: 'var(--color-ec-copper)',
-                            fontFamily: 'var(--color-ec-sans)',
+                            fontFamily: 'General Sans, sans-serif',
                             pointerEvents: 'none'
                           }}>M</span>
                         </div>
@@ -3529,7 +3529,7 @@ export default function WizardStrategyBuilder({
                             fontSize: 11,
                             fontWeight: 700,
                             color: 'var(--color-ec-copper)',
-                            fontFamily: 'var(--color-ec-sans)',
+                            fontFamily: 'General Sans, sans-serif',
                             pointerEvents: 'none'
                           }}>%</span>
                         </div>
@@ -3553,7 +3553,7 @@ export default function WizardStrategyBuilder({
                             fontSize: 10,
                             fontWeight: 700,
                             color: 'var(--color-ec-copper)',
-                            fontFamily: 'var(--color-ec-sans)',
+                            fontFamily: 'General Sans, sans-serif',
                             pointerEvents: 'none'
                           }}>mins</span>
                         </div>
@@ -3657,7 +3657,7 @@ export default function WizardStrategyBuilder({
             : "¿Cuáles son las condiciones para salir del mercado?"}
         </h3>
         <p style={{
-          fontFamily: "var(--color-ec-sans)",
+          fontFamily: "General Sans, sans-serif",
           fontSize: 'var(--ec-fs-hint)',
           fontWeight: 400,
           color: "var(--color-ec-text-muted)",
@@ -3696,7 +3696,7 @@ export default function WizardStrategyBuilder({
               }}
             >
               <span style={{
-                fontFamily: "var(--color-ec-sans)",
+                fontFamily: "General Sans, sans-serif",
                 fontSize: 11,
                 fontWeight: 700,
                 textTransform: "uppercase",
@@ -3706,7 +3706,7 @@ export default function WizardStrategyBuilder({
                 + Nueva Condición
               </span>
               <span style={{
-                fontFamily: "var(--color-ec-sans)",
+                fontFamily: "General Sans, sans-serif",
                 fontSize: 9,
                 color: "var(--color-ec-text-muted)",
                 textAlign: "center"
@@ -3731,7 +3731,7 @@ export default function WizardStrategyBuilder({
               {/* Header */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <span style={{
-                  fontFamily: "var(--color-ec-sans)",
+                  fontFamily: "General Sans, sans-serif",
                   fontSize: 10,
                   fontWeight: 700,
                   textTransform: "uppercase",
@@ -3892,7 +3892,7 @@ export default function WizardStrategyBuilder({
                         backgroundColor: "rgba(216, 122, 61, 0.12)",
                         border: "0.5px solid rgba(216, 122, 61, 0.35)",
                         borderRadius: 6,
-                        fontFamily: "var(--color-ec-sans)",
+                        fontFamily: "General Sans, sans-serif",
                         fontSize: 10,
                         fontWeight: 600,
                         color: "var(--color-ec-text-high)",
@@ -3951,7 +3951,7 @@ export default function WizardStrategyBuilder({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Clock size={12} style={{ color: 'var(--color-ec-copper)' }} />
                   <span style={{
-                    fontFamily: 'var(--color-ec-sans)',
+                    fontFamily: 'General Sans, sans-serif',
                     fontSize: 10,
                     fontWeight: 700,
                     textTransform: 'uppercase',
@@ -3990,7 +3990,7 @@ export default function WizardStrategyBuilder({
                       boxSizing: 'border-box',
                       borderRadius: 4,
                       outline: 'none',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       cursor: 'pointer',
                     }}
                   />
@@ -4012,7 +4012,7 @@ export default function WizardStrategyBuilder({
                       boxSizing: 'border-box',
                       borderRadius: 4,
                       outline: 'none',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       cursor: 'pointer',
                     }}
                   />
@@ -4057,7 +4057,7 @@ export default function WizardStrategyBuilder({
               {/* Validation warning */}
               {getSessionOverlapWarning(tempFromTime, tempToTime) && (
                 <div style={{
-                  fontFamily: 'var(--color-ec-sans)',
+                  fontFamily: 'General Sans, sans-serif',
                   fontSize: 9,
                   color: 'var(--color-ec-loss)',
                   display: 'flex',
@@ -4090,7 +4090,7 @@ export default function WizardStrategyBuilder({
                           border: `0.5px solid ${overlapWarning ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)'}`,
                           borderRadius: 4,
                           padding: '3px 6px',
-                          fontFamily: 'var(--color-ec-sans)',
+                          fontFamily: 'General Sans, sans-serif',
                           fontSize: 9,
                           fontWeight: 600,
                           color: overlapWarning ? 'var(--color-ec-loss)' : 'var(--color-ec-text-secondary)',
@@ -4151,7 +4151,7 @@ export default function WizardStrategyBuilder({
             Límite de Pérdida (Hard Stop Loss)
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -4172,12 +4172,12 @@ export default function WizardStrategyBuilder({
           border: "0.5px solid var(--color-ec-border)",
           borderRadius: 6,
         }}>
-          <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+          <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
             ¿Activar Stop Loss?
           </span>
           <div className="flex items-center gap-2">
             <span style={{
-              fontFamily: 'var(--color-ec-sans)',
+              fontFamily: 'General Sans, sans-serif',
               fontSize: 10,
               fontWeight: 700,
               color: 'var(--color-ec-text-muted)',
@@ -4224,7 +4224,7 @@ export default function WizardStrategyBuilder({
                     flex: 1,
                     padding: "8px 12px",
                     borderRadius: 5,
-                    fontFamily: "var(--color-ec-sans)",
+                    fontFamily: "General Sans, sans-serif",
                     fontSize: 10,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -4247,7 +4247,7 @@ export default function WizardStrategyBuilder({
                     flex: 1,
                     padding: "8px 12px",
                     borderRadius: 5,
-                    fontFamily: "var(--color-ec-sans)",
+                    fontFamily: "General Sans, sans-serif",
                     fontSize: 10,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -4283,7 +4283,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 12,
                       fontWeight: 600,
                       color: 'var(--color-ec-text-primary)',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       height: '36px',
                       display: 'flex',
                       alignItems: 'center',
@@ -4310,7 +4310,7 @@ export default function WizardStrategyBuilder({
                         fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--color-ec-text-primary)',
-                        fontFamily: 'var(--color-ec-sans)',
+                        fontFamily: 'General Sans, sans-serif',
                         outline: 'none',
                         width: '100%',
                         height: '36px',
@@ -4349,7 +4349,7 @@ export default function WizardStrategyBuilder({
                         fontSize: 11,
                         fontWeight: 500,
                         color: 'var(--color-ec-text-primary)',
-                        fontFamily: 'var(--color-ec-sans)',
+                        fontFamily: 'General Sans, sans-serif',
                         cursor: 'pointer',
                         height: '32px',
                         display: 'flex',
@@ -4470,7 +4470,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 11,
                       fontWeight: 500,
                       color: 'var(--color-ec-text-primary)',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       outline: 'none',
                       cursor: 'pointer',
                       width: '95px',
@@ -4500,7 +4500,7 @@ export default function WizardStrategyBuilder({
                           fontSize: 11,
                           fontWeight: 600,
                           color: 'var(--color-ec-text-primary)',
-                          fontFamily: 'var(--color-ec-sans)',
+                          fontFamily: 'General Sans, sans-serif',
                           outline: 'none',
                           width: '100%',
                           height: '32px',
@@ -4618,7 +4618,7 @@ export default function WizardStrategyBuilder({
             Toma de Ganancias (Take Profit)
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -4639,12 +4639,12 @@ export default function WizardStrategyBuilder({
           border: "0.5px solid var(--color-ec-border)",
           borderRadius: 6,
         }}>
-          <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+          <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
             ¿Activar Take Profit?
           </span>
           <div className="flex items-center gap-2">
             <span style={{
-              fontFamily: 'var(--color-ec-sans)',
+              fontFamily: 'General Sans, sans-serif',
               fontSize: 10,
               fontWeight: 700,
               color: 'var(--color-ec-text-muted)',
@@ -4686,7 +4686,7 @@ export default function WizardStrategyBuilder({
                     flex: 1,
                     padding: "8px 12px",
                     borderRadius: 5,
-                    fontFamily: "var(--color-ec-sans)",
+                    fontFamily: "General Sans, sans-serif",
                     fontSize: 10,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -4708,7 +4708,7 @@ export default function WizardStrategyBuilder({
                     flex: 1,
                     padding: "8px 12px",
                     borderRadius: 5,
-                    fontFamily: "var(--color-ec-sans)",
+                    fontFamily: "General Sans, sans-serif",
                     fontSize: 10,
                     fontWeight: 700,
                     cursor: "pointer",
@@ -4759,7 +4759,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 12,
                       fontWeight: 600,
                       color: 'var(--color-ec-text-primary)',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       height: '36px',
                       outline: 'none',
                       cursor: 'pointer',
@@ -4795,7 +4795,7 @@ export default function WizardStrategyBuilder({
                         fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--color-ec-text-primary)',
-                        fontFamily: 'var(--color-ec-sans)',
+                        fontFamily: 'General Sans, sans-serif',
                         outline: 'none',
                         width: '100%',
                         height: '36px',
@@ -4893,7 +4893,7 @@ export default function WizardStrategyBuilder({
                                       fontSize: 10,
                                       fontWeight: 600,
                                       color: 'var(--color-ec-text-primary)',
-                                      fontFamily: 'var(--color-ec-sans)',
+                                      fontFamily: 'General Sans, sans-serif',
                                       outline: 'none',
                                       cursor: 'pointer',
                                     }}
@@ -5030,7 +5030,7 @@ export default function WizardStrategyBuilder({
                     color: 'var(--color-ec-text-muted)',
                     backgroundColor: 'transparent',
                     cursor: 'pointer',
-                    fontFamily: 'var(--color-ec-sans)',
+                    fontFamily: 'General Sans, sans-serif',
                     transition: 'all 150ms ease',
                     display: 'flex',
                     alignItems: 'center',
@@ -5119,7 +5119,7 @@ export default function WizardStrategyBuilder({
             Límite Dinámico (Trailing Stop)
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -5140,12 +5140,12 @@ export default function WizardStrategyBuilder({
           border: "0.5px solid var(--color-ec-border)",
           borderRadius: 6,
         }}>
-          <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+          <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
             ¿Activar Trailing Stop?
           </span>
           <div className="flex items-center gap-2">
             <span style={{
-              fontFamily: 'var(--color-ec-sans)',
+              fontFamily: 'General Sans, sans-serif',
               fontSize: 10,
               fontWeight: 700,
               color: 'var(--color-ec-text-muted)',
@@ -5205,7 +5205,7 @@ export default function WizardStrategyBuilder({
                       fontSize: 13,
                       fontWeight: 600,
                       color: 'var(--color-ec-text-primary)',
-                      fontFamily: 'var(--color-ec-sans)',
+                      fontFamily: 'General Sans, sans-serif',
                       outline: 'none',
                       width: '100%',
                       height: '36px',
@@ -5263,7 +5263,7 @@ export default function WizardStrategyBuilder({
             Permitir Reentradas (Re-entries)
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -5284,12 +5284,12 @@ export default function WizardStrategyBuilder({
           border: "0.5px solid var(--color-ec-border)",
           borderRadius: 6,
         }}>
-          <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+          <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
             ¿Permitir reentradas en la misma sesión?
           </span>
           <div className="flex items-center gap-2">
             <span style={{
-              fontFamily: 'var(--color-ec-sans)',
+              fontFamily: 'General Sans, sans-serif',
               fontSize: 10,
               fontWeight: 700,
               color: 'var(--color-ec-text-muted)',
@@ -5318,10 +5318,10 @@ export default function WizardStrategyBuilder({
             }}
           >
             <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+              <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
                 Tipo de Reentradas
               </span>
-              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 9, color: "var(--color-ec-text-muted)" }}>
+              <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 9, color: "var(--color-ec-text-muted)" }}>
                 Límite de reentradas adicionales permitidas
               </span>
             </div>
@@ -5343,7 +5343,7 @@ export default function WizardStrategyBuilder({
                   fontSize: 11,
                   fontWeight: 500,
                   color: 'var(--color-ec-text-primary)',
-                  fontFamily: 'var(--color-ec-sans)',
+                  fontFamily: 'General Sans, sans-serif',
                   outline: 'none',
                   cursor: 'pointer',
                   height: '30px',
@@ -5369,7 +5369,7 @@ export default function WizardStrategyBuilder({
                     fontSize: 11,
                     fontWeight: 600,
                     color: 'var(--color-ec-text-primary)',
-                    fontFamily: 'var(--color-ec-sans)',
+                    fontFamily: 'General Sans, sans-serif',
                     outline: 'none',
                     width: '50px',
                     height: '30px',
@@ -5387,7 +5387,7 @@ export default function WizardStrategyBuilder({
           backgroundColor: "rgba(255, 255, 255, 0.02)",
           border: "0.5px solid var(--color-ec-border)",
           borderRadius: 6,
-          fontFamily: "var(--color-ec-sans)",
+          fontFamily: "General Sans, sans-serif",
           fontSize: 9,
           color: "var(--color-ec-text-secondary)",
           lineHeight: 1.4,
@@ -5621,7 +5621,7 @@ export default function WizardStrategyBuilder({
             Resumen de tu Estrategia
           </h3>
           <p style={{
-            fontFamily: "var(--color-ec-sans)",
+            fontFamily: "General Sans, sans-serif",
             fontSize: 'var(--ec-fs-hint)',
             fontWeight: 400,
             color: "var(--color-ec-text-muted)",
@@ -5669,7 +5669,7 @@ export default function WizardStrategyBuilder({
                   borderRadius: 6,
                   backgroundColor: "rgba(216, 122, 61, 0.03)",
                   border: "0.5px solid rgba(216, 122, 61, 0.15)",
-                  fontFamily: "var(--color-ec-sans)",
+                  fontFamily: "General Sans, sans-serif",
                   animation: "wizTagSlideIn 200ms ease-out",
                   animationDelay: `${idx * 40}ms`,
                   animationFillMode: "both",
@@ -5992,7 +5992,7 @@ export default function WizardStrategyBuilder({
 
   // Sidebar sections headers and tags layout styles
   const sectionHeaderStyle: React.CSSProperties = {
-    fontFamily: "var(--color-ec-sans)",
+    fontFamily: "General Sans, sans-serif",
     fontSize: 8,
     fontWeight: 700,
     textTransform: "uppercase",
@@ -6020,7 +6020,7 @@ export default function WizardStrategyBuilder({
           borderRadius: 4,
           backgroundColor: `color-mix(in srgb, ${color} 8%, transparent)`,
           border: `0.5px solid ${color}`,
-          fontFamily: "var(--color-ec-sans)",
+          fontFamily: "General Sans, sans-serif",
           fontSize: 9,
           fontWeight: 600,
           color: color,
@@ -6244,7 +6244,7 @@ export default function WizardStrategyBuilder({
                         </svg>
                       ) : (
                         <span style={{
-                          fontFamily: "var(--color-ec-sans)",
+                          fontFamily: "General Sans, sans-serif",
                           fontSize: 8,
                           fontWeight: 700,
                           color: isActive ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
@@ -6254,7 +6254,7 @@ export default function WizardStrategyBuilder({
                       )}
                     </div>
                     <span style={{
-                      fontFamily: "var(--color-ec-sans)",
+                      fontFamily: "General Sans, sans-serif",
                       fontSize: 10,
                       fontWeight: isActive ? 700 : 500,
                       color: isActive
@@ -6410,7 +6410,7 @@ export default function WizardStrategyBuilder({
             minHeight: 0
           }}>
             <div style={{
-              fontFamily: "var(--color-ec-sans)",
+              fontFamily: "General Sans, sans-serif",
               fontSize: 8,
               fontWeight: 700,
               letterSpacing: "0.15em",
