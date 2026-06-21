@@ -246,16 +246,6 @@ export default function Home() {
       return;
     }
 
-    try {
-      const { fetchPrecacheStatus } = await import("@/lib/api_backtester");
-      const statusData = await fetchPrecacheStatus(activeDatasetId);
-      if (statusData && statusData.status === "running") {
-        setError(`Espera a que se cargue el dataset (progreso: ${statusData.percent}%)`);
-        return;
-      }
-    } catch (e) {
-      console.warn("Could not check dataset precache status before run:", e);
-    }
 
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });

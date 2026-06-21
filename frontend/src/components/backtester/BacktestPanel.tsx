@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import type { Dataset, Strategy, PrecacheStatus } from "@/lib/api_backtester";
-import { fetchDatasets, fetchStrategies, fetchPrecacheStatus } from "@/lib/api_backtester";
+import type { Dataset, Strategy } from "@/lib/api_backtester";
+import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
 import { Plus, Settings } from "lucide-react";
@@ -435,9 +435,6 @@ export default function BacktestPanel({
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [precacheStatus, setPrecacheStatus] = useState<PrecacheStatus | null>(null);
-  const [visualPercent, setVisualPercent] = useState<number>(0);
-
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
@@ -644,72 +641,7 @@ export default function BacktestPanel({
     }
   }, [selectedStrategy, activeStrategy, strategies]);
 
-  useEffect(() => {
-    if (!selectedDataset) {
-      setPrecacheStatus(null);
-      setVisualPercent(0);
-      return;
-    }
 
-    let isMounted = true;
-    let timer: NodeJS.Timeout | null = null;
-    let progressTimer: NodeJS.Timeout | null = null;
-    let currentStatus: string | null = null;
-
-    setVisualPercent(0);
-
-    const checkStatus = async () => {
-      try {
-        const statusData = await fetchPrecacheStatus(selectedDataset);
-        if (!isMounted) return;
-
-        currentStatus = statusData.status;
-        setPrecacheStatus(statusData);
-
-        // "pending" = pairs still being computed in background; keep polling
-        // so the card flips to the real download progress when it starts
-        if (statusData.status === "running" || statusData.status === "pending") {
-          timer = setTimeout(checkStatus, 1500);
-          if (statusData.status === "running" && statusData.percent > 0) {
-            setVisualPercent((prev) => Math.max(prev, statusData.percent));
-          }
-        } else if (statusData.status === "completed") {
-          setVisualPercent(100);
-        }
-      } catch (err) {
-        console.error("Error fetching precache status:", err);
-        if (isMounted) {
-          timer = setTimeout(checkStatus, 3000);
-        }
-      }
-    };
-
-    const updateProgress = () => {
-      // Only animate fake progress while the download itself is running —
-      // during "pending" the bar would otherwise climb before data flows
-      if (currentStatus === "running") {
-        setVisualPercent((prev) => {
-          if (prev >= 95) return prev;
-          let increment = 1.5;
-          if (prev >= 80) increment = 0.2;
-          else if (prev >= 50) increment = 0.5;
-          return Math.min(95, prev + increment);
-        });
-      }
-      if (isMounted) {
-        progressTimer = setTimeout(updateProgress, 1000);
-      }
-    };
-
-    checkStatus();
-    updateProgress();
-
-    return () => {
-      isMounted = false;
-      if (timer) clearTimeout(timer);
-      if (progressTimer) clearTimeout(progressTimer);
-    };
-  }, [selectedDataset]);
 
   useEffect(() => {
     onParamsChange?.({
@@ -802,10 +734,7 @@ export default function BacktestPanel({
     const stratDef = getStratDef();
     const hasUniverse = !!(selectedDataset || stratDef?.universe_filters);
     if (!hasUniverse) return;
-    if (precacheStatus?.status === "running") {
-      alert(`Espera a que se cargue el dataset (progreso: ${precacheStatus.percent}%)`);
-      return;
-    }
+
     onRun({
       dataset_id: selectedDataset || "",
       strategy_id: selectedStrategy,
@@ -1042,67 +971,7 @@ export default function BacktestPanel({
             );
           })()}
 
-          {precacheStatus && (precacheStatus.status === "running" || precacheStatus.status === "pending") && (
-            <div style={{
-              marginTop: 8,
-              padding: '8px 10px',
-              backgroundColor: 'var(--color-ec-bg-elevated)',
-              border: '0.5px solid var(--color-ec-border)',
-              borderRadius: 5,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-              marginBottom: 4,
-            }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 9,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                color: 'var(--color-ec-copper)',
-              }}>
-                <span>{precacheStatus.status === "pending" ? "Preparando dataset (calculando pares)..." : "Descargando Data..."}</span>
-                {precacheStatus.status === "running" && <span>{Math.round(visualPercent)}%</span>}
-              </div>
-              {precacheStatus.status === "running" && (
-              <div style={{
-                height: 4,
-                backgroundColor: 'rgba(216, 122, 61, 0.15)',
-                borderRadius: 2,
-                overflow: 'hidden',
-              }}>
-                <div style={{
-                  height: '100%',
-                  width: `${visualPercent}%`,
-                  backgroundColor: 'var(--color-ec-copper)',
-                  borderRadius: 2,
-                  transition: 'width 1000ms linear',
-                }} />
-              </div>
-              )}
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 8,
-                color: 'var(--color-ec-text-muted)',
-                marginTop: 2,
-                gap: 8,
-              }}>
-                <span style={{ textAlign: 'left', flex: 1, lineHeight: '1.2' }}>
-                  La carga puede tardar unos minutos.
-                </span>
-                {precacheStatus.status === "running" && (
-                <span style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                  {Math.min(precacheStatus.total, Math.round(precacheStatus.total * (visualPercent / 100)))} / {precacheStatus.total} pares
-                </span>
-                )}
-              </div>
-            </div>
-          )}
+
           
           <div style={{
             display: 'flex',
