@@ -188,15 +188,14 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
     # Heavy phase WITHOUT the global lock: a read-only scan over daily_metrics
     # (GCS reads, can take minutes). Holding the lock here froze /data/datasets
     # and /precache-status — the picker and progress bar hung until done.
-    con = get_user_db_connection(read_only=True)
-    try:
-        pairs_df = con.execute(select_sql, params).fetchdf()
-    finally:
-        con.close()
+    from app.database import get_db_connection
+    con = get_db_connection()
+    pairs_df = con.execute(select_sql, params).fetchdf()
 
     date_from = ""
     date_to = ""
     if not pairs_df.empty:
+        pairs_df = pairs_df.drop_duplicates(subset=["ticker", "date"])
         date_from = pairs_df['date'].min()
         date_to = pairs_df['date'].max()
 
@@ -209,7 +208,8 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
                 con.register("pairs_tmp", pairs_df)
                 con.execute(
                     "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
-                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp",
+                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp "
+                    "ON CONFLICT DO NOTHING",
                     [query_id],
                 )
             finally:

@@ -60,7 +60,7 @@ def run_backtest_endpoint(req: BacktestRequest):
     # survives backend restarts and is shared across workers).
     from app.routers.query import get_precache_state
     state = get_precache_state(req.dataset_id)
-    if state and state.get("status") == "running":
+    if state and state.get("status") in ("running", "pending"):
         percent = state.get("percent", 0.0)
         raise HTTPException(
             status_code=400,

@@ -159,7 +159,9 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             postgap_preconditions: postgapPreconditions,
             entry_logic: entryLogic,
             exit_logic: exitLogic,
-            risk_management: riskManagement
+            risk_management: riskManagement,
+            dataset_id: selectedDatasetId || null,
+            is_wizard: false
         };
     };
 

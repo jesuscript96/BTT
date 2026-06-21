@@ -157,8 +157,8 @@ def build_screener_query(
     sql_p = []
     m_filters = []
     
-    start_date = filters.get('start_date')
-    end_date = filters.get('end_date')
+    start_date = filters.get('start_date') or filters.get('date_from')
+    end_date = filters.get('end_date') or filters.get('date_to')
     trade_date = filters.get('trade_date')
     ticker = filters.get('ticker')
     

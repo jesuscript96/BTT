@@ -832,8 +832,8 @@ def _fetch_qualifying_data_uncached(
             max_gap = float(max_gap_raw) if max_gap_raw is not None else 999999.0
             min_pm_vol_raw = filters.get("min_pm_volume")
             min_pm_vol = float(min_pm_vol_raw) if min_pm_vol_raw is not None else 0.0
-            start_date = filters.get("start_date")
-            end_date = filters.get("end_date")
+            start_date = filters.get("start_date") or filters.get("date_from")
+            end_date = filters.get("end_date") or filters.get("date_to")
 
             if _can_use_hot_cache(filters):
                 result = hot_df.copy()

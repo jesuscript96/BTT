@@ -212,13 +212,14 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
                 # This is fetched OUTSIDE of the user DB lock to prevent deadlocking or locking database connections.
                 base_qualifying = fetch_qualifying_data(
                     req.dataset_id,
-                    req.start_date,
-                    req.end_date,
+                    None,
+                    None,
                     preconditions=None,
                     apply_day='gap_day'
                 )
                 if base_qualifying is not None and not base_qualifying.empty:
                     pairs_to_insert = base_qualifying[['ticker', 'date']].drop_duplicates()
+                    uploaded_db = False
                     with lock:
                         con = get_user_db_connection(read_only=False)
                         try:
@@ -228,19 +229,22 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
                                 con.register("pairs_tmp", pairs_to_insert)
                                 con.execute(
                                     "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
-                                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp",
+                                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp "
+                                    "ON CONFLICT DO NOTHING",
                                     [req.dataset_id],
                                 )
                                 print(f"[BACKTEST] Saved {len(pairs_to_insert)} base dataset pairs dynamically")
-                                
-                                # Update GCS DB so the sync persists this info
-                                try:
-                                    from app.gcs_sync import upload_user_db
-                                    upload_user_db()
-                                except Exception as upload_err:
-                                    print(f"[WARN] GCS upload after dynamic pairs save failed: {upload_err}")
+                                uploaded_db = True
                         finally:
                             con.close()
+
+                    if uploaded_db:
+                        # Update GCS DB so the sync persists this info
+                        try:
+                            from app.gcs_sync import upload_user_db
+                            upload_user_db()
+                        except Exception as upload_err:
+                            print(f"[WARN] GCS upload after dynamic pairs save failed: {upload_err}")
         except Exception as pc_err:
             print(f"[WARN] Could not dynamically save dataset pairs: {pc_err}")
 

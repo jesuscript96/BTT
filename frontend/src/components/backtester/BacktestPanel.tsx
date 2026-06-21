@@ -788,8 +788,8 @@ export default function BacktestPanel({
       } catch (e) {}
     }
 
-    if (rawDef && rawDef.dataset_id) {
-      setSelectedDataset(rawDef.dataset_id);
+    if (rawDef) {
+      setSelectedDataset(rawDef.dataset_id || "");
     }
   }, [selectedStrategy, strategies, activeStrategy]);
 
