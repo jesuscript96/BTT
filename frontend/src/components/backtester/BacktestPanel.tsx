@@ -931,7 +931,6 @@ export default function BacktestPanel({
                         (universeFilters.min_volume != null && universeFilters.min_volume !== "") ||
                         (universeFilters.max_shares_float != null && universeFilters.max_shares_float !== "") ||
                         universeFilters.require_shortable === true ||
-                        universeFilters.exclude_dilution === true ||
                         (universeFilters.whitelist_sectors && universeFilters.whitelist_sectors.length > 0) ||
                         (universeFilters.rules && universeFilters.rules.length > 0)
                       );
@@ -961,9 +960,6 @@ export default function BacktestPanel({
                         }
                         if (universeFilters.require_shortable === true) {
                           parts.push("Shortable");
-                        }
-                        if (universeFilters.exclude_dilution === true) {
-                          parts.push("Sin Dilución");
                         }
                         if (universeFilters.whitelist_sectors && universeFilters.whitelist_sectors.length > 0) {
                           parts.push(`Sectores: ${universeFilters.whitelist_sectors.join(', ')}`);

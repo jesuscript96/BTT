@@ -655,7 +655,6 @@ export default function TrunkPage() {
     if (filters.min_volume != null && filters.min_volume !== "") tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
     if (filters.max_shares_float != null && filters.max_shares_float !== "") tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
     if (filters.require_shortable === true) tags.push("Require Shortable");
-    if (filters.exclude_dilution === true) tags.push("Exclude Dilution");
     if (filters.whitelist_sectors && filters.whitelist_sectors.length > 0) {
       tags.push(`Sectors: ${filters.whitelist_sectors.join(', ')}`);
     }

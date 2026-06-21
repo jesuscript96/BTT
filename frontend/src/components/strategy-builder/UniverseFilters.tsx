@@ -103,18 +103,6 @@ export const UniverseFiltersComponent: React.FC<Props> = ({ filters, onChange })
                     <span className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">Require Shortable (HTB/ETB)</span>
                 </label>
 
-                <label className="flex items-center gap-3 cursor-pointer group">
-                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${filters.exclude_dilution ? 'bg-ec-profit border-ec-profit' : 'border-muted-foreground/50 group-hover:border-ec-profit/50'}`}>
-                        {filters.exclude_dilution && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                    </div>
-                    <input
-                        type="checkbox"
-                        className="hidden"
-                        checked={filters.exclude_dilution}
-                        onChange={(e) => handleChange('exclude_dilution', e.target.checked)}
-                    />
-                    <span className="text-xs font-bold text-muted-foreground group-hover:text-foreground transition-colors">Exclude Dilution (S-3/F-3)</span>
-                </label>
             </div>
         </div>
     );
