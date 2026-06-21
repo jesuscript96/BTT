@@ -762,7 +762,7 @@ export default function EquityCurveTab({
               if (activeMainTab !== "equity") e.currentTarget.style.color = "var(--color-ec-text-muted)";
             }}
           >
-            Equity Curve
+            IS Equity Curve
           </button>
           <span style={{ width: 1, height: 14, backgroundColor: 'var(--color-ec-border)', opacity: 0.7, margin: '0 6px', flexShrink: 0 }}></span>
           <button
