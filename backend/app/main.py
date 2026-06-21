@@ -24,6 +24,17 @@ def _startup_recovery_precache() -> None:
         from app.database import get_user_db_connection, get_user_db_lock
         from app.routers.query import _write_precache_state
 
+        # PASO 1 — pre-warm the gap-universe intraday to local disk (idempotent,
+        # bounded, env-gated via INTRADAY_PREWARM_ENABLED). PASO 3 — optionally
+        # mirror it into RAM (INTRADAY_RAM_CACHE_ENABLED, off until CCX33).
+        # Both are best-effort and must never block or break startup recovery.
+        try:
+            from app.db.gcs_cache import prewarm_gap_universe, load_ram_cache
+            prewarm_gap_universe()
+            load_ram_cache()
+        except Exception as e:
+            print(f"[RECOVERY] gap-universe prewarm/ram skipped: {e}")
+
         cutoff = datetime.now() - timedelta(hours=48)
         lock = get_user_db_lock()
         with lock:

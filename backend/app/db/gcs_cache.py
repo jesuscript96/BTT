@@ -757,6 +757,23 @@ def _enforce_cache_quota() -> None:
         logger.warning(f"  [CACHE EVICT] failed: {e}")
 
 
+# ─── Optional in-RAM intraday cache (PASO 3 — gated, off until CCX33) ────────
+# When INTRADAY_RAM_CACHE_ENABLED=true, the gap universe is held in a process
+# dict keyed (kind, y, m, ticker) and reads hit RAM before disk. OFF by default:
+# the 15GB CCX23 can't hold it alongside DuckDB; flip it on once on a bigger box.
+RAM_CACHE_ENABLED = os.getenv("INTRADAY_RAM_CACHE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+_RAM_CACHE: dict = {}                 # (kind, y, m, ticker) -> pd.DataFrame
+_RAM_CACHE_LOCK = threading.Lock()
+
+
+def _ram_get(kind: str, y: int, m: int, ticker: str):
+    """Return the cached month DataFrame for a ticker if the RAM cache is on and
+    holds it; None otherwise (cheap no-op when the flag is off)."""
+    if not RAM_CACHE_ENABLED:
+        return None
+    return _RAM_CACHE.get((kind, y, m, ticker))
+
+
 def _fetch_and_cache_month(
     y: int, m: int, path: str, valid_pairs_month: pd.DataFrame, batch_size: int, mi: int, n_months: int
 ) -> pd.DataFrame | None:
@@ -781,6 +798,11 @@ def _fetch_and_cache_month(
     missing: list[str] = []
     n_hits = 0
     for t in unique_tickers:
+        ram_df = _ram_get(kind, y, m, t)          # PASO 3: RAM hit (no-op when disabled)
+        if ram_df is not None:
+            parts.append(ram_df)
+            n_hits += 1
+            continue
         fp = _ticker_cache_path(y, m, kind, t)
         if os.path.exists(fp):
             try:
@@ -1003,6 +1025,146 @@ def iter_intraday_groups_streamed(
 
     executor.shutdown(wait=False)
     logger.info(f"  [FINISH] Backtest stream complete: {total_groups} group(s) processed.")
+
+
+# ─── Gap-universe disk pre-warm (PASO 1) + RAM load (PASO 3) ─────────────────
+# PASO 1 downloads to local disk, at startup, the intraday months for the gap
+# universe (gap_pct >= threshold, ±2-day window) that aren't cached yet, so
+# backtests over the gap universe read local parquet instead of GCS. It is
+# idempotent (skips files already on disk), bounded, runs in a background thread,
+# and never raises. PASO 3 optionally mirrors those months into a process RAM
+# dict — gated OFF until the box has spare RAM (CCX33), since the 15GB CCX23
+# can't hold ~24GB of intraday alongside DuckDB's 8GB.
+
+PREWARM_ENABLED = os.getenv("INTRADAY_PREWARM_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+PREWARM_GAP_PCT = float(os.getenv("INTRADAY_PREWARM_GAP_PCT", "10.0"))
+# 0 = all years; set e.g. 2024 to limit the warm to recent gap days.
+PREWARM_SINCE_YEAR = int(os.getenv("INTRADAY_PREWARM_SINCE_YEAR", "0"))
+# 0 = no limit; otherwise warm only the N most recent (year, month) buckets.
+PREWARM_MONTH_LIMIT = int(os.getenv("INTRADAY_PREWARM_MONTH_LIMIT", "0"))
+# Tickers per GCS query while warming a month (keeps each query bounded).
+PREWARM_CHUNK = int(os.getenv("INTRADAY_PREWARM_CHUNK", "400"))
+
+
+def _gap_universe_combos(gap_pct: float, since_year: int) -> set:
+    """{(ticker, year, month)} for the gap universe (±2 calendar days around each
+    gap day). Reads the in-process hot daily cache; returns empty on any issue."""
+    try:
+        from app.services.cache_service import get_hot_daily_cache
+        df = get_hot_daily_cache()
+    except Exception as e:
+        logger.warning(f"[PREWARM] could not read hot daily cache: {e}")
+        return set()
+    if df is None or len(df) == 0 or "gap_pct" not in df.columns:
+        return set()
+    gap = df[df["gap_pct"] >= gap_pct]
+    if gap.empty:
+        return set()
+    ts = pd.to_datetime(gap["timestamp"])
+    combos: set = set()
+    for ticker, t in zip(gap["ticker"], ts):
+        for delta in (-2, -1, 0, 1, 2):
+            d = t + pd.Timedelta(days=delta)
+            if since_year and d.year < since_year:
+                continue
+            combos.add((str(ticker), int(d.year), int(d.month)))
+    return combos
+
+
+def prewarm_gap_universe() -> None:
+    """Download any gap-universe intraday months missing from local disk.
+    Best-effort, idempotent, bounded. Safe to call in a background thread."""
+    if not PREWARM_ENABLED:
+        logger.info("[PREWARM] disabled (INTRADAY_PREWARM_ENABLED=false)")
+        return
+    try:
+        combos = _gap_universe_combos(PREWARM_GAP_PCT, PREWARM_SINCE_YEAR)
+        if not combos:
+            logger.info("[PREWARM] no gap-universe combos to warm")
+            return
+        by_month: dict = {}
+        for ticker, y, m in combos:
+            by_month.setdefault((y, m), []).append(ticker)
+        months = sorted(by_month.keys())
+        if PREWARM_MONTH_LIMIT > 0:
+            months = months[-PREWARM_MONTH_LIMIT:]
+        conn = get_connection()
+        t0 = time.time()
+        written = 0
+        logger.info(
+            f"[PREWARM] {len(combos):,} combos / {len(months)} month(s) "
+            f"(gap>={PREWARM_GAP_PCT}%, since_year={PREWARM_SINCE_YEAR or 'all'})"
+        )
+        for mi, (y, m) in enumerate(months, 1):
+            path = _select_intraday_glob_for_month(conn, y, m)
+            if not path:
+                continue
+            kind = "opt" if "optimized" in path else "raw"
+            tickers = sorted(set(by_month[(y, m)]))
+            missing = [t for t in tickers if not os.path.exists(_ticker_cache_path(y, m, kind, t))]
+            if not missing:
+                continue
+            to_fetch, _deferred = _claim_tickers(kind, y, m, missing)
+            try:
+                for i in range(0, len(to_fetch), PREWARM_CHUNK):
+                    chunk = to_fetch[i:i + PREWARM_CHUNK]
+                    df_new = _gcs_fetch_tickers(path, y, m, chunk)
+                    if df_new is None:
+                        continue
+                    returned = set(df_new["ticker"].unique()) if not df_new.empty else set()
+                    if not df_new.empty:
+                        for tk, g in df_new.groupby("ticker"):
+                            try:
+                                _atomic_write_parquet(g.copy(), _ticker_cache_path(y, m, kind, tk))
+                                written += 1
+                            except Exception as e:
+                                logger.warning(f"[PREWARM] write {tk} {y}-{m:02d}: {e}")
+                    # Empty marker so absent tickers aren't re-fetched every boot.
+                    for tk in chunk:
+                        if tk not in returned:
+                            try:
+                                _atomic_write_parquet(
+                                    pd.DataFrame(columns=["ticker", "date", "timestamp", "open", "high", "low", "close", "volume"]),
+                                    _ticker_cache_path(y, m, kind, tk),
+                                )
+                            except Exception:
+                                pass
+            finally:
+                _release_tickers(kind, y, m, to_fetch)
+            _enforce_cache_quota()
+            if mi % 6 == 0:
+                logger.info(f"[PREWARM] {mi}/{len(months)} months, {written:,} files, {round(time.time()-t0)}s")
+        logger.info(f"[PREWARM] done: {written:,} new files in {round(time.time()-t0)}s")
+    except Exception as e:
+        logger.warning(f"[PREWARM] failed: {e}")
+
+
+def load_ram_cache() -> None:
+    """Mirror the on-disk gap-universe months into the process RAM dict. Gated by
+    INTRADAY_RAM_CACHE_ENABLED — keep OFF until the box has the RAM (CCX33)."""
+    if not RAM_CACHE_ENABLED:
+        logger.info("[RAM CACHE] disabled (INTRADAY_RAM_CACHE_ENABLED=false)")
+        return
+    try:
+        combos = _gap_universe_combos(PREWARM_GAP_PCT, PREWARM_SINCE_YEAR)
+        loaded = 0
+        nbytes = 0
+        for ticker, y, m in combos:
+            for kind in ("opt", "raw"):
+                fp = _ticker_cache_path(y, m, kind, ticker)
+                if os.path.exists(fp):
+                    try:
+                        df = pd.read_parquet(fp)
+                        with _RAM_CACHE_LOCK:
+                            _RAM_CACHE[(kind, y, m, ticker)] = df
+                        loaded += 1
+                        nbytes += int(df.memory_usage(deep=True).sum())
+                    except Exception:
+                        pass
+                    break
+        logger.info(f"[RAM CACHE] loaded {loaded:,} combos, {nbytes / 1024**3:.2f} GB into RAM")
+    except Exception as e:
+        logger.warning(f"[RAM CACHE] failed: {e}")
 
 
 
