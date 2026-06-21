@@ -1800,14 +1800,16 @@ export default function WizardStrategyBuilder({
       return {
         position: "relative",
         display: "flex",
+        flexDirection: "column",
         alignItems: "center",
-        gap: 10,
-        padding: "10px 14px",
-        borderRadius: 7,
+        justifyContent: "center",
+        gap: 12,
+        padding: "20px 14px",
+        borderRadius: 10,
         border: isSelected
-          ? `1px solid ${accentColor}`
+          ? `1.5px solid ${accentColor}`
           : isHovered
-            ? `1px solid rgba(${rawRgb}, 0.35)`
+            ? `1.5px solid rgba(${rawRgb}, 0.35)`
             : "1px solid var(--color-ec-border)",
         backgroundColor: isSelected
           ? `rgba(${rawRgb}, 0.07)`
@@ -1817,19 +1819,20 @@ export default function WizardStrategyBuilder({
         cursor: "pointer",
         transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
         transform: isSelected
-          ? "scale(1.01)"
+          ? "scale(1.02)"
           : isHovered
-            ? "translateY(-1px)"
+            ? "translateY(-2px)"
             : "translateY(0)",
         boxShadow: isSelected
-          ? `0 2px 12px rgba(${rawRgb}, 0.15)`
+          ? `0 4px 16px rgba(${rawRgb}, 0.15)`
           : isHovered
-            ? "0 3px 12px rgba(0, 0, 0, 0.15)"
+            ? "0 4px 16px rgba(0, 0, 0, 0.15)"
             : "0 1px 3px rgba(0, 0, 0, 0.05)",
         outline: "none",
         overflow: "hidden",
-        flex: 1,
-        minWidth: 0,
+        width: 150,
+        height: 150,
+        boxSizing: "border-box",
       };
     };
 
@@ -1856,7 +1859,7 @@ export default function WizardStrategyBuilder({
           Selecciona si operarás a favor de la tendencia alcista o bajista
         </p>
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 16 }}>
           {/* Long */}
           <button
             onClick={() => handleBiasSelect("long")}
@@ -1866,46 +1869,48 @@ export default function WizardStrategyBuilder({
           >
             <div style={{
               position: "absolute", top: 0, left: 0, right: 0,
-              height: bias === "long" ? 2 : 0,
+              height: bias === "long" ? 3 : 0,
               background: "var(--color-ec-profit)",
               transition: "height 250ms ease",
-              borderRadius: "7px 7px 0 0",
+              borderRadius: "10px 10px 0 0",
             }} />
             <div style={{
-              width: 30, height: 30, borderRadius: "50%",
+              width: 36, height: 36, borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
               backgroundColor: bias === "long" ? "rgba(34, 197, 94, 0.12)" : "var(--color-ec-bg-elevated)",
               border: bias === "long" ? "1px solid rgba(34, 197, 94, 0.25)" : "1px solid var(--color-ec-border)",
               transition: "all 200ms ease", flexShrink: 0,
             }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke={bias === "long" || hoveredBias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-text-muted)"}
                 strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                 style={{ transition: "stroke 200ms ease" }}>
                 <path d="M12 19V5" /><path d="M5 12l7-7 7 7" />
               </svg>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center", textAlign: "center" }}>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 12, fontWeight: 700,
+                fontFamily: "General Sans, sans-serif", fontSize: 13, fontWeight: 700,
                 color: bias === "long" ? "var(--color-ec-profit)" : "var(--color-ec-text-high)",
                 transition: "color 200ms ease",
               }}>Long</span>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 9,
+                fontFamily: "General Sans, sans-serif", fontSize: 9.5,
                 color: "var(--color-ec-text-muted)", lineHeight: 1.3,
               }}>Posiciones alcistas</span>
             </div>
             {bias === "long" && (
               <div style={{
-                marginLeft: "auto",
-                width: 16, height: 16, borderRadius: "50%",
+                position: "absolute",
+                top: 10,
+                right: 10,
+                width: 18, height: 18, borderRadius: "50%",
                 backgroundColor: "var(--color-ec-profit)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 animation: "wizCheckPop 250ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                 flexShrink: 0,
               }}>
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none"
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
                   stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
@@ -1922,46 +1927,48 @@ export default function WizardStrategyBuilder({
           >
             <div style={{
               position: "absolute", top: 0, left: 0, right: 0,
-              height: bias === "short" ? 2 : 0,
+              height: bias === "short" ? 3 : 0,
               background: "var(--color-ec-loss)",
               transition: "height 250ms ease",
-              borderRadius: "7px 7px 0 0",
+              borderRadius: "10px 10px 0 0",
             }} />
             <div style={{
-              width: 30, height: 30, borderRadius: "50%",
+              width: 36, height: 36, borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
               backgroundColor: bias === "short" ? "rgba(239, 68, 68, 0.12)" : "var(--color-ec-bg-elevated)",
               border: bias === "short" ? "1px solid rgba(239, 68, 68, 0.25)" : "1px solid var(--color-ec-border)",
               transition: "all 200ms ease", flexShrink: 0,
             }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                 stroke={bias === "short" || hoveredBias === "short" ? "var(--color-ec-loss)" : "var(--color-ec-text-muted)"}
                 strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                 style={{ transition: "stroke 200ms ease" }}>
                 <path d="M12 5v14" /><path d="M19 12l-7 7-7-7" />
               </svg>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center", textAlign: "center" }}>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 12, fontWeight: 700,
+                fontFamily: "General Sans, sans-serif", fontSize: 13, fontWeight: 700,
                 color: bias === "short" ? "var(--color-ec-loss)" : "var(--color-ec-text-high)",
                 transition: "color 200ms ease",
               }}>Short</span>
               <span style={{
-                fontFamily: "General Sans, sans-serif", fontSize: 9,
+                fontFamily: "General Sans, sans-serif", fontSize: 9.5,
                 color: "var(--color-ec-text-muted)", lineHeight: 1.3,
               }}>Posiciones bajistas</span>
             </div>
             {bias === "short" && (
               <div style={{
-                marginLeft: "auto",
-                width: 16, height: 16, borderRadius: "50%",
+                position: "absolute",
+                top: 10,
+                right: 10,
+                width: 18, height: 18, borderRadius: "50%",
                 backgroundColor: "var(--color-ec-loss)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 animation: "wizCheckPop 250ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                 flexShrink: 0,
               }}>
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none"
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
                   stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
