@@ -70,6 +70,44 @@ export default function InlineDatasetBuilder({
   onExpandedChange,
 }: Props) {
   const [name, setName] = useState("Nuevo Dataset");
+  /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
+  // ── Edgie assistant integration (AssistantBus) ───────────────
+  useAssistantAction({
+    name: "dataset.fill",
+    description:
+      "Rellena el Dataset Builder (parcial o completo): nombre, rango de fechas, valores de filtros por sección e includedConditions. " +
+      "El usuario ve el builder actualizarse. Para guardar el dataset usa dataset_save después.",
+    parameters: DatasetDraftSchema,
+    confirm: "auto",
+    handler: (args) => {
+      window.dispatchEvent(new CustomEvent('fill-dataset-builder', { detail: args }));
+      return { ok: true, result: { applied: args } };
+    },
+  });
+
+  useAssistantAction({
+    name: "dataset.save",
+    description:
+      "Guarda el dataset con el nombre y las condiciones incluidas actuales del builder. La creación puede tardar (se calculan los pares ticker-día en segundo plano).",
+    parameters: EmptySchema,
+    confirm: "auto",
+    handler: async () => {
+      if (includedConditions.length === 0) {
+        return { ok: false, error: "No hay condiciones incluidas en el dataset; añade filtros con dataset_fill primero." };
+      }
+      await handleSave(name);
+      return { ok: true, result: `Dataset "${name}" enviado a guardar con ${includedConditions.length} condición(es).` };
+    },
+  });
+
+  useAssistantContext("dataset.draft", () => ({
+    name,
+    dateFrom,
+    dateTo,
+    includedConditions,
+  }));
+  */
+
   const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
   const [dateTo, setDateTo] = useState(MAX_DATE);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);

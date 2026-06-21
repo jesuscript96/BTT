@@ -26,6 +26,40 @@ import {
 
 export default function Home() {
   const [mode, setMode] = useState<"config" | "builder_choice" | "builder" | "wizard" | "dataset">("config");
+  /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
+  // ── Edgie assistant integration (AssistantBus) ───────────────
+  useAssistantAction({
+    name: "backtester.set_mode",
+    description:
+      "Cambia el panel visible del Backtester: 'config' muestra el formulario del backtest, 'builder' el constructor de estrategias, 'dataset' el constructor de datasets.",
+    parameters: SetModeSchema,
+    confirm: "auto",
+    handler: (args) => {
+      const newMode = String(args.mode);
+      if (newMode === "config" || newMode === "builder" || newMode === "dataset") {
+        setMode(newMode);
+        return { ok: true, result: { mode: newMode } };
+      }
+      return { ok: false, error: `Modo desconocido: ${newMode}` };
+    },
+  });
+
+  useAssistantContext("backtester.page", () => {
+    const metrics: any = result?.aggregate_metrics ?? null;
+    return {
+      mode,
+      isRunning: loading,
+      lastError: error,
+      results: result
+        ? {
+            days: result.day_results?.length ?? 0,
+            aggregate_metrics: metrics,
+          }
+        : null,
+    };
+  });
+  */
+
   const [drawerExpanded, setDrawerExpanded] = useState(false);
   const [strategySessionKey, setStrategySessionKey] = useState<string>("init");
 

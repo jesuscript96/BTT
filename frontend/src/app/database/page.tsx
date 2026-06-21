@@ -385,6 +385,53 @@ const MultiEquityChart = ({ strategiesData }: { strategiesData: { name: string; 
 export default function TrunkPage() {
   const router = useRouter()
   const [strategies, setStrategies] = useState<any[]>([])
+  /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
+  useAssistantAction({
+    name: 'trunk.delete',
+    description: 'Elimina permanentemente una estrategia o un dataset guardado del Trunk. Irreversible.',
+    parameters: TrunkDeleteSchema,
+    confirm: 'danger',
+    handler: async (args) => {
+      const type = String(args.type) as 'strategy' | 'dataset'
+      const list = type === 'strategy' ? strategies : datasets
+      const { item, error } = resolveTrunkItem(list, args.id, args.name)
+      if (!item) return { ok: false, error }
+      try {
+        if (type === 'strategy') {
+          await deleteStrategy(item.id)
+          setStrategies(prev => prev.filter(s => s.id !== item.id))
+          setSelectedStrategyIds(prev => prev.filter(x => x !== item.id))
+        } else {
+          await deleteQuery(item.id)
+          setDatasets(prev => prev.filter(d => d.id !== item.id))
+        }
+        return { ok: true, result: `Eliminado ${type} "${item.name}" (id=${item.id}).` }
+      } catch (err) {
+        return { ok: false, error: `Error al borrar: ${String(err)}` }
+      }
+    },
+  })
+
+  useAssistantAction({
+    name: 'trunk.open_strategy_in_backtester',
+    description: 'Abre el Backtester con una estrategia guardada preseleccionada, lista para configurar y ejecutar.',
+    parameters: TrunkOpenStrategySchema,
+    confirm: 'auto',
+    handler: (args) => {
+      const { item, error } = resolveTrunkItem(strategies, args.id, args.name)
+      if (!item) return { ok: false, error }
+      router.push(`/backtester?strategy_id=${item.id}`)
+      return { ok: true, result: `Abriendo el Backtester con la estrategia "${item.name}".` }
+    },
+  })
+
+  useAssistantContext('trunk.page', () => ({
+    strategies: strategies.slice(0, 40).map(s => ({ id: s.id, name: s.name })),
+    datasets: datasets.slice(0, 40).map(d => ({ id: d.id, name: d.name })),
+    savedBacktests: backtests.slice(0, 40).map(b => ({ id: b.id, name: b.name, strategy_ids: b.strategy_ids })),
+  }))
+  */
+
   const [incubatorStrategies, setIncubatorStrategies] = useState<any[]>([])
   const [datasets, setDatasets] = useState<any[]>([])
   const [backtests, setBacktests] = useState<any[]>([])

@@ -296,6 +296,117 @@ export default function BacktestPanel({
   onConfigureStrategy
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
+  // ── Edgie assistant integration (AssistantBus) ───────────────
+  useAssistantAction({
+    name: "backtest.fill_form",
+    description:
+      "Rellena el formulario de configuración del backtest (parcial o completo); el usuario ve los campos cambiar en pantalla. " +
+      "También selecciona dataset/estrategia por id o nombre. No ejecuta nada: usa backtest_run después.",
+    parameters: BacktestParamsSchema,
+    confirm: "auto",
+    handler: (args) => {
+      const data: any = { ...args };
+      const matchedInfo: string[] = [];
+
+      if (data.datasetId || data.datasetName) {
+        const query = String(data.datasetId || data.datasetName).toLowerCase();
+        const matched = datasetsRef.current.find(
+          (d) => d.id.toLowerCase() === query || d.name.toLowerCase().includes(query)
+        );
+        if (!matched) {
+          const available = datasetsRef.current.map((d) => `"${d.name}" (id=${d.id})`).join(", ") || "(ninguno)";
+          return { ok: false, error: `Ningún dataset coincide con "${query}". Disponibles: ${available}` };
+        }
+        matchedInfo.push(`dataset → "${matched.name}" (id=${matched.id})`);
+      }
+      if (data.strategyId || data.strategyName) {
+        const query = String(data.strategyId || data.strategyName).toLowerCase();
+        const matched = strategiesRef.current.find(
+          (s) => s.id.toLowerCase() === query || s.name.toLowerCase().includes(query)
+        );
+        if (!matched) {
+          const available = strategiesRef.current.map((s) => `"${s.name}" (id=${s.id})`).join(", ") || "(ninguna)";
+          return { ok: false, error: `Ninguna estrategia coincide con "${query}". Disponibles: ${available}` };
+        }
+        matchedInfo.push(`estrategia → "${matched.name}" (id=${matched.id})`);
+      }
+
+      window.dispatchEvent(new CustomEvent("fill-backtest-form", { detail: data }));
+      return { ok: true, result: { applied: data, matched: matchedInfo } };
+    },
+  });
+
+  useAssistantAction({
+    name: "backtest.run",
+    description:
+      "Ejecuta el backtest usando el dataset Y la estrategia GUARDADA que están seleccionados en el formulario. " +
+      "IMPORTANTE: NO usa el borrador del Strategy Builder. Si el usuario acaba de construir una estrategia nueva con strategy_fill, ejecútala con strategy_test (no con esta). " +
+      "Usa backtest_run solo cuando hay una estrategia ya guardada seleccionada. Revisa backtest.form y backtest.catalog antes.",
+    parameters: EmptySchema,
+    confirm: "auto",
+    handler: async () => {
+      // Pre-flight: a valid saved dataset and strategy must be selected, or the
+      // backend fails with opaque errors like "Strategy not found".
+      if (!selectedDataset || !datasetsRef.current.some((d) => d.id === selectedDataset)) {
+        return { ok: false, error: "No hay un dataset válido seleccionado. Usa backtest_fill_form con datasetName/datasetId primero." };
+      }
+      const strat = strategiesRef.current.find((s) => s.id === selectedStrategy);
+      if (!strat) {
+        const available = strategiesRef.current.map((s) => `"${s.name}" (id=${s.id})`).join(", ") || "(ninguna guardada)";
+        return {
+          ok: false,
+          error:
+            "No hay una estrategia GUARDADA válida seleccionada. " +
+            "Si quieres ejecutar una estrategia recién construida en el builder, usa strategy_test en su lugar. " +
+            `Estrategias guardadas disponibles: ${available}.`,
+        };
+      }
+
+      // Race the run against a fast backend failure (e.g. "Strategy not found")
+      // so we report the truth instead of a false "launched".
+      const failure = new Promise<string | null>((resolve) => {
+        const onFinished = (e: Event) => {
+          const detail = (e as CustomEvent).detail;
+          if (detail && detail.ok === false) { cleanup(); resolve(detail.error || "Error al ejecutar el backtest"); }
+        };
+        const timer = setTimeout(() => { cleanup(); resolve(null); }, 4000);
+        const cleanup = () => { clearTimeout(timer); window.removeEventListener("backtest-run-finished", onFinished); };
+        window.addEventListener("backtest-run-finished", onFinished);
+      });
+
+      window.dispatchEvent(new CustomEvent("run-backtest-action"));
+      const err = await failure;
+      if (err) return { ok: false, error: `El backtest falló: ${err}` };
+      return { ok: true, result: `Backtest en ejecución con la estrategia guardada "${strat.name}"; los resultados aparecerán en pantalla al terminar.` };
+    },
+  });
+
+  useAssistantContext("backtest.form", () => ({
+    selectedDatasetId: selectedDataset,
+    selectedStrategyId: selectedStrategy,
+    initCash,
+    riskR,
+    riskType,
+    fixedRatioDelta,
+    fees,
+    feeType,
+    slippage,
+    startDate,
+    endDate,
+    marketSessions,
+    customStartTime,
+    customEndTime,
+    locatesCost: useLocates ? locatesCost : 0,
+    monthlyExpenses: useMonthlyExpenses ? monthlyExpenses : 0,
+  }));
+
+  useAssistantContext("backtest.catalog", () => ({
+    datasets: datasets.map((d) => ({ id: d.id, name: d.name, min_date: d.min_date, max_date: d.max_date })),
+    strategies: strategies.map((s) => ({ id: s.id, name: s.name })),
+  }));
+  */
+
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const isInitialMountRef = useRef(true);
   const [selectedDataset, setSelectedDataset] = useState("");

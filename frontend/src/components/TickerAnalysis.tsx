@@ -1803,6 +1803,64 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [aiLoading, setAiLoading] = useState<boolean>(false);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiMetrics, setAiMetrics] = useState<any | null>(null);
+  /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
+    // ── Edgie assistant integration (AssistantBus) ───────────────
+    useAssistantAction({
+        name: 'ticker.load',
+        description:
+            'Carga un ticker en la página de Ticker Analysis: métricas, gap stats, SEC filings, noticias e informe IA. ' +
+            'Al terminar, la base de conocimiento del ticker queda disponible en la conversación.',
+        parameters: TickerLoadSchema,
+        confirm: 'auto',
+        handler: async (args) => {
+            const t = String(args.ticker || '').toUpperCase().trim();
+            if (!t) return { ok: false, error: 'Ticker vacío.' };
+            setSelectedTicker(t);
+
+            // Wait for the page to finish loading so the tool result can carry
+            // the key metrics and the model can answer in the same turn.
+            const payload = await new Promise<any>((resolve) => {
+                const timer = setTimeout(() => { cleanup(); resolve(null); }, 20000);
+                const onLoaded = (e: Event) => {
+                    const detail = (e as CustomEvent).detail;
+                    if (detail?.ticker === t) { cleanup(); resolve(detail); }
+                };
+                const cleanup = () => {
+                    clearTimeout(timer);
+                    window.removeEventListener('ticker-loaded', onLoaded);
+                };
+                window.addEventListener('ticker-loaded', onLoaded);
+            });
+
+            if (!payload) {
+                return { ok: true, result: `Cargando ${t}; los datos aún no han terminado de llegar (sigue cargando en segundo plano).` };
+            }
+            const market = payload.data?.market ?? {};
+            const profile = payload.data?.profile ?? {};
+            return {
+                ok: true,
+                result: {
+                    ticker: t,
+                    name: profile.name ?? null,
+                    price: market.price ?? null,
+                    market_cap: market.market_cap ?? null,
+                    float_shares: market.float_shares ?? null,
+                    shares_outstanding: market.shares_outstanding ?? null,
+                    note: 'Base de conocimiento completa cargada (perfil, métricas, gap stats, filings, noticias).',
+                },
+            };
+        },
+    });
+
+    useAssistantContext('ticker.page', () => ({
+        selectedTicker: selectedTicker || null,
+        loading: loadingAnalysis,
+        aiReport: aiMetrics
+            ? { metrics: aiMetrics, ready: true }
+            : { ready: false, loading: aiLoading, error: aiError },
+    }));
+  */
+
     const [showFullDesc, setShowFullDesc] = useState(false);
     const [logoFailed, setLogoFailed] = useState(false);
     const [logoUrlIndex, setLogoUrlIndex] = useState(0);

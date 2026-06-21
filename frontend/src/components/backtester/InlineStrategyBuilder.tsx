@@ -300,6 +300,71 @@ export default function InlineStrategyBuilder({
   onExpandedChange,
 }: Props) {
   const [name, setName] = useState("Nueva Estrategia");
+  /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
+  // ── Edgie assistant integration (AssistantBus) ───────────────
+  useAssistantAction({
+    name: "strategy.fill",
+    description:
+      "Construye una estrategia NUEVA en el Strategy Builder (parcial o completo): nombre, bias, día de aplicación, precondiciones, lógica de entrada/salida y gestión de riesgo. " +
+      "El usuario ve el builder actualizarse en pantalla. Para EJECUTAR esta estrategia recién construida usa strategy_test (la corre directamente, NO hace falta guardarla y NO uses backtest_run con ella).",
+    parameters: StrategyDraftSchema,
+    confirm: "auto",
+    handler: (args) => {
+      // Deep-validate the condition tree before it reaches component state:
+      // a malformed condition would crash the builder render.
+      const guardError = guardStrategyDraft(args as Record<string, any>);
+      if (guardError) return { ok: false, error: guardError };
+      window.dispatchEvent(new CustomEvent('fill-strategy-builder', { detail: args }));
+      return { ok: true, result: { applied: args } };
+    },
+  });
+
+  useAssistantAction({
+    name: "strategy.test",
+    description:
+      "Ejecuta directamente un backtest con el borrador ACTUAL del Strategy Builder (la estrategia recién construida con strategy_fill), sin necesidad de guardarla. " +
+      "Usa el dataset y los parámetros seleccionados en el formulario. Este es el camino correcto para 'crear y probar' una estrategia nueva. " +
+      "Falla si hay condiciones incompletas o si los parciales de take profit no suman 100%.",
+    parameters: EmptySchema,
+    confirm: "auto",
+    handler: async () => {
+      const logicErrors = validateStrategyLogic(entryLogic, exitLogic);
+      if (logicErrors.length > 0) {
+        return { ok: false, error: `Condiciones incompletas: ${logicErrors.join('; ')}` };
+      }
+
+      // Race the run against a fast backend failure so we report the truth.
+      const failure = new Promise<string | null>((resolve) => {
+        const onFinished = (e: Event) => {
+          const detail = (e as CustomEvent).detail;
+          if (detail && detail.ok === false) { cleanup(); resolve(detail.error || "Error al ejecutar el backtest"); }
+        };
+        const timer = setTimeout(() => { cleanup(); resolve(null); }, 4000);
+        const cleanup = () => { clearTimeout(timer); window.removeEventListener("backtest-run-finished", onFinished); };
+        window.addEventListener("backtest-run-finished", onFinished);
+      });
+
+      handleTest();
+      const err = await failure;
+      if (err) return { ok: false, error: `El backtest de prueba falló: ${err}` };
+      return { ok: true, result: "Backtest de prueba en ejecución con el borrador actual; los resultados aparecerán al terminar." };
+    },
+  });
+
+  useAssistantContext("strategy.draft", () => ({
+    name,
+    bias,
+    applyDay,
+    preconditionsCount: postgapPreconditions.length,
+    entrySummary: getGroupSummaryText(entryLogic.root_condition) || "(sin condiciones)",
+    entryTimeframe: entryLogic.timeframe,
+    entryTimeWindows: entryLogic.entry_time_windows ?? [],
+    exitSummary: getGroupSummaryText(exitLogic.root_condition) || "(sin condiciones)",
+    exitTimeframe: exitLogic.timeframe,
+    riskManagement,
+  }));
+  */
+
   const createdAtRef = useRef(new Date().toISOString());
   const lastLoadedStrategyRef = useRef<string>("");
   const [activeTooltip, setActiveTooltip] = useState<{
