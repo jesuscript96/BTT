@@ -387,9 +387,9 @@ export default function ChartsTab({
           />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-          {/* Left Column: inputs (5 cols) */}
-          <div className="lg:col-span-5 flex flex-col pr-8" style={{ borderRight: "1px solid var(--color-ec-border)", maxWidth: 380 }}>
+        <div className="flex flex-col lg:flex-row gap-8 items-stretch">
+          {/* Left Column: inputs */}
+          <div className="w-full lg:w-[295px] flex-shrink-0 flex flex-col pb-8 lg:pb-0 lg:pr-8 border-b lg:border-b-0 lg:border-r border-[var(--color-ec-border)]">
             
             {/* 1. Espacios Temporales */}
             <div style={{ borderBottom: "1.5px solid var(--color-ec-border)", paddingBottom: 24, marginBottom: 24 }}>
@@ -413,9 +413,9 @@ export default function ChartsTab({
               </button>
               
               {openSections.includes("temporal") && (
-                <div className="space-y-6 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="space-y-8 pt-2 animate-in fade-in slide-in-from-top-1 duration-200">
                   <div>
-                    <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-2.5 block">Excluir Días de la Semana</label>
+                    <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-4 block">Excluir Días de la Semana</label>
                     <div className="flex gap-2 max-w-[280px]">
                       {["L", "M", "X", "J", "V"].map((day, idx) => (
                         <button
@@ -437,7 +437,7 @@ export default function ChartsTab({
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-2.5 block">Excluir Meses del Año</label>
+                    <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-4 block">Excluir Meses del Año</label>
                     <div className="grid grid-cols-6 gap-2 max-w-[320px]">
                       {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => (
                         <button
@@ -459,10 +459,10 @@ export default function ChartsTab({
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-2.5 block">Excluir Rango de Horas</label>
+                    <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] mb-4 block">Excluir Rango de Horas</label>
                     <div className="flex items-center gap-4 max-w-[280px]">
                       <div className="flex-1">
-                        <label className="text-[9px] font-medium text-[var(--color-ec-text-muted)] mb-1 block uppercase opacity-70">Desde:</label>
+                        <label className="text-[9px] font-medium text-[var(--color-ec-text-muted)] mb-2 block uppercase opacity-70">Desde:</label>
                         <input
                           type="time"
                           value={excludeHourStart}
@@ -471,7 +471,7 @@ export default function ChartsTab({
                         />
                       </div>
                       <div className="flex-1">
-                        <label className="text-[9px] font-medium text-[var(--color-ec-text-muted)] mb-1 block uppercase opacity-70">Hasta:</label>
+                        <label className="text-[9px] font-medium text-[var(--color-ec-text-muted)] mb-2 block uppercase opacity-70">Hasta:</label>
                         <input
                           type="time"
                           value={excludeHourEnd}
@@ -482,7 +482,7 @@ export default function ChartsTab({
                     </div>
                   </div>
 
-                  <div className="border-t border-[var(--color-ec-border)] pt-4 max-w-[280px]">
+                  <div className="border-t border-[var(--color-ec-border)] pt-6 max-w-[280px]">
                     <div className="flex items-center justify-between">
                       <label className="text-[10px] font-medium text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] transition-colors">Excluir días aleatorios/mes:</label>
                       <input
@@ -657,50 +657,62 @@ export default function ChartsTab({
 
           </div>
 
-          {/* Right Column: results & chart (7 cols) */}
-          <div className="lg:col-span-7 flex flex-col gap-8">
-            <h4 className="text-[10px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-0 flex items-center gap-2 font-mono tracking-[0.12em]">
+          {/* Middle Column: Chart comparison */}
+          <div className="flex-grow min-w-0 flex flex-col justify-start py-4 lg:py-0">
+            <WhatIfEquityChart
+              originalEquity={globalEquity}
+              originalDrawdown={globalDrawdown}
+              simResult={simResult}
+              initCash={initCash}
+              riskR={riskR}
+              isDarkMode={isDarkMode}
+            />
+          </div>
+
+          {/* Right Column: results table */}
+          <div className="w-full lg:w-[245px] flex-shrink-0 flex flex-col gap-4 pl-0 lg:pl-4">
+            <h4 className="text-[10px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-1 flex items-center gap-2 font-mono tracking-[0.12em]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
               Resultados Simulados
             </h4>
             
-            <div className="w-full overflow-x-auto">
+            <div className="w-full">
               <table className="w-full text-left border-collapse font-mono">
                 <thead>
                   <tr className="border-b border-[var(--color-ec-border)]">
-                    <th className="pb-2.5 text-[10px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
+                    <th className="pb-2.5 text-[9px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
                       Métrica
                     </th>
-                    <th className="pb-2.5 text-right text-[10px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
-                      Original
+                    <th className="pb-2.5 text-right text-[9px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
+                      Orig.
                     </th>
-                    <th className="pb-2.5 text-right text-[10px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
-                      Simulado (What If)
+                    <th className="pb-2.5 text-right text-[9px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
+                      Sim.
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   {[
                     { label: "Días totales", base: metrics?.total_days ?? 0, sim: getSimValue("total_days") },
-                    { label: "Trades ejecutados", base: metrics?.total_trades ?? 0, sim: getSimValue("total_trades") },
+                    { label: "Trades ejec.", base: metrics?.total_trades ?? 0, sim: getSimValue("total_trades") },
                     { label: "Win Rate", base: `${(metrics?.win_rate_pct ?? 0).toFixed(1)}%`, sim: getSimValue("win_rate_pct", v => `${v.toFixed(1)}%`) },
-                    { label: "Profit Factor", base: (metrics?.avg_profit_factor ?? 0).toFixed(3), sim: getSimValue("avg_profit_factor", v => v.toFixed(3)) },
-                    { label: "Retorno Total (PnL)", base: `${(metrics?.total_return_pct ?? 0).toFixed(2)}%`, sim: getSimValue("total_return_pct", v => `${v.toFixed(2)}%`) },
-                    { label: "Drawdown Máximo", base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(2)}%`, sim: getSimValue("max_drawdown_pct", v => `${v.toFixed(2)}%`), danger: true },
-                    { label: "R promedio / Día", base: `${(metrics?.avg_r_per_day ?? 0).toFixed(3)}R`, sim: getSimValue("avg_r_per_day", v => `${v.toFixed(3)}R`) },
-                    { label: "Ratio Sharpe", base: (metrics?.avg_sharpe ?? 0).toFixed(3), sim: getSimValue("avg_sharpe", v => v.toFixed(3)) },
+                    { label: "Profit Factor", base: (metrics?.avg_profit_factor ?? 0).toFixed(2), sim: getSimValue("avg_profit_factor", v => v.toFixed(2)) },
+                    { label: "Retorno (PnL)", base: `${(metrics?.total_return_pct ?? 0).toFixed(1)}%`, sim: getSimValue("total_return_pct", v => `${v.toFixed(1)}%`) },
+                    { label: "Max DD", base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(1)}%`, sim: getSimValue("max_drawdown_pct", v => `${v.toFixed(1)}%`), danger: true },
+                    { label: "R / Día", base: `${(metrics?.avg_r_per_day ?? 0).toFixed(2)}R`, sim: getSimValue("avg_r_per_day", v => `${v.toFixed(2)}R`) },
+                    { label: "Sharpe", base: (metrics?.avg_sharpe ?? 0).toFixed(2), sim: getSimValue("avg_sharpe", v => v.toFixed(2)) },
                   ].map((m, idx) => (
                     <tr
                       key={idx}
                       className="border-b border-dashed border-[var(--color-ec-border)] hover:bg-[rgba(255,255,255,0.015)] transition-colors"
                     >
-                      <td className="py-2.5 text-[11px] text-[var(--color-ec-text-secondary)] font-medium">
+                      <td className="py-2 text-[10.5px] text-[var(--color-ec-text-secondary)] font-medium truncate max-w-[110px]" title={m.label}>
                         {m.label}
                       </td>
-                      <td className="py-2.5 text-right text-[11px] text-[var(--color-ec-text-muted)] font-mono">
+                      <td className="py-2 text-right text-[10.5px] text-[var(--color-ec-text-muted)] font-mono">
                         {m.base}
                       </td>
-                      <td className={`py-2.5 text-right text-[12px] font-bold font-mono ${
+                      <td className={`py-2 text-right text-[11px] font-bold font-mono ${
                         m.sim === "---" 
                           ? "text-[var(--color-ec-text-muted)]"
                           : m.danger 
@@ -713,18 +725,6 @@ export default function ChartsTab({
                   ))}
                 </tbody>
               </table>
-            </div>
-
-            {/* Chart comparison */}
-            <div className="border-t border-dashed border-[var(--color-ec-border)] pt-4 w-full">
-              <WhatIfEquityChart
-                originalEquity={globalEquity}
-                originalDrawdown={globalDrawdown}
-                simResult={simResult}
-                initCash={initCash}
-                riskR={riskR}
-                isDarkMode={isDarkMode}
-              />
             </div>
           </div>
         </div>
