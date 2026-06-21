@@ -503,12 +503,12 @@ export default function ChartsTab({
             </div>
 
             {/* Simulation button */}
-            <div className="max-w-[358px] mt-7 pb-5 border-b border-[var(--color-ec-border)]">
+            <div className="max-w-[358px]" style={{ marginTop: "24px" }}>
               <button
                 type="button"
                 onClick={handleRunWhatIf}
                 disabled={simLoading}
-                className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-2.5 rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                className="w-full bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] py-[14px] rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 {simLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" strokeWidth={2} />}
                 {simLoading ? "Simulando..." : "Ejecutar Simulación What-if"}
@@ -518,8 +518,11 @@ export default function ChartsTab({
               </p>
             </div>
 
+            {/* Separator above Basic Stress Test */}
+            <div className="border-t border-[var(--color-ec-border)] max-w-[358px]" style={{ marginTop: "24px" }} />
+
             {/* ── SECTION: BASIC STRESS TEST ── */}
-            <div className="max-w-[358px] mt-6 flex flex-col" style={{ gap: "16px" }}>
+            <div className="max-w-[358px] flex flex-col" style={{ gap: "16px", marginTop: "20px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Shield className="w-4 h-4 text-[var(--color-ec-text-high)]" strokeWidth={2} />
                 <h4 style={{
@@ -566,7 +569,7 @@ export default function ChartsTab({
                         className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
                       />
                     </div>
-                    <div className="flex items-center justify-between border-t border-[var(--color-ec-border)] pt-2">
+                    <div className="flex items-center justify-between">
                       <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Excluir días aleatorios/mes:</span>
                       <input
                         type="number"
@@ -607,7 +610,7 @@ export default function ChartsTab({
                       />
                     </div>
                     
-                    <div className="border-t border-[var(--color-ec-border)] pt-3.5 flex flex-col gap-3">
+                    <div className="flex flex-col gap-3">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-[var(--color-ec-text-muted)] font-medium">Black Swans (Eventos):</span>
                         <input
@@ -658,7 +661,7 @@ export default function ChartsTab({
                   type="button"
                   onClick={handleRunStressTest}
                   disabled={simLoading}
-                  className="w-full bg-[var(--color-ec-loss)] text-white hover:bg-[color-mix(in_srgb,var(--color-ec-loss)_85%,white)] py-2.5 rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="w-full bg-[var(--color-ec-loss)] text-white hover:bg-[color-mix(in_srgb,var(--color-ec-loss)_85%,white)] py-[14px] rounded-md text-[10px] font-sans font-bold uppercase tracking-[0.15em] transform active:scale-[0.98] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   {simLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" strokeWidth={2} />}
                   {simLoading ? "Simular Basic Stress..." : "Ejecutar simulación de basic stress"}
@@ -1055,7 +1058,7 @@ function WhatIfEquityChart({
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: 380,
+      height: 580,
       handleScale: {
         mouseWheel: false,
         pinch: false,
@@ -1267,7 +1270,7 @@ function WhatIfEquityChart({
           ))}
         </div>
       </div>
-      <div ref={chartContainerRef} className="h-[380px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
+      <div ref={chartContainerRef} className="h-[580px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
       <div ref={ddContainerRef} className="h-[120px] w-full rounded-b border border-[var(--color-ec-border)]" />
     </div>
   );
