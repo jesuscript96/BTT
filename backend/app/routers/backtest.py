@@ -56,16 +56,6 @@ def run_backtest_endpoint(req: BacktestRequest):
     if req.dataset_id in backtest_progress and backtest_progress[req.dataset_id].get("status") == "cancelled":
         backtest_progress.pop(req.dataset_id, None)
 
-    # Check if dataset precache is running (state lives in users.duckdb so it
-    # survives backend restarts and is shared across workers).
-    from app.routers.query import get_precache_state
-    state = get_precache_state(req.dataset_id)
-    if state and state.get("status") in ("running", "pending"):
-        percent = state.get("percent", 0.0)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Espera a que se cargue el dataset (progreso: {percent}%)"
-        )
     return run_backtest_orchestrator(req)
 
 
