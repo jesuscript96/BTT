@@ -14,7 +14,7 @@ const TABS = [
   { id: "calendar", label: "Calendar" },
   { id: "trades", label: "Trades" },
   { id: "analysis", label: "Análisis por trade" },
-  { id: "charts_optimization", label: "Charts + Optimization" },
+  { id: "charts_optimization", label: "Charts + Optimization IS" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
