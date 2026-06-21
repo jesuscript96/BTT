@@ -88,7 +88,7 @@ export default function Home() {
   const [selectedDay, setSelectedDay] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [strategyToSave, setStrategyToSave] = useState<any | null>(null);
-  const [includeWhatIfInSave, setIncludeWhatIfInSave] = useState(false);
+  const [includeWhatIfInSave, setIncludeWhatIfInSave] = useState(true);
   const [hoveredSaveBtn, setHoveredSaveBtn] = useState(false);
   const [activeSaveBtn, setActiveSaveBtn] = useState(false);
 
@@ -1175,62 +1175,47 @@ export default function Home() {
                 <div style={{ width: '33.333333%', display: 'flex', flexDirection: 'column', height: 580, paddingBottom: 4, boxSizing: 'border-box' }}>
                   <div style={{ flexShrink: 0 }}>
                     <MetricsCard metrics={isFilteredResult!.aggregate_metrics} vertical />
-                    <div style={{ padding: '12px 4px 4px 4px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <button
-                        onClick={handleSaveToBaulClick}
-                        disabled={!draftStrategy}
-                        onMouseEnter={() => { if (draftStrategy) setHoveredSaveBtn(true); }}
-                        onMouseLeave={() => { setHoveredSaveBtn(false); setActiveSaveBtn(false); }}
-                        onMouseDown={() => { if (draftStrategy) setActiveSaveBtn(true); }}
-                        onMouseUp={() => setActiveSaveBtn(false)}
-                        style={{
-                          width: '100%',
-                          padding: '8px 0',
-                          backgroundColor: 'var(--color-ec-copper)',
-                          border: 'none',
-                          borderRadius: 5,
-                          fontFamily: 'var(--color-ec-sans)',
-                          fontSize: 11,
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                          letterSpacing: '1.2px',
-                          color: 'var(--color-ec-copper-text)',
-                          cursor: draftStrategy ? 'pointer' : 'not-allowed',
-                          opacity: draftStrategy ? 1 : 0.4,
-                          boxShadow: (hoveredSaveBtn && draftStrategy) ? '0 0 14px rgba(216, 122, 61, 0.5)' : 'none',
-                          transform: (activeSaveBtn && draftStrategy) ? 'scale(0.98)' : (hoveredSaveBtn && draftStrategy) ? 'scale(1.015)' : 'scale(1)',
-                          transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
-                        }}
-                      >
-                        Guardar estrategia en el baúl
-                      </button>
-                      <label style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        cursor: 'pointer',
-                        fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 10,
-                        color: 'var(--color-ec-text-secondary)',
-                        userSelect: 'none',
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={includeWhatIfInSave}
-                          onChange={(e) => setIncludeWhatIfInSave(e.target.checked)}
-                          style={{
-                            accentColor: 'var(--color-ec-copper)',
-                            cursor: 'pointer',
-                            width: 13,
-                            height: 13,
-                          }}
-                        />
-                        <span>incluir configuración del what-if</span>
-                      </label>
-                    </div>
                   </div>
-                  <div style={{ height: 288, width: '100%', marginTop: 'auto', marginBottom: 0, flexShrink: 0 }}>
+                  
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexGrow: 1,
+                    padding: '8px 4px',
+                  }}>
+                    <button
+                      onClick={handleSaveToBaulClick}
+                      disabled={!draftStrategy}
+                      onMouseEnter={() => { if (draftStrategy) setHoveredSaveBtn(true); }}
+                      onMouseLeave={() => { setHoveredSaveBtn(false); setActiveSaveBtn(false); }}
+                      onMouseDown={() => { if (draftStrategy) setActiveSaveBtn(true); }}
+                      onMouseUp={() => setActiveSaveBtn(false)}
+                      style={{
+                        width: '100%',
+                        padding: '10px 0',
+                        backgroundColor: 'var(--color-ec-copper)',
+                        border: 'none',
+                        borderRadius: 5,
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11.5,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '1.4px',
+                        color: 'var(--color-ec-copper-text)',
+                        cursor: draftStrategy ? 'pointer' : 'not-allowed',
+                        opacity: draftStrategy ? 1 : 0.4,
+                        boxShadow: (hoveredSaveBtn && draftStrategy) ? '0 0 16px rgba(216, 122, 61, 0.6)' : 'none',
+                        transform: (activeSaveBtn && draftStrategy) ? 'scale(0.98)' : (hoveredSaveBtn && draftStrategy) ? 'scale(1.015)' : 'scale(1)',
+                        transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+                      }}
+                    >
+                      Guardar estrategia en el baúl
+                    </button>
+                  </div>
+
+                  <div style={{ height: 288, width: '100%', flexShrink: 0 }}>
                     <MaeScatterChart trades={isFilteredResult!.trades} isDarkMode={isDarkMode} />
                   </div>
                 </div>

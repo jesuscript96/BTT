@@ -255,7 +255,7 @@ export default function ResultsTabs({
           {/* Sub-navigation tabs */}
           <div style={{
             display: "flex",
-            gap: 16,
+            alignItems: "center",
             borderBottom: "1px solid var(--color-ec-border)",
             marginBottom: 20,
             paddingTop: 8,
@@ -264,11 +264,11 @@ export default function ResultsTabs({
               onClick={() => setChartsSubTab("charts")}
               style={{
                 paddingBottom: 8,
+                paddingLeft: 4,
+                paddingRight: 4,
                 fontFamily: "var(--color-ec-sans)",
                 fontSize: 11,
                 fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
                 color: chartsSubTab === "charts" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
                 borderBottom: chartsSubTab === "charts" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
                 background: "transparent",
@@ -277,21 +277,23 @@ export default function ResultsTabs({
                 borderRight: "none",
                 cursor: "pointer",
                 transition: "all 150ms ease",
+                marginBottom: -1,
               }}
               onMouseEnter={(e) => { if (chartsSubTab !== "charts") e.currentTarget.style.color = "var(--color-ec-text-secondary)"; }}
               onMouseLeave={(e) => { if (chartsSubTab !== "charts") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
             >
               Charts
             </button>
+            <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
             <button
               onClick={() => setChartsSubTab("optimization")}
               style={{
                 paddingBottom: 8,
+                paddingLeft: 4,
+                paddingRight: 4,
                 fontFamily: "var(--color-ec-sans)",
                 fontSize: 11,
                 fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
                 color: chartsSubTab === "optimization" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
                 borderBottom: chartsSubTab === "optimization" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
                 background: "transparent",
@@ -300,6 +302,7 @@ export default function ResultsTabs({
                 borderRight: "none",
                 cursor: "pointer",
                 transition: "all 150ms ease",
+                marginBottom: -1,
               }}
               onMouseEnter={(e) => { if (chartsSubTab !== "optimization") e.currentTarget.style.color = "var(--color-ec-text-secondary)"; }}
               onMouseLeave={(e) => { if (chartsSubTab !== "optimization") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
