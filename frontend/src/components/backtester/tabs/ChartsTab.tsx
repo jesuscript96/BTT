@@ -40,6 +40,7 @@ interface ChartsTabProps {
   riskR: number;
   monthlyExpenses?: number;
   isDarkMode?: boolean;
+  viewMode?: "charts" | "whatif";
 }
 
 const WEEKDAY_NAMES = ["Lun", "Mar", "Mie", "Jue", "Vie"];
@@ -103,6 +104,7 @@ export default function ChartsTab({
   riskR = 100,
   monthlyExpenses = 0,
   isDarkMode = false,
+  viewMode = "charts",
 }: ChartsTabProps) {
 
   const gridColor = "#2C2F33";
@@ -403,11 +405,10 @@ export default function ChartsTab({
     return <p className="text-sm text-[var(--muted)] pr-6">Sin trades para analizar</p>;
   }
 
-  return (
-    <div className="space-y-12 animate-in fade-in duration-300" style={{ paddingTop: 0 }}>
-      
-      {/* ── SECTION: WHAT IF SIMULATOR ── */}
-      <div className="pb-0 mb-0">
+  if (viewMode === "whatif") {
+    return (
+      <div className="space-y-12 animate-in fade-in duration-300" style={{ paddingTop: 0 }}>
+        <div className="pb-0 mb-0">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <Zap className="w-4 h-4 text-[var(--color-ec-text-high)]" strokeWidth={2} />
           <h3 style={{
@@ -746,11 +747,13 @@ export default function ChartsTab({
             </div>
           </div>
         </div>
-
-        {/* Separator line between Simulator and Descriptive Charts */}
-        <div className="w-full" style={{ borderBottom: "1px solid var(--color-ec-border)", marginTop: "40px", marginBottom: "40px" }} />
       </div>
+      </div>
+    );
+  }
 
+  return (
+    <div className="space-y-12 animate-in fade-in duration-300" style={{ paddingTop: 0 }}>
       {/* ── SECTION: DESCRIPTIVE CHARTS ── */}
       {/* ROW 1: Rolling EV + EV by Time + EV by Day — borderless triptych */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 h-[280px] lg:h-[300px]" style={{ borderBottom: '1px solid var(--border)' }}>

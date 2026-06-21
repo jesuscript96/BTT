@@ -55,7 +55,7 @@ export default function ResultsTabs({
   onSelectDay,
 }: ResultsTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("performance");
-  const [chartsSubTab, setChartsSubTab] = useState<"charts" | "optimization">("charts");
+  const [chartsSubTab, setChartsSubTab] = useState<"charts" | "whatif_stress" | "optimization">("charts");
 
   const handleSelectTrade = (ticker: string, date: string) => {
     const dayIdx = result.day_results.findIndex(
@@ -251,7 +251,7 @@ export default function ResultsTabs({
             )}
           </div>
         </div>
-        <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
+         <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
           {/* Sub-navigation tabs */}
           <div style={{
             display: "flex",
@@ -283,6 +283,31 @@ export default function ResultsTabs({
               onMouseLeave={(e) => { if (chartsSubTab !== "charts") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
             >
               Charts
+            </button>
+            <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
+            <button
+              onClick={() => setChartsSubTab("whatif_stress")}
+              style={{
+                paddingBottom: 8,
+                paddingLeft: 4,
+                paddingRight: 4,
+                fontFamily: "var(--color-ec-sans)",
+                fontSize: 11,
+                fontWeight: 600,
+                color: chartsSubTab === "whatif_stress" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+                borderBottom: chartsSubTab === "whatif_stress" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                background: "transparent",
+                borderTop: "none",
+                borderLeft: "none",
+                borderRight: "none",
+                cursor: "pointer",
+                transition: "all 150ms ease",
+                marginBottom: -1,
+              }}
+              onMouseEnter={(e) => { if (chartsSubTab !== "whatif_stress") e.currentTarget.style.color = "var(--color-ec-text-secondary)"; }}
+              onMouseLeave={(e) => { if (chartsSubTab !== "whatif_stress") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
+            >
+              What if and Stress test
             </button>
             <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
             <button
@@ -323,6 +348,21 @@ export default function ResultsTabs({
               riskR={riskR}
               monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
               isDarkMode={isDarkMode}
+              viewMode="charts"
+            />
+          </div>
+          <div style={{ display: chartsSubTab === "whatif_stress" ? "block" : "none" }}>
+            <ChartsTab
+              trades={result.trades}
+              dayResults={result.day_results}
+              globalEquity={result.global_equity}
+              globalDrawdown={result.global_drawdown}
+              metrics={result.aggregate_metrics}
+              initCash={initCash}
+              riskR={riskR}
+              monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+              isDarkMode={isDarkMode}
+              viewMode="whatif"
             />
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>
