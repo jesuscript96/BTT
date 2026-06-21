@@ -422,10 +422,12 @@ export default function Home() {
               resolvedDatasetId = newQuery.id;
               
               // Update strategy in chest with the generated dataset_id so it is persistent!
-              await updateStrategy(strategyData.id, {
-                ...def,
-                dataset_id: resolvedDatasetId,
-              });
+              if (strategyData.id) {
+                await updateStrategy(strategyData.id, {
+                  ...def,
+                  dataset_id: resolvedDatasetId,
+                });
+              }
               setStrategiesRefresh((prev) => prev + 1);
             } catch (err: any) {
               setError(err.message || "Error al crear el universo para la estrategia.");

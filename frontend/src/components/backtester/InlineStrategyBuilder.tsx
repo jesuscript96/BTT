@@ -921,16 +921,16 @@ export default function InlineStrategyBuilder({
                         <div style={{ display: 'flex', gap: 12 }}>
                           <div>
                             <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
-                            <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>{currentDs.pair_count > 0 ? currentDs.pair_count : "Pendiente"}</span>
+                            <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>{currentDs!.pair_count > 0 ? currentDs!.pair_count : "Pendiente"}</span>
                           </div>
                           <div>
                             <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
-                            <span>{currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}</span>
+                            <span>{currentDs!.min_date ? formatDate(currentDs!.min_date!) : '?'} - {currentDs!.max_date ? formatDate(currentDs!.max_date!) : '?'}</span>
                           </div>
                         </div>
-                        {currentDs.filters && Object.keys(currentDs.filters).length > 0 && (
+                        {currentDs!.filters && Object.keys(currentDs!.filters!).length > 0 && (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                            {Object.entries(currentDs.filters)
+                            {Object.entries(currentDs!.filters!)
                               .filter(([k]) => k !== 'rules' && k !== 'date_from' && k !== 'date_to')
                               .map(([key, val]) => {
                                 const lbl = formatFilterValue(key, val);
@@ -951,7 +951,7 @@ export default function InlineStrategyBuilder({
                                   </span>
                                 ) : null;
                               })}
-                            {(currentDs.filters.rules || []).map((r: any, idx: number) => {
+                            {(currentDs!.filters!.rules || []).map((r: any, idx: number) => {
                               const lbl = formatRule(r);
                               return (
                                 <span key={idx} style={{

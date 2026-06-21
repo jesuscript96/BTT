@@ -104,6 +104,9 @@ export interface UniverseFilters {
     require_shortable: boolean;
     exclude_dilution: boolean;
     whitelist_sectors: string[];
+    date_from?: string;
+    date_to?: string;
+    rules?: any[];
 }
 
 export interface IndicatorConfig {
@@ -211,6 +214,7 @@ export interface TrailingStopSettings {
     active: boolean;
     type: string;
     buffer_pct: number;
+    buffer_r?: number;
 }
 
 export interface RiskManagement {

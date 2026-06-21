@@ -662,6 +662,7 @@ export default function WizardStrategyBuilder({
   const [loadingDatasets, setLoadingDatasets] = useState(true);
   const [selectedDataset, setSelectedDataset] = useState<string>("");
   const [customUniverse, setCustomUniverse] = useState<boolean>(true);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [universeFilters, setUniverseFilters] = useState<any>({
     date_from: TWO_YEARS_AGO,
     date_to: MAX_DATE,
@@ -1304,21 +1305,21 @@ export default function WizardStrategyBuilder({
                   <div>
                     <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>PARES: </span>
                     <span style={{ color: 'var(--color-ec-copper)', fontWeight: 700 }}>
-                      {currentDs.pair_count > 0 ? `${currentDs.pair_count} pares` : "Pendiente"}
+                      {currentDs!.pair_count > 0 ? `${currentDs!.pair_count} pares` : "Pendiente"}
                     </span>
                   </div>
                   <div>
                     <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RANGO: </span>
                     <span style={{ color: 'var(--color-ec-text-primary)' }}>
-                      {currentDs.min_date ? formatDate(currentDs.min_date) : '?'} - {currentDs.max_date ? formatDate(currentDs.max_date) : '?'}
+                      {currentDs!.min_date ? formatDate(currentDs!.min_date!) : '?'} - {currentDs!.max_date ? formatDate(currentDs!.max_date!) : '?'}
                     </span>
                   </div>
                 </div>
 
                 {/* Render filters inside the dataset */}
-                {currentDs.filters && Object.keys(currentDs.filters).length > 0 && (
+                {currentDs!.filters && Object.keys(currentDs!.filters!).length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                    {Object.entries(currentDs.filters)
+                    {Object.entries(currentDs!.filters!)
                       .filter(([k]) => k !== 'rules' && k !== 'date_from' && k !== 'date_to')
                       .map(([key, val]) => {
                         const lbl = formatFilterValue(key, val);
@@ -1336,7 +1337,7 @@ export default function WizardStrategyBuilder({
                           </span>
                         ) : null;
                       })}
-                    {(currentDs.filters.rules || []).map((r: any, idx: number) => (
+                    {(currentDs!.filters!.rules || []).map((r: any, idx: number) => (
                       <span key={idx} style={{ 
                         fontSize: 10, 
                         fontWeight: 600,
@@ -5938,6 +5939,50 @@ export default function WizardStrategyBuilder({
     return list;
   }, [riskManagement, currentStep, wizardRiskStep, completedSteps]);
 
+  const universeTags = useMemo(() => {
+    const summaryStepIdx = STEPS.findIndex(s => s.key === "summary");
+    if (currentStep === summaryStepIdx) return [];
+    const list: { label: string; color: string; onRemove?: () => void }[] = [];
+    if (universeFilters.date_from || universeFilters.date_to) {
+      const fromFmt = universeFilters.date_from ? formatDate(universeFilters.date_from) : "...";
+      const toFmt = universeFilters.date_to ? formatDate(universeFilters.date_to) : "...";
+      list.push({
+        label: `Rango: ${fromFmt} - ${toFmt}`,
+        color: "var(--color-ec-copper)",
+      });
+    }
+    (universeFilters.rules || []).forEach((r: any, idx: number) => {
+      const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+      const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
+      let friendlyVal = r.value;
+      const numVal = parseFloat(r.value);
+      if (!isNaN(numVal) && r.metric.toLowerCase().includes('volume')) {
+        friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+      }
+      list.push({
+        label: `${friendlyName}: ${friendlyOp} ${friendlyVal}`,
+        color: "var(--color-ec-copper)",
+        onRemove: () => {
+          setUniverseFilters((prev: any) => ({
+            ...prev,
+            rules: (prev.rules || []).filter((_: any, i: number) => i !== idx)
+          }));
+        }
+      });
+    });
+    return list;
+  }, [universeFilters, currentStep]);
+
+  const totalConfigCount = useMemo(() => {
+    return universeTags.length +
+           directionTags.length +
+           applyDayTags.length +
+           marketSessionsTags.length +
+           entryTags.length +
+           exitTags.length +
+           riskTags.length;
+  }, [universeTags, directionTags, applyDayTags, marketSessionsTags, entryTags, exitTags, riskTags]);
+
   // Sidebar sections headers and tags layout styles
   const sectionHeaderStyle: React.CSSProperties = {
     fontFamily: "General Sans, sans-serif",
@@ -6110,6 +6155,313 @@ export default function WizardStrategyBuilder({
         }} />
       </div>
 
+      {/* Horizontal Steps timeline */}
+      <div style={{
+        padding: "16px 12px 12px 12px",
+        borderBottom: "0.5px solid var(--color-ec-border)",
+        backgroundColor: "var(--color-ec-bg-base)",
+        flexShrink: 0,
+        display: "grid",
+        gridTemplateColumns: "repeat(8, 1fr)",
+      }}>
+        {STEPS.map((step, idx) => {
+          const isActive = idx === currentStep;
+          const isCompleted = completedSteps.has(idx) && idx < currentStep;
+          const isFuture = idx > currentStep;
+
+          return (
+            <div 
+              key={step.key}
+              style={{
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
+              {/* Connecting Line segment */}
+              {idx < STEPS.length - 1 && (
+                <div style={{
+                  position: "absolute",
+                  top: 10, // Center of the 20px circle
+                  left: "50%",
+                  width: "100%", // Extends to the center of the next step!
+                  height: 1.5,
+                  backgroundColor: isCompleted 
+                    ? "var(--color-ec-copper)" 
+                    : "var(--color-ec-border)",
+                  zIndex: 1,
+                  transition: "background-color 300ms ease",
+                }} />
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentStep(idx);
+                }}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  opacity: isFuture ? 0.45 : 1,
+                  transition: "all 200ms ease",
+                  width: "100%",
+                  padding: 0,
+                  zIndex: 2,
+                }}
+              >
+                {/* Circle */}
+                <div style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                  backgroundColor: isCompleted
+                    ? "var(--color-ec-copper)"
+                    : isActive
+                      ? "rgba(216, 122, 61, 0.15)"
+                      : "var(--color-ec-bg-base)", // Mask the line!
+                  border: isCompleted
+                    ? "none"
+                    : isActive
+                      ? "1.5px solid var(--color-ec-copper)"
+                      : "1px solid var(--color-ec-border)",
+                  transition: "all 250ms ease",
+                  zIndex: 3,
+                }}>
+                  {isCompleted ? (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                      stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <span style={{
+                      fontFamily: "General Sans, sans-serif",
+                      fontSize: 8,
+                      fontWeight: 700,
+                      color: isActive ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
+                    }}>
+                      {idx + 1}
+                    </span>
+                  )}
+                </div>
+
+                {/* Text Label Below Circle */}
+                <span style={{
+                  fontFamily: "General Sans, sans-serif",
+                  fontSize: 10,
+                  fontWeight: isActive ? 700 : 500,
+                  color: isActive
+                    ? "var(--color-ec-copper)"
+                    : isCompleted
+                      ? "var(--color-ec-text-high)"
+                      : "var(--color-ec-text-muted)",
+                  transition: "color 200ms ease",
+                  marginTop: 6,
+                  textAlign: "center",
+                  whiteSpace: "nowrap",
+                  zIndex: 3,
+                }}>
+                  {step.shortLabel}
+                </span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Collapsible Dropdown "Resumen de Configuración" */}
+      {STEPS[currentStep]?.key !== "summary" && (
+        <div style={{
+          borderBottom: "0.5px solid var(--color-ec-border)",
+          backgroundColor: "var(--color-ec-bg-surface)",
+          display: "flex",
+          flexDirection: "column",
+          flexShrink: 0,
+        }}>
+          {/* Toggle Header */}
+          <div
+            onClick={() => setSummaryExpanded(!summaryExpanded)}
+            style={{
+              padding: "8px 16px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              cursor: "pointer",
+              userSelect: "none",
+              backgroundColor: "rgba(255, 255, 255, 0.01)",
+              transition: "background-color 150ms ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "rgba(255, 255, 255, 0.01)";
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{
+                fontFamily: "var(--color-ec-sans)",
+                fontSize: 9,
+                fontWeight: 700,
+                color: "var(--color-ec-text-high)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}>
+                Resumen de Configuración
+              </span>
+              <span style={{
+                fontSize: 8.5,
+                fontWeight: 700,
+                backgroundColor: 'rgba(216, 122, 61, 0.1)',
+                color: 'var(--color-ec-copper-bright)',
+                padding: '1px 6px',
+                borderRadius: 10,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em'
+              }}>
+                {totalConfigCount} {totalConfigCount === 1 ? 'regla' : 'reglas'}
+              </span>
+            </div>
+            <span style={{
+              fontSize: 8.5,
+              fontWeight: 700,
+              color: "var(--color-ec-copper)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}>
+              {summaryExpanded ? "Ocultar ▲" : "Ver Detalles ▼"}
+            </span>
+          </div>
+
+          {/* Collapsible Content */}
+          {summaryExpanded && (
+            <div style={{
+              padding: "0 16px 12px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              borderTop: "0.5px solid rgba(255, 255, 255, 0.03)",
+              maxHeight: 180,
+              overflowY: "auto",
+              scrollbarWidth: "none",
+            }}>
+              <div style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 16,
+                marginTop: 8
+              }}>
+                {/* Universo */}
+                {universeTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Universo</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {universeTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Dirección */}
+                {directionTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 100, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Dirección</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {directionTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Día de Aplicación */}
+                {applyDayTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 120, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Día de Aplicación</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {applyDayTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sesión de Aplicación */}
+                {marketSessionsTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 120, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Sesión</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {marketSessionsTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Lógica de Entrada */}
+                {entryTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Entrada</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {entryTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Lógica de Salida */}
+                {exitTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Salida</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {exitTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Gestión de Riesgo */}
+                {riskTags.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150, flex: "1 1 0" }}>
+                    <span style={sectionHeaderStyle}>Riesgo</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {riskTags.map((tag, idx) => (
+                        <Fragment key={idx}>
+                          {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Body: Rail + Content */}
       <div style={{
         flex: 1,
@@ -6117,230 +6469,6 @@ export default function WizardStrategyBuilder({
         overflow: "hidden",
         minHeight: 0,
       }}>
-        {/* Left: Step Rail (width 190px for full formulas) */}
-        <div style={{
-          width: 190,
-          flexShrink: 0,
-          borderRight: "0.5px solid var(--color-ec-border)",
-          display: "flex",
-          flexDirection: "column",
-          backgroundColor: "var(--color-ec-bg-base)",
-          height: "100%",
-          overflow: "hidden",
-        }}>
-          {/* Top Container: Steps Indicators */}
-          <div style={{
-            flexShrink: 0,
-            padding: "14px 8px 8px 8px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-          }}>
-            {STEPS.map((step, idx) => {
-              const isActive = idx === currentStep;
-              const isCompleted = completedSteps.has(idx) && idx < currentStep;
-              const isFuture = idx > currentStep;
-
-              return (
-                <div key={step.key} style={{ position: "relative" }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCurrentStep(idx);
-                    }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      background: isActive ? "rgba(216, 122, 61, 0.06)" : "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      opacity: isFuture ? 0.45 : 1,
-                      transition: "all 200ms ease",
-                      width: "100%",
-                      textAlign: "left",
-                      position: "relative",
-                      zIndex: 2,
-                    }}
-                  >
-                    <div style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: "50%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                      backgroundColor: isCompleted
-                        ? "var(--color-ec-copper)"
-                        : isActive
-                          ? "rgba(216, 122, 61, 0.15)"
-                          : "transparent",
-                      border: isCompleted
-                        ? "none"
-                        : isActive
-                          ? "1.5px solid var(--color-ec-copper)"
-                          : "1px solid var(--color-ec-border)",
-                      transition: "all 250ms ease",
-                    }}>
-                      {isCompleted ? (
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
-                          stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      ) : (
-                        <span style={{
-                          fontFamily: "General Sans, sans-serif",
-                          fontSize: 8,
-                          fontWeight: 700,
-                          color: isActive ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
-                        }}>
-                          {idx + 1}
-                        </span>
-                      )}
-                    </div>
-                    <span style={{
-                      fontFamily: "General Sans, sans-serif",
-                      fontSize: 10,
-                      fontWeight: isActive ? 700 : 500,
-                      color: isActive
-                        ? "var(--color-ec-copper)"
-                        : isCompleted
-                          ? "var(--color-ec-text-high)"
-                          : "var(--color-ec-text-muted)",
-                      transition: "color 200ms ease",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}>
-                      {step.label}
-                    </span>
-                  </button>
-
-                  {idx < STEPS.length - 1 && (
-                    <div style={{
-                      position: "absolute",
-                      left: 18,
-                      top: 28,
-                      width: 1,
-                      height: 10,
-                      backgroundColor: isCompleted
-                        ? "var(--color-ec-copper)"
-                        : "var(--color-ec-border)",
-                      transition: "background-color 300ms ease",
-                      zIndex: 1,
-                    }} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Divider */}
-          <div style={{
-            height: "0.5px",
-            backgroundColor: "var(--color-ec-border)",
-            width: "100%",
-          }} />
-
-          {/* Bottom 2/3 Container: Summary Tags grouped by category */}
-          <div style={{
-            flex: 1,
-            padding: "12px 10px",
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-            scrollbarWidth: "none",
-          }}>
-            {/* Dirección */}
-            {directionTags.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={sectionHeaderStyle}>Dirección</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {directionTags.map((tag, idx) => (
-                    <Fragment key={idx}>
-                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
-                    </Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Día de Aplicación */}
-            {applyDayTags.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={sectionHeaderStyle}>Día de Aplicación</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {applyDayTags.map((tag, idx) => (
-                    <Fragment key={idx}>
-                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
-                    </Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Sesión de Aplicación */}
-            {marketSessionsTags.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={sectionHeaderStyle}>Sesión de Aplicación</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {marketSessionsTags.map((tag, idx) => (
-                    <Fragment key={idx}>
-                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
-                    </Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Lógica de Entrada */}
-            {entryTags.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={sectionHeaderStyle}>Lógica de Entrada</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {entryTags.map((tag, idx) => (
-                    <Fragment key={idx}>
-                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
-                    </Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Lógica de Salida */}
-            {exitTags.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={sectionHeaderStyle}>Lógica de Salida</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {exitTags.map((tag, idx) => (
-                    <Fragment key={idx}>
-                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
-                    </Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Gestión de Riesgo */}
-            {riskTags.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={sectionHeaderStyle}>Gestión de Riesgo</span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {riskTags.map((tag, idx) => (
-                    <Fragment key={idx}>
-                      {renderSummaryTag(tag.label, tag.color, tag.onRemove)}
-                    </Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
         <div style={{
           flex: 1,
           overflow: "hidden",

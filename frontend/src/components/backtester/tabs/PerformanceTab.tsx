@@ -320,7 +320,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
     const markerSeries = chart.addSeries(LineSeries, {
       priceScaleId: 'tradesScale',
       color: 'rgba(0,0,0,0)',
-      lineWidth: 0,
+      lineWidth: 1,
       crosshairMarkerVisible: false,
       lastValueVisible: false,
       priceLineVisible: false,
@@ -337,7 +337,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
       size: 1
     }));
     const markersApi = createSeriesMarkers(markerSeries);
-    markersApi.setMarkers(markers);
+    markersApi.setMarkers(markers as any);
 
     // Series 2: Win Rate (Right Axis, Line)
     const wrSeries = chart.addSeries(LineSeries, {
