@@ -645,18 +645,116 @@ export default function TrunkPage() {
     return `${dayLabel} • ${metricLabel}: ${valLabel}`;
   }
 
+  const getFriendlyMetricLabel = (metric: string): string => {
+    if (!metric) return "";
+    const m = metric.replace(/['"]+/g, '');
+    const labelMap: Record<string, string> = {
+      "Close Price": "cierre",
+      "Min Open PM price": "apertura pm",
+      "PMH Gap %": "gap pm high %",
+      "Premarket Volume": "volumen premarket",
+      "Open Gap %": "gap de apertura %",
+      "EOD Volume": "volumen rth",
+      "RTH Range %": "rango rth %",
+      "Open Price": "apertura rth",
+      "High Price": "máximo rth",
+      "Low Price": "mínimo rth",
+      "RTH Run %": "run rth %",
+      "High Spike %": "spike máximo %",
+      "Low Spike %": "spike mínimo %",
+      "M15 Return %": "retorno m15 %",
+      "M30 Return %": "retorno m30 %",
+      "M60 Return %": "retorno m60 %",
+      "Day Return %": "retorno del día %",
+      "Previous Close": "cierre anterior",
+      "lead_rth_close_1": "cierre gap+1",
+      "lead_open_1": "apertura pm gap+1",
+      "lead_pmh_gap_pct_1": "gap pm high gap+1 %",
+      "lead_pm_volume_1": "volumen premarket gap+1",
+      "lead_gap_pct_1": "gap de apertura gap+1 %",
+      "lead_rth_volume_1": "volumen rth gap+1",
+      "lead_rth_range_pct_1": "rango rth gap+1 %",
+      "lead_rth_open_1": "apertura rth gap+1",
+      "lead_rth_high_1": "máximo rth gap+1",
+      "lead_rth_low_1": "mínimo rth gap+1",
+      "lead_rth_close_2": "cierre gap+2",
+      "lead_open_2": "apertura pm gap+2",
+      "lead_pmh_gap_pct_2": "gap pm high gap+2 %",
+      "lead_pm_volume_2": "volumen premarket gap+2",
+      "lead_gap_pct_2": "gap de apertura gap+2 %",
+      "lead_rth_volume_2": "volumen rth gap+2",
+      "lead_rth_range_pct_2": "rango rth gap+2 %",
+      "lead_rth_open_2": "apertura rth gap+2",
+      "lead_rth_high_2": "máximo rth gap+2",
+      "lead_rth_low_2": "mínimo rth gap+2",
+    };
+    if (labelMap[m]) return labelMap[m];
+    return m.replace(/_/g, " ").toLowerCase();
+  }
+
+  const formatRule = (rule: any): string => {
+    if (!rule || !rule.metric) return '';
+    const opMap: Record<string, string> = {
+      'GT': '>',
+      'LT': '<',
+      'GTE': '>=',
+      'LTE': '<=',
+      'EQUAL': '=',
+      'NEQ': '!=',
+      'GREATER_THAN_OR_EQUAL': '>=',
+      'LESS_THAN_OR_EQUAL': '<=',
+      'GREATER_THAN': '>',
+      'LESS_THAN': '<',
+    };
+    const op = opMap[rule.operator] || rule.operator;
+    const friendlyMetric = getFriendlyMetricLabel(rule.metric);
+    let friendlyVal = rule.value;
+    const numVal = parseFloat(rule.value);
+    if (!isNaN(numVal)) {
+      if (rule.metric.toLowerCase().includes('volume')) {
+        if (numVal >= 1_000_000) {
+          friendlyVal = `${(numVal / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+        } else if (numVal >= 1_000) {
+          friendlyVal = `${(numVal / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+        }
+      } else if (rule.metric.includes('%') || rule.metric.toLowerCase().includes('pct')) {
+        friendlyVal = `${numVal}%`;
+      } else if (rule.metric.toLowerCase().includes('price') || rule.metric.toLowerCase().includes('close') || rule.metric.toLowerCase().includes('open') || rule.metric.toLowerCase().includes('high') || rule.metric.toLowerCase().includes('low')) {
+        friendlyVal = `$${numVal.toFixed(2).replace(/\.00$/, '')}`;
+      }
+    }
+    return `${friendlyMetric} ${op} ${friendlyVal}`;
+  }
+
   const getUniverseTags = (filters?: any): string[] => {
     if (!filters) return [];
     const tags: string[] = [];
-    if (filters.min_market_cap != null && filters.min_market_cap !== "") tags.push(`Min Cap: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
-    if (filters.max_market_cap != null && filters.max_market_cap !== "") tags.push(`Max Cap: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
-    if (filters.min_price != null && filters.min_price !== "") tags.push(`Min Price: $${filters.min_price}`);
-    if (filters.max_price != null && filters.max_price !== "") tags.push(`Max Price: $${filters.max_price}`);
-    if (filters.min_volume != null && filters.min_volume !== "") tags.push(`Min Vol: ${(filters.min_volume / 1e3).toFixed(0)}k`);
-    if (filters.max_shares_float != null && filters.max_shares_float !== "") tags.push(`Max Float: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
-    if (filters.require_shortable === true) tags.push("Require Shortable");
+    
+    const formatDateStr = (dStr?: string) => {
+      if (!dStr) return '';
+      const parts = dStr.split('-');
+      if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      return dStr;
+    };
+    if (filters.date_from || filters.date_to) {
+      tags.push(`Fechas: ${formatDateStr(filters.date_from) || '?'} a ${formatDateStr(filters.date_to) || '?'}`);
+    }
+
+    if (filters.min_market_cap != null && filters.min_market_cap !== "") tags.push(`Cap Mín: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.max_market_cap != null && filters.max_market_cap !== "") tags.push(`Cap Máx: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
+    if (filters.min_price != null && filters.min_price !== "") tags.push(`Precio Mín: $${filters.min_price}`);
+    if (filters.max_price != null && filters.max_price !== "") tags.push(`Precio Máx: $${filters.max_price}`);
+    if (filters.min_volume != null && filters.min_volume !== "") tags.push(`Vol Mín: ${(filters.min_volume / 1e3).toFixed(0)}K`);
+    if (filters.max_shares_float != null && filters.max_shares_float !== "") tags.push(`Float Máx: ${(filters.max_shares_float / 1e6).toFixed(1)}M`);
+    if (filters.require_shortable === true) tags.push("Shortable");
     if (filters.whitelist_sectors && filters.whitelist_sectors.length > 0) {
-      tags.push(`Sectors: ${filters.whitelist_sectors.join(', ')}`);
+      tags.push(`Sectores: ${filters.whitelist_sectors.join(', ')}`);
+    }
+    if (filters.rules && filters.rules.length > 0) {
+      filters.rules.forEach((r: any) => {
+        const formatted = formatRule(r);
+        if (formatted) tags.push(formatted);
+      });
     }
     return tags;
   }
@@ -664,28 +762,62 @@ export default function TrunkPage() {
   const getRiskTags = (risk?: any): string[] => {
     if (!risk) return [];
     const tags: string[] = [];
+    
+    // Stop Loss
     if (risk.use_hard_stop && risk.hard_stop?.value != null && risk.hard_stop.value !== "") {
-      tags.push(`SL: ${risk.hard_stop.value}%`);
-    }
-    if (risk.use_take_profit && risk.take_profit?.value != null && risk.take_profit.value !== "") {
-      tags.push(`TP: ${risk.take_profit.value}%`);
-    }
-    if (risk.take_profit_mode && (risk.use_take_profit || (risk.partial_take_profits && risk.partial_take_profits.length > 0))) {
-      tags.push(`TP Mode: ${risk.take_profit_mode}`);
-    }
-    if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
-      risk.partial_take_profits.forEach((pt: any, i: number) => {
-        if (pt && pt.capital_pct != null && pt.capital_pct !== "" && pt.distance_pct != null && pt.distance_pct !== "") {
-          tags.push(`P-TP ${i+1}: ${pt.capital_pct}% @ ${pt.distance_pct === 'EOD' ? 'EOD' : pt.distance_pct + '%'}`);
-        }
-      });
+      tags.push(`SL: ${risk.hard_stop.value}${risk.hard_stop.type === 'Percentage' ? '%' : 'R'}`);
     }
     if (risk.trailing_stop?.active && risk.trailing_stop?.buffer_pct != null && risk.trailing_stop.buffer_pct !== "") {
-      tags.push(`TS: ${risk.trailing_stop.buffer_pct}%`);
+      const bufferVal = risk.trailing_stop.type === 'Percentage' ? `${risk.trailing_stop.buffer_pct}%` : `${risk.trailing_stop.buffer_r || risk.trailing_stop.buffer_pct}R`;
+      tags.push(`TS: ${bufferVal}`);
     }
+
+    // Take Profit (only if use_take_profit is true)
+    if (risk.use_take_profit) {
+      if (risk.take_profit_mode === "Partial") {
+        if (risk.partial_take_profits && risk.partial_take_profits.length > 0) {
+          const partials = risk.partial_take_profits
+            .map((pt: any) => {
+              if (pt && pt.capital_pct != null && pt.capital_pct !== "") {
+                const dist = pt.multiplier || pt.distance_pct;
+                if (dist != null && dist !== "") {
+                  return `${dist}${pt.type === 'Percentage' ? '%' : 'R'}: ${pt.capital_pct}%`;
+                }
+              }
+              return null;
+            })
+            .filter(Boolean)
+            .join(', ');
+          if (partials) {
+            tags.push(`TP Parciales (${partials})`);
+          }
+        }
+      } else {
+        if (risk.take_profit?.value != null && risk.take_profit.value !== "") {
+          tags.push(`TP: ${risk.take_profit.value}${risk.take_profit.type === 'Percentage' ? '%' : 'R'}`);
+        }
+      }
+    }
+
+    // Reentries
+    if (risk.accept_reentries === true) {
+      if (risk.max_reentries === undefined || risk.max_reentries === -1) {
+        tags.push("Reentradas: Ilimitadas");
+      } else {
+        tags.push(`Reentradas: Máx ${risk.max_reentries}`);
+      }
+    }
+
+    // Swing
+    if (risk.swing_option?.active) {
+      tags.push(`Swing hasta ${risk.swing_option.target_day === 'gap_1_day' ? 'Gap+1' : 'Gap+2'}`);
+    }
+
+    // Daily DD
     if (risk.max_drawdown_daily != null && risk.max_drawdown_daily !== "") {
-      tags.push(`Max Daily DD: ${risk.max_drawdown_daily}%`);
+      tags.push(`Max DD Diario: ${risk.max_drawdown_daily}%`);
     }
+
     return tags;
   }
 
