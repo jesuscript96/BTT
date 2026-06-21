@@ -772,31 +772,31 @@ export default function Home() {
   const isFilteredResult = useMemo(() => {
     if (!result || currentIsPercent >= 100) return result;
 
-    const eq = result.global_equity;
-    if (!eq || eq.length < 2) return result;
+    const eq = result.global_equity || [];
+    if (eq.length < 2) return result;
 
     // Find the IS cutoff index based on percentage of equity points
     const cutoffIdx = Math.max(1, Math.floor(eq.length * currentIsPercent / 100));
-    const cutoffTime = eq[cutoffIdx - 1].time;
+    const cutoffTime = eq[cutoffIdx - 1]?.time || 0;
 
     // Filter trades to IS period only
-    const isTrades = result.trades.filter(t => {
+    const isTrades = (result.trades || []).filter(t => {
       const tradeEpoch = t.entry_time_epoch;
       return tradeEpoch <= cutoffTime;
     });
 
     // Filter day_results to IS period only
-    const isDayResults = result.day_results.filter(d => {
+    const isDayResults = (result.day_results || []).filter(d => {
       const dateEpoch = new Date(d.date).getTime() / 1000;
       return dateEpoch <= cutoffTime;
     });
 
     // Filter equity and drawdown to IS period
     const isEquity = eq.slice(0, cutoffIdx);
-    const isDrawdown = result.global_drawdown.filter(p => p.time <= cutoffTime);
+    const isDrawdown = (result.global_drawdown || []).filter(p => p.time <= cutoffTime);
 
     // Filter equity_curves (per-day) to IS period
-    const isEquityCurves = result.equity_curves.filter(e => {
+    const isEquityCurves = (result.equity_curves || []).filter(e => {
       const dateEpoch = new Date(e.date).getTime() / 1000;
       return dateEpoch <= cutoffTime;
     });
