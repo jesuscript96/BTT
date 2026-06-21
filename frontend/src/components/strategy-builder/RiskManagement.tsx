@@ -44,14 +44,14 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
     const removePartial = (index: number) => {
         onChange({
             ...risk,
-            partial_take_profits: risk.partial_take_profits.filter((_, i) => i !== index)
+            partial_take_profits: (risk.partial_take_profits || []).filter((_, i) => i !== index)
         });
     };
 
     const updatePartial = (index: number, field: keyof PartialTakeProfit, value: any) => {
         onChange({
             ...risk,
-            partial_take_profits: risk.partial_take_profits.map((p, i) =>
+            partial_take_profits: (risk.partial_take_profits || []).map((p, i) =>
                 i === index ? { ...p, [field]: value } : p
             )
         });
@@ -650,7 +650,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                         ) : (
                             <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <div className="space-y-2">
-                                    {risk.partial_take_profits.map((partial, idx) => (
+                                    {(risk.partial_take_profits || []).map((partial, idx) => (
                                         <div key={idx} className="group relative"
                                             style={{
                                                 backgroundColor: 'transparent',
@@ -808,7 +808,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             </div>
 
                                             {/* Delete button */}
-                                            {risk.partial_take_profits.length > 1 && (
+                                            {(risk.partial_take_profits || []).length > 1 && (
                                                 <button
                                                     onClick={() => removePartial(idx)}
                                                     className="p-1 text-muted-foreground hover:text-ec-loss transition-colors opacity-0 group-hover:opacity-100"
