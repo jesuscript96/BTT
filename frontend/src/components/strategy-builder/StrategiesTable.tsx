@@ -212,6 +212,17 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
     const getUniverseTags = (filters?: UniverseFilters): string[] => {
         if (!filters) return [];
         const tags: string[] = [];
+        
+        const formatDateStr = (dStr?: string) => {
+            if (!dStr) return '';
+            const parts = dStr.split('-');
+            if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+            return dStr;
+        };
+        if (filters.date_from || filters.date_to) {
+            tags.push(`Fechas: ${formatDateStr(filters.date_from) || '?'} a ${formatDateStr(filters.date_to) || '?'}`);
+        }
+        
         if (filters.min_market_cap != null && (filters.min_market_cap as any) !== "") tags.push(`Cap Mín: $${(filters.min_market_cap / 1e6).toFixed(1)}M`);
         if (filters.max_market_cap != null && (filters.max_market_cap as any) !== "") tags.push(`Cap Máx: $${(filters.max_market_cap / 1e6).toFixed(1)}M`);
         if (filters.min_price != null && (filters.min_price as any) !== "") tags.push(`Precio Mín: $${filters.min_price}`);
@@ -243,9 +254,6 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
             const bufferVal = risk.trailing_stop.type === 'Percentage' ? `${risk.trailing_stop.buffer_pct}%` : `${risk.trailing_stop.buffer_r || risk.trailing_stop.buffer_pct}R`;
             tags.push(`Trailing: ${bufferVal}`);
         }
-        if (risk.use_hard_stop && !risk.use_hard_stop && !risk.trailing_stop?.active) {
-            tags.push("Sin Stop Loss");
-        }
         
         // Take Profit
         if (risk.use_take_profit && risk.take_profit && risk.take_profit.value != null && (risk.take_profit.value as any) !== "") {
@@ -258,8 +266,6 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         } else if (risk.use_take_profit && risk.take_profit_mode === "Partial" && risk.partial_take_profits && risk.partial_take_profits.length > 0) {
             const partials = (risk.partial_take_profits || []).map((p: any) => `${p.multiplier || p.distance_pct || ''}${p.type === 'Percentage' ? '%' : 'R'}: ${p.capital_pct}%`).join(', ');
             tags.push(`TP Parciales (${partials})`);
-        } else {
-            tags.push("Sin Take Profit");
         }
         
         // Reentries

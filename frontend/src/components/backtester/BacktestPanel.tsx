@@ -1007,7 +1007,7 @@ export default function BacktestPanel({
                         const bufferVal = rm.trailing_stop.type === 'Percentage' ? `${rm.trailing_stop.buffer_pct}%` : `${rm.trailing_stop.buffer_r}R`;
                         stopList.push(`Trailing: ${bufferVal}`);
                       }
-                      if (rm.use_hard_stop && !rm.use_hard_stop && !rm.trailing_stop?.active) {
+                      if (!rm.use_hard_stop && !rm.trailing_stop?.active) {
                         stopList.push("Sin Stop Loss");
                       }
                       
