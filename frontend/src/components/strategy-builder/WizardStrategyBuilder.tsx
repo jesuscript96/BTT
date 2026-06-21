@@ -1837,41 +1837,31 @@ export default function WizardStrategyBuilder({
     };
 
     return (
-      <div style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-        padding: "40px 20px",
-        flex: 1,
-        width: "100%",
-        boxSizing: "border-box",
-      }}>
-        <h3 style={{
-          fontFamily: 'Fraunces, serif',
-          fontSize: '24px',
-          fontWeight: 600,
-          color: "var(--color-ec-text-high)",
-          margin: "0 0 8px 0",
-          letterSpacing: "-0.2px",
-          textAlign: "center",
-        }}>
-          ¿Qué dirección tomará tu estrategia?
-        </h3>
-        <p style={{
-          fontFamily: "General Sans, sans-serif",
-          fontSize: '13.5px',
-          fontWeight: 400,
-          color: "var(--color-ec-text-muted)",
-          margin: "0 0 28px 0",
-          lineHeight: 1.5,
-          textAlign: "center",
-        }}>
-          Selecciona si operarás a favor de la tendencia alcista o bajista
-        </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div>
+          <h3 style={{
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
+            fontWeight: 600,
+            color: "var(--color-ec-text-high)",
+            margin: "0 0 4px 0",
+            letterSpacing: "-0.2px",
+          }}>
+            ¿Qué dirección tomará tu estrategia?
+          </h3>
+          <p style={{
+            fontFamily: "General Sans, sans-serif",
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
+            color: "var(--color-ec-text-muted)",
+            margin: 0,
+            lineHeight: 1.5,
+          }}>
+            Selecciona si operarás a favor de la tendencia alcista o bajista
+          </p>
+        </div>
 
-        <div style={{ display: "flex", gap: 20, justifyContent: "center", padding: "20px 0", width: "100%" }}>
+        <div style={{ display: "flex", gap: 20, justifyContent: "center", padding: "12px 0", width: "100%" }}>
           {/* Long */}
           <button
             onClick={() => handleBiasSelect("long")}
