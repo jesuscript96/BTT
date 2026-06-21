@@ -829,7 +829,7 @@ export default function WizardStrategyBuilder({
 
   // Check market session overlaps for time windows
   const getSessionOverlapWarning = (fromTime: string, toTime: string) => {
-    if (!marketSessions || marketSessions.length === 0 || marketSessions.includes("all")) {
+    if (!wizardMarketSessions || wizardMarketSessions.length === 0 || wizardMarketSessions.includes("all")) {
       return null;
     }
 
@@ -842,18 +842,18 @@ export default function WizardStrategyBuilder({
     const windowEnd = parseTimeToMins(toTime);
 
     const intervals: { label: string; start: number; end: number }[] = [];
-    marketSessions.forEach(s => {
+    wizardMarketSessions.forEach(s => {
       if (s === "pre") {
         intervals.push({ label: "Pre-Market", start: 240, end: 570 });
       } else if (s === "rth") {
         intervals.push({ label: "Regular Hours", start: 570, end: 960 });
       } else if (s === "post") {
         intervals.push({ label: "After-Market", start: 960, end: 1200 });
-      } else if (s === "custom" && customStartTime && customEndTime) {
+      } else if (s === "custom" && wizardCustomStartTime && wizardCustomEndTime) {
         intervals.push({
-          label: `Custom (${customStartTime}-${customEndTime})`,
-          start: parseTimeToMins(customStartTime),
-          end: parseTimeToMins(customEndTime)
+          label: `Custom (${wizardCustomStartTime}-${wizardCustomEndTime})`,
+          start: parseTimeToMins(wizardCustomStartTime),
+          end: parseTimeToMins(wizardCustomEndTime)
         });
       }
     });
