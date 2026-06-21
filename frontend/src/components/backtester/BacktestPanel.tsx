@@ -898,7 +898,7 @@ export default function BacktestPanel({
                   }}>{cleanDesc}</span>
                 )}
 
-                {(displayBias || displayDay || precondsText) && (
+                {(displayBias || displayDay || precondsText || stratDef?.universe_filters || stratDef?.dataset_id || stratDef?.risk_management) && (
                   <div style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -917,6 +917,142 @@ export default function BacktestPanel({
                         {displayDay && ` | Aplicar en ${displayDay}`}
                       </div>
                     )}
+
+                    {/* Universo / Dataset */}
+                    {(() => {
+                      const universeFilters = stratDef?.universe_filters;
+                      const hasUniverseFilters = universeFilters && (
+                        universeFilters.date_from ||
+                        universeFilters.date_to ||
+                        (universeFilters.min_market_cap != null && universeFilters.min_market_cap !== "") ||
+                        (universeFilters.max_market_cap != null && universeFilters.max_market_cap !== "") ||
+                        (universeFilters.min_price != null && universeFilters.min_price !== "") ||
+                        (universeFilters.max_price != null && universeFilters.max_price !== "") ||
+                        (universeFilters.min_volume != null && universeFilters.min_volume !== "") ||
+                        (universeFilters.max_shares_float != null && universeFilters.max_shares_float !== "") ||
+                        universeFilters.require_shortable === true ||
+                        universeFilters.exclude_dilution === true ||
+                        (universeFilters.whitelist_sectors && universeFilters.whitelist_sectors.length > 0) ||
+                        (universeFilters.rules && universeFilters.rules.length > 0)
+                      );
+
+                      if (hasUniverseFilters) {
+                        const parts: string[] = [];
+                        if (universeFilters.date_from || universeFilters.date_to) {
+                          parts.push(`Fechas: ${formatDate(universeFilters.date_from) || '?'} a ${formatDate(universeFilters.date_to) || '?'}`);
+                        }
+                        if (universeFilters.min_market_cap != null && universeFilters.min_market_cap !== "") {
+                          parts.push(`Cap Mín: $${(universeFilters.min_market_cap / 1e6).toFixed(1)}M`);
+                        }
+                        if (universeFilters.max_market_cap != null && universeFilters.max_market_cap !== "") {
+                          parts.push(`Cap Máx: $${(universeFilters.max_market_cap / 1e6).toFixed(1)}M`);
+                        }
+                        if (universeFilters.min_price != null && universeFilters.min_price !== "") {
+                          parts.push(`Precio Mín: $${universeFilters.min_price}`);
+                        }
+                        if (universeFilters.max_price != null && universeFilters.max_price !== "") {
+                          parts.push(`Precio Máx: $${universeFilters.max_price}`);
+                        }
+                        if (universeFilters.min_volume != null && universeFilters.min_volume !== "") {
+                          parts.push(`Vol Mín: ${(universeFilters.min_volume / 1e3).toFixed(0)}K`);
+                        }
+                        if (universeFilters.max_shares_float != null && universeFilters.max_shares_float !== "") {
+                          parts.push(`Float Máx: ${(universeFilters.max_shares_float / 1e6).toFixed(1)}M`);
+                        }
+                        if (universeFilters.require_shortable === true) {
+                          parts.push("Shortable");
+                        }
+                        if (universeFilters.exclude_dilution === true) {
+                          parts.push("Sin Dilución");
+                        }
+                        if (universeFilters.whitelist_sectors && universeFilters.whitelist_sectors.length > 0) {
+                          parts.push(`Sectores: ${universeFilters.whitelist_sectors.join(', ')}`);
+                        }
+                        if (universeFilters.rules && universeFilters.rules.length > 0) {
+                          const rulesText = universeFilters.rules.map((r: any) => formatRule(r)).filter(Boolean).join(", ");
+                          if (rulesText) {
+                            parts.push(`Criterios: [${rulesText}]`);
+                          }
+                        }
+                        return (
+                          <div>
+                            <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>UNIVERSO: </span>
+                            <span style={{ color: 'var(--color-ec-text-primary)' }}>{parts.join(" | ")}</span>
+                          </div>
+                        );
+                      } else {
+                        const dsId = stratDef?.dataset_id || currentStrat.dataset_id;
+                        if (dsId) {
+                          const currentDs = datasets.find(d => d.id === dsId);
+                          const datasetName = currentDs ? currentDs.name : dsId;
+                          return (
+                            <div>
+                              <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>DATASET: </span>
+                              <span style={{ color: 'var(--color-ec-text-primary)' }}>{datasetName}</span>
+                            </div>
+                          );
+                        }
+                      }
+                      return null;
+                    })()}
+
+                    {/* Gestión de Riesgo (Stops) */}
+                    {(() => {
+                      const rm = stratDef?.risk_management;
+                      if (!rm) return null;
+                      
+                      const stopList: string[] = [];
+                      
+                      // Stop Loss
+                      if (rm.use_hard_stop && rm.hard_stop?.value > 0) {
+                        stopList.push(`Stop Loss: ${rm.hard_stop.value}${rm.hard_stop.type === 'Percentage' ? '%' : 'R'}`);
+                      }
+                      if (rm.trailing_stop?.active) {
+                        const bufferVal = rm.trailing_stop.type === 'Percentage' ? `${rm.trailing_stop.buffer_pct}%` : `${rm.trailing_stop.buffer_r}R`;
+                        stopList.push(`Trailing: ${bufferVal}`);
+                      }
+                      if (rm.use_hard_stop && !rm.use_hard_stop && !rm.trailing_stop?.active) {
+                        stopList.push("Sin Stop Loss");
+                      }
+                      
+                      // Take Profit
+                      if (rm.use_take_profit) {
+                        if (rm.take_profit_mode === "Partial") {
+                          const partials = (rm.partial_take_profits || []).map((p: any) => `${p.multiplier || p.distance_pct || ''}${p.type === 'Percentage' ? '%' : 'R'}: ${p.capital_pct}%`).join(', ');
+                          stopList.push(`TP Parciales (${partials})`);
+                        } else {
+                          const tpVal = rm.take_profit?.value ? `${rm.take_profit.value}${rm.take_profit.type === 'Percentage' ? '%' : 'R'}` : '';
+                          stopList.push(`Take Profit: ${tpVal}`);
+                        }
+                      } else {
+                        stopList.push("Sin Take Profit");
+                      }
+                      
+                      // Reentries
+                      if (rm.accept_reentries) {
+                        stopList.push(`Reentradas: ${rm.max_reentries === -1 || rm.max_reentries === undefined ? 'Ilimitadas' : rm.max_reentries}`);
+                      }
+                      
+                      // Swing
+                      if (rm.swing_option?.active) {
+                        stopList.push(`Swing hasta ${rm.swing_option.target_day === 'gap_1_day' ? 'Gap+1' : 'Gap+2'}`);
+                      }
+
+                      // Max daily drawdown
+                      if (rm.max_drawdown_daily != null && rm.max_drawdown_daily !== "") {
+                        stopList.push(`Max DD Diario: ${rm.max_drawdown_daily}%`);
+                      }
+                      
+                      if (stopList.length === 0) return null;
+                      
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RIESGO / STOPS: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)' }}>{stopList.join(" | ")}</span>
+                        </div>
+                      );
+                    })()}
+
                     {entryLogic?.entry_time_windows && entryLogic.entry_time_windows.length > 0 && (
                       <div>
                         <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>HORAS ENTRADA (ET): </span>
