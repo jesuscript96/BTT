@@ -87,3 +87,7 @@ backend/test_*.py
 /query_api_test.py
 /read_task_logs.py
 
+
+# Redis dump (not for version control)
+dump.rdb
+*.rdb
