@@ -535,10 +535,6 @@ export default function ChartsTab({
                 }}>
                   Basic Stress Test
                 </h4>
-                <InfoTooltip
-                  position="right"
-                  text="Simula condiciones de estrés, límites de operaciones, costes fijos y peores escenarios como cisnes negros para medir la resistencia de la estrategia."
-                />
               </div>
 
               {/* Stress Test Options (Directly on the background, no cards) */}
@@ -699,13 +695,13 @@ export default function ChartsTab({
               <table className="w-full text-left border-collapse font-mono">
                 <thead>
                   <tr className="border-b border-[var(--color-ec-border)]">
-                    <th className="pb-3 text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
+                    <th className="pb-[24px] text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
                       Métrica
                     </th>
-                    <th className="pb-3 text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
+                    <th className="pb-[24px] text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
                       Original
                     </th>
-                    <th className="pb-3 text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
+                    <th className="pb-[24px] text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
                       {activeSimMode === "stress" ? "Simulado (Stress)" : "Simulado (What If)"}
                     </th>
                   </tr>
@@ -725,13 +721,13 @@ export default function ChartsTab({
                       key={idx}
                       className="border-b border-dashed border-[var(--color-ec-border)] hover:bg-[rgba(255,255,255,0.015)] transition-colors"
                     >
-                      <td className="py-3 text-[12px] text-[var(--color-ec-text-secondary)] font-medium">
+                      <td className="py-[25px] text-[12px] text-[var(--color-ec-text-secondary)] font-medium">
                         {m.label}
                       </td>
-                      <td className="py-3 text-right text-[12px] text-[var(--color-ec-text-muted)] font-mono">
+                      <td className="py-[25px] text-right text-[12px] text-[var(--color-ec-text-muted)] font-mono">
                         {m.base}
                       </td>
-                      <td className={`py-3 text-right text-[13px] font-bold font-mono ${
+                      <td className={`py-[25px] text-right text-[13px] font-bold font-mono ${
                         m.sim === "---" 
                           ? "text-[var(--color-ec-text-muted)]"
                           : m.danger 
