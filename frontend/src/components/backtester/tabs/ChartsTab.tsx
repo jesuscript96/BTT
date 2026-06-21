@@ -658,7 +658,7 @@ export default function ChartsTab({
           </div>
 
           {/* Middle Column: Chart comparison */}
-          <div className="flex-grow min-w-0 flex flex-col justify-start py-4 lg:py-0">
+          <div className="flex-grow min-w-0 flex flex-col justify-start py-4 lg:py-0 pr-4">
             <WhatIfEquityChart
               originalEquity={globalEquity}
               originalDrawdown={globalDrawdown}
@@ -1180,18 +1180,20 @@ function WhatIfEquityChart({
     chart.timeScale().fitContent();
     ddChart.timeScale().fitContent();
 
-    const handleResize = () => {
+    const resizeObserver = new ResizeObserver(() => {
       if (container && ddContainer) {
         chart.applyOptions({ width: container.clientWidth });
         chart.timeScale().fitContent();
         ddChart.applyOptions({ width: ddContainer.clientWidth });
         ddChart.timeScale().fitContent();
       }
-    };
-    window.addEventListener("resize", handleResize);
+    });
+
+    resizeObserver.observe(container);
+    resizeObserver.observe(ddContainer);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       chart.remove();
       chartInstanceRef.current = null;
       if (ddInstanceRef.current) {
