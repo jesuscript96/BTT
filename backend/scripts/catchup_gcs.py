@@ -298,7 +298,19 @@ def write_intraday_to_gcs(df: pd.DataFrame, year: int, month: int, date_str: str
 
     path = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={month}/catchup_intraday_{date_str}.parquet"
     con.register("df_intraday", df)
-    con.execute(f"COPY df_intraday TO '{path}' (FORMAT PARQUET)")
+    # CAST explícito al schema EXACTO del intraday_1m existente: volume BIGINT
+    # (la API lo devuelve como float) y timestamp TIMESTAMP en µs (pandas usa ns).
+    # Evita deriva de tipos entre particiones viejas y nuevas en el data lake.
+    con.execute(f"""
+        COPY (
+            SELECT ticker,
+                   TRY_CAST(volume AS BIGINT) AS volume,
+                   open, close, high, low,
+                   CAST(timestamp AS TIMESTAMP) AS timestamp,
+                   transactions, date, month, year
+            FROM df_intraday
+        ) TO '{path}' (FORMAT PARQUET)
+    """)
     con.close()
     logger.info(f"  Written {len(df)} intraday 1m rows to {path}")
 
