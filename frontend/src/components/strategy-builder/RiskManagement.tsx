@@ -741,7 +741,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                                                         border: '0.5px solid var(--color-ec-border)',
                                                                         borderRadius: 4,
-                                                                        padding: '4px 2px',
+                                                                        padding: '4px 2px 4px 5px',
                                                                         fontSize: 11,
                                                                         fontWeight: 700,
                                                                         color: 'var(--color-ec-text-primary)',

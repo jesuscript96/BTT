@@ -4896,7 +4896,7 @@ export default function WizardStrategyBuilder({
                                         backgroundColor: 'var(--color-ec-bg-surface)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 4,
-                                        padding: '4px 2px',
+                                        padding: '4px 2px 4px 5px',
                                         fontSize: 10,
                                         fontWeight: 700,
                                         color: 'var(--color-ec-text-primary)',
