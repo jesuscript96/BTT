@@ -91,3 +91,8 @@ backend/test_*.py
 # Redis dump (not for version control)
 dump.rdb
 *.rdb
+
+# Edgecute public API local store (runtime data, not for VCS)
+edgecute_api.sqlite
+backend/edgecute_api.sqlite
+*.sqlite

@@ -1,0 +1,437 @@
+openapi: 3.1.0
+info:
+  title: Edgecute Backtest API
+  version: 0.1.0-draft
+  description: >
+    API comercial B2D para ejecutar backtests de gaps/short-selling contra el motor y los datos
+    intradía propietarios de Edgecute. Borrador derivado del backend real (FastAPI). NO es el
+    contrato final: el agente de ejecución regenera este fichero desde los modelos Pydantic.
+    Reglas de payload y aislamiento en docs/b2d-gateway/01_VIABILIDAD.md.
+servers:
+  - url: https://api.edgecute.com/v1
+    description: Producción (placeholder; ver doc 07)
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      summary: Healthcheck
+      security: []
+      responses:
+        "200": { description: OK }
+  /openapi.json:
+    get:
+      summary: Esquema OpenAPI servido por la API
+      security: []
+      responses:
+        "200": { description: OpenAPI document }
+  /catalog/indicators:
+    get:
+      summary: Catálogo de indicadores disponibles (IndicatorType)
+      parameters:
+        - { name: category, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Lista de indicadores y sus parámetros
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  indicators:
+                    type: array
+                    items: { $ref: "#/components/schemas/IndicatorCatalogEntry" }
+  /universe/preview:
+    post:
+      summary: Estima tamaño del universo y créditos, sin ejecutar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UniverseSpec" }
+      responses:
+        "200":
+          description: Estimación
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UniversePreview" }
+        "422": { $ref: "#/components/responses/Error" }
+  /strategies/validate:
+    post:
+      summary: Valida una estrategia sin ejecutarla
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Strategy" }
+      responses:
+        "200":
+          description: Resultado de validación
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        message: { type: string }
+        "422": { $ref: "#/components/responses/Error" }
+  /backtests:
+    post:
+      summary: Ejecuta un backtest. MVP síncrono (200 con result); async v2 (202 con job_id).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BacktestCreate" }
+      responses:
+        "200":
+          description: "MVP síncrono: ejecutado, status=succeeded + result"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobStatus" }
+        "202":
+          description: "v2 async: job encolado (universos grandes)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobAccepted" }
+        "402": { $ref: "#/components/responses/Error" }   # insufficient_credits
+        "422": { $ref: "#/components/responses/Error" }    # invalid_* / universe_too_large
+        "429": { $ref: "#/components/responses/Error" }    # rate_limited
+  /backtests/{job_id}:
+    get:
+      summary: Estado y (si terminó) resultado del backtest
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Estado del job (+ result si succeeded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobStatus" }
+        "404": { $ref: "#/components/responses/Error" }
+  /backtests/{job_id}/cancel:
+    post:
+      summary: Cancela un backtest en curso
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Cancelación solicitada }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /backtests/{job_id}/intraday:
+    get:
+      summary: Una serie de equity intradía (1m) para un ticker-día concreto
+      parameters:
+        - { name: job_id, in: path, required: true, schema: { type: string } }
+        - { name: ticker, in: query, required: true, schema: { type: string } }
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Serie intradía
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntradayEquity" }
+        "404": { $ref: "#/components/responses/Error" }
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      description: "Authorization: Bearer ek_live_… | ek_test_…"
+  responses:
+    Error:
+      description: Error con forma fija (sin fugas de IP)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              enum: [unauthorized, invalid_api_key, rate_limited, insufficient_credits,
+                universe_too_large, invalid_strategy, invalid_universe, job_not_found,
+                job_failed, validation_error, internal_error]
+            message: { type: string }
+            request_id: { type: string }
+            details: { type: object, additionalProperties: true }
+    IndicatorCatalogEntry:
+      type: object
+      properties:
+        name: { type: string, example: "VWAP" }
+        category: { type: string, example: "Trend / MA" }
+        params:
+          type: array
+          items: { type: string }
+          example: ["period"]
+    UniverseSpec:
+      type: object
+      required: [date_from, date_to]
+      properties:
+        date_from: { type: string, format: date }
+        date_to: { type: string, format: date }
+        apply_day: { type: string, enum: [gap_day, gap_1_day, gap_2_day], default: gap_day }
+        filters:
+          type: object
+          properties:
+            min_price: { type: number }
+            max_price: { type: number }
+            min_volume: { type: number }
+            min_market_cap: { type: number }
+            max_market_cap: { type: number }
+            max_shares_float: { type: number }
+            require_shortable: { type: boolean, default: true }
+            exclude_dilution: { type: boolean, default: true }
+            whitelist_sectors: { type: array, items: { type: string } }
+        postgap_preconditions:
+          type: array
+          items: { $ref: "#/components/schemas/PostGapPrecondition" }
+    PostGapPrecondition:
+      type: object
+      required: [id, day, metric, operator]
+      properties:
+        id: { type: string }
+        day: { type: string, enum: [gap_day, gap_1_day] }
+        metric:
+          type: string
+          enum: [volume, close_vs_open, close_vs_high_low, close_vs_pm_high, close_vs_pm_low,
+            close_vs_high, close_vs_low, close_vs_vwap, close_vs_sma, candle_range_pct,
+            candle_range_ratio_gap_1_vs_gap]
+        operator: { type: string, enum: [">", "<", "> High", "< Low"] }
+        value: { type: number, nullable: true }
+        sma_period: { type: integer, nullable: true }
+    UniversePreview:
+      type: object
+      properties:
+        ticker_days: { type: integer }
+        tickers: { type: integer }
+        date_from: { type: string, format: date }
+        date_to: { type: string, format: date }
+        estimated_credits: { type: integer }
+        within_plan_limit: { type: boolean }
+    Strategy:
+      type: object
+      required: [name, bias, entry_logic, risk_management]
+      properties:
+        name: { type: string }
+        description: { type: string, nullable: true }
+        bias: { type: string, enum: [long, short] }
+        apply_day: { type: string, enum: [gap_day, gap_1_day, gap_2_day], default: gap_day }
+        postgap_preconditions:
+          type: array
+          items: { $ref: "#/components/schemas/PostGapPrecondition" }
+        entry_logic: { $ref: "#/components/schemas/EntryLogic" }
+        exit_logic: { $ref: "#/components/schemas/EntryLogic", nullable: true }
+        risk_management: { $ref: "#/components/schemas/RiskManagement" }
+    EntryLogic:
+      type: object
+      required: [root_condition]
+      properties:
+        timeframe: { type: string, enum: ["1m","5m","15m","30m","1h","1d"], default: "1m" }
+        root_condition: { $ref: "#/components/schemas/ConditionGroup" }
+        candle_delay: { type: integer, nullable: true }
+    ConditionGroup:
+      type: object
+      required: [type, operator, conditions]
+      properties:
+        type: { type: string, enum: [group] }
+        operator: { type: string, enum: [AND, OR] }
+        conditions:
+          type: array
+          items:
+            oneOf:
+              - { $ref: "#/components/schemas/ConditionGroup" }
+              - { $ref: "#/components/schemas/IndicatorComparison" }
+    IndicatorComparison:
+      type: object
+      required: [type, source, comparator, target]
+      properties:
+        type: { type: string, enum: [indicator_comparison] }
+        source: { $ref: "#/components/schemas/IndicatorConfig" }
+        comparator:
+          type: string
+          enum: [GREATER_THAN, LESS_THAN, GREATER_THAN_OR_EQUAL, LESS_THAN_OR_EQUAL, EQUAL,
+            CROSSES_ABOVE, CROSSES_BELOW]
+        target:
+          oneOf:
+            - { $ref: "#/components/schemas/IndicatorConfig" }
+            - { type: number }
+    IndicatorConfig:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "Valor de IndicatorType; ver /catalog/indicators" }
+        period: { type: integer, nullable: true }
+        period2: { type: integer, nullable: true }
+        multiplier: { type: number, nullable: true }
+        offset: { type: integer, default: 0 }
+    RiskManagement:
+      type: object
+      properties:
+        use_hard_stop: { type: boolean, default: true }
+        hard_stop:
+          type: object
+          properties:
+            type: { type: string, enum: [Percentage, "ATR Multiplier", "Fixed Amount", "Market Structure (HOD/LOD)"] }
+            value: { type: number }
+        use_take_profit: { type: boolean, default: true }
+        take_profit:
+          type: object
+          properties:
+            type: { type: string }
+            value: { type: number }
+        trailing_stop:
+          type: object
+          properties:
+            active: { type: boolean, default: false }
+            buffer_pct: { type: number }
+    BacktestCreate:
+      type: object
+      required: [strategy]
+      properties:
+        universe: { $ref: "#/components/schemas/UniverseSpec" }
+        universe_ref: { type: string, nullable: true }
+        strategy: { $ref: "#/components/schemas/Strategy" }
+        strategy_ref: { type: string, nullable: true }
+        execution: { $ref: "#/components/schemas/Execution" }
+        include:
+          type: array
+          items: { type: string, enum: [metrics, equity, days, trades] }
+          default: [metrics, equity, days]
+        trades_limit: { type: integer, default: 500, maximum: 5000 }
+    Execution:
+      type: object
+      properties:
+        init_cash: { type: number, default: 10000 }
+        risk_r: { type: number, default: 100 }
+        risk_type: { type: string, enum: [FIXED, PERCENT, FIXED_RATIO], default: FIXED }
+        size_by_sl: { type: boolean, default: false }
+        fees: { type: number, default: 0 }
+        fee_type: { type: string, enum: [PERCENT, PER_SHARE], default: PERCENT }
+        slippage: { type: number, default: 0 }
+        locates_cost: { type: number, default: 0 }
+        monthly_expenses: { type: number, default: 0 }
+        market_sessions:
+          type: array
+          items: { type: string, enum: [PM, RTH, AM, custom] }
+          default: [RTH]
+        custom_start_time: { type: string, nullable: true }
+        custom_end_time: { type: string, nullable: true }
+        look_ahead_prevention: { type: boolean, default: false }
+    JobAccepted:
+      type: object
+      properties:
+        job_id: { type: string }
+        status: { type: string, enum: [queued] }
+        estimated_credits: { type: integer }
+        poll_after_ms: { type: integer }
+        links: { type: object, properties: { self: { type: string } } }
+    JobStatus:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        progress:
+          type: object
+          properties:
+            percent: { type: number }
+            current: { type: integer }
+            total: { type: integer }
+        meta:
+          type: object
+          properties:
+            ticker_days: { type: integer }
+            trades_total: { type: integer }
+            credits_charged: { type: integer }
+            engine_ms: { type: integer }
+            downsampled: { type: boolean }
+        result: { $ref: "#/components/schemas/BacktestResult" }
+        error: { $ref: "#/components/schemas/ErrorEnvelope" }
+    BacktestResult:
+      type: object
+      properties:
+        aggregate_metrics:
+          type: object
+          additionalProperties: true
+          description: "Claves literales de _aggregate_metrics(): total_trades, win_rate_pct, total_pnl, total_pnl_net, total_return_pct, avg_sharpe, sortino_ratio, calmar_ratio, max_drawdown_pct, avg_profit_factor, expectancy, payoff_ratio, avg_win, avg_loss, max_consecutive_wins, max_consecutive_losses, avg_r_per_day, max_mae, total_expenses, r_squared, dd_return_ratio, avg_return_per_day_pct, avg_r_ui, total_days"
+        global_equity: { type: array, items: { $ref: "#/components/schemas/EquityPoint" } }
+        global_drawdown: { type: array, items: { $ref: "#/components/schemas/EquityPoint" } }
+        day_results: { type: array, items: { $ref: "#/components/schemas/DayResult" } }
+        trades: { $ref: "#/components/schemas/TradesPage" }
+    EquityPoint:
+      type: object
+      properties:
+        time: { type: integer, description: "epoch segundos" }
+        value: { type: number }
+    DayResult:
+      type: object
+      properties:
+        ticker: { type: string }
+        date: { type: string, format: date }
+        total_return_pct: { type: number }
+        max_drawdown_pct: { type: number }
+        win_rate_pct: { type: number }
+        total_trades: { type: integer }
+        profit_factor: { type: number }
+        sharpe_ratio: { type: number }
+        sortino_ratio: { type: number }
+        expectancy: { type: number }
+        best_trade_pct: { type: number }
+        worst_trade_pct: { type: number }
+        init_value: { type: number }
+        end_value: { type: number }
+        gap_pct: { type: number, nullable: true }
+    TradesPage:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Trade" } }
+        page:
+          type: object
+          properties:
+            limit: { type: integer }
+            returned: { type: integer }
+            next_cursor: { type: string, nullable: true }
+            total: { type: integer }
+        export_url: { type: string, nullable: true, description: "URL firmada (parquet/csv), expira 1h" }
+    Trade:
+      type: object
+      properties:
+        ticker: { type: string }
+        date: { type: string, format: date }
+        entry_time: { type: string }
+        exit_time: { type: string }
+        entry_price: { type: number }
+        exit_price: { type: number }
+        pnl: { type: number }
+        fees: { type: number }
+        return_pct: { type: number }
+        direction: { type: string }
+        status: { type: string }
+        size: { type: number }
+        exit_reason: { type: string }
+        mae: { type: number }
+        mfe: { type: number }
+        r_multiple: { type: number, nullable: true }
+        entry_hour: { type: integer }
+        entry_weekday: { type: integer }
+        gap_pct: { type: number, nullable: true }
+        stop_loss: { type: number }
+    IntradayEquity:
+      type: object
+      properties:
+        ticker: { type: string }
+        date: { type: string, format: date }
+        equity: { type: array, items: { $ref: "#/components/schemas/EquityPoint" } }
