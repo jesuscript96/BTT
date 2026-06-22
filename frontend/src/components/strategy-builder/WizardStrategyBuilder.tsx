@@ -4892,11 +4892,11 @@ export default function WizardStrategyBuilder({
                                         updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
                                       }}
                                       style={{
-                                        width: 72,
+                                        width: 65,
                                         backgroundColor: 'var(--color-ec-bg-surface)',
                                         border: '0.5px solid var(--color-ec-border)',
                                         borderRadius: 4,
-                                        padding: '4px 4px',
+                                        padding: '4px 2px',
                                         fontSize: 10,
                                         fontWeight: 700,
                                         color: 'var(--color-ec-text-primary)',
