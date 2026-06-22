@@ -230,6 +230,10 @@ app.include_router(news.router, prefix="/api", tags=["News"])
 app.include_router(edgie.router, prefix="/api/edgie", tags=["Edgie"])
 # assistant.router already declares prefix="/api/assistant" (Edgie AI Gateway: streaming + function calling)
 app.include_router(assistant.router)
+# Developer console (control plane) for the Edgecute Backtest API — Clerk-authed,
+# manages API keys / usage / billing. Declares its own prefix="/api/console".
+from app.routers import api_console
+app.include_router(api_console.router)
 
 @app.get("/health")
 def read_health():

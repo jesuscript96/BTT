@@ -32,6 +32,16 @@
 - **Probado**: tsc estricto (0 errores), build, vitest, y **e2e con cliente MCP real por stdio**
   + **costura MCP → API en vivo** (validate_strategy y schema://openapi contra uvicorn).
 
+### Panel de developer (control plane) — `backend/app/routers/api_console.py` + frontend
+- **Backend** `/api/console/*` (Clerk-auth, mismo store, scoping por owner): overview, keys (crear/
+  listar/revocar, token visible una sola vez), usage, billing (placeholder Stripe), plans, playground
+  (indicadores + validar estrategia, sin gastar uso). **8 tests verde** (incl. scoping por owner).
+- **Frontend** Next: `frontend/src/app/developers/` + `components/developers/ApiConsole.tsx` +
+  `lib/api_console.ts` + link en Sidebar. Pestañas: Resumen (uso, onboarding, actividad), API Keys,
+  Uso, Facturación, Playground, Docs. tsc del frontend: **0 errores**.
+- Extras incluidos (sugeridos): límites del plan visibles, actividad/uso reciente, onboarding
+  checklist, playground para probar la API. Pendientes (v2): webhooks, equipo, alertas de cuota.
+
 ### Verificaciones cruzadas hechas
 - `fee_type` corregido a `PERCENT|FLAT` (el motor no soporta `PER_SHARE`) — evita cálculo erróneo silencioso.
 - Plataforma de deploy: Railway + uvicorn (envelope ya probado por el `/backtest` síncrono actual).

@@ -45,6 +45,13 @@ DATABASE_URL = os.getenv("EDGECUTE_DATABASE_URL")  # reserved for Postgres (v2)
 # When False, requests resolve to a synthetic principal (dev only). Prod = True.
 AUTH_REQUIRED = os.getenv("EDGECUTE_AUTH_REQUIRED", "true").lower() in ("1", "true", "yes")
 
+# ── Developer console (control plane) ────────────────────────────────────────
+DOCS_URL = os.getenv("EDGECUTE_DOCS_URL", "https://docs.edgecute.com")
+# Where the "upgrade plan" CTA points. Empty until the pricing/Stripe flow exists
+# (monetization policy is deferred — docs/b2d-gateway/07 §A).
+UPGRADE_URL = os.getenv("EDGECUTE_UPGRADE_URL", "")
+MAX_KEYS_PER_OWNER = _int("EDGECUTE_MAX_KEYS_PER_OWNER", 25)
+
 # ── Technical plan defaults (mechanism, not policy) ──────────────────────────
 # A single neutral plan. The *policy* (who gets what, pricing) is decided later
 # and applied as config/data — see docs/b2d-gateway/07 §A. The gating hook

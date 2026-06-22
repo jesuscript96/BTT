@@ -48,6 +48,8 @@ class ApiKeyRow:
     status: str  # "active" | "revoked"
     created_at: float
     last_used_at: Optional[float]
+    label: Optional[str] = None
+    is_test: bool = False
 
 
 class Store:
@@ -94,11 +96,24 @@ class Store:
                 );
                 """
             )
+            # Safe migration: add columns introduced after first release.
+            for ddl in (
+                "ALTER TABLE api_keys ADD COLUMN label TEXT",
+                "ALTER TABLE api_keys ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0",
+            ):
+                try:
+                    self._con.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
             self._con.commit()
 
     # ── API keys ─────────────────────────────────────────────────────────────
     def create_api_key(
-        self, owner_id: Optional[str] = None, plan: str = "default", test: bool = False
+        self,
+        owner_id: Optional[str] = None,
+        plan: str = "default",
+        test: bool = False,
+        label: Optional[str] = None,
     ) -> tuple[str, ApiKeyRow]:
         """Create a key. Returns (plaintext_token, row). Plaintext shown once."""
         token, prefix = new_token(test=test)
@@ -106,15 +121,25 @@ class Store:
         row = ApiKeyRow(
             id=kid, prefix=prefix, owner_id=owner_id, plan=plan,
             status="active", created_at=_now(), last_used_at=None,
+            label=label, is_test=test,
         )
         with self._lock:
             self._con.execute(
-                "INSERT INTO api_keys (id, prefix, key_hash, owner_id, plan, status, created_at, last_used_at)"
-                " VALUES (?,?,?,?,?,?,?,?)",
-                (kid, prefix, hash_token(token), owner_id, plan, "active", row.created_at, None),
+                "INSERT INTO api_keys (id, prefix, key_hash, owner_id, plan, status, created_at, last_used_at, label, is_test)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (kid, prefix, hash_token(token), owner_id, plan, "active", row.created_at, None, label, 1 if test else 0),
             )
             self._con.commit()
         return token, row
+
+    def _row_to_key(self, r: sqlite3.Row) -> ApiKeyRow:
+        keys = r.keys()
+        return ApiKeyRow(
+            id=r["id"], prefix=r["prefix"], owner_id=r["owner_id"], plan=r["plan"],
+            status=r["status"], created_at=r["created_at"], last_used_at=r["last_used_at"],
+            label=r["label"] if "label" in keys else None,
+            is_test=bool(r["is_test"]) if "is_test" in keys else False,
+        )
 
     def get_key_by_token(self, token: str) -> Optional[ApiKeyRow]:
         h = hash_token(token)
@@ -122,12 +147,19 @@ class Store:
             r = self._con.execute(
                 "SELECT * FROM api_keys WHERE key_hash = ?", (h,)
             ).fetchone()
-        if not r:
-            return None
-        return ApiKeyRow(
-            id=r["id"], prefix=r["prefix"], owner_id=r["owner_id"], plan=r["plan"],
-            status=r["status"], created_at=r["created_at"], last_used_at=r["last_used_at"],
-        )
+        return self._row_to_key(r) if r else None
+
+    def get_key_by_id(self, key_id: str) -> Optional[ApiKeyRow]:
+        with self._lock:
+            r = self._con.execute("SELECT * FROM api_keys WHERE id = ?", (key_id,)).fetchone()
+        return self._row_to_key(r) if r else None
+
+    def list_keys_by_owner(self, owner_id: str) -> list[ApiKeyRow]:
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT * FROM api_keys WHERE owner_id = ? ORDER BY created_at DESC", (owner_id,)
+            ).fetchall()
+        return [self._row_to_key(r) for r in rows]
 
     def touch_key(self, key_id: str) -> None:
         with self._lock:
@@ -163,6 +195,35 @@ class Store:
                 (api_key_id, since_ts),
             ).fetchone()
         return {"runs": r["n"], "ticker_days": r["td"], "trades": r["tr"]}
+
+    def usage_for_owner(self, owner_id: str, since_ts: float) -> dict:
+        """Aggregate usage across all of an owner's keys (for the dashboard)."""
+        with self._lock:
+            r = self._con.execute(
+                "SELECT COUNT(*) n, COALESCE(SUM(l.ticker_days),0) td, COALESCE(SUM(l.trades),0) tr"
+                " FROM usage_ledger l JOIN api_keys k ON k.id = l.api_key_id"
+                " WHERE k.owner_id = ? AND l.ts >= ?",
+                (owner_id, since_ts),
+            ).fetchone()
+        return {"runs": r["n"], "ticker_days": r["td"], "trades": r["tr"]}
+
+    def recent_activity_for_owner(self, owner_id: str, limit: int = 20) -> list[dict]:
+        """Recent ledger entries across the owner's keys (most recent first)."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT l.module, l.action, l.ticker_days, l.trades, l.ts, k.prefix"
+                " FROM usage_ledger l JOIN api_keys k ON k.id = l.api_key_id"
+                " WHERE k.owner_id = ? ORDER BY l.ts DESC LIMIT ?",
+                (owner_id, int(limit)),
+            ).fetchall()
+        return [
+            {
+                "module": r["module"], "action": r["action"],
+                "ticker_days": r["ticker_days"], "trades": r["trades"],
+                "ts": r["ts"], "key_prefix": r["prefix"],
+            }
+            for r in rows
+        ]
 
     # ── Backtest results ─────────────────────────────────────────────────────
     def save_result(
