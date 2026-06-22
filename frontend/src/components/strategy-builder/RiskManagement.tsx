@@ -737,11 +737,11 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                                         updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
                                                                     }}
                                                                     style={{
-                                                                        width: 85,
+                                                                        width: 72,
                                                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                                                                         border: '0.5px solid var(--color-ec-border)',
                                                                         borderRadius: 4,
-                                                                        padding: '4px 6px',
+                                                                        padding: '4px 4px',
                                                                         fontSize: 11,
                                                                         fontWeight: 700,
                                                                         color: 'var(--color-ec-text-primary)',

@@ -201,3 +201,8 @@ a[href*="tradingview.com"] {
   opacity: 0 !important;
   pointer-events: none !important;
 }
+/* Styling for input type="time" clock indicator to make it white */
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.5);
+  cursor: pointer;
+}
