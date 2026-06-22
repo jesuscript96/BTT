@@ -22,6 +22,11 @@ MONTHS_TO_OPTIMIZE = [
     (2024, 7),
     (2025, 1),
     (2025, 2),
+    # Backfill marzo-junio 2026 (intraday revivido vía catchup_gcs.py)
+    (2026, 3),
+    (2026, 4),
+    (2026, 5),
+    (2026, 6),
 ]
 
 

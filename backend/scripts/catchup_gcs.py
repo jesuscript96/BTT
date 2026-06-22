@@ -268,6 +268,40 @@ def write_parquet_to_gcs(df: pd.DataFrame, year: int, month: int):
     con.close()
     logger.info(f"  Written {len(df)} rows to {path}")
 
+
+def write_intraday_to_gcs(df: pd.DataFrame, year: int, month: int, date_str: str):
+    """Persiste las barras 1m crudas de un día a cold_storage/intraday_1m.
+
+    Escritura por día (nombre determinista → idempotente, re-runs sobrescriben)
+    y sin read-merge: a diferencia de daily_metrics, un mes intraday son ~34M
+    filas; leerlo para mergear reventaría memoria (el OOM que apagó el pulse).
+    """
+    if df is None or df.empty:
+        return
+
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["timestamp"]).dt.date
+    df["month"] = month
+    df["year"] = year
+    # Orden EXACTO del schema del intraday_1m existente en GCS.
+    df = df[["ticker", "volume", "open", "close", "high", "low",
+             "timestamp", "transactions", "date", "month", "year"]]
+
+    con = duckdb.connect()
+    con.execute(f"""
+        INSTALL httpfs; LOAD httpfs;
+        SET s3_endpoint='storage.googleapis.com';
+        SET s3_access_key_id='{GCS_HMAC_KEY}';
+        SET s3_secret_access_key='{GCS_HMAC_SECRET}';
+        SET s3_url_style='path';
+    """)
+
+    path = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={month}/catchup_intraday_{date_str}.parquet"
+    con.register("df_intraday", df)
+    con.execute(f"COPY df_intraday TO '{path}' (FORMAT PARQUET)")
+    con.close()
+    logger.info(f"  Written {len(df)} intraday 1m rows to {path}")
+
 # ─── Main loop ────────────────────────────────────────
 
 CHECKPOINT_PATH = os.path.join(os.path.dirname(__file__), 'catchup_checkpoint.json')
@@ -367,17 +401,21 @@ def _seed_prev_closes(seed_date: date) -> dict[str, float]:
         return {}
 
 def process_single_ticker(args):
-    """Procesa un ticker para un día dado."""
+    """Procesa un ticker para un día dado.
+
+    Devuelve la tupla (metrics, df_1m): las métricas diarias y las barras 1m
+    crudas para persistirlas en cold_storage/intraday_1m. (None, None) si falla.
+    """
     ticker, date_str, prev_close = args
     try:
         df_1m = get_1m_bars(ticker, date_str)
         if df_1m.empty:
-            return None
+            return (None, None)
         metrics = process_day_metrics(ticker, df_1m, prev_close, date_str)
-        return metrics
+        return (metrics, df_1m)
     except Exception as e:
         logger.warning(f"  {ticker} {date_str}: {e}")
-        return None
+        return (None, None)
 
 def _flush_month(monthly_buffer: dict, year: int, month: int) -> None:
     """Escribe el buffer de un mes a GCS y lo limpia."""
@@ -393,8 +431,14 @@ def _flush_month(monthly_buffer: dict, year: int, month: int) -> None:
 def main():
     logger.info("=== BTT GCS Catchup Pipeline ===")
 
-    # 1. Determinar rango
-    last_date = get_last_gcs_date()
+    # 1. Determinar rango. INTRADAY_BACKFILL_FROM fuerza el inicio (one-shot)
+    # para rellenar intraday_1m, ya que get_last_gcs_date() mira daily_metrics.
+    backfill_from = os.getenv("INTRADAY_BACKFILL_FROM")
+    if backfill_from:
+        last_date = date.fromisoformat(backfill_from)
+        logger.info(f"INTRADAY_BACKFILL_FROM set → forcing start at {last_date}")
+    else:
+        last_date = get_last_gcs_date()
     today = date.today()
     trading_days = get_trading_days(last_date, today)
 
@@ -449,14 +493,17 @@ def main():
 
         # 3c. Descargar 1m bars en paralelo
         day_metrics = []
+        day_intraday = []  # frames df_1m del día (para cold_storage/intraday_1m)
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {pool.submit(process_single_ticker, args): args
                       for args in candidates}
             for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    day_metrics.append(result)
+                metrics, df_1m = future.result()
+                if metrics:
+                    day_metrics.append(metrics)
+                if df_1m is not None and not df_1m.empty:
+                    day_intraday.append(df_1m)
 
         logger.info(f"  Processed: {len(day_metrics)} tickers with metrics")
 
@@ -472,6 +519,11 @@ def main():
             if month_key not in monthly_buffer:
                 monthly_buffer[month_key] = []
             monthly_buffer[month_key].extend(day_metrics)
+
+        # 3e-bis. Persistir intraday 1m del día (flush inmediato, memoria acotada)
+        if day_intraday:
+            day_df = pd.concat(day_intraday, ignore_index=True)
+            write_intraday_to_gcs(day_df, dt.year, dt.month, date_str)
 
         # 3f. Actualizar prev_closes y checkpoint
         prev_closes.update(new_prev_closes)
