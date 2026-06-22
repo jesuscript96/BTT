@@ -3,6 +3,9 @@ import "./globals.css";
 import { LayoutShell } from "@/components/LayoutShell";
 import { ClerkProvider } from "@clerk/nextjs";
 import { dark } from "@clerk/themes";
+import { PHProvider } from "./providers";
+import PostHogPageView from "@/components/PostHogPageView";
+import { Suspense } from "react";
 
 export const metadata: Metadata = {
   title: "Edgecute",
@@ -195,7 +198,12 @@ export default function RootLayout({
           <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet" />
         </head>
         <body>
-          <LayoutShell>{children}</LayoutShell>
+          <PHProvider>
+            <Suspense fallback={null}>
+              <PostHogPageView />
+            </Suspense>
+            <LayoutShell>{children}</LayoutShell>
+          </PHProvider>
         </body>
       </html>
     </ClerkProvider>
