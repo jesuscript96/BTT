@@ -127,6 +127,7 @@ interface EquityCurveTabProps {
   fullGlobalEquity: GlobalEquityPoint[];
   fullGlobalDrawdown: DrawdownPoint[];
   fullTrades: any[];
+  riskType?: string;
 }
 
 export default function EquityCurveTab({
@@ -142,6 +143,7 @@ export default function EquityCurveTab({
   fullGlobalEquity,
   fullGlobalDrawdown,
   fullTrades,
+  riskType = "FIXED",
 }: EquityCurveTabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
@@ -153,6 +155,24 @@ export default function EquityCurveTab({
 
   type ViewMode = "$" | "%" | "R";
   const [viewMode, setViewMode] = useState<ViewMode>("$");
+
+  const getRValue = (val: number) => {
+    if (riskType === "PERCENT") {
+      const ratio = Math.max(0.0001, val / initCash);
+      const ln_base = Math.log(1 + riskR / 100);
+      return ln_base > 0 ? Math.log(ratio) / ln_base : 0;
+    } else {
+      return riskR > 0 ? (val - initCash) / riskR : 0;
+    }
+  };
+
+  const getDrawdownRValue = (ddPct: number) => {
+    if (riskType === "PERCENT") {
+      return riskR > 0 ? ddPct / riskR : 0;
+    } else {
+      return riskR > 0 ? ((ddPct / 100) * initCash) / riskR : 0;
+    }
+  };
   const [activeMainTab, setActiveMainTab] = useState<"equity" | "oos_degradation">("equity");
 
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
@@ -324,7 +344,7 @@ export default function EquityCurveTab({
         if (viewMode === "%") {
           val = ((p.value / initCash) - 1) * 100;
         } else if (viewMode === "R") {
-          val = riskR > 0 ? (p.value - initCash) / riskR : 0;
+          val = getRValue(p.value);
         }
         return { time: p.time as Time, value: val };
       })
@@ -350,7 +370,7 @@ export default function EquityCurveTab({
           if (viewMode === "%") {
             val = ((netValue / initCash) - 1) * 100;
           } else if (viewMode === "R") {
-            val = riskR > 0 ? (netValue - initCash) / riskR : 0;
+            val = getRValue(netValue);
           }
           return { time: p.time as Time, value: val };
         })
@@ -422,8 +442,7 @@ export default function EquityCurveTab({
         globalDrawdown.map((p) => {
           let val = p.value; // Drawdown is natively in % from the backend
           if (viewMode === "R") {
-            // Convert % drawdown to absolute $ drawdown, then divide by R
-            val = riskR > 0 ? ((p.value / 100) * initCash) / riskR : 0;
+            val = getDrawdownRValue(p.value);
           } else if (viewMode === "$") {
             val = (p.value / 100) * initCash;
           }
@@ -458,7 +477,7 @@ export default function EquityCurveTab({
 
           let val = ddPct;
           if (viewMode === "R") {
-            val = riskR > 0 ? ddAbsolute / riskR : 0;
+            val = riskType === "PERCENT" ? ddPct / riskR : (riskR > 0 ? ddAbsolute / riskR : 0);
           } else if (viewMode === "$") {
             val = ddAbsolute;
           }
@@ -596,7 +615,7 @@ export default function EquityCurveTab({
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod]);
+  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType]);
 
   if (!globalEquity.length) {
     return <p className="text-sm text-[var(--muted)]">Sin datos de equity</p>;
@@ -609,7 +628,7 @@ export default function EquityCurveTab({
   const maxProfit = globalEquity && globalEquity.length > 0
     ? Math.max(...globalEquity.map((p) => {
       if (viewMode === "%") return ((p.value / initCash) - 1) * 100;
-      if (viewMode === "R") return riskR > 0 ? (p.value - initCash) / riskR : 0;
+      if (viewMode === "R") return getRValue(p.value);
       return p.value - initCash;
     }))
     : 0;
@@ -622,7 +641,7 @@ export default function EquityCurveTab({
       const netValue = p.value - (monthlyExpenses * monthsElapsed);
       
       if (viewMode === "%") return ((netValue / initCash) - 1) * 100;
-      if (viewMode === "R") return riskR > 0 ? (netValue - initCash) / riskR : 0;
+      if (viewMode === "R") return getRValue(netValue);
       return netValue - initCash;
     }))
     : null;
@@ -630,7 +649,7 @@ export default function EquityCurveTab({
   const ddDisplay = (() => {
     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
     if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
-    if (viewMode === "R") return riskR > 0 ? `${((maxDD / 100) * initCash / riskR).toFixed(2)}R` : "0R";
+    if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
     return `${maxDD.toFixed(2)}%`;
   })();
 
@@ -976,6 +995,7 @@ export default function EquityCurveTab({
               isPercent={isPercent}
               monthlyExpenses={monthlyExpenses}
               isDarkMode={isDarkMode}
+              riskType={riskType}
             />
           </div>
         )}

@@ -858,8 +858,8 @@ export default function Home() {
       avg_loss: avgLoss,
       payoff_ratio: avgLoss > 0 ? avgWin / avgLoss : 0,
       expectancy: totalTrades > 0 ? totalPnl / totalTrades : 0,
-      avg_r_per_day: uniqueDays > 0 && riskRRef.current > 0
-        ? totalPnl / uniqueDays / riskRRef.current
+      avg_r_per_day: uniqueDays > 0
+        ? isTrades.reduce((sum: number, t: any) => sum + (t.r_multiple ?? 0), 0) / uniqueDays
         : 0,
       calmar_ratio: maxDd !== 0 ? totalReturnPct / Math.abs(maxDd) : 0,
       dd_return_ratio: totalReturnPct !== 0 ? Math.abs(maxDd) / totalReturnPct : 0,
@@ -1170,6 +1170,7 @@ export default function Home() {
                     fullGlobalDrawdown={result.global_drawdown}
                     fullTrades={result.trades}
                     isDarkMode={isDarkMode}
+                    riskType={backtestParamsRef.current.risk_type as string}
                   />
                 </div>
                 <div style={{ width: '33.333333%', display: 'flex', flexDirection: 'column', height: 580, paddingBottom: 4, boxSizing: 'border-box' }}>

@@ -349,6 +349,7 @@ export default function ResultsTabs({
               monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
               isDarkMode={isDarkMode}
               viewMode="charts"
+              riskType={backtestParams?.risk_type as string}
             />
           </div>
           <div style={{ display: chartsSubTab === "whatif_stress" ? "block" : "none" }}>
@@ -363,6 +364,7 @@ export default function ResultsTabs({
               monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
               isDarkMode={isDarkMode}
               viewMode="whatif"
+              riskType={backtestParams?.risk_type as string}
             />
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>

@@ -1210,7 +1210,7 @@ def _aggregate_metrics(
         "payoff_ratio": round(payoff_ratio, 4),
         "total_expenses": round(total_expenses, 2),
         "total_pnl_net": round(total_pnl_net, 2),
-        "avg_r_per_day": round(total_pnl_trades / total_days / risk_r, 4) if total_days > 0 and risk_r > 0 else 0,
+        "avg_r_per_day": round(sum(t.get("r_multiple") or 0.0 for t in trades) / total_days, 4) if total_days > 0 else 0,
         "avg_r_ui": round(avg_r_ui, 4),
     }
 

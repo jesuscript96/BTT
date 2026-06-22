@@ -31,7 +31,6 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
 
     const evData = useMemo(() => {
         if (!trades.length) return [];
-        const r = riskR > 0 ? riskR : 1;
 
         if (basis === "days") {
             // Group trades by day, compute daily EV, then rolling avg over days
@@ -49,8 +48,8 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 const losses = dayT.filter((t) => t.pnl <= 0);
                 const pWin = wins.length / dayT.length;
                 const pLoss = losses.length / dayT.length;
-                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl / r, 0) / wins.length : 0;
-                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl / r, 0) / losses.length) : 0;
+                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / wins.length : 0;
+                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / losses.length) : 0;
                 dailyEV.push({ date, ev: pWin * avgWin - pLoss * avgLoss });
             }
             dailyEV.sort((a, b) => a.date.localeCompare(b.date));
@@ -79,8 +78,8 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 const losses = slice.filter((t) => t.pnl <= 0);
                 const pWin = wins.length / slice.length;
                 const pLoss = losses.length / slice.length;
-                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl / r, 0) / wins.length : 0;
-                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl / r, 0) / losses.length) : 0;
+                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / wins.length : 0;
+                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / losses.length) : 0;
                 const ev = pWin * avgWin - pLoss * avgLoss;
                 const d = new Date(sorted[i].exit_time);
                 const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -93,7 +92,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 .sort((a, b) => a[0].localeCompare(b[0]))
                 .map(([date, value]) => ({ time: date as unknown as Time, value }));
         }
-    }, [trades, rollingWindow, riskR, basis]);
+    }, [trades, rollingWindow, basis]);
 
 
 
