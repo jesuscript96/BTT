@@ -68,6 +68,11 @@ function calculateEnhancedStats(arr: number[]) {
     }
   };
 
+  const median = getPercentile(0.5);
+  const q1 = getPercentile(0.25);
+  const q3 = getPercentile(0.75);
+  const iqr = q3 - q1;
+  const max = sorted[n - 1];
   const min = sorted[0];
   const range = max - min;
 
