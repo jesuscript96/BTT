@@ -3,33 +3,24 @@
 > **Objetivo:** confirmar que la *física* del proyecto (datos, payload, latencia, seguridad,
 > límites de las herramientas) soporta la visión de negocio **antes** de invertir en desarrollo.
 >
-> **VEREDICTO (resumen):** ✅ **Viable** — y, además, **ya construido y testeado** en la rama
-> `api-jesus` (2026-06-22). Detalle abajo.
+> **VEREDICTO (resumen):** ✅ **Viable**, con **una condición de diseño no negociable** y
+> **restricciones que reescriben el alcance ingenuo**. Detalle abajo.
 
 ---
 
-## Estado: esta versión está reconciliada con el MVP CONSTRUIDO
+## Alcance del MVP (qué entra y qué queda para fases posteriores)
 
-> Este análisis se escribió antes de desarrollar; esta versión está **alineada con lo que de hecho
-> está en la rama `api-jesus`**. Mapa de "lo que dice el análisis ↔ lo que está construido"
-> (estado exhaustivo en [`BUILD_STATUS.md`](BUILD_STATUS.md)):
+> Para que la viabilidad sea realista, el MVP acota el alcance a propósito. Esta tabla fija qué
+> resuelve el MVP y qué se deja para más adelante. Lo de "fase posterior" es ampliación, no bloqueo:
+> no cambia el veredicto.
 
-| Decisión del análisis | Estado en `api-jesus` |
-|---|---|
-| Aislamiento por fachada + handler de errores sin fugas | ✅ Construido (test de no-fuga + guard de imports en CI) |
-| Payloads pesados no por defecto (downsample LTTB / paginar / `include` / intradía perezoso) | ✅ Construido |
-| Cap técnico de ticker-días por request | ✅ Construido (`EDGECUTE_MAX_TICKER_DAYS`) |
-| API **síncrona** (no async) | ✅ Construido · async = **v2** |
-| Metering (`usage_ledger`) + hook de gating por módulo (default permitir) | ✅ Construido · política de cobro diferida |
-| MCP build-time (codegen + componentes + docs) | ✅ Construido (17 tests + e2e) |
-| Panel de developer (keys / uso / billing / playground) | ✅ Construido (8 tests) |
-| **Universo por filtros del screener** | ⏳ **v2** — el MVP usa `dataset_ref` (dataset existente) o `mock_dataset_1`; con filtros devuelve `not_implemented` accionable |
-| **Export de trades a URL firmada (CSV/Parquet)** | ⏳ **v2** — el campo `export_url` está reservado en el contrato pero aún no genera el fichero |
-| Store **Postgres/Redis**, créditos prepago, cola/worker | ⏳ **v2** — el MVP usa **SQLite** + rate-limit **en proceso**, sin cola |
-
-> Lo único que NO se pudo verificar localmente: un backtest real end-to-end con datos reales
-> (MotherDuck/GCS). La API llama al **mismo `run_backtest_orchestrator` que ya usa la web en prod**;
-> falta una pasada con un `dataset_ref` real + un load test para fijar el cap.
+| Capacidad | En el MVP | Fase posterior |
+|---|---|---|
+| Ejecución del backtest | Síncrona, con cap de ticker-días | Jobs async (para universos grandes) |
+| Universo | Referencia a un dataset existente (`dataset_ref`) | Creación por filtros del screener al vuelo |
+| Payloads | Selectivos (`include`), downsample LTTB, paginación de trades | Export del set completo a URL firmada |
+| Cobro | Solo el mecanismo: metering + hook de gating por módulo | Política de tiers/precios (Stripe) |
+| Infra del store | SQLite + rate-limit en proceso | Postgres + Redis |
 
 ---
 
@@ -53,11 +44,10 @@ El trader indie **no tiene estos datos en local**. Por tanto:
 Implicación directa en la API: además de "estrategia" y "ejecución", **el formulario de entrada
 incluye la referencia al universo**.
 
-> **Estado del universo (MVP vs v2):** el MVP construido referencia un **dataset existente**
-> (`universe.dataset_ref`) — o `mock_dataset_1` para el sandbox — y lo resuelve con
-> `fetch_qualifying_data`. La **creación de universo por filtros del screener al vuelo**
-> (`backend/app/routers/screener.py`, `query.py`) requiere el pipeline de precache y queda como
-> **v2** (la API devuelve `not_implemented` accionable si mandas filtros sin dataset). El moat es el
+> **Alcance del universo (MVP vs fase posterior):** el MVP referencia un **dataset existente**
+> (`universe.dataset_ref`) — o `mock_dataset_1` para el sandbox — resuelto con `fetch_qualifying_data`.
+> La **creación de universo por filtros del screener al vuelo** (`backend/app/routers/screener.py`,
+> `query.py`) requiere el pipeline de precache y se deja para una **fase posterior**. El moat es el
 > mismo en ambos casos: el trader no tiene los datos intradía.
 
 ---
@@ -94,8 +84,8 @@ incluye la referencia al universo**.
 2. **`global_equity` se devuelve siempre** (está acotado por nº de trades, no por minutos) y,
    si supera N puntos, se aplica **downsampling LTTB** preservando picos/valles para gráficos.
 3. **`trades` se paginan** (`?limit&cursor`), con un `default_limit` (500). *(El export del set
-   completo a CSV/Parquet vía URL firmada está **reservado en el contrato** — campo `export_url` —
-   pero la generación del fichero es **v2**; en el MVP el set completo se recorre por paginación.)*
+   completo a CSV/Parquet vía URL firmada se deja para una **fase posterior**; el contrato reserva el
+   campo `export_url`. En el MVP el set completo se recorre por paginación.)*
 4. **`day_results` y `aggregate_metrics` se devuelven íntegros** (siempre acotados y son el 90%
    del valor analítico).
 5. **Field selection / verbosity**: parámetro `include` (`metrics`, `equity`, `trades`,
@@ -165,10 +155,10 @@ reglas de payload NO nacen de que el backend sea distinto, sino de la **frontera
 - 🟡 Varios `print("[DEBUG ORCH] strategy_def keys: …")` en el orquestador — server-side, ok,
   pero la capa pública nunca debe reenviar logs/stdout.
 
-> **Restricción nº3 (aislamiento) — ✅ construida así:** la API B2D vive en un **paquete separado**
-> (`backend/app/api_public/`) que llega al motor **solo por `facade.py`** (`facade.run_backtest` →
-> `run_backtest_orchestrator`; `facade.preview_universe` → `fetch_qualifying_data`) y **nunca**
-> importa `engine.py` / `indicators.py` / `portfolio_sim.py` (un test de CI lo verifica). Reglas:
+> **Restricción nº3 (aislamiento):** la API B2D vive en un **paquete separado**
+> (`backend/app/api_public/`) que llega al motor **solo por una fachada** (`run_backtest_orchestrator`,
+> `fetch_qualifying_data`) y **nunca** importa `engine.py` / `indicators.py` / `portfolio_sim.py` (se
+> enforca con un guard de imports en CI). Reglas:
 > - Manejador de excepciones **propio**: mapea todo a `{code, message_safe, request_id}` con
 >   catálogo cerrado de errores; **jamás** `str(exc)` ni traces. El trace real va a logs server-side
 >   indexados por `request_id`.
@@ -235,14 +225,14 @@ reglas de payload NO nacen de que el backend sea distinto, sino de la **frontera
 
 | Riesgo | Severidad | Mitigación |
 |---|---|---|
-| Payload `equity_curves`/`trades` revienta memoria/red | 🔴 Alta | ✅ No-default + paginación + downsampling LTTB (export firmado = v2) (1.1) |
-| Timeout del LLM en backtests | ⚪ N/A | El MCP es **build-time**, no ejecuta backtests de prod → no hay LLM en el hot path (§1.1-bis) |
-| Fuga de IP por errores/traces | 🔴 Alta | ✅ Servicio fachada + handler propio + DTO allow-list (1.2) |
-| Abuso/scraping del dataset histórico vía API | 🟠 Media | ✅ Rate limit + cap de ticker-días por request; sin OHLCV crudo a granel |
-| Coste de CPU no acotado (DoS económico) | 🟠 Media | ✅ Cap duro de ticker-días (créditos/cola con prioridad = v2) |
-| Deriva del contrato (el `types/backtest.ts` del front está **desincronizado** del backend) | 🟠 Media | ✅ El contrato se deriva del backend real (Pydantic) → `openapi.generated.json` |
-| Estrategias inválidas que rompen el motor | 🟡 Baja | ✅ `validate_strategy` con el modelo **Pydantic `StrategyCreate`** antes de ejecutar (NO `backtest_validator.py`, que valida resultados) |
-| Concurrencia DuckDB (locks de `users.duckdb`) | 🟡 Baja | ✅ La API solo lee el histórico; keys/metering en store propio (SQLite en el MVP, Postgres en v2), no en `users.duckdb` |
+| Payload `equity_curves`/`trades` revienta memoria/red | 🔴 Alta | No-default + paginación + downsampling LTTB; export firmado en fase posterior (1.1) |
+| Timeout del LLM en backtests | ⚪ N/A | El MCP es **build-time** (no ejecuta backtests en runtime) → no hay LLM en el hot path (§1.1-bis) |
+| Fuga de IP por errores/traces | 🔴 Alta | Servicio fachada + handler de errores propio + DTO allow-list (1.2) |
+| Abuso/scraping del dataset histórico vía API | 🟠 Media | Rate limit + cap de ticker-días por request; sin OHLCV crudo a granel |
+| Coste de CPU no acotado (DoS económico) | 🟠 Media | Cap duro de ticker-días (créditos/cola con prioridad en fase posterior) |
+| Deriva del contrato (el `types/backtest.ts` del front está **desincronizado** del backend) | 🟠 Media | El contrato se deriva del backend real (Pydantic), no a mano; test de contrato en CI |
+| Estrategias inválidas que rompen el motor | 🟡 Baja | `validate_strategy` con el modelo **Pydantic `StrategyCreate`** antes de ejecutar (NO `backtest_validator.py`, que valida resultados) |
+| Concurrencia DuckDB (locks de `users.duckdb`) | 🟡 Baja | La API solo lee el histórico; keys/metering en store propio (SQLite; Postgres en fase posterior), no en `users.duckdb` |
 
 ### ⚠️ Nota de contrato desincronizado (evidencia)
 
