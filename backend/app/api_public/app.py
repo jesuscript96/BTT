@@ -54,6 +54,11 @@ def create_app() -> FastAPI:
     def health():
         return {"status": "ok", "service": config.API_TITLE, "version": config.API_VERSION}
 
+    # OpenAPI also under the versioned prefix (contract: GET /v1/openapi.json).
+    @app.get(f"{config.API_PREFIX}/openapi.json", include_in_schema=False)
+    def versioned_openapi():
+        return app.openapi()
+
     # Mount enabled modules generically.
     mounted = []
     for name in config.ENABLED_MODULES:
