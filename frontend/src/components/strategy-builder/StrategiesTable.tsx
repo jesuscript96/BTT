@@ -258,13 +258,27 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         // Take Profit
         if (risk.use_take_profit && risk.take_profit && risk.take_profit.value != null && (risk.take_profit.value as any) !== "") {
             if (risk.take_profit_mode === "Partial") {
-                const partials = (risk.partial_take_profits || []).map((p: any) => `${p.multiplier || p.distance_pct || ''}${p.type === 'Percentage' ? '%' : 'R'}: ${p.capital_pct}%`).join(', ');
+                const partials = (risk.partial_take_profits || []).map((p: any) => {
+                    const d = String(p.distance_pct ?? p.multiplier ?? '');
+                    if (d === 'EOD') return `EOD: ${p.capital_pct}%`;
+                    if (d.startsWith('TIME:')) return `${d.split(':')[1]}m: ${p.capital_pct}%`;
+                    if (d.startsWith('HOUR:')) return `${d.substring(5)}: ${p.capital_pct}%`;
+                    const suffix = p.type === 'Percentage' ? '%' : 'R';
+                    return `${d}${suffix}: ${p.capital_pct}%`;
+                }).join(', ');
                 tags.push(`TP Parciales (${partials})`);
             } else {
                 tags.push(`Take Profit: ${risk.take_profit.value}${risk.take_profit.type === 'Percentage' ? '%' : 'R'}`);
             }
         } else if (risk.use_take_profit && risk.take_profit_mode === "Partial" && risk.partial_take_profits && risk.partial_take_profits.length > 0) {
-            const partials = (risk.partial_take_profits || []).map((p: any) => `${p.multiplier || p.distance_pct || ''}${p.type === 'Percentage' ? '%' : 'R'}: ${p.capital_pct}%`).join(', ');
+            const partials = (risk.partial_take_profits || []).map((p: any) => {
+                const d = String(p.distance_pct ?? p.multiplier ?? '');
+                if (d === 'EOD') return `EOD: ${p.capital_pct}%`;
+                if (d.startsWith('TIME:')) return `${d.split(':')[1]}m: ${p.capital_pct}%`;
+                if (d.startsWith('HOUR:')) return `${d.substring(5)}: ${p.capital_pct}%`;
+                const suffix = p.type === 'Percentage' ? '%' : 'R';
+                return `${d}${suffix}: ${p.capital_pct}%`;
+            }).join(', ');
             tags.push(`TP Parciales (${partials})`);
         }
         

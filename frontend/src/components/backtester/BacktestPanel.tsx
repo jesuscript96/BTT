@@ -1014,7 +1014,14 @@ export default function BacktestPanel({
                       // Take Profit
                       if (rm.use_take_profit) {
                         if (rm.take_profit_mode === "Partial") {
-                          const partials = (rm.partial_take_profits || []).map((p: any) => `${p.multiplier || p.distance_pct || ''}${p.type === 'Percentage' ? '%' : 'R'}: ${p.capital_pct}%`).join(', ');
+                          const partials = (rm.partial_take_profits || []).map((p: any) => {
+                            const d = String(p.distance_pct ?? p.multiplier ?? '');
+                            if (d === 'EOD') return `EOD: ${p.capital_pct}%`;
+                            if (d.startsWith('TIME:')) return `${d.split(':')[1]}m: ${p.capital_pct}%`;
+                            if (d.startsWith('HOUR:')) return `${d.substring(5)}: ${p.capital_pct}%`;
+                            const suffix = p.type === 'Percentage' ? '%' : 'R';
+                            return `${d}${suffix}: ${p.capital_pct}%`;
+                          }).join(', ');
                           stopList.push(`TP Parciales (${partials})`);
                         } else {
                           const tpVal = rm.take_profit?.value ? `${rm.take_profit.value}${rm.take_profit.type === 'Percentage' ? '%' : 'R'}` : '';

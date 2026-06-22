@@ -2532,7 +2532,13 @@ export default function InlineStrategyBuilder({
                           <>
                             <span style={{ color: 'var(--color-ec-text-secondary)' }}>TP Parcial:</span>
                             <strong style={{ color: 'var(--color-ec-profit)', marginLeft: 3 }}>
-                              {(riskManagement.partial_take_profits || []).map(tp => `${tp.distance_pct}% (${tp.capital_pct}%)`).join(" / ")}
+                              {(riskManagement.partial_take_profits || []).map(tp => {
+                                const d = String(tp.distance_pct);
+                                if (d === 'EOD') return `EOD (${tp.capital_pct}%)`;
+                                if (d.startsWith('TIME:')) return `${d.split(':')[1]}m (${tp.capital_pct}%)`;
+                                if (d.startsWith('HOUR:')) return `${d.substring(5)} (${tp.capital_pct}%)`;
+                                return `${d}% (${tp.capital_pct}%)`;
+                              }).join(" / ")}
                             </strong>
                           </>
                         ) : (
