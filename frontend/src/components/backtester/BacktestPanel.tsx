@@ -615,28 +615,37 @@ export default function BacktestPanel({
       ? activeStrategy
       : strategies.find((s) => s.id === selectedStrategy);
     if (currentStrat) {
-      const stratDef = currentStrat.definition || currentStrat;
-      if (stratDef.market_sessions) {
-        const nextSessions = stratDef.market_sessions;
-        setMarketSessions((prev) => {
-          if (prev.length === nextSessions.length && prev.every((v, i) => v === nextSessions[i])) {
-            return prev;
-          }
-          return nextSessions;
-        });
-      } else {
-        setMarketSessions((prev) => {
-          if (prev.length === 1 && prev[0] === "rth") {
-            return prev;
-          }
-          return ["rth"];
-        });
+      let stratDef = currentStrat.definition || currentStrat;
+      if (typeof stratDef === 'string') {
+        try {
+          stratDef = JSON.parse(stratDef);
+        } catch (e) {
+          console.error("Error parsing strategy definition in useEffect:", e);
+        }
       }
-      if (stratDef.custom_start_time) {
-        setCustomStartTime((prev) => prev === stratDef.custom_start_time ? prev : stratDef.custom_start_time);
-      }
-      if (stratDef.custom_end_time) {
-        setCustomEndTime((prev) => prev === stratDef.custom_end_time ? prev : stratDef.custom_end_time);
+      if (stratDef && typeof stratDef === 'object') {
+        if (stratDef.market_sessions) {
+          const nextSessions = stratDef.market_sessions;
+          setMarketSessions((prev) => {
+            if (prev.length === nextSessions.length && prev.every((v, i) => v === nextSessions[i])) {
+              return prev;
+            }
+            return nextSessions;
+          });
+        } else {
+          setMarketSessions((prev) => {
+            if (prev.length === 1 && prev[0] === "rth") {
+              return prev;
+            }
+            return ["rth"];
+          });
+        }
+        if (stratDef.custom_start_time) {
+          setCustomStartTime((prev) => prev === stratDef.custom_start_time ? prev : stratDef.custom_start_time);
+        }
+        if (stratDef.custom_end_time) {
+          setCustomEndTime((prev) => prev === stratDef.custom_end_time ? prev : stratDef.custom_end_time);
+        }
       }
     }
   }, [selectedStrategy, activeStrategy, strategies]);
@@ -865,7 +874,14 @@ export default function BacktestPanel({
             const cleanDesc = (currentStrat.description || "")
               .replace(/\[What-if:[\s\S]*\]/g, "")
               .trim();
-            const stratDef = currentStrat.definition || currentStrat as any;
+            let stratDef = currentStrat.definition || currentStrat as any;
+            if (typeof stratDef === 'string') {
+              try {
+                stratDef = JSON.parse(stratDef);
+              } catch (e) {
+                console.error("Error parsing strategy definition in info box:", e);
+              }
+            }
             const entryLogic = stratDef?.entry_logic;
             const exitLogic = stratDef?.exit_logic;
             const bias = stratDef?.bias;
@@ -1189,7 +1205,7 @@ export default function BacktestPanel({
               }}
             >
               <Settings size={13} strokeWidth={2} />
-              Configurar Estrategia
+              Config. Estrategia guardada
             </button>
           </div>
         </div>

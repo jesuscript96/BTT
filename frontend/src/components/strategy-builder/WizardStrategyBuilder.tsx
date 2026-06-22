@@ -584,6 +584,19 @@ const isVolumeIndicator = (name?: string): boolean => {
   );
 };
 
+function getParsedStrategyDef(strat: any) {
+  if (!strat) return null;
+  const def = strat.definition;
+  if (typeof def === 'string') {
+    try {
+      return JSON.parse(def);
+    } catch (e) {
+      return strat;
+    }
+  }
+  return def || strat;
+}
+
 export default function WizardStrategyBuilder({
   onBack,
   onTest,
@@ -595,6 +608,7 @@ export default function WizardStrategyBuilder({
   onExpandedChange,
   defaultDatasetId,
 }: Props) {
+  const stratObj = getParsedStrategyDef(initialStrategy);
   const [currentStep, setCurrentStep] = useState(0);
   const createdAtRef = useRef(new Date().toISOString());
   const lastLoadedStrategyRef = useRef<string>("");
@@ -606,7 +620,8 @@ export default function WizardStrategyBuilder({
     if (!initialStrategy) return;
     if ((initialStrategy.id === "draft" || initialStrategy.id === "wizard_draft") && lastLoadedStrategyRef.current !== "") return;
 
-    const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+    const stratObj = getParsedStrategyDef(initialStrategy);
+    if (!stratObj) return;
     const str = JSON.stringify({
       bias: stratObj.bias,
       apply_day: stratObj.apply_day,
@@ -746,16 +761,16 @@ export default function WizardStrategyBuilder({
   }, [defaultDatasetId]);
 
   // Strategy Builder States
-  const [bias, setBias] = useState<"long" | "short" | null>(null);
+  const [bias, setBias] = useState<"long" | "short" | null>(stratObj?.bias || null);
   const [hoveredBias, setHoveredBias] = useState<"long" | "short" | null>(null);
-  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
-  const [wizardMarketSessions, setWizardMarketSessions] = useState<string[]>(initialStrategy?.definition?.market_sessions || initialStrategy?.market_sessions || marketSessions || ["rth"]);
-  const [wizardCustomStartTime, setWizardCustomStartTime] = useState<string>(initialStrategy?.definition?.custom_start_time || initialStrategy?.custom_start_time || customStartTime || "09:30");
-  const [wizardCustomEndTime, setWizardCustomEndTime] = useState<string>(initialStrategy?.definition?.custom_end_time || initialStrategy?.custom_end_time || customEndTime || "16:00");
-  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
-  const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
-  const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
-  const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
+  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>(stratObj?.apply_day || 'gap_day');
+  const [wizardMarketSessions, setWizardMarketSessions] = useState<string[]>(stratObj?.market_sessions || marketSessions || ["rth"]);
+  const [wizardCustomStartTime, setWizardCustomStartTime] = useState<string>(stratObj?.custom_start_time || customStartTime || "09:30");
+  const [wizardCustomEndTime, setWizardCustomEndTime] = useState<string>(stratObj?.custom_end_time || customEndTime || "16:00");
+  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>(stratObj?.postgap_preconditions || []);
+  const [entryLogic, setEntryLogic] = useState<EntryLogicType>(stratObj?.entry_logic || initialEntryLogic);
+  const [exitLogic, setExitLogic] = useState<ExitLogicType>(stratObj?.exit_logic || initialExitLogic);
+  const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
 
   // Preconditions Form States
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');

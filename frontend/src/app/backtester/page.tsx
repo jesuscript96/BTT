@@ -168,10 +168,28 @@ export default function Home() {
           exit_logic: def.exit_logic || {
             root_condition: { type: "group", operator: "AND", conditions: [] }
           },
-          risk_management: def.risk_management || {},
+          risk_management: {
+            size_by_sl: false,
+            use_take_profit: false,
+            take_profit_mode: "Fixed",
+            fixed_take_profit_pct: 1.0,
+            partial_take_profits: [],
+            use_stop_loss: true,
+            stop_loss_mode: "Fixed",
+            fixed_stop_loss_pct: 1.0,
+            trail_stop_loss_pct: 1.0,
+            use_time_exit: false,
+            time_exit_session: "rth",
+            time_exit_value: "15:58",
+            swing_option: { active: false, target_day: "gap_1_day" },
+            ...(def.risk_management || {})
+          },
           universe_filters: def.universe_filters,
           is_wizard: def.is_wizard,
           dataset_id: params.dataset_id,
+          market_sessions: def.market_sessions || ["rth"],
+          custom_start_time: def.custom_start_time,
+          custom_end_time: def.custom_end_time,
         } as any;
       }
       return prev;
@@ -449,7 +467,22 @@ export default function Home() {
             exit_logic: def.exit_logic || {
               root_condition: { type: "group", operator: "AND", conditions: [] }
             },
-            risk_management: def.risk_management || {},
+            risk_management: {
+              size_by_sl: false,
+              use_take_profit: false,
+              take_profit_mode: "Fixed",
+              fixed_take_profit_pct: 1.0,
+              partial_take_profits: [],
+              use_stop_loss: true,
+              stop_loss_mode: "Fixed",
+              fixed_stop_loss_pct: 1.0,
+              trail_stop_loss_pct: 1.0,
+              use_time_exit: false,
+              time_exit_session: "rth",
+              time_exit_value: "15:58",
+              swing_option: { active: false, target_day: "gap_1_day" },
+              ...(def.risk_management || {})
+            },
             universe_filters: def.universe_filters,
             is_wizard: def.is_wizard || strategyData.is_wizard || false,
             dataset_id: resolvedDatasetId,
@@ -474,10 +507,28 @@ export default function Home() {
         postgap_preconditions: targetDraft.definition?.postgap_preconditions || targetDraft.postgap_preconditions,
         entry_logic: targetDraft.definition?.entry_logic || targetDraft.entry_logic,
         exit_logic: targetDraft.definition?.exit_logic || targetDraft.exit_logic,
-        risk_management: targetDraft.definition?.risk_management || targetDraft.risk_management,
+        risk_management: {
+          size_by_sl: false,
+          use_take_profit: false,
+          take_profit_mode: "Fixed",
+          fixed_take_profit_pct: 1.0,
+          partial_take_profits: [],
+          use_stop_loss: true,
+          stop_loss_mode: "Fixed",
+          fixed_stop_loss_pct: 1.0,
+          trail_stop_loss_pct: 1.0,
+          use_time_exit: false,
+          time_exit_session: "rth",
+          time_exit_value: "15:58",
+          swing_option: { active: false, target_day: "gap_1_day" },
+          ...(targetDraft.definition?.risk_management || targetDraft.risk_management || {})
+        },
         universe_filters: targetDraft.definition?.universe_filters || targetDraft.universe_filters,
         is_wizard: targetDraft.definition?.is_wizard || targetDraft.is_wizard,
         dataset_id: params.dataset_id,
+        market_sessions: targetDraft.definition?.market_sessions || targetDraft.market_sessions || params.market_sessions || ["rth"],
+        custom_start_time: targetDraft.definition?.custom_start_time || targetDraft.custom_start_time || params.custom_start_time,
+        custom_end_time: targetDraft.definition?.custom_end_time || targetDraft.custom_end_time || params.custom_end_time,
       } as any;
       await handleRunWithDraft(draft);
       return;
@@ -562,10 +613,28 @@ export default function Home() {
             exit_logic: def.exit_logic || {
               root_condition: { type: "group", operator: "AND", conditions: [] }
             },
-            risk_management: def.risk_management || {},
+            risk_management: {
+              size_by_sl: false,
+              use_take_profit: false,
+              take_profit_mode: "Fixed",
+              fixed_take_profit_pct: 1.0,
+              partial_take_profits: [],
+              use_stop_loss: true,
+              stop_loss_mode: "Fixed",
+              fixed_stop_loss_pct: 1.0,
+              trail_stop_loss_pct: 1.0,
+              use_time_exit: false,
+              time_exit_session: "rth",
+              time_exit_value: "15:58",
+              swing_option: { active: false, target_day: "gap_1_day" },
+              ...(def.risk_management || {})
+            },
             universe_filters: def.universe_filters,
             is_wizard: def.is_wizard,
             dataset_id: params.dataset_id,
+            market_sessions: def.market_sessions || ["rth"],
+            custom_start_time: def.custom_start_time,
+            custom_end_time: def.custom_end_time,
           } as any);
         } else {
           setDraftStrategy(null);
@@ -994,7 +1063,7 @@ export default function Home() {
                       exit_logic: def.exit_logic || {
                         root_condition: { type: "group", operator: "AND", conditions: [] }
                       },
-                      risk_management: def.risk_management || {
+                      risk_management: {
                         size_by_sl: false,
                         use_take_profit: false,
                         take_profit_mode: "Fixed",
@@ -1007,11 +1076,15 @@ export default function Home() {
                         use_time_exit: false,
                         time_exit_session: "rth",
                         time_exit_value: "15:58",
-                        swing_option: { active: false, target_day: "gap_1_day" }
+                        swing_option: { active: false, target_day: "gap_1_day" },
+                        ...(def.risk_management || {})
                       },
                       dataset_id: def.dataset_id,
                       universe_filters: def.universe_filters,
                       is_wizard: def.is_wizard || strategyData.is_wizard || false,
+                      market_sessions: def.market_sessions || ["rth"],
+                      custom_start_time: def.custom_start_time,
+                      custom_end_time: def.custom_end_time,
                     } as any);
                     
                     setMode('builder_choice');

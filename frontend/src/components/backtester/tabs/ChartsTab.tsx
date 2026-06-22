@@ -106,6 +106,7 @@ export default function ChartsTab({
   monthlyExpenses = 0,
   isDarkMode = false,
   viewMode = "charts",
+  riskType = "FIXED",
 }: ChartsTabProps) {
 
   const gridColor = "#2C2F33";

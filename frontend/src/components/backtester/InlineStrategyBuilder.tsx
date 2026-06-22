@@ -290,6 +290,19 @@ interface Props {
   defaultDatasetId?: string;
 }
 
+function getParsedStrategyDef(strat: any) {
+  if (!strat) return null;
+  const def = strat.definition;
+  if (typeof def === 'string') {
+    try {
+      return JSON.parse(def);
+    } catch (e) {
+      return strat;
+    }
+  }
+  return def || strat;
+}
+
 export default function InlineStrategyBuilder({
   onTest,
   onBack,
@@ -301,7 +314,8 @@ export default function InlineStrategyBuilder({
   onExpandedChange,
   defaultDatasetId,
 }: Props) {
-  const [name, setName] = useState("Nueva Estrategia");
+  const stratObj = getParsedStrategyDef(initialStrategy);
+  const [name, setName] = useState<string>(stratObj?.name || initialStrategy?.name || "Nueva Estrategia");
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
   // ── Edgie assistant integration (AssistantBus) ───────────────
   useAssistantAction({
@@ -383,7 +397,8 @@ export default function InlineStrategyBuilder({
     if (!initialStrategy) return;
     if ((initialStrategy.id === "draft" || initialStrategy.id === "wizard_draft") && lastLoadedStrategyRef.current !== "") return;
 
-    const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+    const stratObj = getParsedStrategyDef(initialStrategy);
+    if (!stratObj) return;
     const str = JSON.stringify({
       name: stratObj.name || initialStrategy.name,
       bias: stratObj.bias,
@@ -537,15 +552,15 @@ export default function InlineStrategyBuilder({
     loadDatasetsList();
   }, [defaultDatasetId]);
 
-  const [bias, setBias] = useState<"long" | "short">("long");
-  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
-  const [localMarketSessions, setLocalMarketSessions] = useState<string[]>(initialStrategy?.definition?.market_sessions || initialStrategy?.market_sessions || marketSessions || ["rth"]);
-  const [localCustomStartTime, setLocalCustomStartTime] = useState<string>(initialStrategy?.definition?.custom_start_time || initialStrategy?.custom_start_time || customStartTime || "09:30");
-  const [localCustomEndTime, setLocalCustomEndTime] = useState<string>(initialStrategy?.definition?.custom_end_time || initialStrategy?.custom_end_time || customEndTime || "16:00");
-  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
-  const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
-  const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
-  const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
+  const [bias, setBias] = useState<"long" | "short">(stratObj?.bias || "long");
+  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>(stratObj?.apply_day || 'gap_day');
+  const [localMarketSessions, setLocalMarketSessions] = useState<string[]>(stratObj?.market_sessions || marketSessions || ["rth"]);
+  const [localCustomStartTime, setLocalCustomStartTime] = useState<string>(stratObj?.custom_start_time || customStartTime || "09:30");
+  const [localCustomEndTime, setLocalCustomEndTime] = useState<string>(stratObj?.custom_end_time || customEndTime || "16:00");
+  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>(stratObj?.postgap_preconditions || []);
+  const [entryLogic, setEntryLogic] = useState<EntryLogicType>(stratObj?.entry_logic || initialEntryLogic);
+  const [exitLogic, setExitLogic] = useState<ExitLogicType>(stratObj?.exit_logic || initialExitLogic);
+  const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
   const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap'>('cierre');
