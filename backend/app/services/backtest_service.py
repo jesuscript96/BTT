@@ -384,7 +384,7 @@ def run_backtest(
 
             # Re-parse risk management with current (modified) strategy_def
             risk = strategy_def.get("risk_management", {})
-            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_trail_pct, sig_partial_tps = \
+            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_tp_time_limit, sig_trail_pct, sig_partial_tps = \
                 _parse_risk_management(risk, mini_df, daily_stats, {})
         else:
             try:
