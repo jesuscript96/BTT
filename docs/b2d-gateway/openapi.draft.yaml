@@ -319,7 +319,7 @@ components:
         risk_type: { type: string, enum: [FIXED, PERCENT, FIXED_RATIO], default: FIXED }
         size_by_sl: { type: boolean, default: false }
         fees: { type: number, default: 0 }
-        fee_type: { type: string, enum: [PERCENT, PER_SHARE], default: PERCENT }
+        fee_type: { type: string, enum: [PERCENT, FLAT], default: PERCENT }
         slippage: { type: number, default: 0 }
         locates_cost: { type: number, default: 0 }
         monthly_expenses: { type: number, default: 0 }

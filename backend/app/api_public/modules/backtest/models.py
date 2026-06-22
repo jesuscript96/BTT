@@ -39,7 +39,8 @@ class Execution(BaseModel):
     fixed_ratio_delta: float = 500.0
     size_by_sl: bool = False
     fees: float = 0.0
-    fee_type: Literal["PERCENT", "PER_SHARE"] = "PERCENT"
+    # Engine supports PERCENT (fee on gross PnL) or FLAT ($ per side, charged x2).
+    fee_type: Literal["PERCENT", "FLAT"] = "PERCENT"
     slippage: float = 0.0
     locates_cost: float = 0.0
     monthly_expenses: float = 0.0

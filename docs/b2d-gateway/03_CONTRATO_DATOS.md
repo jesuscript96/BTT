@@ -130,7 +130,7 @@ Espejo de `BacktestRequest` + el universo y la estrategia inline. **El "formular
     "risk_type": "FIXED",                 // FIXED | PERCENT | FIXED_RATIO
     "size_by_sl": false,
     "fees": 0.0,
-    "fee_type": "PERCENT",                // PERCENT | PER_SHARE
+    "fee_type": "PERCENT",                // PERCENT (sobre PnL) | FLAT ($ por lado, x2)
     "slippage": 0.0,
     "locates_cost": 0.0,
     "monthly_expenses": 0.0,
@@ -256,7 +256,7 @@ Catálogo cerrado de `code` (no exhaustivo): `unauthorized`, `invalid_api_key`,
 |---|---|---|
 | `execution.init_cash` | `BacktestRequest.init_cash` | idéntico |
 | `execution.risk_r` | `BacktestRequest.risk_r` | idéntico |
-| `execution.fee_type=PER_SHARE` | `fee_type="PERCENT"`-alterno | confirmar enum real en ejecución |
+| `execution.fee_type` | `BacktestRequest.fee_type` | enum `PERCENT`\|`FLAT` (verificado en portfolio_sim.py) |
 | `universe.*` | `UniverseFilters` + `_resolve_filters` | resuelve `dataset_id` server-side |
 | `strategy.*` | `StrategyCreate` | 1:1 |
 | `result.aggregate_metrics` | `_aggregate_metrics()` | claves literales |
