@@ -695,7 +695,12 @@ export default function ChartsTab({
             </h4>
             
             <div className="w-full">
-              <table className="w-full text-left border-collapse font-mono">
+              <table className="w-full max-w-[260px] text-left border-collapse font-mono">
+                <colgroup>
+                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "70px" }} />
+                  <col style={{ width: "70px" }} />
+                </colgroup>
                 <thead>
                   <tr className="border-b border-[var(--color-ec-border)]">
                     <th className="pb-[24px] text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
@@ -705,7 +710,7 @@ export default function ChartsTab({
                       Original
                     </th>
                     <th className="pb-[24px] text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
-                      {activeSimMode === "stress" ? "Simulado (Stress)" : "Simulado (What If)"}
+                      Simulado
                     </th>
                   </tr>
                 </thead>
