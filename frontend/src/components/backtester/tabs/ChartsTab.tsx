@@ -426,7 +426,7 @@ export default function ChartsTab({
 
         <div className="flex flex-col lg:flex-row gap-8 items-stretch">
           {/* Left Column: inputs */}
-          <div className="w-full lg:w-[390px] flex-shrink-0 flex flex-col pb-8 lg:pb-0 lg:pr-8 border-b lg:border-b-0 lg:border-r border-[var(--color-ec-border)]">
+          <div className="w-full lg:w-[300px] xl:w-[360px] flex-shrink-0 flex flex-col pb-8 lg:pb-0 lg:pr-8 border-b lg:border-b-0 lg:border-r border-[var(--color-ec-border)]">
             
             <div className="flex flex-col">
               <h4 className="text-[12px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-4 flex items-center gap-2 font-mono tracking-[0.12em]">
@@ -688,7 +688,7 @@ export default function ChartsTab({
           </div>
 
           {/* Right Column: results table */}
-          <div className="w-full lg:w-[360px] flex-shrink-0 flex flex-col gap-4 pl-0 lg:pl-4">
+          <div className="w-full lg:w-[260px] xl:w-[310px] flex-shrink-0 min-w-[240px] flex flex-col gap-4 pl-0 lg:pl-4">
             <h4 className="text-[12px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-1 flex items-center gap-2 font-mono tracking-[0.12em]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
               Resultados Simulados
