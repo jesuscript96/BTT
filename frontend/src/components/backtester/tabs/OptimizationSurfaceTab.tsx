@@ -550,20 +550,23 @@ export default function OptimizationSurfaceTab({
 
       {/* Informative introductory panel shown when not loading and no result exists */}
       {!result && !loading && (
-        <div className="max-w-4xl mx-auto text-center pt-[3px] pb-16 px-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+        <div 
+          className="max-w-4xl mx-auto w-full flex flex-col items-center justify-center text-center pb-16 px-6 animate-in fade-in slide-in-from-bottom-4 duration-300"
+          style={{ marginTop: '4px' }}
+        >
           
           {/* Warning banner - simple warning text, no background box */}
-          <div className="space-y-2" style={{ marginBottom: '3px' }}>
+          <div className="w-full flex flex-col items-center justify-center text-center space-y-2" style={{ marginBottom: '3px' }}>
             <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-loss)] font-mono flex items-center justify-center gap-1.5">
               <span>⚠️</span> Advertencia de Tiempo de Ejecución
             </h4>
-            <p className="text-[11px] text-[var(--color-ec-text-secondary)] leading-relaxed max-w-xl mx-auto text-center">
+            <p className="text-[11px] text-[var(--color-ec-text-secondary)] leading-relaxed max-w-xl text-center">
               Este modelo de optimización requiere <strong>una gran cantidad de tiempo</strong> de procesamiento. Para generar la superficie, el servidor debe simular <strong>un backtest completo por cada combinación de la cuadrícula</strong> (por ejemplo, una resolución de 10×10 ejecuta 100 simulaciones).
             </p>
           </div>
 
           {/* Three columns directly on the background */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-10 text-center" style={{ marginTop: '3px' }}>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-10 text-center w-full" style={{ marginTop: '3px' }}>
             {/* Column 1: Qué va a hacer */}
             <div className="space-y-3">
               <div className="flex flex-col items-center gap-1.5">
