@@ -18,6 +18,7 @@ interface PerformanceTabProps {
   initCash: number;
   riskR: number;
   isDarkMode?: boolean;
+  riskType?: string;
 }
 
 const MONTHS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
@@ -31,10 +32,11 @@ interface CellData {
   grossProfit: number;
   grossLoss: number;
   dailyReturns: number[];
+  rMultiple: number;
 }
 
 function emptyCell(): CellData {
-  return { pnl: 0, trades: 0, wins: 0, grossProfit: 0, grossLoss: 0, dailyReturns: [] };
+  return { pnl: 0, trades: 0, wins: 0, grossProfit: 0, grossLoss: 0, dailyReturns: [], rMultiple: 0 };
 }
 
 // Helper: Get ISO week string 'YYYY-Www'
@@ -46,7 +48,14 @@ function getFormatWeek(dateStr: string) {
   return `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, "0")}`;
 }
 
-export default function PerformanceTab({ dayResults, trades, initCash, riskR, isDarkMode = false }: PerformanceTabProps) {
+export default function PerformanceTab({
+  dayResults,
+  trades,
+  initCash,
+  riskR,
+  isDarkMode = false,
+  riskType = "FIXED",
+}: PerformanceTabProps) {
   const [metric, setMetric] = useState<GridMetric>("PnL %");
   const [rollingWindow, setRollingWindow] = useState(30); // days
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -109,6 +118,9 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
         cell.pnl += t.pnl;
         ytd.pnl += t.pnl;
 
+        cell.rMultiple += (t.r_multiple ?? 0);
+        ytd.rMultiple += (t.r_multiple ?? 0);
+
         if (isWin) {
           cell.wins++;
           ytd.wins++;
@@ -141,7 +153,7 @@ export default function PerformanceTab({ dayResults, trades, initCash, riskR, is
         text = `${val >= 0 ? "+" : ""}${val.toFixed(0)}`;
         break;
       case "PnL R":
-        val = riskR > 0 ? cell.pnl / riskR : 0;
+        val = riskType === "PERCENT" ? cell.rMultiple : (riskR > 0 ? cell.pnl / riskR : 0);
         text = `${val >= 0 ? "+" : ""}${val.toFixed(2)}`;
         break;
       case "Win Rate":

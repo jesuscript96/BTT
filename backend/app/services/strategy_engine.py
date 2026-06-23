@@ -491,18 +491,28 @@ def _parse_risk_management(
                 cap = pt.get("capital_pct", 0)
                 is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
                 is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
-                if (is_eod_val or is_time_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
+                is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
+                if (is_eod_val or is_time_val or is_hour_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
                     partial_tps.append({
                         "distance_pct": dist,
                         "capital_pct": cap / 100.0,
                     })
             
-            # Helper to sort partial TPs: numeric first, then TIME, then EOD
+            # Helper to sort partial TPs: numeric first, then TIME, then HOUR, then EOD
             def _pt_sort_key(x):
                 d = x["distance_pct"]
                 if isinstance(d, str):
                     if d.upper() == "EOD":
-                        return (2, 0.0)
+                        return (3, 0.0)
+                    if d.startswith("HOUR:"):
+                        try:
+                            parts = d.split(":")
+                            h = int(parts[1])
+                            m = int(parts[2])
+                            val = h * 60 + m
+                        except:
+                            val = 0.0
+                        return (2, val)
                     if d.startswith("TIME:"):
                         try:
                             t_val = float(d.split(":")[1])

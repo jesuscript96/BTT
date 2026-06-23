@@ -23,6 +23,7 @@ interface OOSDegradationTabProps {
   isPercent: number;
   monthlyExpenses?: number;
   isDarkMode?: boolean;
+  riskType?: string;
 }
 
 /* ── Metric calculator shared between IS and OOS ── */
@@ -114,6 +115,7 @@ export default function OOSDegradationTab({
   isPercent,
   monthlyExpenses,
   isDarkMode = false,
+  riskType = "FIXED",
 }: OOSDegradationTabProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
@@ -123,6 +125,24 @@ export default function OOSDegradationTab({
 
   type ViewMode = "$" | "%" | "R";
   const [viewMode, setViewMode] = useState<ViewMode>("$");
+
+  const getRValue = (val: number) => {
+    if (riskType === "PERCENT") {
+      const ratio = Math.max(0.0001, val / initCash);
+      const ln_base = Math.log(1 + riskR / 100);
+      return ln_base > 0 ? Math.log(ratio) / ln_base : 0;
+    } else {
+      return riskR > 0 ? (val - initCash) / riskR : 0;
+    }
+  };
+
+  const getDrawdownRValue = (ddPct: number) => {
+    if (riskType === "PERCENT") {
+      return riskR > 0 ? ddPct / riskR : 0;
+    } else {
+      return riskR > 0 ? ((ddPct / 100) * initCash) / riskR : 0;
+    }
+  };
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
   const [showDrawdownExpenses, setShowDrawdownExpenses] = useState(false);
 
@@ -221,7 +241,7 @@ export default function OOSDegradationTab({
         if (viewMode === "%") {
           val = ((p.value / initCash) - 1) * 100;
         } else if (viewMode === "R") {
-          val = riskR > 0 ? (p.value - initCash) / riskR : 0;
+          val = getRValue(p.value);
         }
         return { time: p.time as Time, value: val };
       })
@@ -243,7 +263,7 @@ export default function OOSDegradationTab({
         if (viewMode === "%") {
           val = ((p.value / initCash) - 1) * 100;
         } else if (viewMode === "R") {
-          val = riskR > 0 ? (p.value - initCash) / riskR : 0;
+          val = getRValue(p.value);
         }
         return { time: p.time as Time, value: val };
       })
@@ -268,7 +288,7 @@ export default function OOSDegradationTab({
           if (viewMode === "%") {
             val = ((netValue / initCash) - 1) * 100;
           } else if (viewMode === "R") {
-            val = riskR > 0 ? (netValue - initCash) / riskR : 0;
+            val = getRValue(netValue);
           }
           return { time: p.time as Time, value: val };
         })
@@ -288,7 +308,7 @@ export default function OOSDegradationTab({
           if (viewMode === "%") {
             val = ((netValue / initCash) - 1) * 100;
           } else if (viewMode === "R") {
-            val = riskR > 0 ? (netValue - initCash) / riskR : 0;
+            val = getRValue(netValue);
           }
           return { time: p.time as Time, value: val };
         })
@@ -346,7 +366,7 @@ export default function OOSDegradationTab({
         fullGlobalDrawdown.map((p) => {
           let val = p.value;
           if (viewMode === "R") {
-            val = riskR > 0 ? ((p.value / 100) * initCash) / riskR : 0;
+            val = getDrawdownRValue(p.value);
           } else if (viewMode === "$") {
             val = (p.value / 100) * initCash;
           }
@@ -381,7 +401,7 @@ export default function OOSDegradationTab({
 
           let val = ddPct;
           if (viewMode === "R") {
-            val = riskR > 0 ? ddAbsolute / riskR : 0;
+            val = riskType === "PERCENT" ? ddPct / riskR : (riskR > 0 ? ddAbsolute / riskR : 0);
           } else if (viewMode === "$") {
             val = ddAbsolute;
           }
@@ -457,7 +477,7 @@ export default function OOSDegradationTab({
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [fullGlobalEquity, fullGlobalDrawdown, isPercent, disabled, cutoffTime, viewMode, showEquityExpenses, showDrawdownExpenses, initCash, riskR, monthlyExpenses]);
+  }, [fullGlobalEquity, fullGlobalDrawdown, isPercent, disabled, cutoffTime, viewMode, showEquityExpenses, showDrawdownExpenses, initCash, riskR, monthlyExpenses, riskType]);
 
   // ── Disabled state ──
   if (disabled) {
@@ -513,7 +533,7 @@ export default function OOSDegradationTab({
   const maxProfit = fullGlobalEquity && fullGlobalEquity.length > 0
     ? Math.max(...fullGlobalEquity.map((p) => {
       if (viewMode === "%") return ((p.value / initCash) - 1) * 100;
-      if (viewMode === "R") return riskR > 0 ? (p.value - initCash) / riskR : 0;
+      if (viewMode === "R") return getRValue(p.value);
       return p.value - initCash;
     }))
     : 0;
@@ -526,7 +546,7 @@ export default function OOSDegradationTab({
       const netValue = p.value - (monthlyExpenses * monthsElapsed);
       
       if (viewMode === "%") return ((netValue / initCash) - 1) * 100;
-      if (viewMode === "R") return riskR > 0 ? (netValue - initCash) / riskR : 0;
+      if (viewMode === "R") return getRValue(netValue);
       return netValue - initCash;
     }))
     : null;
@@ -534,7 +554,7 @@ export default function OOSDegradationTab({
   const ddDisplay = (() => {
     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
     if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
-    if (viewMode === "R") return riskR > 0 ? `${((maxDD / 100) * initCash / riskR).toFixed(2)}R` : "0R";
+    if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
     return `${maxDD.toFixed(2)}%`;
   })();
 

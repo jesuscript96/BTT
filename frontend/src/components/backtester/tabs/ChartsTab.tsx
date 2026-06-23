@@ -41,6 +41,7 @@ interface ChartsTabProps {
   monthlyExpenses?: number;
   isDarkMode?: boolean;
   viewMode?: "charts" | "whatif";
+  riskType?: string;
 }
 
 const WEEKDAY_NAMES = ["Lun", "Mar", "Mie", "Jue", "Vie"];
@@ -105,6 +106,7 @@ export default function ChartsTab({
   monthlyExpenses = 0,
   isDarkMode = false,
   viewMode = "charts",
+  riskType = "FIXED",
 }: ChartsTabProps) {
 
   const gridColor = "#2C2F33";
@@ -681,6 +683,7 @@ export default function ChartsTab({
               initCash={initCash}
               riskR={riskR}
               isDarkMode={isDarkMode}
+              riskType={riskType}
             />
           </div>
 
@@ -1003,6 +1006,7 @@ function WhatIfEquityChart({
   initCash,
   riskR,
   isDarkMode = false,
+  riskType = "FIXED",
 }: {
   originalEquity: GlobalEquityPoint[];
   originalDrawdown: DrawdownPoint[];
@@ -1011,6 +1015,7 @@ function WhatIfEquityChart({
   initCash: number;
   riskR: number;
   isDarkMode?: boolean;
+  riskType?: string;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
@@ -1022,13 +1027,27 @@ function WhatIfEquityChart({
 
   const transformEquity = (p: GlobalEquityPoint): number => {
     if (wiViewMode === "%") return ((p.value / initCash) - 1) * 100;
-    if (wiViewMode === "R") return riskR > 0 ? (p.value - initCash) / riskR : 0;
+    if (wiViewMode === "R") {
+      if (riskType === "PERCENT") {
+        const ratio = Math.max(0.0001, p.value / initCash);
+        const ln_base = Math.log(1 + riskR / 100);
+        return ln_base > 0 ? Math.log(ratio) / ln_base : 0;
+      } else {
+        return riskR > 0 ? (p.value - initCash) / riskR : 0;
+      }
+    }
     return p.value;
   };
 
   const transformDrawdown = (p: DrawdownPoint): number => {
     if (wiViewMode === "$") return (p.value / 100) * initCash;
-    if (wiViewMode === "R") return riskR > 0 ? ((p.value / 100) * initCash) / riskR : 0;
+    if (wiViewMode === "R") {
+      if (riskType === "PERCENT") {
+        return riskR > 0 ? p.value / riskR : 0;
+      } else {
+        return riskR > 0 ? ((p.value / 100) * initCash) / riskR : 0;
+      }
+    }
     return p.value; // Already in %
   };
 
@@ -1223,7 +1242,7 @@ function WhatIfEquityChart({
         ddInstanceRef.current = null;
       }
     };
-  }, [originalEquity, originalDrawdown, simResult, initCash, riskR, isDarkMode, wiViewMode]);
+  }, [originalEquity, originalDrawdown, simResult, initCash, riskR, isDarkMode, wiViewMode, riskType]);
 
   if (!simResult) {
     return (

@@ -584,6 +584,19 @@ const isVolumeIndicator = (name?: string): boolean => {
   );
 };
 
+function getParsedStrategyDef(strat: any) {
+  if (!strat) return null;
+  const def = strat.definition;
+  if (typeof def === 'string') {
+    try {
+      return JSON.parse(def);
+    } catch (e) {
+      return strat;
+    }
+  }
+  return def || strat;
+}
+
 export default function WizardStrategyBuilder({
   onBack,
   onTest,
@@ -595,6 +608,7 @@ export default function WizardStrategyBuilder({
   onExpandedChange,
   defaultDatasetId,
 }: Props) {
+  const stratObj = getParsedStrategyDef(initialStrategy);
   const [currentStep, setCurrentStep] = useState(0);
   const createdAtRef = useRef(new Date().toISOString());
   const lastLoadedStrategyRef = useRef<string>("");
@@ -606,7 +620,8 @@ export default function WizardStrategyBuilder({
     if (!initialStrategy) return;
     if ((initialStrategy.id === "draft" || initialStrategy.id === "wizard_draft") && lastLoadedStrategyRef.current !== "") return;
 
-    const stratObj = initialStrategy.definition ? initialStrategy.definition : initialStrategy;
+    const stratObj = getParsedStrategyDef(initialStrategy);
+    if (!stratObj) return;
     const str = JSON.stringify({
       bias: stratObj.bias,
       apply_day: stratObj.apply_day,
@@ -746,16 +761,16 @@ export default function WizardStrategyBuilder({
   }, [defaultDatasetId]);
 
   // Strategy Builder States
-  const [bias, setBias] = useState<"long" | "short" | null>(null);
+  const [bias, setBias] = useState<"long" | "short" | null>(stratObj?.bias || null);
   const [hoveredBias, setHoveredBias] = useState<"long" | "short" | null>(null);
-  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>('gap_day');
-  const [wizardMarketSessions, setWizardMarketSessions] = useState<string[]>(initialStrategy?.definition?.market_sessions || initialStrategy?.market_sessions || marketSessions || ["rth"]);
-  const [wizardCustomStartTime, setWizardCustomStartTime] = useState<string>(initialStrategy?.definition?.custom_start_time || initialStrategy?.custom_start_time || customStartTime || "09:30");
-  const [wizardCustomEndTime, setWizardCustomEndTime] = useState<string>(initialStrategy?.definition?.custom_end_time || initialStrategy?.custom_end_time || customEndTime || "16:00");
-  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>([]);
-  const [entryLogic, setEntryLogic] = useState<EntryLogicType>(initialEntryLogic);
-  const [exitLogic, setExitLogic] = useState<ExitLogicType>(initialExitLogic);
-  const [riskManagement, setRiskManagement] = useState<RiskManagementType>(initialRiskManagement);
+  const [applyDay, setApplyDay] = useState<'gap_day' | 'gap_1_day' | 'gap_2_day'>(stratObj?.apply_day || 'gap_day');
+  const [wizardMarketSessions, setWizardMarketSessions] = useState<string[]>(stratObj?.market_sessions || marketSessions || ["rth"]);
+  const [wizardCustomStartTime, setWizardCustomStartTime] = useState<string>(stratObj?.custom_start_time || customStartTime || "09:30");
+  const [wizardCustomEndTime, setWizardCustomEndTime] = useState<string>(stratObj?.custom_end_time || customEndTime || "16:00");
+  const [postgapPreconditions, setPostgapPreconditions] = useState<PostGapPrecondition[]>(stratObj?.postgap_preconditions || []);
+  const [entryLogic, setEntryLogic] = useState<EntryLogicType>(stratObj?.entry_logic || initialEntryLogic);
+  const [exitLogic, setExitLogic] = useState<ExitLogicType>(stratObj?.exit_logic || initialExitLogic);
+  const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
 
   // Preconditions Form States
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
@@ -4832,7 +4847,7 @@ export default function WizardStrategyBuilder({
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             {(() => {
                               const valStr = String(partial.distance_pct);
-                              const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : 'PCT';
+                              const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : valStr.startsWith('HOUR:') ? 'HOUR' : 'PCT';
                               
                               return (
                                 <>
@@ -4844,6 +4859,8 @@ export default function WizardStrategyBuilder({
                                         updatePartial(idx, 'distance_pct', 'EOD');
                                       } else if (newMode === 'TIME') {
                                         updatePartial(idx, 'distance_pct', 'TIME:30');
+                                      } else if (newMode === 'HOUR') {
+                                        updatePartial(idx, 'distance_pct', 'HOUR:15:30');
                                       } else {
                                         updatePartial(idx, 'distance_pct', 3.0);
                                       }
@@ -4863,10 +4880,47 @@ export default function WizardStrategyBuilder({
                                   >
                                     <option value="PCT">% Distancia</option>
                                     <option value="TIME">Tiempo (minutos)</option>
+                                    <option value="HOUR">Hora específica</option>
                                     <option value="EOD">Fin del Día (EOD)</option>
                                   </select>
 
-                                  {mode !== 'EOD' ? (
+                                  {mode === 'EOD' ? (
+                                    <div style={{
+                                      width: 65,
+                                      border: '0.5px solid var(--color-ec-border)',
+                                      borderRadius: 4,
+                                      padding: '4px 6px',
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      color: 'var(--color-ec-text-muted)',
+                                      textAlign: 'center',
+                                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                      boxSizing: 'border-box',
+                                    }}>
+                                      EOD
+                                    </div>
+                                  ) : mode === 'HOUR' ? (
+                                    <input
+                                      type="time"
+                                      value={valStr.startsWith('HOUR:') ? valStr.substring(5) : '15:30'}
+                                      onChange={(e) => {
+                                        updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
+                                      }}
+                                      style={{
+                                        width: 65,
+                                        backgroundColor: 'var(--color-ec-bg-surface)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        padding: '4px 2px 4px 5px',
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        color: 'var(--color-ec-text-primary)',
+                                        outline: 'none',
+                                        textAlign: 'center',
+                                        boxSizing: 'border-box',
+                                      }}
+                                    />
+                                  ) : (
                                     <div style={{ position: "relative", width: 65 }}>
                                       <input
                                         type="number"
@@ -4917,21 +4971,6 @@ export default function WizardStrategyBuilder({
                                       }}>
                                         {mode === 'TIME' ? 'm' : '%'}
                                       </span>
-                                    </div>
-                                  ) : (
-                                    <div style={{
-                                      width: 65,
-                                      border: '0.5px solid var(--color-ec-border)',
-                                      borderRadius: 4,
-                                      padding: '4px 6px',
-                                      fontSize: 10,
-                                      fontWeight: 700,
-                                      color: 'var(--color-ec-text-muted)',
-                                      textAlign: 'center',
-                                      backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                                      boxSizing: 'border-box',
-                                    }}>
-                                      EOD
                                     </div>
                                   )}
                                 </>
@@ -5507,7 +5546,7 @@ export default function WizardStrategyBuilder({
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5) : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             stepName: "Gestión de Riesgo"
@@ -5882,7 +5921,7 @@ export default function WizardStrategyBuilder({
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5) : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             color: "var(--color-ec-copper)",

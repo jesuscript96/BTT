@@ -384,7 +384,7 @@ def run_backtest(
 
             # Re-parse risk management with current (modified) strategy_def
             risk = strategy_def.get("risk_management", {})
-            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_trail_pct, sig_partial_tps = \
+            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_tp_time_limit, sig_trail_pct, sig_partial_tps = \
                 _parse_risk_management(risk, mini_df, daily_stats, {})
         else:
             try:
@@ -1210,7 +1210,7 @@ def _aggregate_metrics(
         "payoff_ratio": round(payoff_ratio, 4),
         "total_expenses": round(total_expenses, 2),
         "total_pnl_net": round(total_pnl_net, 2),
-        "avg_r_per_day": round(total_pnl_trades / total_days / risk_r, 4) if total_days > 0 and risk_r > 0 else 0,
+        "avg_r_per_day": round(sum(t.get("r_multiple") or 0.0 for t in trades) / total_days, 4) if total_days > 0 else 0,
         "avg_r_ui": round(avg_r_ui, 4),
     }
 

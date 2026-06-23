@@ -678,7 +678,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                                                 {(() => {
                                                     const valStr = String(partial.distance_pct);
-                                                    const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : 'PCT';
+                                                    const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : valStr.startsWith('HOUR:') ? 'HOUR' : 'PCT';
                                                     
                                                     return (
                                                         <>
@@ -690,6 +690,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                                         updatePartial(idx, 'distance_pct', 'EOD');
                                                                     } else if (newMode === 'TIME') {
                                                                         updatePartial(idx, 'distance_pct', 'TIME:30');
+                                                                    } else if (newMode === 'HOUR') {
+                                                                        updatePartial(idx, 'distance_pct', 'HOUR:15:30');
                                                                     } else {
                                                                         updatePartial(idx, 'distance_pct', 3.0);
                                                                     }
@@ -709,10 +711,46 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                             >
                                                                 <option value="PCT">% Distancia</option>
                                                                 <option value="TIME">Tiempo (minutos)</option>
+                                                                <option value="HOUR">Hora específica</option>
                                                                 <option value="EOD">Fin del Día (EOD)</option>
                                                             </select>
                                                             
-                                                            {mode !== 'EOD' ? (
+                                                            {mode === 'EOD' ? (
+                                                                <div style={{
+                                                                    width: 65,
+                                                                    border: '0.5px solid var(--color-ec-border)',
+                                                                    borderRadius: 4,
+                                                                    padding: '4px 6px',
+                                                                    fontSize: 11,
+                                                                    fontWeight: 700,
+                                                                    color: 'var(--color-ec-text-muted)',
+                                                                    textAlign: 'center',
+                                                                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                                                                }}>
+                                                                    EOD
+                                                                </div>
+                                                            ) : mode === 'HOUR' ? (
+                                                                <input
+                                                                    type="time"
+                                                                    value={valStr.startsWith('HOUR:') ? valStr.substring(5) : '15:30'}
+                                                                    onChange={(e) => {
+                                                                        updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
+                                                                    }}
+                                                                    style={{
+                                                                        width: 65,
+                                                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                        border: '0.5px solid var(--color-ec-border)',
+                                                                        borderRadius: 4,
+                                                                        padding: '4px 2px 4px 5px',
+                                                                        fontSize: 11,
+                                                                        fontWeight: 700,
+                                                                        color: 'var(--color-ec-text-primary)',
+                                                                        outline: 'none',
+                                                                        textAlign: 'center',
+                                                                        boxSizing: 'border-box',
+                                                                    }}
+                                                                />
+                                                            ) : (
                                                                 <div className="relative" style={{ width: 65 }}>
                                                                     <input
                                                                         type="number"
@@ -753,20 +791,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                                     <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">
                                                                         {mode === 'TIME' ? 'm' : '%'}
                                                                     </span>
-                                                                </div>
-                                                            ) : (
-                                                                <div style={{
-                                                                    width: 65,
-                                                                    border: '0.5px solid var(--color-ec-border)',
-                                                                    borderRadius: 4,
-                                                                    padding: '4px 6px',
-                                                                    fontSize: 11,
-                                                                    fontWeight: 700,
-                                                                    color: 'var(--color-ec-text-muted)',
-                                                                    textAlign: 'center',
-                                                                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                                                                }}>
-                                                                    EOD
                                                                 </div>
                                                             )}
                                                         </>
