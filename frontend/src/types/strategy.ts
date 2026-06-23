@@ -234,6 +234,8 @@ export interface RiskManagement {
         active: boolean;
         target_day: 'gap_1_day' | 'gap_2_day';
     };
+    exclude_days?: number[];
+    exclude_months?: number[];
 }
 
 export interface PostGapPrecondition {
@@ -296,7 +298,9 @@ export const initialRiskManagement: RiskManagement = {
     ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
     size_by_sl: false,
-    swing_option: { active: false, target_day: 'gap_1_day' }
+    swing_option: { active: false, target_day: 'gap_1_day' },
+    exclude_days: [],
+    exclude_months: []
 };
 
 export const initialExitLogic: ExitLogic = {

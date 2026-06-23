@@ -5441,6 +5441,155 @@ export default function WizardStrategyBuilder({
     );
   };
 
+  const renderRiskSubStepExclusions = () => {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }} className="animate-in fade-in duration-200">
+        <div>
+          <h3 style={{
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
+            fontWeight: 600,
+            color: "var(--color-ec-text-high)",
+            margin: "0 0 4px 0",
+            letterSpacing: "-0.2px",
+          }}>
+            Otros parámetros (Exclusiones temporales)
+          </h3>
+          <p style={{
+            fontFamily: "General Sans, sans-serif",
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
+            color: "var(--color-ec-text-muted)",
+            margin: "0 0 12px 0",
+            lineHeight: 1.5,
+          }}>
+            Configura qué días de la semana o meses del año no deseas que se ejecute la estrategia en el backtest.
+          </p>
+        </div>
+
+        {/* Exclude days */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{
+            fontFamily: 'General Sans, sans-serif',
+            fontSize: 11,
+            fontWeight: 700,
+            color: 'var(--color-ec-text-secondary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+          }}>Excluir Días de la Semana</label>
+          <div style={{ display: 'flex', gap: 8, maxWidth: 360, marginTop: 4 }}>
+            {["L", "M", "X", "J", "V"].map((day, idx) => {
+              const isExcluded = (riskManagement.exclude_days || []).includes(idx);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => {
+                    const current = riskManagement.exclude_days || [];
+                    const next = current.includes(idx)
+                      ? current.filter(d => d !== idx)
+                      : [...current, idx];
+                    setRiskManagement({ ...riskManagement, exclude_days: next });
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '10px 0',
+                    borderRadius: 5,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    fontFamily: 'General Sans, sans-serif',
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                    backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                    border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                    color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isExcluded) {
+                      e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                      e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isExcluded) {
+                      e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                      e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                    }
+                  }}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Exclude months */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+          <label style={{
+            fontFamily: 'General Sans, sans-serif',
+            fontSize: 11,
+            fontWeight: 700,
+            color: 'var(--color-ec-text-secondary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+          }}>Excluir Meses del Año</label>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 8,
+            maxWidth: 360,
+            marginTop: 4
+          }}>
+            {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => {
+              const isExcluded = (riskManagement.exclude_months || []).includes(idx);
+              return (
+                <button
+                  key={month}
+                  type="button"
+                  onClick={() => {
+                    const current = riskManagement.exclude_months || [];
+                    const next = current.includes(idx)
+                      ? current.filter(m => m !== idx)
+                      : [...current, idx];
+                    setRiskManagement({ ...riskManagement, exclude_months: next });
+                  }}
+                  style={{
+                    padding: '8px 0',
+                    borderRadius: 5,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    fontFamily: 'General Sans, sans-serif',
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                    backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                    border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                    color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                    textAlign: 'center',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isExcluded) {
+                      e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                      e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isExcluded) {
+                      e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                      e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                    }
+                  }}
+                >
+                  {month}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   /* ── Unified full-text tag list for Strategy Summary ── */
   const allTagsUnified = useMemo(() => {
     const list: { label: string; stepName: string }[] = [];
@@ -5733,6 +5882,8 @@ export default function WizardStrategyBuilder({
         return renderRiskSubStepTrailingStop();
       case 3:
         return renderRiskSubStepReentries();
+      case 4:
+        return renderRiskSubStepExclusions();
       default:
         return null;
     }
@@ -6558,11 +6709,11 @@ export default function WizardStrategyBuilder({
             }}>
               <span>
                 Paso {currentStep + 1} de {STEPS.length}
-                {STEPS[currentStep]?.key === "risk" && ` (Riesgo: ${wizardRiskStep + 1} de 4)`}
+                {STEPS[currentStep]?.key === "risk" && ` (Riesgo: ${wizardRiskStep + 1} de 5)`}
               </span>
               {STEPS[currentStep]?.key === "risk" && (
                 <div style={{ display: "flex", gap: 4 }}>
-                  {Array.from({ length: 4 }).map((_, idx) => (
+                  {Array.from({ length: 5 }).map((_, idx) => (
                     <div
                       key={idx}
                       style={{
@@ -6633,7 +6784,7 @@ export default function WizardStrategyBuilder({
             )}
  
             {currentStep < STEPS.length - 1 ? (
-              (STEPS[currentStep]?.key === "risk" && wizardRiskStep === 3) ? (
+              (STEPS[currentStep]?.key === "risk" && wizardRiskStep === 4) ? (
                 <button
                   onClick={() => {
                     setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));

@@ -258,6 +258,21 @@ def run_backtest(
 
         ticker = str(ticker_raw)
         date = str(date_raw)[:10]
+
+        # Check day/month exclusions
+        rm = strategy_def.get("risk_management", {}) if strategy_def else {}
+        exclude_days = rm.get("exclude_days", [])
+        exclude_months = rm.get("exclude_months", [])
+        if exclude_days or exclude_months:
+            try:
+                dt = datetime.datetime.strptime(date, "%Y-%m-%d")
+                if dt.weekday() in exclude_days:
+                    continue
+                if (dt.month - 1) in exclude_months:
+                    continue
+            except Exception as e:
+                logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
+
         daily_stats = qual_lookup.get((ticker, date), {})
 
         # Check swing option to fetch and concatenate subsequent days

@@ -1202,9 +1202,166 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 </div>
             )}
 
+            {/* Otros parámetros Card */}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+            }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{
+                            width: 3,
+                            height: 14,
+                            borderRadius: 1,
+                            backgroundColor: 'var(--color-ec-copper)',
+                        }} />
+                        <h2 style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 13,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.08em',
+                            color: 'var(--color-ec-text-high)',
+                            margin: 0,
+                        }}>Otros parámetros</h2>
+                    </div>
+                    <span style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 10,
+                        fontWeight: 400,
+                        color: 'var(--color-ec-text-muted)',
+                        marginTop: 2,
+                    }}>Configura qué días o meses del año no deseas que se ejecute la estrategia</span>
+                </div>
+
+                {/* Exclude days */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <label style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--color-ec-text-secondary)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                    }}>Excluir Días de la Semana</label>
+                    <div style={{ display: 'flex', gap: 8, maxWidth: 360, marginTop: 4 }}>
+                        {["L", "M", "X", "J", "V"].map((day, idx) => {
+                            const isExcluded = (risk.exclude_days || []).includes(idx);
+                            return (
+                                <button
+                                    key={day}
+                                    type="button"
+                                    onClick={() => {
+                                        const current = risk.exclude_days || [];
+                                        const next = current.includes(idx)
+                                            ? current.filter(d => d !== idx)
+                                            : [...current, idx];
+                                        onChange({ ...risk, exclude_days: next });
+                                    }}
+                                    style={{
+                                        flex: 1,
+                                        padding: '10px 0',
+                                        borderRadius: 5,
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        cursor: 'pointer',
+                                        transition: 'all 150ms ease',
+                                        backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                                        border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                                        color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        if (!isExcluded) {
+                                            e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                                            e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                        }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        if (!isExcluded) {
+                                            e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                                            e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                        }
+                                    }}
+                                >
+                                    {day}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Exclude months */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                    <label style={{
+                        fontFamily: 'var(--color-ec-sans)',
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: 'var(--color-ec-text-secondary)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                    }}>Excluir Meses del Año</label>
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(4, 1fr)',
+                        gap: 8,
+                        maxWidth: 360,
+                        marginTop: 4
+                    }}>
+                        {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => {
+                            const isExcluded = (risk.exclude_months || []).includes(idx);
+                            return (
+                                <button
+                                    key={month}
+                                    type="button"
+                                    onClick={() => {
+                                        const current = risk.exclude_months || [];
+                                        const next = current.includes(idx)
+                                            ? current.filter(m => m !== idx)
+                                            : [...current, idx];
+                                        onChange({ ...risk, exclude_months: next });
+                                    }}
+                                    style={{
+                                        padding: '8px 0',
+                                        borderRadius: 5,
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        cursor: 'pointer',
+                                        transition: 'all 150ms ease',
+                                        backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                                        border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                                        color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                                        textAlign: 'center',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        if (!isExcluded) {
+                                            e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                                            e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                        }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        if (!isExcluded) {
+                                            e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                                            e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                        }
+                                    }}
+                                >
+                                    {month}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+
         </div>
     );
 };
+
 
 export const RiskManagementComponent = React.memo(RiskManagementComponentInner);
 RiskManagementComponent.displayName = "RiskManagementComponent";
