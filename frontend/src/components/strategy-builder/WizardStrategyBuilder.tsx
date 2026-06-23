@@ -4712,14 +4712,14 @@ export default function WizardStrategyBuilder({
                   />
                 </div>
                 <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>
-                  {riskManagement.take_profit.type === RiskType.TIME ? 'Ejemplo: 30 minutos de tiempo antes de tomar ganancias.' : 'Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.'}
+                  {riskManagement.take_profit.type === RiskType.TIME ? 'Ejemplo: 30 minutos de tiempo antes de tomar ganancias.' : riskManagement.take_profit.type === 'Hour' ? 'Ejemplo: 15:30 para salir a esa hora exacta.' : 'Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.'}
                 </span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
                   <select
                     value={riskManagement.take_profit.type || RiskType.PERCENTAGE}
                     onChange={(e) => {
                       const newType = e.target.value as RiskType;
-                      const defaultVal = newType === RiskType.TIME ? 30 : 6.0;
+                      const defaultVal = newType === RiskType.TIME ? 30 : (newType === 'Hour' ? '15:30' : 6.0);
                       setRiskManagement({
                         ...riskManagement,
                         take_profit: {
@@ -4745,31 +4745,41 @@ export default function WizardStrategyBuilder({
                   >
                     <option value={RiskType.PERCENTAGE}>% Distancia</option>
                     <option value={RiskType.TIME}>Tiempo (minutos)</option>
+                    <option value="Hour">Hora específica</option>
                   </select>
                   <div className="relative" style={{ width: '120px' }}>
                     <input
-                      type="number"
-                      step={riskManagement.take_profit.type === RiskType.TIME ? '1' : '0.1'}
-                      value={riskManagement.take_profit.value ?? ''}
+                      type={riskManagement.take_profit.type === 'Hour' ? 'time' : 'number'}
+                      step={riskManagement.take_profit.type === 'Hour' ? '60' : (riskManagement.take_profit.type === RiskType.TIME ? '1' : '0.1')}
+                      value={riskManagement.take_profit.type === 'Hour' && riskManagement.take_profit.value ? String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':') : (riskManagement.take_profit.value ?? '')}
                       onChange={(e) => setRiskManagement({
                         ...riskManagement,
                         take_profit: { ...riskManagement.take_profit, value: e.target.value === '' ? '' : e.target.value }
                       })}
                       onBlur={() => {
-                        const val = parseFloat(String(riskManagement.take_profit.value));
-                        const isTime = riskManagement.take_profit.type === RiskType.TIME;
-                        const defaultVal = isTime ? 30 : 6.0;
-                        setRiskManagement({
-                          ...riskManagement,
-                          take_profit: { ...riskManagement.take_profit, value: isNaN(val) ? defaultVal : val }
-                        });
+                        if (riskManagement.take_profit.type === 'Hour') {
+                          if (!riskManagement.take_profit.value) {
+                            setRiskManagement({
+                              ...riskManagement,
+                              take_profit: { ...riskManagement.take_profit, value: '15:30' }
+                            });
+                          }
+                        } else {
+                          const val = parseFloat(String(riskManagement.take_profit.value));
+                          const isTime = riskManagement.take_profit.type === RiskType.TIME;
+                          const defaultVal = isTime ? 30 : 6.0;
+                          setRiskManagement({
+                            ...riskManagement,
+                            take_profit: { ...riskManagement.take_profit, value: isNaN(val) ? defaultVal : val }
+                          });
+                        }
                       }}
                       onFocus={(e) => e.target.select()}
                       style={{
                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                         border: '0.5px solid var(--color-ec-border)',
                         borderRadius: 5,
-                        padding: '7px 24px 7px 10px',
+                        padding: riskManagement.take_profit.type === 'Hour' ? '7px 10px' : '7px 24px 7px 10px',
                         fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--color-ec-text-primary)',
@@ -4780,9 +4790,11 @@ export default function WizardStrategyBuilder({
                         textAlign: 'center',
                       }}
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
-                      {riskManagement.take_profit.type === RiskType.TIME ? 'min' : '%'}
-                    </span>
+                    {riskManagement.take_profit.type !== 'Hour' && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                        {riskManagement.take_profit.type === RiskType.TIME ? 'min' : '%'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4902,7 +4914,7 @@ export default function WizardStrategyBuilder({
                                   ) : mode === 'HOUR' ? (
                                     <input
                                       type="time"
-                                      value={valStr.startsWith('HOUR:') ? valStr.substring(5) : '15:30'}
+                                      value={valStr.startsWith('HOUR:') ? valStr.substring(5).split(':').slice(0, 2).join(':') : '15:30'}
                                       onChange={(e) => {
                                         updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
                                       }}
@@ -5097,7 +5109,7 @@ export default function WizardStrategyBuilder({
             {!isTpOn
               ? "Desactivado"
               : riskManagement.take_profit_mode === TakeProfitMode.FULL
-              ? `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`
+              ? `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : riskManagement.take_profit.type === 'Hour' ? `Hora: ${String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':')}` : `${riskManagement.take_profit.value}%`}`
               : `Take Profit: ${riskManagement.partial_take_profits.length} parciales (Total ${totalPartialCapital}%)`}
           </span>
         </div>
@@ -5540,13 +5552,13 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
-          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`,
+          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : riskManagement.take_profit.type === 'Hour' ? `Hora: ${String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':')}` : `${riskManagement.take_profit.value}%`}`,
           stepName: "Gestión de Riesgo"
         });
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5) : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5).split(':').slice(0, 2).join(':') : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             stepName: "Gestión de Riesgo"
@@ -5909,7 +5921,7 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
-          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`,
+          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : riskManagement.take_profit.type === 'Hour' ? `Hora: ${String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':')}` : `${riskManagement.take_profit.value}%`}`,
           color: "var(--color-ec-copper)",
           onRemove: () => {
             setRiskManagement({
@@ -5921,7 +5933,7 @@ export default function WizardStrategyBuilder({
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5) : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5).split(':').slice(0, 2).join(':') : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             color: "var(--color-ec-copper)",

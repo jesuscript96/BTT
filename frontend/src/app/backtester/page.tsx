@@ -114,6 +114,9 @@ export default function Home() {
         universe_filters: (draftStrategy as any).universe_filters,
         is_wizard: draftStrategy.is_wizard,
         description: (draftStrategy as any).description || activeStrategy?.description || "",
+        market_sessions: draftStrategy.market_sessions || activeSessions,
+        custom_start_time: draftStrategy.custom_start_time || activeCustomStartTime,
+        custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
       });
 
       if (isExisting) {
@@ -1087,6 +1090,10 @@ export default function Home() {
                       custom_end_time: def.custom_end_time,
                     } as any);
                     
+                    setActiveSessions(def.market_sessions || ["rth"]);
+                    setActiveCustomStartTime(def.custom_start_time || "09:30");
+                    setActiveCustomEndTime(def.custom_end_time || "16:00");
+                    
                     setMode('builder_choice');
                   } catch (err) {
                     alert("Error al cargar la estrategia para configurar.");
@@ -1409,6 +1416,9 @@ export default function Home() {
                           postgap_preconditions: strategyToSave.postgap_preconditions,
                           universe_filters: strategyToSave.universe_filters,
                           dataset_id: strategyToSave.dataset_id,
+                          market_sessions: strategyToSave.market_sessions,
+                          custom_start_time: strategyToSave.custom_start_time,
+                          custom_end_time: strategyToSave.custom_end_time,
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -1545,6 +1555,9 @@ export default function Home() {
                           postgap_preconditions: strategyToSave.postgap_preconditions,
                           universe_filters: strategyToSave.universe_filters,
                           dataset_id: strategyToSave.dataset_id,
+                          market_sessions: strategyToSave.market_sessions,
+                          custom_start_time: strategyToSave.custom_start_time,
+                          custom_end_time: strategyToSave.custom_end_time,
                         } as any);
 
                         // Persist backtest results linked to this strategy

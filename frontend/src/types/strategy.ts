@@ -85,7 +85,8 @@ export enum RiskType {
     PERCENTAGE = "Percentage",
     ATR = "ATR Multiplier",
     MARKET_STRUCTURE = "Market Structure (HOD/LOD)",
-    TIME = "Time"
+    TIME = "Time",
+    HOUR = "Hour"
 }
 
 export enum TakeProfitMode {

@@ -593,9 +593,15 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     value={risk.take_profit.type || RiskType.PERCENTAGE}
                                     onChange={(e) => {
                                         const newType = e.target.value as RiskType;
-                                        updateRiskSetting('take_profit', 'type', newType);
-                                        const defaultVal = newType === RiskType.TIME ? 30 : 6.0;
-                                        updateRiskSetting('take_profit', 'value', defaultVal);
+                                        const defaultVal = newType === RiskType.TIME ? 30 : (newType === 'Hour' ? '15:30' : 6.0);
+                                        onChange({
+                                            ...risk,
+                                            take_profit: {
+                                                ...risk.take_profit,
+                                                type: newType,
+                                                value: defaultVal
+                                            }
+                                        });
                                     }}
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -613,25 +619,32 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 >
                                     <option value={RiskType.PERCENTAGE}>% Distancia</option>
                                     <option value={RiskType.TIME}>Tiempo (minutos)</option>
+                                    <option value="Hour">Hora específica</option>
                                 </select>
                                 <div className="relative" style={{ width: '120px' }}>
                                     <input
-                                        type="number"
-                                        step={risk.take_profit.type === RiskType.TIME ? '1' : '0.1'}
-                                        value={risk.take_profit.value ?? ''}
+                                        type={risk.take_profit.type === 'Hour' ? 'time' : 'number'}
+                                        step={risk.take_profit.type === 'Hour' ? '60' : (risk.take_profit.type === RiskType.TIME ? '1' : '0.1')}
+                                        value={risk.take_profit.type === 'Hour' && risk.take_profit.value ? String(risk.take_profit.value).split(':').slice(0, 2).join(':') : (risk.take_profit.value ?? '')}
                                         onChange={(e) => updateRiskSetting('take_profit', 'value', e.target.value === '' ? '' : e.target.value)}
                                         onBlur={() => {
-                                            const val = parseFloat(String(risk.take_profit.value));
-                                            const isTime = risk.take_profit.type === RiskType.TIME;
-                                            const defaultVal = isTime ? 30 : 6.0;
-                                            updateRiskSetting('take_profit', 'value', isNaN(val) ? defaultVal : val);
+                                            if (risk.take_profit.type === 'Hour') {
+                                                if (!risk.take_profit.value) {
+                                                    updateRiskSetting('take_profit', 'value', '15:30');
+                                                }
+                                            } else {
+                                                const val = parseFloat(String(risk.take_profit.value));
+                                                const isTime = risk.take_profit.type === RiskType.TIME;
+                                                const defaultVal = isTime ? 30 : 6.0;
+                                                updateRiskSetting('take_profit', 'value', isNaN(val) ? defaultVal : val);
+                                            }
                                         }}
                                         onFocus={(e) => e.target.select()}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
-                                            padding: '7px 30px 7px 10px',
+                                            padding: risk.take_profit.type === 'Hour' ? '7px 10px' : '7px 30px 7px 10px',
                                             fontSize: 13,
                                             fontWeight: 600,
                                             color: 'var(--color-ec-text-primary)',
@@ -642,9 +655,11 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             textAlign: 'center',
                                         }}
                                     />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
-                                        {risk.take_profit.type === RiskType.TIME ? 'min' : '%'}
-                                    </span>
+                                    {risk.take_profit.type !== 'Hour' && (
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                                            {risk.take_profit.type === RiskType.TIME ? 'min' : '%'}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         ) : (
@@ -732,7 +747,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                             ) : mode === 'HOUR' ? (
                                                                 <input
                                                                     type="time"
-                                                                    value={valStr.startsWith('HOUR:') ? valStr.substring(5) : '15:30'}
+                                                                    value={valStr.startsWith('HOUR:') ? valStr.substring(5).split(':').slice(0, 2).join(':') : '15:30'}
                                                                     onChange={(e) => {
                                                                         updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
                                                                     }}

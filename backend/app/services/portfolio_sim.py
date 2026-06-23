@@ -30,7 +30,7 @@ def simulate(
     sl_stop: float | None = None,
     sl_trail: bool = False,
     tp_stop: float | None = None,
-    tp_time_limit: float | None = None,
+    tp_time_limit: float | str | None = None,
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
@@ -196,11 +196,24 @@ def simulate(
                             exit_reason = "TP"
 
                 if not exit_triggered and tp_time_limit is not None and timestamps is not None:
-                    elapsed_mins = (timestamps[i] - entry_time) / 6e10
-                    if elapsed_mins >= tp_time_limit:
-                        exit_triggered = True
-                        exit_price = close[i]
-                        exit_reason = "TP"
+                    if isinstance(tp_time_limit, str) and tp_time_limit.startswith("HOUR:"):
+                        try:
+                            parts = tp_time_limit.split(":")
+                            tp_hour = int(parts[1])
+                            tp_min = int(parts[2])
+                        except:
+                            tp_hour, tp_min = 0, 0
+                        dt = datetime.fromtimestamp(timestamps[i] / 1e9, tz=timezone.utc)
+                        if dt.hour > tp_hour or (dt.hour == tp_hour and dt.minute >= tp_min):
+                            exit_triggered = True
+                            exit_price = close[i]
+                            exit_reason = "TP"
+                    else:
+                        elapsed_mins = (timestamps[i] - entry_time) / 6e10
+                        if elapsed_mins >= tp_time_limit:
+                            exit_triggered = True
+                            exit_price = close[i]
+                            exit_reason = "TP"
 
             # --- Partial Take-Profits ---
             if not exit_triggered and partial_take_profits and not skip_exits:

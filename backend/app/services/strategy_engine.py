@@ -533,9 +533,12 @@ def _parse_risk_management(
             # tp_stop stays None — partial mode doesn't use a single TP
         elif risk.get("take_profit"):
             tp = risk["take_profit"]
-            if tp.get("type") == "Percentage":
+            tp_type = tp.get("type")
+            if tp_type == "Percentage":
                 tp_stop = tp.get("value", 0) / 100.0
-            elif tp.get("type") == "Time":
-                tp_time_limit = float(tp.get("value", 0))
+            elif tp_type == "Time":
+                tp_time_limit = float(tp.get("value", 0)) if tp.get("value") else 0.0
+            elif tp_type == "Hour":
+                tp_time_limit = f"HOUR:{tp.get('value', '15:30')}"
 
     return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps

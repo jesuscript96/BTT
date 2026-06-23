@@ -934,6 +934,24 @@ export default function BacktestPanel({
                       </div>
                     )}
 
+                    {(() => {
+                      const sessions = stratDef?.market_sessions || ["rth"];
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>SESIÓN: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)', fontWeight: 600 }}>
+                            {sessions.map((s: string) => {
+                              if (s === 'pre') return 'Pre-market';
+                              if (s === 'rth') return 'RTH (Mercado)';
+                              if (s === 'post') return 'Afterhours';
+                              if (s === 'custom') return `Personalizado (${stratDef?.custom_start_time || '09:30'}-${stratDef?.custom_end_time || '16:00'})`;
+                              return s;
+                            }).join(' + ')}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     {/* Universo / Dataset */}
                     {(() => {
                       const universeFilters = stratDef?.universe_filters;
@@ -1034,13 +1052,16 @@ export default function BacktestPanel({
                             const d = String(p.distance_pct ?? p.multiplier ?? '');
                             if (d === 'EOD') return `EOD: ${p.capital_pct}%`;
                             if (d.startsWith('TIME:')) return `${d.split(':')[1]}m: ${p.capital_pct}%`;
-                            if (d.startsWith('HOUR:')) return `${d.substring(5)}: ${p.capital_pct}%`;
+                            if (d.startsWith('HOUR:')) return `${d.substring(5).split(':').slice(0, 2).join(':')}: ${p.capital_pct}%`;
                             const suffix = p.type === 'Percentage' ? '%' : 'R';
                             return `${d}${suffix}: ${p.capital_pct}%`;
                           }).join(', ');
                           stopList.push(`TP Parciales (${partials})`);
                         } else {
-                          const tpVal = rm.take_profit?.value ? `${rm.take_profit.value}${rm.take_profit.type === 'Percentage' ? '%' : 'R'}` : '';
+                          const tpType = rm.take_profit?.type;
+                          const suffix = tpType === 'Percentage' ? '%' : tpType === 'Time' ? 'm' : tpType === 'Hour' ? '' : 'R';
+                          const prefix = tpType === 'Hour' ? 'Hora: ' : '';
+                          const tpVal = rm.take_profit?.value ? `${prefix}${tpType === 'Hour' ? String(rm.take_profit.value).split(':').slice(0, 2).join(':') : rm.take_profit.value}${suffix}` : '';
                           stopList.push(`Take Profit: ${tpVal}`);
                         }
                       } else {
