@@ -64,11 +64,12 @@ def test_day_and_month_exclusions():
             "use_take_profit": False,
             "accept_reentries": False,
             "exclude_days": [],
-            "exclude_months": []
+            "exclude_months": [],
+            "exclude_days_active": False
         }
     }
 
-    # Case 1: No exclusions
+    # Case 1: No exclusions active
     res_no_exclusions = run_backtest(
         intraday_df=df.copy(),
         strategy_def=strategy_def.copy(),
@@ -78,11 +79,27 @@ def test_day_and_month_exclusions():
     # Triggers once on Monday and once on Tuesday
     assert len(res_no_exclusions["trades"]) == 2
 
-    # Case 2: Exclude Mondays (0)
+    # Case 2: Exclusions configured but active=False (should still trade on Monday and Tuesday)
+    strategy_inactive_exclusions = strategy_def.copy()
+    strategy_inactive_exclusions["risk_management"] = {
+        **strategy_inactive_exclusions["risk_management"],
+        "exclude_days": [0],
+        "exclude_days_active": False
+    }
+    res_inactive = run_backtest(
+        intraday_df=df.copy(),
+        strategy_def=strategy_inactive_exclusions,
+        market_sessions=["all"],
+        init_cash=10000.0,
+    )
+    assert len(res_inactive["trades"]) == 2
+
+    # Case 3: Exclude Mondays (0) active=True
     strategy_exclude_monday = strategy_def.copy()
     strategy_exclude_monday["risk_management"] = {
         **strategy_exclude_monday["risk_management"],
-        "exclude_days": [0]  # Mon = 0
+        "exclude_days": [0],  # Mon = 0
+        "exclude_days_active": True
     }
     res_exclude_monday = run_backtest(
         intraday_df=df.copy(),
@@ -95,11 +112,12 @@ def test_day_and_month_exclusions():
     entry_time = pd.to_datetime(res_exclude_monday["trades"][0]["entry_time"])
     assert entry_time.date() == pd.Timestamp("2026-06-02").date()
 
-    # Case 3: Exclude June (5 in 0-based indexing from frontend)
+    # Case 4: Exclude June (5 in 0-based indexing from frontend) active=True
     strategy_exclude_june = strategy_def.copy()
     strategy_exclude_june["risk_management"] = {
         **strategy_exclude_june["risk_management"],
-        "exclude_months": [5]  # June = 5 (0-based)
+        "exclude_months": [5],  # June = 5 (0-based)
+        "exclude_days_active": True
     }
     res_exclude_june = run_backtest(
         intraday_df=df.copy(),

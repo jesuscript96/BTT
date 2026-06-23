@@ -5442,6 +5442,7 @@ export default function WizardStrategyBuilder({
   };
 
   const renderRiskSubStepExclusions = () => {
+    const isExclusionsActive = riskManagement.exclude_days_active === true;
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }} className="animate-in fade-in duration-200">
         <div>
@@ -5467,125 +5468,161 @@ export default function WizardStrategyBuilder({
           </p>
         </div>
 
-        {/* Exclude days */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{
-            fontFamily: 'General Sans, sans-serif',
-            fontSize: 11,
-            fontWeight: 700,
-            color: 'var(--color-ec-text-secondary)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-          }}>Excluir Días de la Semana</label>
-          <div style={{ display: 'flex', gap: 8, maxWidth: 360, marginTop: 4 }}>
-            {["L", "M", "X", "J", "V"].map((day, idx) => {
-              const isExcluded = (riskManagement.exclude_days || []).includes(idx);
-              return (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => {
-                    const current = riskManagement.exclude_days || [];
-                    const next = current.includes(idx)
-                      ? current.filter(d => d !== idx)
-                      : [...current, idx];
-                    setRiskManagement({ ...riskManagement, exclude_days: next });
-                  }}
-                  style={{
-                    flex: 1,
-                    padding: '10px 0',
-                    borderRadius: 5,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    fontFamily: 'General Sans, sans-serif',
-                    cursor: 'pointer',
-                    transition: 'all 150ms ease',
-                    backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
-                    border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
-                    color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isExcluded) {
-                      e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
-                      e.currentTarget.style.color = 'var(--color-ec-text-primary)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isExcluded) {
-                      e.currentTarget.style.borderColor = 'var(--color-ec-border)';
-                      e.currentTarget.style.color = 'var(--color-ec-text-muted)';
-                    }
-                  }}
-                >
-                  {day}
-                </button>
-              );
-            })}
+        {/* Toggle Switch */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 14px",
+          backgroundColor: "var(--color-ec-bg-surface)",
+          border: "0.5px solid var(--color-ec-border)",
+          borderRadius: 6,
+        }}>
+          <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+            ¿Fijar exclusiones temporales?
+          </span>
+          <div className="flex items-center gap-2">
+            <span style={{
+              fontFamily: 'General Sans, sans-serif',
+              fontSize: 10,
+              fontWeight: 700,
+              color: 'var(--color-ec-text-muted)',
+            }}>{isExclusionsActive ? 'SÍ' : 'NO'}</span>
+            <div
+              className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${isExclusionsActive ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+              onClick={() => setRiskManagement({
+                ...riskManagement,
+                exclude_days_active: !isExclusionsActive
+              })}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${isExclusionsActive ? 'left-4.5' : 'left-0.5'}`}></div>
+            </div>
           </div>
         </div>
 
-        {/* Exclude months */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-          <label style={{
-            fontFamily: 'General Sans, sans-serif',
-            fontSize: 11,
-            fontWeight: 700,
-            color: 'var(--color-ec-text-secondary)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-          }}>Excluir Meses del Año</label>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 8,
-            maxWidth: 360,
-            marginTop: 4
-          }}>
-            {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => {
-              const isExcluded = (riskManagement.exclude_months || []).includes(idx);
-              return (
-                <button
-                  key={month}
-                  type="button"
-                  onClick={() => {
-                    const current = riskManagement.exclude_months || [];
-                    const next = current.includes(idx)
-                      ? current.filter(m => m !== idx)
-                      : [...current, idx];
-                    setRiskManagement({ ...riskManagement, exclude_months: next });
-                  }}
-                  style={{
-                    padding: '8px 0',
-                    borderRadius: 5,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    fontFamily: 'General Sans, sans-serif',
-                    cursor: 'pointer',
-                    transition: 'all 150ms ease',
-                    backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
-                    border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
-                    color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
-                    textAlign: 'center',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isExcluded) {
-                      e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
-                      e.currentTarget.style.color = 'var(--color-ec-text-primary)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isExcluded) {
-                      e.currentTarget.style.borderColor = 'var(--color-ec-border)';
-                      e.currentTarget.style.color = 'var(--color-ec-text-muted)';
-                    }
-                  }}
-                >
-                  {month}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        {isExclusionsActive && (
+          <>
+            {/* Exclude days */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} className="animate-in fade-in duration-200">
+              <label style={{
+                fontFamily: 'General Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}>Excluir Días de la Semana</label>
+              <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 4 }}>
+                {["L", "M", "X", "J", "V"].map((day, idx) => {
+                  const isExcluded = (riskManagement.exclude_days || []).includes(idx);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => {
+                        const current = riskManagement.exclude_days || [];
+                        const next = current.includes(idx)
+                          ? current.filter(d => d !== idx)
+                          : [...current, idx];
+                        setRiskManagement({ ...riskManagement, exclude_days: next });
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '10px 0',
+                        borderRadius: 5,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        fontFamily: 'General Sans, sans-serif',
+                        cursor: 'pointer',
+                        transition: 'all 150ms ease',
+                        backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                        border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                        color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                        }
+                      }}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Exclude months */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }} className="animate-in fade-in duration-200">
+              <label style={{
+                fontFamily: 'General Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}>Excluir Meses del Año</label>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 8,
+                width: '100%',
+                marginTop: 4
+              }}>
+                {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => {
+                  const isExcluded = (riskManagement.exclude_months || []).includes(idx);
+                  return (
+                    <button
+                      key={month}
+                      type="button"
+                      onClick={() => {
+                        const current = riskManagement.exclude_months || [];
+                        const next = current.includes(idx)
+                          ? current.filter(m => m !== idx)
+                          : [...current, idx];
+                        setRiskManagement({ ...riskManagement, exclude_months: next });
+                      }}
+                      style={{
+                        padding: '8px 0',
+                        borderRadius: 5,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: 'General Sans, sans-serif',
+                        cursor: 'pointer',
+                        transition: 'all 150ms ease',
+                        backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                        border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                        color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                        textAlign: 'center',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                        }
+                      }}
+                    >
+                      {month}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   };
@@ -5741,6 +5778,26 @@ export default function WizardStrategyBuilder({
         : "Reentradas: Bloqueadas",
       stepName: "Gestión de Riesgo"
     });
+
+    // Exclusiones
+    if (riskManagement.exclude_days_active === true) {
+      if (riskManagement.exclude_days && riskManagement.exclude_days.length > 0) {
+        const dayNames = ["L", "M", "X", "J", "V"];
+        const daysStr = riskManagement.exclude_days.map(d => dayNames[d]).join(",");
+        list.push({
+          label: `Excluir Días: ${daysStr}`,
+          stepName: "Gestión de Riesgo"
+        });
+      }
+      if (riskManagement.exclude_months && riskManagement.exclude_months.length > 0) {
+        const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+        const monthsStr = riskManagement.exclude_months.map(m => monthNames[m]).join(",");
+        list.push({
+          label: `Excluir Meses: ${monthsStr}`,
+          stepName: "Gestión de Riesgo"
+        });
+      }
+    }
     
     return list;
   }, [
@@ -6143,6 +6200,40 @@ export default function WizardStrategyBuilder({
         });
       }
     });
+
+    // Exclusiones
+    if (riskManagement.exclude_days_active === true) {
+      if (riskManagement.exclude_days && riskManagement.exclude_days.length > 0) {
+        const dayNames = ["L", "M", "X", "J", "V"];
+        const daysStr = riskManagement.exclude_days.map(d => dayNames[d]).join(",");
+        list.push({
+          label: `Excluir Días: ${daysStr}`,
+          color: "var(--color-ec-copper)",
+          onRemove: () => {
+            setRiskManagement({
+              ...riskManagement,
+              exclude_days: [],
+              exclude_days_active: (riskManagement.exclude_months && riskManagement.exclude_months.length > 0) ? true : false
+            });
+          }
+        });
+      }
+      if (riskManagement.exclude_months && riskManagement.exclude_months.length > 0) {
+        const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+        const monthsStr = riskManagement.exclude_months.map(m => monthNames[m]).join(",");
+        list.push({
+          label: `Excluir Meses: ${monthsStr}`,
+          color: "var(--color-ec-copper)",
+          onRemove: () => {
+            setRiskManagement({
+              ...riskManagement,
+              exclude_months: [],
+              exclude_days_active: (riskManagement.exclude_days && riskManagement.exclude_days.length > 0) ? true : false
+            });
+          }
+        });
+      }
+    }
 
     return list;
   }, [riskManagement, currentStep, wizardRiskStep, completedSteps]);

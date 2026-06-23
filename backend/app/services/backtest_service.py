@@ -261,17 +261,19 @@ def run_backtest(
 
         # Check day/month exclusions
         rm = strategy_def.get("risk_management", {}) if strategy_def else {}
-        exclude_days = rm.get("exclude_days", [])
-        exclude_months = rm.get("exclude_months", [])
-        if exclude_days or exclude_months:
-            try:
-                dt = datetime.datetime.strptime(date, "%Y-%m-%d")
-                if dt.weekday() in exclude_days:
-                    continue
-                if (dt.month - 1) in exclude_months:
-                    continue
-            except Exception as e:
-                logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
+        exclude_active = rm.get("exclude_days_active", False)
+        if exclude_active:
+            exclude_days = rm.get("exclude_days", [])
+            exclude_months = rm.get("exclude_months", [])
+            if exclude_days or exclude_months:
+                try:
+                    dt = datetime.datetime.strptime(date, "%Y-%m-%d")
+                    if dt.weekday() in exclude_days:
+                        continue
+                    if (dt.month - 1) in exclude_months:
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
 
         daily_stats = qual_lookup.get((ticker, date), {})
 
