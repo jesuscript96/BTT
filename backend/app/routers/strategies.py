@@ -35,6 +35,9 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
                 "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
                 "is_wizard": strategy.is_wizard,
                 "dataset_id": strategy.dataset_id,
+                "market_sessions": strategy.market_sessions,
+                "custom_start_time": strategy.custom_start_time,
+                "custom_end_time": strategy.custom_end_time,
             })
 
             con.execute(
@@ -87,6 +90,9 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                 "risk_management": strategy.risk_management.model_dump() if strategy.risk_management else None,
                 "is_wizard": strategy.is_wizard,
                 "dataset_id": strategy.dataset_id,
+                "market_sessions": strategy.market_sessions,
+                "custom_start_time": strategy.custom_start_time,
+                "custom_end_time": strategy.custom_end_time,
             })
 
             con.execute(

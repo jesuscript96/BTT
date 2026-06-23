@@ -331,6 +331,9 @@ class StrategyCreate(BaseModel):
     risk_management: RiskManagement
     is_wizard: Optional[bool] = None
     dataset_id: Optional[str] = None
+    market_sessions: Optional[List[str]] = None
+    custom_start_time: Optional[str] = None
+    custom_end_time: Optional[str] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))
