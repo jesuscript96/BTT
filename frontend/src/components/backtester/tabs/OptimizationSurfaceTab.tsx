@@ -548,6 +548,61 @@ export default function OptimizationSurfaceTab({
         </div>
       )}
 
+      {/* Informative introductory panel shown when not loading and no result exists */}
+      {!result && !loading && (
+        <div className="rounded-lg border border-[var(--color-ec-border)] bg-[var(--color-ec-bg-surface)] p-6 space-y-6 max-w-4xl mx-auto backdrop-blur-md transition-all duration-300">
+          
+          {/* Warning banner */}
+          <div className="flex gap-3 p-4 rounded bg-[rgba(201,77,63,0.08)] border border-[rgba(201,77,63,0.25)]">
+            <span className="text-xl select-none">⚠️</span>
+            <div className="space-y-1">
+              <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-loss)] font-mono">
+                Advertencia de Tiempo de Ejecución
+              </h4>
+              <p className="text-[11px] text-[var(--color-ec-text-secondary)] leading-relaxed">
+                Este modelo de optimización puede requerir **una gran cantidad de tiempo** en completar y mostrar resultados. Esto se debe a la complejidad del modelo: para generar la superficie de optimización, el servidor debe ejecutar **un backtest completo por cada punto de la cuadrícula** (por ejemplo, una resolución de 10×10 requiere simular 100 ejecuciones completas de la estrategia).
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
+            {/* Column 1: Qué va a hacer */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[rgba(212,143,56,0.1)] text-[var(--color-ec-copper)] text-[10px] font-bold font-mono">1</span>
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-text-primary)] font-mono">¿Qué hace esto?</h4>
+              </div>
+              <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
+                Ejecuta de forma secuencial un barrido (grid search) combinando los rangos de dos parámetros de tu estrategia (los ejes X e Y). En cada combinación, evalúa el rendimiento histórico de tu estrategia utilizando la métrica que hayas seleccionado (como el Sharpe Ratio o Retorno Total).
+              </p>
+            </div>
+
+            {/* Column 2: Qué vas a ver */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[rgba(212,143,56,0.1)] text-[var(--color-ec-copper)] text-[10px] font-bold font-mono">2</span>
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-text-primary)] font-mono">¿Qué vas a ver?</h4>
+              </div>
+              <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
+                Una **gráfica tridimensional interactiva** (o mapa de calor 2D) que representa la topografía de tu estrategia. Las zonas elevadas (montañas) muestran configuraciones de alta rentabilidad/eficiencia, mientras que los valles muestran zonas de pérdidas o bajo desempeño.
+              </p>
+            </div>
+
+            {/* Column 3: Para qué sirve */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[rgba(212,143,56,0.1)] text-[var(--color-ec-copper)] text-[10px] font-bold font-mono">3</span>
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-text-primary)] font-mono">¿Para qué sirve?</h4>
+              </div>
+              <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
+                Sirve para encontrar **zonas de estabilidad (plateaus)**. El objetivo no es elegir el pico más alto (que suele ser un caso aislado y sobreajustado), sino una llanura estable donde pequeños cambios en el mercado no afecten negativamente el rendimiento de la estrategia.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      )}
+
       {/* Results */}
       {result && plotData && !loading && (
         <div className="flex gap-6 flex-col lg:flex-row">
