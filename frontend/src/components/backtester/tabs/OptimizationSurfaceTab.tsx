@@ -552,7 +552,7 @@ export default function OptimizationSurfaceTab({
       {!result && !loading && (
         <div 
           className="max-w-4xl mx-auto w-full flex flex-col items-center justify-center text-center pb-16 px-6 animate-in fade-in slide-in-from-bottom-4 duration-300"
-          style={{ marginTop: '4px' }}
+          style={{ marginTop: '32px' }}
         >
           
           {/* Warning banner - simple warning text, no background box */}
@@ -575,7 +575,7 @@ export default function OptimizationSurfaceTab({
               </div>
               <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
                 Cruza dos variables de tu estrategia para evaluar su rendimiento en todas las combinaciones posibles.
-                <span className="text-[10px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
+                <span className="text-[9px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
                   <strong>Ejemplo:</strong> Probar periodos de SMA de 10 a 50 contra valores de Stop Loss de 1% a 5%.
                 </span>
               </p>
@@ -589,7 +589,7 @@ export default function OptimizationSurfaceTab({
               </div>
               <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
                 Un mapa topográfico interactivo en 3D o 2D. Las "montañas" son zonas rentables y los "valles" representan pérdidas.
-                <span className="text-[10px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
+                <span className="text-[9px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
                   <strong>Ejemplo:</strong> Verás si el Sharpe Ratio de tu estrategia sube o baja al variar conjuntamente la SMA y el Stop Loss.
                 </span>
               </p>
@@ -603,7 +603,7 @@ export default function OptimizationSurfaceTab({
               </div>
               <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
                 Sirve para encontrar <strong>plateaus (zonas estables)</strong> en lugar de picos aislados (sobreajuste), lo que da robustez en real.
-                <span className="text-[10px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
+                <span className="text-[9px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
                   <strong>Ejemplo:</strong> Si tu estrategia funciona bien en SMA 20, 21 y 22, es robusta. Si solo funciona en SMA 20, es sobreajuste.
                 </span>
               </p>
