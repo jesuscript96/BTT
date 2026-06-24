@@ -1443,25 +1443,31 @@ export default function BacktestPanel({
             alignItems: 'center',
             gap: 8,
           }}>
-            <label className="flex items-center cursor-pointer">
+            <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={useLocates}
                 onChange={() => setUseLocates(!useLocates)}
-                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)] mr-2"
+                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
               <span style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 11,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-secondary)',
-              }}>Locates estimados $/100</span>
-              <InfoTooltip
-                position="left"
-                width={260}
-                text="Estimación de precio medio por locate, al aplicar este dato se restará por ticker en concepto de comisiones, esta cantidad de precio por locate. Trata de calcular, aproximadamente, la media de precios por locates que estimas que te cobrarán por ticker"
-                style={{ marginLeft: '1px', display: 'inline-flex' }}
-              />
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 1,
+              }}>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-secondary)',
+                }}>Locates estimados $/100</span>
+                <InfoTooltip
+                  position="left"
+                  width={260}
+                  text="Estimación de precio medio por locate, al aplicar este dato se restará por ticker en concepto de comisiones, esta cantidad de precio por locate. Trata de calcular, aproximadamente, la media de precios por locates que estimas que te cobrarán por ticker"
+                  style={{ display: 'inline-flex' }}
+                />
+              </span>
             </label>
             {useLocates && (
               <input
