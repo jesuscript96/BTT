@@ -13,6 +13,7 @@ import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
 import { createStrategy, createQuery, getStrategy, saveBacktest, updateStrategy } from "@/lib/api";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
+import { useEntitlements } from "@/lib/entitlements";
 import {
   runBacktest,
   runBacktestWithDefinition,
@@ -23,6 +24,26 @@ import {
   type MultiDayCandles,
 } from "@/lib/api_backtester";
 
+
+// Shows "X / Y backtests hoy" only when the tier has a finite daily run limit.
+// MVP: limit is -1 (unlimited) so this renders nothing.
+function BacktestUsageIndicator() {
+  const { limit, used } = useEntitlements();
+  const dailyLimit = limit("backtester.runs_per_day");
+  if (dailyLimit === -1) return null;
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 500,
+        color: "var(--color-ec-text-secondary)",
+        padding: "4px 2px",
+      }}
+    >
+      {used("backtester.runs_per_day")} / {dailyLimit} backtests hoy
+    </div>
+  );
+}
 
 export default function Home() {
   const [mode, setMode] = useState<"config" | "builder_choice" | "builder" | "wizard" | "dataset">("config");
@@ -994,6 +1015,7 @@ export default function Home() {
           zIndex: 45,
         }}>
           <div style={{ padding: '16px 12px 24px 12px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <BacktestUsageIndicator />
             <BacktestPanel
               onRun={handleRun}
               onNewStrategy={() => {

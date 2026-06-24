@@ -7,6 +7,7 @@ import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import TradesTab from "@/components/backtester/tabs/TradesTab";
 import ChartsTab from "@/components/backtester/tabs/ChartsTab";
 import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
+import LockedFeature from "@/components/LockedFeature";
 import Chart from "@/components/backtester/Chart";
 
 const TABS = [
@@ -369,13 +370,15 @@ export default function ResultsTabs({
             />
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>
-            <OptimizationSurfaceTab
-              strategyId={strategyId}
-              strategyDefinition={strategyDefinition}
-              datasetId={datasetId}
-              isDarkMode={isDarkMode}
-              backtestParams={backtestParams}
-            />
+            <LockedFeature feature="backtester.surface_3d" requiredTier="Pro">
+              <OptimizationSurfaceTab
+                strategyId={strategyId}
+                strategyDefinition={strategyDefinition}
+                datasetId={datasetId}
+                isDarkMode={isDarkMode}
+                backtestParams={backtestParams}
+              />
+            </LockedFeature>
           </div>
         </div>
       </div>

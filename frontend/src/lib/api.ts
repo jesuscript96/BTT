@@ -87,7 +87,7 @@ function formatErrorDetail(detail: unknown, status: number, statusText: string):
 }
 
 // ─── Core request helper ────────────────────────────────────
-async function apiRequest<T>(
+export async function apiRequest<T>(
   path: string,
   options?: RequestInit & { timeoutMs?: number },
 ): Promise<T> {
