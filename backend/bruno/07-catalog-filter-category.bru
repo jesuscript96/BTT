@@ -1,0 +1,23 @@
+meta {
+  name: Catalog - filter by category
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/catalog/indicators?category=Momentum
+  body: none
+  auth: inherit
+}
+
+params:query {
+  category: Momentum
+}
+
+tests {
+  test("200 and only Momentum entries", function () {
+    expect(res.getStatus()).to.equal(200);
+    const cats = [...new Set(res.getBody().indicators.map((i) => i.category))];
+    expect(cats).to.deep.equal(["Momentum"]);
+  });
+}

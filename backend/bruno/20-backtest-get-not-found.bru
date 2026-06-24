@@ -1,0 +1,18 @@
+meta {
+  name: Backtest retrieve - not found
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/v1/backtests/bt_nope
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("404 job_not_found for unknown id", function () {
+    expect(res.getStatus()).to.equal(404);
+    expect(res.getBody().error.code).to.equal("job_not_found");
+  });
+}

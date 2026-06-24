@@ -1,0 +1,26 @@
+meta {
+  name: Auth - revoked key
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/v1/catalog/indicators
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{revokedKey}}
+}
+
+tests {
+  test("403 forbidden for a revoked key", function () {
+    expect(res.getStatus()).to.equal(403);
+    expect(res.getBody().error.code).to.equal("forbidden");
+  });
+}
+
+docs {
+  Needs `revokedKey` — `run.sh` mints a key, revokes it, and injects it here.
+}

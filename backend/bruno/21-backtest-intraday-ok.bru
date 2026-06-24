@@ -1,0 +1,26 @@
+meta {
+  name: Backtest intraday - series found
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/v1/backtests/{{jobId}}/intraday?ticker=AAPL&date=2024-01-02
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ticker: AAPL
+  date: 2024-01-02
+}
+
+tests {
+  test("200 and intraday equity series", function () {
+    expect(res.getStatus()).to.equal(200);
+    const body = res.getBody();
+    expect(body.ticker).to.equal("AAPL");
+    expect(body.date).to.equal("2024-01-02");
+    expect(body.equity).to.have.lengthOf(10);
+  });
+}

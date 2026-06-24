@@ -6,6 +6,7 @@ import {
     Play,
     Briefcase,
     Radar,
+    KeyRound,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -195,6 +196,18 @@ export const Sidebar = () => {
                 >
                     <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Baúl</span>
+                </Link>
+
+                {/* Developer API console */}
+                <Link
+                    href="/developers"
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/developers"),
+                    }}
+                >
+                    <KeyRound style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>API</span>
                 </Link>
             </nav>
 

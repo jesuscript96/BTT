@@ -1,0 +1,33 @@
+meta {
+  name: Backtest retrieve - trades page 1 (cursor)
+  type: http
+  seq: 25
+}
+
+get {
+  url: {{baseUrl}}/v1/backtests/{{jobId}}?include=trades&trades_limit=2
+  body: none
+  auth: inherit
+}
+
+params:query {
+  include: trades
+  trades_limit: 2
+}
+
+script:post-response {
+  if (res.getStatus() === 200) {
+    bru.setVar("tradesCursor", res.getBody().result.trades.page.next_cursor);
+  }
+}
+
+tests {
+  test("200 first page of 2 with a next cursor", function () {
+    expect(res.getStatus()).to.equal(200);
+    const page = res.getBody().result.trades.page;
+    expect(page.total).to.equal(3);
+    expect(page.returned).to.equal(2);
+    expect(page.next_cursor).to.be.a("string").that.is.not.empty;
+    expect(res.getBody().result.trades.items).to.have.lengthOf(2);
+  });
+}

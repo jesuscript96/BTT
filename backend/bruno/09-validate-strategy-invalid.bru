@@ -1,0 +1,28 @@
+meta {
+  name: Validate strategy - invalid
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/v1/strategies/validate
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "x",
+    "bias": "sideways"
+  }
+}
+
+tests {
+  test("200 and valid:false with field errors", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().valid).to.equal(false);
+    const paths = res.getBody().errors.map((e) => e.path);
+    expect(paths.some((p) => p.includes("bias"))).to.equal(true);
+    expect(paths.some((p) => p.includes("entry_logic"))).to.equal(true);
+  });
+}

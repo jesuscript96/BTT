@@ -1,0 +1,48 @@
+meta {
+  name: Backtest run - missing universe
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/v1/backtests
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "universe": null,
+    "strategy": {
+      "name": "VWAP fade short",
+      "bias": "short",
+      "apply_day": "gap_day",
+      "entry_logic": {
+        "timeframe": "1m",
+        "root_condition": {
+          "type": "group",
+          "operator": "AND",
+          "conditions": [
+            {
+              "type": "indicator_comparison",
+              "source": { "name": "Bar Close" },
+              "comparator": "CROSSES_BELOW",
+              "target": { "name": "VWAP" }
+            }
+          ]
+        }
+      },
+      "risk_management": {
+        "use_hard_stop": true,
+        "hard_stop": { "type": "Percentage", "value": 3.0 }
+      }
+    }
+  }
+}
+
+tests {
+  test("422 invalid_universe when universe is null", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.getBody().error.code).to.equal("invalid_universe");
+  });
+}

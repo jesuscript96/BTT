@@ -1,0 +1,17 @@
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+docs {
+  # Edgecute Backtest API — automated tests
+
+  Collection-level auth sends `Authorization: Bearer {{apiKey}}` on every request
+  whose auth mode is `inherit`. Negative auth tests override this with `auth: none`.
+
+  Run with `./run.sh` (boots the API with the deterministic demo facade, mints a
+  sandbox key, runs the suite) — see README.md.
+}

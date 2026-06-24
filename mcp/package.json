@@ -1,0 +1,40 @@
+{
+  "name": "@edgecute/mcp",
+  "version": "0.1.0",
+  "description": "Edgecute Backtest MCP — build-time codegen + component library for traders building local apps in Cursor / Claude Code.",
+  "type": "module",
+  "bin": {
+    "edgecute-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "edgecute",
+    "backtesting",
+    "trading",
+    "model-context-protocol"
+  ],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}

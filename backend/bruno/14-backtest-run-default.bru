@@ -1,0 +1,66 @@
+meta {
+  name: Backtest run - default include
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{baseUrl}}/v1/backtests
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "universe": {
+      "dataset_ref": "ds_123",
+      "date_from": "2024-01-01",
+      "date_to": "2024-01-31"
+    },
+    "strategy": {
+      "name": "VWAP fade short",
+      "bias": "short",
+      "apply_day": "gap_day",
+      "entry_logic": {
+        "timeframe": "1m",
+        "root_condition": {
+          "type": "group",
+          "operator": "AND",
+          "conditions": [
+            {
+              "type": "indicator_comparison",
+              "source": { "name": "Bar Close" },
+              "comparator": "CROSSES_BELOW",
+              "target": { "name": "VWAP" }
+            }
+          ]
+        }
+      },
+      "risk_management": {
+        "use_hard_stop": true,
+        "hard_stop": { "type": "Percentage", "value": 3.0 }
+      }
+    },
+    "execution": { "init_cash": 10000, "market_sessions": ["RTH"] },
+    "include": ["metrics", "equity", "days"]
+  }
+}
+
+script:post-response {
+  if (res.getStatus() === 200) {
+    bru.setVar("jobId", res.getBody().job_id);
+  }
+}
+
+tests {
+  test("200 succeeded with metrics + equity, no trades by default", function () {
+    expect(res.getStatus()).to.equal(200);
+    const body = res.getBody();
+    expect(body.status).to.equal("succeeded");
+    expect(body.job_id).to.match(/^bt_/);
+    expect(body.result.aggregate_metrics.total_trades).to.equal(3);
+    expect(body.result.global_equity).to.be.an("array").that.is.not.empty;
+    expect(body.result.trades == null).to.equal(true);
+    expect(body.meta.trades_total).to.equal(3);
+  });
+}

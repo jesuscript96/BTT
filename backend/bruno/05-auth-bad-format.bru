@@ -1,0 +1,22 @@
+meta {
+  name: Auth - bad key format
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/catalog/indicators
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer not_a_key
+}
+
+tests {
+  test("401 invalid_api_key on malformed token", function () {
+    expect(res.getStatus()).to.equal(401);
+    expect(res.getBody().error.code).to.equal("invalid_api_key");
+  });
+}

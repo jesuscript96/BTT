@@ -1,0 +1,28 @@
+meta {
+  name: Universe preview - over cap
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/v1/universe/preview
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "dataset_ref": "huge_dataset",
+    "date_from": "2024-01-01",
+    "date_to": "2024-01-31"
+  }
+}
+
+tests {
+  test("200 and within_cap:false for oversized universe", function () {
+    expect(res.getStatus()).to.equal(200);
+    const b = res.getBody();
+    expect(b.within_cap).to.equal(false);
+    expect(b.ticker_days).to.be.above(b.cap);
+  });
+}

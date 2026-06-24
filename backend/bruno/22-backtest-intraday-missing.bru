@@ -1,0 +1,23 @@
+meta {
+  name: Backtest intraday - series missing
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/v1/backtests/{{jobId}}/intraday?ticker=ZZZZ&date=2024-01-02
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ticker: ZZZZ
+  date: 2024-01-02
+}
+
+tests {
+  test("404 job_not_found for unknown ticker/date", function () {
+    expect(res.getStatus()).to.equal(404);
+    expect(res.getBody().error.code).to.equal("job_not_found");
+  });
+}

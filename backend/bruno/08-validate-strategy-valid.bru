@@ -1,0 +1,46 @@
+meta {
+  name: Validate strategy - valid
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/strategies/validate
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "VWAP fade short",
+    "bias": "short",
+    "apply_day": "gap_day",
+    "entry_logic": {
+      "timeframe": "1m",
+      "root_condition": {
+        "type": "group",
+        "operator": "AND",
+        "conditions": [
+          {
+            "type": "indicator_comparison",
+            "source": { "name": "Bar Close" },
+            "comparator": "CROSSES_BELOW",
+            "target": { "name": "VWAP" }
+          }
+        ]
+      }
+    },
+    "risk_management": {
+      "use_hard_stop": true,
+      "hard_stop": { "type": "Percentage", "value": 3.0 }
+    }
+  }
+}
+
+tests {
+  test("200 and valid:true with no errors", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().valid).to.equal(true);
+    expect(res.getBody().errors).to.be.an("array").that.is.empty;
+  });
+}
