@@ -1457,6 +1457,12 @@ export default function BacktestPanel({
                 color: 'var(--color-ec-text-secondary)',
               }}>Locates estimados $/100</span>
             </label>
+            <InfoTooltip
+              position="top-left"
+              width={260}
+              text="Estimación de precio medio por locate, al aplicar este dato se restará por ticker en concepto de comisiones, esta cantidad de precio por locate. Trata de calcular, aproximadamente, la media de precios por locates que estimas que te cobrarán por ticker"
+              style={{ marginLeft: '2px' }}
+            />
             {useLocates && (
               <input
                 type="number"
