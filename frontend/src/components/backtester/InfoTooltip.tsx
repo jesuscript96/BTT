@@ -109,7 +109,7 @@ export default function InfoTooltip({ text, position = "top", style, width, titl
             fontWeight: 500,
             lineHeight: "1.4",
             boxShadow: "0 4px 20px rgba(0, 0, 0, 0.45)",
-            zIndex: 100,
+            zIndex: 99999,
             pointerEvents: "none",
             textTransform: "none",
             letterSpacing: "normal",

@@ -35,6 +35,7 @@ def simulate(
     max_reentries: int = -1,
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
+    locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
     patch_mask: np.ndarray | None = None,
     partial_take_profits: list | None = None,
@@ -716,8 +717,17 @@ def simulate(
     # Deduct Daily Locates Fee
     import math
     if max_short_size_today > 0 and locates_cost > 0:
+        if locate_type == "PERCENT":
+            if risk_type == "PERCENT":
+                day_risk_unit = init_cash * (risk_r / 100.0)
+            else:
+                day_risk_unit = risk_r
+            cost_per_100 = day_risk_unit * (locates_cost / 100.0)
+        else:
+            cost_per_100 = locates_cost
+
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
-        daily_locates_fee = blocks_of_100 * locates_cost
+        daily_locates_fee = blocks_of_100 * cost_per_100
         
         # We subtract it from the final equity tally
         # To ensure trade sum = equity curve change, we assign the deduction to the first short trade
