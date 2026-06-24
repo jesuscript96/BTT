@@ -44,6 +44,7 @@ interface BacktestPanelProps {
     custom_start_time?: string;
     custom_end_time?: string;
     locates_cost?: number;
+    locate_type?: "PERCENT" | "FLAT";
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;

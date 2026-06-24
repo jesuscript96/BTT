@@ -300,6 +300,7 @@ export async function runBacktest(params: {
   custom_start_time?: string;
   custom_end_time?: string;
   locates_cost?: number;
+  locate_type?: "PERCENT" | "FLAT";
   look_ahead_prevention?: boolean;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
