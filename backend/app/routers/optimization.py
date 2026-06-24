@@ -15,6 +15,7 @@ from app.services.optimization_service import (
     get_progress,
     store_result,
     pop_result,
+    cancel_optimization_task,
 )
 
 logger = logging.getLogger("backtester.optimization")
@@ -119,6 +120,14 @@ def get_optimization_result(task_id: str):
     return {"status": "running", "progress": prog}
 
 
+@router.post("/optimization/cancel/{task_id}")
+def cancel_optimization(task_id: str):
+    """Cancel a running optimization task."""
+    logger.info(f"[OPT] Cancellation requested for task {task_id}")
+    cancel_optimization_task(task_id)
+    return {"status": "success", "message": "Optimization cancellation requested"}
+
+
 def _run_optimization_in_background(req_data: dict, task_id: str):
     """Background thread function that runs the optimization and stores the result."""
     try:
@@ -135,9 +144,14 @@ def _run_optimization_in_background(req_data: dict, task_id: str):
         set_progress(task_id, 100.0)
         logger.info(f"[OPT] Background task {task_id} completed successfully")
     except Exception as e:
-        logger.error(f"[OPT] Background task {task_id} failed: {e}", exc_info=True)
-        store_result(task_id, e)
-        set_progress(task_id, 100.0)
+        if isinstance(e, RuntimeError) and str(e) == "OPTIMIZATION_CANCELLED":
+            logger.info(f"[OPT] Background task {task_id} was successfully cancelled")
+            store_result(task_id, Exception("OPTIMIZATION_CANCELLED"))
+            set_progress(task_id, -2.0)
+        else:
+            logger.error(f"[OPT] Background task {task_id} failed: {e}", exc_info=True)
+            store_result(task_id, e)
+            set_progress(task_id, 100.0)
 
 
 @router.post("/optimization/surface")

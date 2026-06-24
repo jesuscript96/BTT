@@ -593,9 +593,15 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     value={risk.take_profit.type || RiskType.PERCENTAGE}
                                     onChange={(e) => {
                                         const newType = e.target.value as RiskType;
-                                        updateRiskSetting('take_profit', 'type', newType);
-                                        const defaultVal = newType === RiskType.TIME ? 30 : 6.0;
-                                        updateRiskSetting('take_profit', 'value', defaultVal);
+                                        const defaultVal = newType === RiskType.TIME ? 30 : (newType === 'Hour' ? '15:30' : 6.0);
+                                        onChange({
+                                            ...risk,
+                                            take_profit: {
+                                                ...risk.take_profit,
+                                                type: newType,
+                                                value: defaultVal
+                                            }
+                                        });
                                     }}
                                     style={{
                                         backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -613,25 +619,32 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 >
                                     <option value={RiskType.PERCENTAGE}>% Distancia</option>
                                     <option value={RiskType.TIME}>Tiempo (minutos)</option>
+                                    <option value="Hour">Hora específica</option>
                                 </select>
                                 <div className="relative" style={{ width: '120px' }}>
                                     <input
-                                        type="number"
-                                        step={risk.take_profit.type === RiskType.TIME ? '1' : '0.1'}
-                                        value={risk.take_profit.value ?? ''}
+                                        type={risk.take_profit.type === 'Hour' ? 'time' : 'number'}
+                                        step={risk.take_profit.type === 'Hour' ? '60' : (risk.take_profit.type === RiskType.TIME ? '1' : '0.1')}
+                                        value={risk.take_profit.type === 'Hour' && risk.take_profit.value ? String(risk.take_profit.value).split(':').slice(0, 2).join(':') : (risk.take_profit.value ?? '')}
                                         onChange={(e) => updateRiskSetting('take_profit', 'value', e.target.value === '' ? '' : e.target.value)}
                                         onBlur={() => {
-                                            const val = parseFloat(String(risk.take_profit.value));
-                                            const isTime = risk.take_profit.type === RiskType.TIME;
-                                            const defaultVal = isTime ? 30 : 6.0;
-                                            updateRiskSetting('take_profit', 'value', isNaN(val) ? defaultVal : val);
+                                            if (risk.take_profit.type === 'Hour') {
+                                                if (!risk.take_profit.value) {
+                                                    updateRiskSetting('take_profit', 'value', '15:30');
+                                                }
+                                            } else {
+                                                const val = parseFloat(String(risk.take_profit.value));
+                                                const isTime = risk.take_profit.type === RiskType.TIME;
+                                                const defaultVal = isTime ? 30 : 6.0;
+                                                updateRiskSetting('take_profit', 'value', isNaN(val) ? defaultVal : val);
+                                            }
                                         }}
                                         onFocus={(e) => e.target.select()}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
-                                            padding: '7px 30px 7px 10px',
+                                            padding: risk.take_profit.type === 'Hour' ? '7px 10px' : '7px 30px 7px 10px',
                                             fontSize: 13,
                                             fontWeight: 600,
                                             color: 'var(--color-ec-text-primary)',
@@ -642,9 +655,11 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             textAlign: 'center',
                                         }}
                                     />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
-                                        {risk.take_profit.type === RiskType.TIME ? 'min' : '%'}
-                                    </span>
+                                    {risk.take_profit.type !== 'Hour' && (
+                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                                            {risk.take_profit.type === RiskType.TIME ? 'min' : '%'}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         ) : (
@@ -732,7 +747,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                             ) : mode === 'HOUR' ? (
                                                                 <input
                                                                     type="time"
-                                                                    value={valStr.startsWith('HOUR:') ? valStr.substring(5) : '15:30'}
+                                                                    value={valStr.startsWith('HOUR:') ? valStr.substring(5).split(':').slice(0, 2).join(':') : '15:30'}
                                                                     onChange={(e) => {
                                                                         updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
                                                                     }}
@@ -1187,9 +1202,197 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 </div>
             )}
 
+            {/* Otros parámetros Card */}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+            }}>
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingBottom: (risk.exclude_days_active) ? 12 : 0,
+                    borderBottom: (risk.exclude_days_active) ? '0.5px solid var(--color-ec-border)' : 'none',
+                }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                                width: 3,
+                                height: 14,
+                                borderRadius: 1,
+                                backgroundColor: 'var(--color-ec-copper)',
+                            }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Otros parámetros</h2>
+                        </div>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Configura qué días o meses del año no deseas que se ejecute la estrategia</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.exclude_days_active ? 'YES' : 'NO'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.exclude_days_active ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+                            onClick={() => {
+                                onChange({
+                                    ...risk,
+                                    exclude_days_active: !risk.exclude_days_active
+                                });
+                            }}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.exclude_days_active ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+
+                {risk.exclude_days_active && (
+                    <>
+                        {/* Exclude days */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} className="animate-in fade-in duration-200">
+                            <label style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-secondary)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                            }}>Excluir Días de la Semana</label>
+                            <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 4 }}>
+                                {["L", "M", "X", "J", "V"].map((day, idx) => {
+                                    const isExcluded = (risk.exclude_days || []).includes(idx);
+                                    return (
+                                        <button
+                                            key={day}
+                                            type="button"
+                                            onClick={() => {
+                                                const current = risk.exclude_days || [];
+                                                const next = current.includes(idx)
+                                                    ? current.filter(d => d !== idx)
+                                                    : [...current, idx];
+                                                onChange({ ...risk, exclude_days: next });
+                                            }}
+                                            style={{
+                                                flex: 1,
+                                                padding: '10px 0',
+                                                borderRadius: 5,
+                                                fontSize: 12,
+                                                fontWeight: 700,
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                cursor: 'pointer',
+                                                transition: 'all 150ms ease',
+                                                backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                                                border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                                                color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isExcluded) {
+                                                    e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                                                    e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                                }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isExcluded) {
+                                                    e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                                                    e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                                }
+                                            }}
+                                        >
+                                            {day}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Exclude months */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }} className="animate-in fade-in duration-200">
+                            <label style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                color: 'var(--color-ec-text-secondary)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                            }}>Excluir Meses del Año</label>
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(4, 1fr)',
+                                gap: 8,
+                                width: '100%',
+                                marginTop: 4
+                            }}>
+                                {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => {
+                                    const isExcluded = (risk.exclude_months || []).includes(idx);
+                                    return (
+                                        <button
+                                            key={month}
+                                            type="button"
+                                            onClick={() => {
+                                                const current = risk.exclude_months || [];
+                                                const next = current.includes(idx)
+                                                    ? current.filter(m => m !== idx)
+                                                    : [...current, idx];
+                                                onChange({ ...risk, exclude_months: next });
+                                            }}
+                                            style={{
+                                                padding: '8px 0',
+                                                borderRadius: 5,
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                cursor: 'pointer',
+                                                transition: 'all 150ms ease',
+                                                backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                                                border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                                                color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                                                textAlign: 'center',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isExcluded) {
+                                                    e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                                                    e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                                                }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isExcluded) {
+                                                    e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                                                    e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                                                }
+                                            }}
+                                        >
+                                            {month}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
+
         </div>
     );
 };
+
 
 export const RiskManagementComponent = React.memo(RiskManagementComponentInner);
 RiskManagementComponent.displayName = "RiskManagementComponent";

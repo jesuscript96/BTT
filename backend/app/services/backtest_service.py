@@ -57,6 +57,7 @@ def run_backtest(
     custom_start_time: str | None = None,
     custom_end_time: str | None = None,
     locates_cost: float = 0.0,
+    locate_type: str = "FLAT",
     look_ahead_prevention: bool = False,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -258,6 +259,23 @@ def run_backtest(
 
         ticker = str(ticker_raw)
         date = str(date_raw)[:10]
+
+        # Check day/month exclusions
+        rm = strategy_def.get("risk_management", {}) if strategy_def else {}
+        exclude_active = rm.get("exclude_days_active", False)
+        if exclude_active:
+            exclude_days = rm.get("exclude_days", [])
+            exclude_months = rm.get("exclude_months", [])
+            if exclude_days or exclude_months:
+                try:
+                    dt = datetime.datetime.strptime(date, "%Y-%m-%d")
+                    if dt.weekday() in exclude_days:
+                        continue
+                    if (dt.month - 1) in exclude_months:
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
+
         daily_stats = qual_lookup.get((ticker, date), {})
 
         # Check swing option to fetch and concatenate subsequent days
@@ -542,6 +560,7 @@ def run_backtest(
                 fee_type=fee_type,
                 slippage=slippage,
                 locates_cost=locates_cost,
+                locate_type=locate_type,
                 look_ahead_prevention=look_ahead_prevention,
                 sl_stop=sig_sl_stop,
                 sl_trail=sig_sl_trail,

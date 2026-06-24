@@ -7,6 +7,7 @@ import {
   runOptimizationSurface,
   fetchOptimizationProgress,
   fetchOptimizationResult,
+  cancelOptimization,
   type OptimizationParam,
   type OptimizationResult,
   type OptimizationParamConfig,
@@ -56,6 +57,7 @@ export default function OptimizationSurfaceTab({
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [visualProgress, setVisualProgress] = useState<number>(0);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
   const pollIntervalRef = useRef<number | null>(null);
 
@@ -69,13 +71,19 @@ export default function OptimizationSurfaceTab({
   }, []);
 
   const startPolling = useCallback((taskId: string, currentMetric: string) => {
+    setActiveTaskId(taskId);
     if (pollIntervalRef.current) {
       window.clearInterval(pollIntervalRef.current);
     }
 
+    let consecutiveErrors = 0;
+    const maxErrors = 5;
+
     const interval = window.setInterval(async () => {
       try {
         const res = await fetchOptimizationResult(taskId);
+        consecutiveErrors = 0; // Reset error count on successful request
+
         if ("status" in res && res.status === "running") {
           setProgress(res.progress);
           setVisualProgress((prev) => {
@@ -96,6 +104,7 @@ export default function OptimizationSurfaceTab({
           if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
           localStorage.removeItem("active_optimization_task");
+          setActiveTaskId(null);
           setProgress(100);
           setVisualProgress(100);
           setTimeout(() => {
@@ -104,13 +113,19 @@ export default function OptimizationSurfaceTab({
           }, 300);
         }
       } catch (e: any) {
-        if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-        localStorage.removeItem("active_optimization_task");
-        console.error("Error polling optimization result", e);
-        const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
-        setError(msg);
-        setLoading(false);
+        consecutiveErrors++;
+        console.warn(`Error polling optimization result (attempt ${consecutiveErrors}/${maxErrors}):`, e);
+
+        if (consecutiveErrors >= maxErrors) {
+          if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("active_optimization_task");
+          setActiveTaskId(null);
+          console.error("Error polling optimization result", e);
+          const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
+          setError(msg);
+          setLoading(false);
+        }
       }
     }, 800);
 
@@ -250,11 +265,31 @@ export default function OptimizationSurfaceTab({
       if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
       localStorage.removeItem("active_optimization_task");
+      setActiveTaskId(null);
       console.error("Error starting optimization:", err);
       const msg = err.response?.data?.detail || err.message || "Error al iniciar la optimización";
       setError(msg);
       setLoading(false);
     }
+  };
+
+  const handleCancel = async () => {
+    if (!activeTaskId) return;
+    try {
+      await cancelOptimization(activeTaskId);
+    } catch (e) {
+      console.warn("Error cancelando la optimización:", e);
+    }
+    if (pollIntervalRef.current) {
+      window.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    localStorage.removeItem("active_optimization_task");
+    setActiveTaskId(null);
+    setProgress(0);
+    setVisualProgress(0);
+    setLoading(false);
+    setError("Optimización cancelada por el usuario.");
   };
 
   // Plotly data
@@ -313,6 +348,7 @@ export default function OptimizationSurfaceTab({
           yaxis: { title: { text: p[1].label }, gridcolor: gridColor, color: fg },
           margin: { l: 60, r: 20, t: 30, b: 60 },
           autosize: true,
+          uirevision: metric,
         },
       };
     }
@@ -355,6 +391,7 @@ export default function OptimizationSurfaceTab({
           },
           margin: { l: 0, r: 0, t: 30, b: 0 },
           autosize: true,
+          uirevision: metric,
         },
       };
     }
@@ -543,8 +580,82 @@ export default function OptimizationSurfaceTab({
                   ? "Inicializando datos de mercado..."
                   : `Procesando: ${Math.min(gridSteps * gridSteps, Math.round(((progress - 5) / 95) * (gridSteps * gridSteps)))} / ${gridSteps * gridSteps} backtests`}
               </p>
+              {activeTaskId && (
+                <button
+                  onClick={handleCancel}
+                  className="w-full h-[28px] bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] rounded text-[11px] font-mono font-bold uppercase tracking-[0.1em] flex items-center justify-center transform active:scale-[0.98] transition-all cursor-pointer mx-auto"
+                  style={{ marginTop: '5px' }}
+                >
+                  Cancelar optimización
+                </button>
+              )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Informative introductory panel shown when not loading and no result exists */}
+      {!result && !loading && (
+        <div 
+          className="max-w-4xl mx-auto w-full flex flex-col items-center justify-center text-center pb-16 px-6 animate-in fade-in slide-in-from-bottom-4 duration-300"
+          style={{ marginTop: '32px' }}
+        >
+          
+          {/* Warning banner - simple warning text, no background box */}
+          <div className="w-full flex flex-col items-center justify-center text-center space-y-2" style={{ marginBottom: '3px' }}>
+            <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-loss)] font-mono flex items-center justify-center gap-1.5">
+              <span>⚠️</span> Advertencia de Tiempo de Ejecución
+            </h4>
+            <p className="text-[11px] text-[var(--color-ec-text-secondary)] leading-relaxed max-w-xl text-center">
+              Este modelo de optimización requiere <strong>una gran cantidad de tiempo</strong> de procesamiento. Para generar la superficie, el servidor debe simular <strong>un backtest completo por cada combinación de la cuadrícula</strong> (por ejemplo, una resolución de 10×10 ejecuta 100 simulaciones).
+            </p>
+          </div>
+
+          {/* Three columns directly on the background */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-10 text-center w-full" style={{ marginTop: '3px' }}>
+            {/* Column 1: Qué va a hacer */}
+            <div className="space-y-3">
+              <div className="flex flex-col items-center gap-1.5">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[rgba(212,143,56,0.1)] text-[var(--color-ec-copper)] text-[10px] font-bold font-mono">1</span>
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-text-primary)] font-mono">¿Qué hace esto?</h4>
+              </div>
+              <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
+                Cruza dos variables de tu estrategia para evaluar su rendimiento en todas las combinaciones posibles.
+                <span className="text-[9px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
+                  <strong>Ejemplo:</strong> Probar periodos de SMA de 10 a 50 contra valores de Stop Loss de 1% a 5%.
+                </span>
+              </p>
+            </div>
+
+            {/* Column 2: Qué vas a ver */}
+            <div className="space-y-3">
+              <div className="flex flex-col items-center gap-1.5">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[rgba(212,143,56,0.1)] text-[var(--color-ec-copper)] text-[10px] font-bold font-mono">2</span>
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-text-primary)] font-mono">¿Qué vas a ver?</h4>
+              </div>
+              <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
+                Un mapa topográfico interactivo en 3D o 2D. Las "montañas" son zonas rentables y los "valles" representan pérdidas.
+                <span className="text-[9px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
+                  <strong>Ejemplo:</strong> Verás si el Sharpe Ratio de tu estrategia sube o baja al variar conjuntamente la SMA y el Stop Loss.
+                </span>
+              </p>
+            </div>
+
+            {/* Column 3: Para qué sirve */}
+            <div className="space-y-3">
+              <div className="flex flex-col items-center gap-1.5">
+                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-[rgba(212,143,56,0.1)] text-[var(--color-ec-copper)] text-[10px] font-bold font-mono">3</span>
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-ec-text-primary)] font-mono">¿Para qué sirve?</h4>
+              </div>
+              <p className="text-[11px] text-[var(--color-ec-text-muted)] leading-relaxed">
+                Sirve para encontrar <strong>plateaus (zonas estables)</strong> en lugar de picos aislados (sobreajuste), lo que da robustez en real.
+                <span className="text-[9px] text-[var(--color-ec-copper)] font-mono block mt-2 opacity-90">
+                  <strong>Ejemplo:</strong> Si tu estrategia funciona bien en SMA 20, 21 y 22, es robusta. Si solo funciona en SMA 20, es sobreajuste.
+                </span>
+              </p>
+            </div>
+          </div>
+
         </div>
       )}
 

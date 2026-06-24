@@ -781,7 +781,11 @@ export default function TrunkPage() {
               if (pt && pt.capital_pct != null && pt.capital_pct !== "") {
                 const dist = pt.multiplier || pt.distance_pct;
                 if (dist != null && dist !== "") {
-                  return `${dist}${pt.type === 'Percentage' ? '%' : 'R'}: ${pt.capital_pct}%`;
+                  const distStr = String(dist);
+                  if (distStr === 'EOD') return `EOD: ${pt.capital_pct}%`;
+                  if (distStr.startsWith('TIME:')) return `${distStr.split(':')[1]}m: ${pt.capital_pct}%`;
+                  if (distStr.startsWith('HOUR:')) return `${distStr.substring(5).split(':').slice(0, 2).join(':')}: ${pt.capital_pct}%`;
+                  return `${distStr}${pt.type === 'Percentage' ? '%' : 'R'}: ${pt.capital_pct}%`;
                 }
               }
               return null;
@@ -794,7 +798,10 @@ export default function TrunkPage() {
         }
       } else {
         if (risk.take_profit?.value != null && risk.take_profit.value !== "") {
-          tags.push(`TP: ${risk.take_profit.value}${risk.take_profit.type === 'Percentage' ? '%' : 'R'}`);
+          const tpType = risk.take_profit.type;
+          const suffix = tpType === 'Percentage' ? '%' : tpType === 'Time' ? 'm' : tpType === 'Hour' ? '' : 'R';
+          const prefix = tpType === 'Hour' ? 'Hora: ' : '';
+          tags.push(`TP: ${prefix}${tpType === 'Hour' ? String(risk.take_profit.value).split(':').slice(0, 2).join(':') : risk.take_profit.value}${suffix}`);
         }
       }
     }

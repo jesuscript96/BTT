@@ -553,6 +553,10 @@ export default function BacktestPanel({
       if (savedState.riskType !== undefined) setRiskType(savedState.riskType);
       if (savedState.feeType !== undefined) setFeeType(savedState.feeType);
       if (savedState.isPercent !== undefined) setIsPercent(savedState.isPercent);
+      if (savedState.useLocates !== undefined) setUseLocates(savedState.useLocates);
+      if (savedState.locatesCost !== undefined) setLocatesCost(savedState.locatesCost);
+      if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
+      if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
 
     setLoadError(failed);
@@ -701,6 +705,10 @@ export default function BacktestPanel({
         riskType,
         feeType,
         isPercent,
+        useLocates,
+        locatesCost,
+        useMonthlyExpenses,
+        monthlyExpenses,
       };
       sessionStorage.setItem("backtester_panel_state", JSON.stringify(panelState));
     } catch (e) {
@@ -709,7 +717,8 @@ export default function BacktestPanel({
   }, [
     selectedDataset, selectedStrategy, initCash, riskR, fees, slippage,
     startDate, endDate, marketSessions, customStartTime, customEndTime,
-    riskType, feeType, isPercent, loadingData
+    riskType, feeType, isPercent, loadingData,
+    useLocates, locatesCost, useMonthlyExpenses, monthlyExpenses
   ]);
 
   // Synchronize dataset selection with the selected strategy's associated dataset
@@ -758,6 +767,7 @@ export default function BacktestPanel({
       custom_start_time: marketSessions.includes("custom") ? customStartTime : undefined,
       custom_end_time: marketSessions.includes("custom") ? customEndTime : undefined,
       locates_cost: useLocates ? locatesCost : 0,
+      locate_type: useLocates ? "PERCENT" : "FLAT",
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -934,6 +944,24 @@ export default function BacktestPanel({
                       </div>
                     )}
 
+                    {(() => {
+                      const sessions = stratDef?.market_sessions || ["rth"];
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>SESIÓN: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)', fontWeight: 600 }}>
+                            {sessions.map((s: string) => {
+                              if (s === 'pre') return 'Pre-market';
+                              if (s === 'rth') return 'RTH (Mercado)';
+                              if (s === 'post') return 'Afterhours';
+                              if (s === 'custom') return `Personalizado (${stratDef?.custom_start_time || '09:30'}-${stratDef?.custom_end_time || '16:00'})`;
+                              return s;
+                            }).join(' + ')}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     {/* Universo / Dataset */}
                     {(() => {
                       const universeFilters = stratDef?.universe_filters;
@@ -1034,13 +1062,16 @@ export default function BacktestPanel({
                             const d = String(p.distance_pct ?? p.multiplier ?? '');
                             if (d === 'EOD') return `EOD: ${p.capital_pct}%`;
                             if (d.startsWith('TIME:')) return `${d.split(':')[1]}m: ${p.capital_pct}%`;
-                            if (d.startsWith('HOUR:')) return `${d.substring(5)}: ${p.capital_pct}%`;
+                            if (d.startsWith('HOUR:')) return `${d.substring(5).split(':').slice(0, 2).join(':')}: ${p.capital_pct}%`;
                             const suffix = p.type === 'Percentage' ? '%' : 'R';
                             return `${d}${suffix}: ${p.capital_pct}%`;
                           }).join(', ');
                           stopList.push(`TP Parciales (${partials})`);
                         } else {
-                          const tpVal = rm.take_profit?.value ? `${rm.take_profit.value}${rm.take_profit.type === 'Percentage' ? '%' : 'R'}` : '';
+                          const tpType = rm.take_profit?.type;
+                          const suffix = tpType === 'Percentage' ? '%' : tpType === 'Time' ? 'm' : tpType === 'Hour' ? '' : 'R';
+                          const prefix = tpType === 'Hour' ? 'Hora: ' : '';
+                          const tpVal = rm.take_profit?.value ? `${prefix}${tpType === 'Hour' ? String(rm.take_profit.value).split(':').slice(0, 2).join(':') : rm.take_profit.value}${suffix}` : '';
                           stopList.push(`Take Profit: ${tpVal}`);
                         }
                       } else {
@@ -1413,7 +1444,7 @@ export default function BacktestPanel({
             alignItems: 'center',
             gap: 8,
           }}>
-            <label className="flex items-center gap-2 cursor-pointer">
+            <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
               <input
                 type="checkbox"
                 checked={useLocates}
@@ -1421,11 +1452,23 @@ export default function BacktestPanel({
                 className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
               <span style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 11,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-secondary)',
-              }}>Locates estimados $/100</span>
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 1,
+              }}>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-secondary)',
+                }}>% Locates/riesgo</span>
+                <InfoTooltip
+                  position="left"
+                  width={280}
+                  text="El % de la cantidad de riesgo (dinero a apostar) que asumimos en cada trade en concepto de comisiones por cada 100 acciones (locates asumibles). Ejemplo: si arriesgas 1000€ y configuras un 3% de locates asumibles, pagas 30€ de comisión por cada 100 acciones. Si controlas 1000 acciones (10 locates), la comisión será de 300€."
+                  style={{ display: 'inline-flex' }}
+                />
+              </span>
             </label>
             {useLocates && (
               <input
@@ -1433,8 +1476,9 @@ export default function BacktestPanel({
                 step="0.01"
                 value={locatesCost}
                 onChange={(e) => setLocatesCost(Number(e.target.value))}
-                className="w-20 border border-[var(--color-ec-border)]"
+                className="border border-[var(--color-ec-border)]"
                 style={{
+                  width: '55px',
                   backgroundColor: 'var(--color-ec-bg-elevated)',
                   borderRadius: 5,
                   padding: '6px 8px',
@@ -1472,8 +1516,9 @@ export default function BacktestPanel({
                 step="1"
                 value={monthlyExpenses}
                 onChange={(e) => setMonthlyExpenses(Number(e.target.value))}
-                className="w-20 border border-[var(--color-ec-border)]"
+                className="border border-[var(--color-ec-border)]"
                 style={{
+                  width: '55px',
                   backgroundColor: 'var(--color-ec-bg-elevated)',
                   borderRadius: 5,
                   padding: '6px 8px',

@@ -4712,14 +4712,14 @@ export default function WizardStrategyBuilder({
                   />
                 </div>
                 <span style={{ fontSize: 8, color: "var(--color-ec-text-muted)", lineHeight: 1.35 }}>
-                  {riskManagement.take_profit.type === RiskType.TIME ? 'Ejemplo: 30 minutos de tiempo antes de tomar ganancias.' : 'Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.'}
+                  {riskManagement.take_profit.type === RiskType.TIME ? 'Ejemplo: 30 minutos de tiempo antes de tomar ganancias.' : riskManagement.take_profit.type === 'Hour' ? 'Ejemplo: 15:30 para salir a esa hora exacta.' : 'Ejemplo: 6.0% de distancia de toma de ganancias con respecto al precio de entrada.'}
                 </span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center" }}>
                   <select
                     value={riskManagement.take_profit.type || RiskType.PERCENTAGE}
                     onChange={(e) => {
                       const newType = e.target.value as RiskType;
-                      const defaultVal = newType === RiskType.TIME ? 30 : 6.0;
+                      const defaultVal = newType === RiskType.TIME ? 30 : (newType === 'Hour' ? '15:30' : 6.0);
                       setRiskManagement({
                         ...riskManagement,
                         take_profit: {
@@ -4745,31 +4745,41 @@ export default function WizardStrategyBuilder({
                   >
                     <option value={RiskType.PERCENTAGE}>% Distancia</option>
                     <option value={RiskType.TIME}>Tiempo (minutos)</option>
+                    <option value="Hour">Hora específica</option>
                   </select>
                   <div className="relative" style={{ width: '120px' }}>
                     <input
-                      type="number"
-                      step={riskManagement.take_profit.type === RiskType.TIME ? '1' : '0.1'}
-                      value={riskManagement.take_profit.value ?? ''}
+                      type={riskManagement.take_profit.type === 'Hour' ? 'time' : 'number'}
+                      step={riskManagement.take_profit.type === 'Hour' ? '60' : (riskManagement.take_profit.type === RiskType.TIME ? '1' : '0.1')}
+                      value={riskManagement.take_profit.type === 'Hour' && riskManagement.take_profit.value ? String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':') : (riskManagement.take_profit.value ?? '')}
                       onChange={(e) => setRiskManagement({
                         ...riskManagement,
                         take_profit: { ...riskManagement.take_profit, value: e.target.value === '' ? '' : e.target.value }
                       })}
                       onBlur={() => {
-                        const val = parseFloat(String(riskManagement.take_profit.value));
-                        const isTime = riskManagement.take_profit.type === RiskType.TIME;
-                        const defaultVal = isTime ? 30 : 6.0;
-                        setRiskManagement({
-                          ...riskManagement,
-                          take_profit: { ...riskManagement.take_profit, value: isNaN(val) ? defaultVal : val }
-                        });
+                        if (riskManagement.take_profit.type === 'Hour') {
+                          if (!riskManagement.take_profit.value) {
+                            setRiskManagement({
+                              ...riskManagement,
+                              take_profit: { ...riskManagement.take_profit, value: '15:30' }
+                            });
+                          }
+                        } else {
+                          const val = parseFloat(String(riskManagement.take_profit.value));
+                          const isTime = riskManagement.take_profit.type === RiskType.TIME;
+                          const defaultVal = isTime ? 30 : 6.0;
+                          setRiskManagement({
+                            ...riskManagement,
+                            take_profit: { ...riskManagement.take_profit, value: isNaN(val) ? defaultVal : val }
+                          });
+                        }
                       }}
                       onFocus={(e) => e.target.select()}
                       style={{
                         backgroundColor: 'var(--color-ec-bg-sidebar)',
                         border: '0.5px solid var(--color-ec-border)',
                         borderRadius: 5,
-                        padding: '7px 24px 7px 10px',
+                        padding: riskManagement.take_profit.type === 'Hour' ? '7px 10px' : '7px 24px 7px 10px',
                         fontSize: 13,
                         fontWeight: 600,
                         color: 'var(--color-ec-text-primary)',
@@ -4780,9 +4790,11 @@ export default function WizardStrategyBuilder({
                         textAlign: 'center',
                       }}
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
-                      {riskManagement.take_profit.type === RiskType.TIME ? 'min' : '%'}
-                    </span>
+                    {riskManagement.take_profit.type !== 'Hour' && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                        {riskManagement.take_profit.type === RiskType.TIME ? 'min' : '%'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4902,7 +4914,7 @@ export default function WizardStrategyBuilder({
                                   ) : mode === 'HOUR' ? (
                                     <input
                                       type="time"
-                                      value={valStr.startsWith('HOUR:') ? valStr.substring(5) : '15:30'}
+                                      value={valStr.startsWith('HOUR:') ? valStr.substring(5).split(':').slice(0, 2).join(':') : '15:30'}
                                       onChange={(e) => {
                                         updatePartial(idx, 'distance_pct', `HOUR:${e.target.value || '15:30'}`);
                                       }}
@@ -5097,7 +5109,7 @@ export default function WizardStrategyBuilder({
             {!isTpOn
               ? "Desactivado"
               : riskManagement.take_profit_mode === TakeProfitMode.FULL
-              ? `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`
+              ? `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : riskManagement.take_profit.type === 'Hour' ? `Hora: ${String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':')}` : `${riskManagement.take_profit.value}%`}`
               : `Take Profit: ${riskManagement.partial_take_profits.length} parciales (Total ${totalPartialCapital}%)`}
           </span>
         </div>
@@ -5429,6 +5441,192 @@ export default function WizardStrategyBuilder({
     );
   };
 
+  const renderRiskSubStepExclusions = () => {
+    const isExclusionsActive = riskManagement.exclude_days_active === true;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }} className="animate-in fade-in duration-200">
+        <div>
+          <h3 style={{
+            fontFamily: 'Fraunces, serif',
+            fontSize: 'var(--ec-fs-panel-title)',
+            fontWeight: 600,
+            color: "var(--color-ec-text-high)",
+            margin: "0 0 4px 0",
+            letterSpacing: "-0.2px",
+          }}>
+            Otros parámetros (Exclusiones temporales)
+          </h3>
+          <p style={{
+            fontFamily: "General Sans, sans-serif",
+            fontSize: 'var(--ec-fs-hint)',
+            fontWeight: 400,
+            color: "var(--color-ec-text-muted)",
+            margin: "0 0 12px 0",
+            lineHeight: 1.5,
+          }}>
+            Configura qué días de la semana o meses del año no deseas que se ejecute la estrategia en el backtest.
+          </p>
+        </div>
+
+        {/* Toggle Switch */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 14px",
+          backgroundColor: "var(--color-ec-bg-surface)",
+          border: "0.5px solid var(--color-ec-border)",
+          borderRadius: 6,
+        }}>
+          <span style={{ fontFamily: "General Sans, sans-serif", fontSize: 11, fontWeight: 700, color: "var(--color-ec-text-primary)" }}>
+            ¿Fijar exclusiones temporales?
+          </span>
+          <div className="flex items-center gap-2">
+            <span style={{
+              fontFamily: 'General Sans, sans-serif',
+              fontSize: 10,
+              fontWeight: 700,
+              color: 'var(--color-ec-text-muted)',
+            }}>{isExclusionsActive ? 'SÍ' : 'NO'}</span>
+            <div
+              className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${isExclusionsActive ? 'bg-[var(--color-ec-copper)]' : 'bg-muted'}`}
+              onClick={() => setRiskManagement({
+                ...riskManagement,
+                exclude_days_active: !isExclusionsActive
+              })}
+            >
+              <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${isExclusionsActive ? 'left-4.5' : 'left-0.5'}`}></div>
+            </div>
+          </div>
+        </div>
+
+        {isExclusionsActive && (
+          <>
+            {/* Exclude days */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} className="animate-in fade-in duration-200">
+              <label style={{
+                fontFamily: 'General Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}>Excluir Días de la Semana</label>
+              <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 4 }}>
+                {["L", "M", "X", "J", "V"].map((day, idx) => {
+                  const isExcluded = (riskManagement.exclude_days || []).includes(idx);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => {
+                        const current = riskManagement.exclude_days || [];
+                        const next = current.includes(idx)
+                          ? current.filter(d => d !== idx)
+                          : [...current, idx];
+                        setRiskManagement({ ...riskManagement, exclude_days: next });
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: '10px 0',
+                        borderRadius: 5,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        fontFamily: 'General Sans, sans-serif',
+                        cursor: 'pointer',
+                        transition: 'all 150ms ease',
+                        backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                        border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                        color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                        }
+                      }}
+                    >
+                      {day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Exclude months */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }} className="animate-in fade-in duration-200">
+              <label style={{
+                fontFamily: 'General Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: 700,
+                color: 'var(--color-ec-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+              }}>Excluir Meses del Año</label>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 8,
+                width: '100%',
+                marginTop: 4
+              }}>
+                {["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"].map((month, idx) => {
+                  const isExcluded = (riskManagement.exclude_months || []).includes(idx);
+                  return (
+                    <button
+                      key={month}
+                      type="button"
+                      onClick={() => {
+                        const current = riskManagement.exclude_months || [];
+                        const next = current.includes(idx)
+                          ? current.filter(m => m !== idx)
+                          : [...current, idx];
+                        setRiskManagement({ ...riskManagement, exclude_months: next });
+                      }}
+                      style={{
+                        padding: '8px 0',
+                        borderRadius: 5,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: 'General Sans, sans-serif',
+                        cursor: 'pointer',
+                        transition: 'all 150ms ease',
+                        backgroundColor: isExcluded ? 'rgba(201, 77, 63, 0.15)' : 'var(--color-ec-bg-surface)',
+                        border: isExcluded ? '1px solid var(--color-ec-loss)' : '0.5px solid var(--color-ec-border)',
+                        color: isExcluded ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                        textAlign: 'center',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-primary)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isExcluded) {
+                          e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+                          e.currentTarget.style.color = 'var(--color-ec-text-muted)';
+                        }
+                      }}
+                    >
+                      {month}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   /* ── Unified full-text tag list for Strategy Summary ── */
   const allTagsUnified = useMemo(() => {
     const list: { label: string; stepName: string }[] = [];
@@ -5540,13 +5738,13 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
-          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`,
+          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : riskManagement.take_profit.type === 'Hour' ? `Hora: ${String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':')}` : `${riskManagement.take_profit.value}%`}`,
           stepName: "Gestión de Riesgo"
         });
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5) : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5).split(':').slice(0, 2).join(':') : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             stepName: "Gestión de Riesgo"
@@ -5580,6 +5778,26 @@ export default function WizardStrategyBuilder({
         : "Reentradas: Bloqueadas",
       stepName: "Gestión de Riesgo"
     });
+
+    // Exclusiones
+    if (riskManagement.exclude_days_active === true) {
+      if (riskManagement.exclude_days && riskManagement.exclude_days.length > 0) {
+        const dayNames = ["L", "M", "X", "J", "V"];
+        const daysStr = riskManagement.exclude_days.map(d => dayNames[d]).join(",");
+        list.push({
+          label: `Excluir Días: ${daysStr}`,
+          stepName: "Gestión de Riesgo"
+        });
+      }
+      if (riskManagement.exclude_months && riskManagement.exclude_months.length > 0) {
+        const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+        const monthsStr = riskManagement.exclude_months.map(m => monthNames[m]).join(",");
+        list.push({
+          label: `Excluir Meses: ${monthsStr}`,
+          stepName: "Gestión de Riesgo"
+        });
+      }
+    }
     
     return list;
   }, [
@@ -5721,6 +5939,8 @@ export default function WizardStrategyBuilder({
         return renderRiskSubStepTrailingStop();
       case 3:
         return renderRiskSubStepReentries();
+      case 4:
+        return renderRiskSubStepExclusions();
       default:
         return null;
     }
@@ -5909,7 +6129,7 @@ export default function WizardStrategyBuilder({
     if (riskManagement.use_take_profit === true) {
       if (riskManagement.take_profit_mode === "Full") {
         list.push({
-          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : `${riskManagement.take_profit.value}%`}`,
+          label: `Take Profit: ${riskManagement.take_profit.type === RiskType.TIME ? `${riskManagement.take_profit.value} min` : riskManagement.take_profit.type === 'Hour' ? `Hora: ${String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':')}` : `${riskManagement.take_profit.value}%`}`,
           color: "var(--color-ec-copper)",
           onRemove: () => {
             setRiskManagement({
@@ -5921,7 +6141,7 @@ export default function WizardStrategyBuilder({
       } else {
         const partials = riskManagement.partial_take_profits || [];
         partials.forEach((p, idx) => {
-          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5) : `${p.distance_pct}%`;
+          const distStr = p.distance_pct === 'EOD' ? 'EOD' : String(p.distance_pct).startsWith('TIME:') ? `${String(p.distance_pct).split(':')[1]} min` : String(p.distance_pct).startsWith('HOUR:') ? String(p.distance_pct).substring(5).split(':').slice(0, 2).join(':') : `${p.distance_pct}%`;
           list.push({
             label: `TP Parcial ${idx + 1}: ${p.capital_pct}% a ${distStr}`,
             color: "var(--color-ec-copper)",
@@ -5980,6 +6200,40 @@ export default function WizardStrategyBuilder({
         });
       }
     });
+
+    // Exclusiones
+    if (riskManagement.exclude_days_active === true) {
+      if (riskManagement.exclude_days && riskManagement.exclude_days.length > 0) {
+        const dayNames = ["L", "M", "X", "J", "V"];
+        const daysStr = riskManagement.exclude_days.map(d => dayNames[d]).join(",");
+        list.push({
+          label: `Excluir Días: ${daysStr}`,
+          color: "var(--color-ec-copper)",
+          onRemove: () => {
+            setRiskManagement({
+              ...riskManagement,
+              exclude_days: [],
+              exclude_days_active: (riskManagement.exclude_months && riskManagement.exclude_months.length > 0) ? true : false
+            });
+          }
+        });
+      }
+      if (riskManagement.exclude_months && riskManagement.exclude_months.length > 0) {
+        const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+        const monthsStr = riskManagement.exclude_months.map(m => monthNames[m]).join(",");
+        list.push({
+          label: `Excluir Meses: ${monthsStr}`,
+          color: "var(--color-ec-copper)",
+          onRemove: () => {
+            setRiskManagement({
+              ...riskManagement,
+              exclude_months: [],
+              exclude_days_active: (riskManagement.exclude_days && riskManagement.exclude_days.length > 0) ? true : false
+            });
+          }
+        });
+      }
+    }
 
     return list;
   }, [riskManagement, currentStep, wizardRiskStep, completedSteps]);
@@ -6546,11 +6800,11 @@ export default function WizardStrategyBuilder({
             }}>
               <span>
                 Paso {currentStep + 1} de {STEPS.length}
-                {STEPS[currentStep]?.key === "risk" && ` (Riesgo: ${wizardRiskStep + 1} de 4)`}
+                {STEPS[currentStep]?.key === "risk" && ` (Riesgo: ${wizardRiskStep + 1} de 5)`}
               </span>
               {STEPS[currentStep]?.key === "risk" && (
                 <div style={{ display: "flex", gap: 4 }}>
-                  {Array.from({ length: 4 }).map((_, idx) => (
+                  {Array.from({ length: 5 }).map((_, idx) => (
                     <div
                       key={idx}
                       style={{
@@ -6621,7 +6875,7 @@ export default function WizardStrategyBuilder({
             )}
  
             {currentStep < STEPS.length - 1 ? (
-              (STEPS[currentStep]?.key === "risk" && wizardRiskStep === 3) ? (
+              (STEPS[currentStep]?.key === "risk" && wizardRiskStep === 4) ? (
                 <button
                   onClick={() => {
                     setCompletedSteps((prev) => new Set(prev).add(STEPS.findIndex(s => s.key === "risk")));

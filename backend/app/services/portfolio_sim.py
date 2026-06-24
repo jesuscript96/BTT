@@ -30,11 +30,12 @@ def simulate(
     sl_stop: float | None = None,
     sl_trail: bool = False,
     tp_stop: float | None = None,
-    tp_time_limit: float | None = None,
+    tp_time_limit: float | str | None = None,
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
+    locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
     patch_mask: np.ndarray | None = None,
     partial_take_profits: list | None = None,
@@ -196,11 +197,24 @@ def simulate(
                             exit_reason = "TP"
 
                 if not exit_triggered and tp_time_limit is not None and timestamps is not None:
-                    elapsed_mins = (timestamps[i] - entry_time) / 6e10
-                    if elapsed_mins >= tp_time_limit:
-                        exit_triggered = True
-                        exit_price = close[i]
-                        exit_reason = "TP"
+                    if isinstance(tp_time_limit, str) and tp_time_limit.startswith("HOUR:"):
+                        try:
+                            parts = tp_time_limit.split(":")
+                            tp_hour = int(parts[1])
+                            tp_min = int(parts[2])
+                        except:
+                            tp_hour, tp_min = 0, 0
+                        dt = datetime.fromtimestamp(timestamps[i] / 1e9, tz=timezone.utc)
+                        if dt.hour > tp_hour or (dt.hour == tp_hour and dt.minute >= tp_min):
+                            exit_triggered = True
+                            exit_price = close[i]
+                            exit_reason = "TP"
+                    else:
+                        elapsed_mins = (timestamps[i] - entry_time) / 6e10
+                        if elapsed_mins >= tp_time_limit:
+                            exit_triggered = True
+                            exit_price = close[i]
+                            exit_reason = "TP"
 
             # --- Partial Take-Profits ---
             if not exit_triggered and partial_take_profits and not skip_exits:
@@ -703,8 +717,17 @@ def simulate(
     # Deduct Daily Locates Fee
     import math
     if max_short_size_today > 0 and locates_cost > 0:
+        if locate_type == "PERCENT":
+            if risk_type == "PERCENT":
+                day_risk_unit = init_cash * (risk_r / 100.0)
+            else:
+                day_risk_unit = risk_r
+            cost_per_100 = day_risk_unit * (locates_cost / 100.0)
+        else:
+            cost_per_100 = locates_cost
+
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
-        daily_locates_fee = blocks_of_100 * locates_cost
+        daily_locates_fee = blocks_of_100 * cost_per_100
         
         # We subtract it from the final equity tally
         # To ensure trade sum = equity curve change, we assign the deduction to the first short trade

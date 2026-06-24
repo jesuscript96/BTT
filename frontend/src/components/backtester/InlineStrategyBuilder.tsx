@@ -2551,7 +2551,7 @@ export default function InlineStrategyBuilder({
                                 const d = String(tp.distance_pct);
                                 if (d === 'EOD') return `EOD (${tp.capital_pct}%)`;
                                 if (d.startsWith('TIME:')) return `${d.split(':')[1]}m (${tp.capital_pct}%)`;
-                                if (d.startsWith('HOUR:')) return `${d.substring(5)} (${tp.capital_pct}%)`;
+                                if (d.startsWith('HOUR:')) return `${d.substring(5).split(':').slice(0, 2).join(':')} (${tp.capital_pct}%)`;
                                 return `${d}% (${tp.capital_pct}%)`;
                               }).join(" / ")}
                             </strong>
@@ -2559,7 +2559,11 @@ export default function InlineStrategyBuilder({
                         ) : (
                           <>
                             <span style={{ color: 'var(--color-ec-text-secondary)' }}>Take Profit:</span>
-                            <strong style={{ color: 'var(--color-ec-profit)', marginLeft: 3 }}>{riskManagement.take_profit.value}%</strong>
+                            <strong style={{ color: 'var(--color-ec-profit)', marginLeft: 3 }}>
+                              {riskManagement.take_profit.type === 'Hour' ? 'Hora: ' : ''}
+                              {riskManagement.take_profit.type === 'Hour' ? String(riskManagement.take_profit.value).split(':').slice(0, 2).join(':') : riskManagement.take_profit.value}
+                              {riskManagement.take_profit.type === 'Percentage' ? '%' : riskManagement.take_profit.type === 'Time' ? 'm' : ''}
+                            </strong>
                           </>
                         )}
                       </span>

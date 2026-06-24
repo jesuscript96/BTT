@@ -38,6 +38,7 @@ class BacktestRequest(BaseModel):
     custom_start_time: str | None = None
     custom_end_time: str | None = None
     locates_cost: float = 0.0
+    locate_type: str = "PERCENT"
     look_ahead_prevention: bool = False
 
 
@@ -307,6 +308,7 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
             custom_start_time=req.custom_start_time,
             custom_end_time=req.custom_end_time,
             locates_cost=req.locates_cost,
+            locate_type=req.locate_type,
             look_ahead_prevention=req.look_ahead_prevention,
             day_group_iter=intraday_stream,
             n_groups_hint=n_qualifying,

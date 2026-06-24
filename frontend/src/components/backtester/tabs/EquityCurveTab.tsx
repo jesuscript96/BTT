@@ -617,9 +617,40 @@ export default function EquityCurveTab({
     };
   }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType]);
 
+  if (!trades || trades.length === 0) {
+    return (
+      <div style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "100%",
+        width: "100%",
+        border: "0.5px solid var(--color-ec-border)",
+        borderRadius: 8,
+        backgroundColor: "var(--color-ec-bg-surface)",
+        padding: "24px",
+        boxSizing: "border-box",
+        textAlign: "center",
+      }}>
+        <p style={{
+          fontFamily: "var(--color-ec-sans)",
+          fontSize: 13,
+          fontWeight: 500,
+          color: "var(--color-ec-text-muted)",
+          maxWidth: "400px",
+          lineHeight: "1.6",
+        }}>
+          La estrategia no ha generado ningún trade con los parámetros fijados
+        </p>
+      </div>
+    );
+  }
+
   if (!globalEquity.length) {
     return <p className="text-sm text-[var(--muted)]">Sin datos de equity</p>;
   }
+
 
   const maxDD = globalDrawdown && globalDrawdown.length > 0
     ? Math.min(...globalDrawdown.map((d) => d.value))

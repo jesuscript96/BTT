@@ -506,4 +506,9 @@ export async function cancelBacktest(datasetId: string): Promise<{ status: strin
   return data;
 }
 
+export async function cancelOptimization(task_id: string): Promise<{ status: string }> {
+  const { data } = await api.post(`/optimization/cancel/${task_id}`);
+  return data;
+}
+
 

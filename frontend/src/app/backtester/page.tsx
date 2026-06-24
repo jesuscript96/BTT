@@ -114,6 +114,9 @@ export default function Home() {
         universe_filters: (draftStrategy as any).universe_filters,
         is_wizard: draftStrategy.is_wizard,
         description: (draftStrategy as any).description || activeStrategy?.description || "",
+        market_sessions: draftStrategy.market_sessions || activeSessions,
+        custom_start_time: draftStrategy.custom_start_time || activeCustomStartTime,
+        custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
       });
 
       if (isExisting) {
@@ -1087,6 +1090,10 @@ export default function Home() {
                       custom_end_time: def.custom_end_time,
                     } as any);
                     
+                    setActiveSessions(def.market_sessions || ["rth"]);
+                    setActiveCustomStartTime(def.custom_start_time || "09:30");
+                    setActiveCustomEndTime(def.custom_end_time || "16:00");
+                    
                     setMode('builder_choice');
                   } catch (err) {
                     alert("Error al cargar la estrategia para configurar.");
@@ -1409,6 +1416,9 @@ export default function Home() {
                           postgap_preconditions: strategyToSave.postgap_preconditions,
                           universe_filters: strategyToSave.universe_filters,
                           dataset_id: strategyToSave.dataset_id,
+                          market_sessions: strategyToSave.market_sessions,
+                          custom_start_time: strategyToSave.custom_start_time,
+                          custom_end_time: strategyToSave.custom_end_time,
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -1431,6 +1441,49 @@ export default function Home() {
 
                         setActiveStrategy(savedStrategy);
                         setLoadedStrategyId(savedStrategy.id ?? null);
+                        strategyIdRef.current = savedStrategy.id ?? "";
+                        
+                        const def = typeof savedStrategy.definition === 'string'
+                          ? JSON.parse(savedStrategy.definition)
+                          : savedStrategy.definition || savedStrategy;
+                        const savedDraft = {
+                          id: savedStrategy.id,
+                          name: savedStrategy.name || "",
+                          bias: def.bias || "long",
+                          apply_day: def.apply_day || "gap_day",
+                          postgap_preconditions: def.postgap_preconditions || [],
+                          entry_logic: def.entry_logic || {
+                            root_condition: { type: "group", operator: "AND", conditions: [] },
+                            entry_time_windows: []
+                          },
+                          exit_logic: def.exit_logic || {
+                            root_condition: { type: "group", operator: "AND", conditions: [] }
+                          },
+                          risk_management: {
+                            size_by_sl: false,
+                            use_take_profit: false,
+                            take_profit_mode: "Fixed",
+                            fixed_take_profit_pct: 1.0,
+                            partial_take_profits: [],
+                            use_stop_loss: true,
+                            stop_loss_mode: "Fixed",
+                            fixed_stop_loss_pct: 1.0,
+                            trail_stop_loss_pct: 1.0,
+                            use_time_exit: false,
+                            time_exit_session: "rth",
+                            time_exit_value: "15:58",
+                            swing_option: { active: false, target_day: "gap_1_day" },
+                            ...(def.risk_management || {})
+                          },
+                          universe_filters: def.universe_filters,
+                          is_wizard: def.is_wizard,
+                          dataset_id: savedStrategy.dataset_id,
+                          market_sessions: def.market_sessions || ["rth"],
+                          custom_start_time: def.custom_start_time,
+                          custom_end_time: def.custom_end_time,
+                        } as any;
+                        setBuilderDraft(savedDraft);
+
                         setStrategiesRefresh((prev) => prev + 1);
                         setShowSaveModal(false);
                         setDraftStrategy(null);
@@ -1545,6 +1598,9 @@ export default function Home() {
                           postgap_preconditions: strategyToSave.postgap_preconditions,
                           universe_filters: strategyToSave.universe_filters,
                           dataset_id: strategyToSave.dataset_id,
+                          market_sessions: strategyToSave.market_sessions,
+                          custom_start_time: strategyToSave.custom_start_time,
+                          custom_end_time: strategyToSave.custom_end_time,
                         } as any);
 
                         // Persist backtest results linked to this strategy
@@ -1566,7 +1622,49 @@ export default function Home() {
                         // Update the active strategy in the state with the returned/updated strategy
                         setActiveStrategy(updated);
                         setLoadedStrategyId(updated.id ?? null);
+                        strategyIdRef.current = updated.id ?? "";
                         
+                        const def = typeof updated.definition === 'string'
+                          ? JSON.parse(updated.definition)
+                          : updated.definition || updated;
+                        const updatedDraft = {
+                          id: updated.id,
+                          name: updated.name || "",
+                          bias: def.bias || "long",
+                          apply_day: def.apply_day || "gap_day",
+                          postgap_preconditions: def.postgap_preconditions || [],
+                          entry_logic: def.entry_logic || {
+                            root_condition: { type: "group", operator: "AND", conditions: [] },
+                            entry_time_windows: []
+                          },
+                          exit_logic: def.exit_logic || {
+                            root_condition: { type: "group", operator: "AND", conditions: [] }
+                          },
+                          risk_management: {
+                            size_by_sl: false,
+                            use_take_profit: false,
+                            take_profit_mode: "Fixed",
+                            fixed_take_profit_pct: 1.0,
+                            partial_take_profits: [],
+                            use_stop_loss: true,
+                            stop_loss_mode: "Fixed",
+                            fixed_stop_loss_pct: 1.0,
+                            trail_stop_loss_pct: 1.0,
+                            use_time_exit: false,
+                            time_exit_session: "rth",
+                            time_exit_value: "15:58",
+                            swing_option: { active: false, target_day: "gap_1_day" },
+                            ...(def.risk_management || {})
+                          },
+                          universe_filters: def.universe_filters,
+                          is_wizard: def.is_wizard,
+                          dataset_id: updated.dataset_id,
+                          market_sessions: def.market_sessions || ["rth"],
+                          custom_start_time: def.custom_start_time,
+                          custom_end_time: def.custom_end_time,
+                        } as any;
+                        setBuilderDraft(updatedDraft);
+
                         setStrategiesRefresh((prev) => prev + 1);
                         setShowRewriteModal(false);
                         setDraftStrategy(null);
