@@ -1443,12 +1443,12 @@ export default function BacktestPanel({
             alignItems: 'center',
             gap: 8,
           }}>
-            <label className="flex items-center gap-2 cursor-pointer">
+            <label className="flex items-center cursor-pointer">
               <input
                 type="checkbox"
                 checked={useLocates}
                 onChange={() => setUseLocates(!useLocates)}
-                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)] mr-2"
               />
               <span style={{
                 fontFamily: 'var(--color-ec-sans)',
@@ -1457,10 +1457,10 @@ export default function BacktestPanel({
                 color: 'var(--color-ec-text-secondary)',
               }}>Locates estimados $/100</span>
               <InfoTooltip
-                position="top-left"
+                position="left"
                 width={260}
                 text="Estimación de precio medio por locate, al aplicar este dato se restará por ticker en concepto de comisiones, esta cantidad de precio por locate. Trata de calcular, aproximadamente, la media de precios por locates que estimas que te cobrarán por ticker"
-                style={{ marginLeft: '2px', display: 'inline-flex' }}
+                style={{ marginLeft: '1px', display: 'inline-flex' }}
               />
             </label>
             {useLocates && (
