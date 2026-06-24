@@ -57,8 +57,11 @@ REVOKED_ID="$(printf '%s\n' "$REVOKED_OUT" | awk '/^[[:space:]]*key_id[[:space:]
 
 echo "→ Running Bruno collection ..."
 cd "$HERE"
+# Extra args (e.g. --reporter-junit results.xml) are forwarded to `bru run`,
+# which is how CI produces report artifacts.
 $BRU run -r \
   --env local \
   --env-var baseUrl="http://localhost:$PORT" \
   --env-var apiKey="$TOKEN" \
-  --env-var revokedKey="$REVOKED_TOKEN"
+  --env-var revokedKey="$REVOKED_TOKEN" \
+  "$@"

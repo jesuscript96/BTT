@@ -3,3 +3,8 @@ package-lock.json
 *.sqlite
 results.json
 results.xml
+report.html
+
+# The repo-root .gitignore ignores *.json; bruno.json is the collection
+# manifest and MUST be tracked, so re-include it here.
+!bruno.json

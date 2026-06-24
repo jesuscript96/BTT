@@ -1,0 +1,66 @@
+name: API tests (Bruno)
+
+# Runs the Bruno collection (backend/bruno) against the public /v1 API booted
+# with the deterministic demo facade — no engine, no MotherDuck/GCS. This is the
+# automated gate that must pass before the API ships to production.
+
+on:
+  push:
+    branches: [api-jesus]
+    paths:
+      - 'backend/app/api_public/**'
+      - 'backend/app/schemas/**'
+      - 'backend/bruno/**'
+      - '.github/workflows/api-tests.yml'
+  pull_request:
+    branches: [api-jesus, main]
+    paths:
+      - 'backend/app/api_public/**'
+      - 'backend/app/schemas/**'
+      - 'backend/bruno/**'
+      - '.github/workflows/api-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  bruno:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install API runtime (demo facade — no engine deps)
+        # The demo facade serves canned data, so the heavy engine deps
+        # (duckdb/pandas/numba/...) are never imported. Versions pinned to match
+        # backend/requirements.txt.
+        run: pip install "fastapi==0.115.0" "uvicorn[standard]==0.32.0" "pydantic==2.9.2"
+
+      - name: Install Bruno CLI
+        working-directory: backend/bruno
+        run: npm install --no-audit --no-fund
+
+      - name: Run Bruno API tests
+        working-directory: backend/bruno
+        env:
+          EDGECUTE_PY: python
+          BRU: ./node_modules/.bin/bru
+        run: ./run.sh --reporter-junit results.xml --reporter-html report.html
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bruno-report
+          path: |
+            backend/bruno/results.xml
+            backend/bruno/report.html
+          if-no-files-found: ignore
