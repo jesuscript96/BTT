@@ -1104,8 +1104,37 @@ def fetch_day_candles(dataset_id: str, ticker: str, date: str) -> list[dict]:
     except Exception:
         return []
 
-    intraday = fetch_intraday_batch(dt_year, dt_month, [ticker], date, date)
-    df = intraday[intraday["date"].astype(str) == date] if not intraday.empty else intraday
+    # 1. Attempt to hit the local disk cache first (populated during backtests)
+    df = pd.DataFrame()
+    try:
+        from app.db.gcs_cache import CACHE_DIR
+        for kind in ("opt", "raw"):
+            fp = os.path.join(CACHE_DIR, kind, str(dt_year), f"{dt_month:02d}", f"{ticker}.parquet")
+            if os.path.exists(fp):
+                try:
+                    # Touch file to bump atime (important for LRU eviction)
+                    try:
+                        os.utime(fp, None)
+                    except OSError:
+                        pass
+                    temp_df = pd.read_parquet(fp)
+                    if not temp_df.empty:
+                        # Ensure we stringify dates for safe comparison
+                        day_df = temp_df[temp_df["date"].astype(str) == date]
+                        if not day_df.empty:
+                            df = day_df
+                            logger.info(f"[CACHE HIT] Loaded candles for {ticker} on {date} from local disk cache ({kind}).")
+                            break
+                except Exception as ce:
+                    logger.warning(f"[CACHE READ ERROR] Failed reading local cache at {fp}: {ce}")
+    except Exception as e:
+        logger.warning(f"Could not check local disk cache for {ticker} on {date}: {e}")
+
+    # 2. Fallback to GCS query if local cache miss or empty
+    if df.empty:
+        logger.info(f"[CACHE MISS] Fetching candles for {ticker} on {date} from GCS...")
+        intraday = fetch_intraday_batch(dt_year, dt_month, [ticker], date, date)
+        df = intraday[intraday["date"].astype(str) == date] if not intraday.empty else intraday
 
     if df.empty:
         return []

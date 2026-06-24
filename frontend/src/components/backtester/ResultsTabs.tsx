@@ -76,12 +76,13 @@ export default function ResultsTabs({
       setLoadProgress(0);
       const interval = setInterval(() => {
         setLoadProgress((prev) => {
-          if (prev < 30) return prev + Math.random() * 15 + 5;
-          if (prev < 70) return prev + Math.random() * 10 + 2;
-          if (prev < 90) return prev + Math.random() * 3 + 0.5;
+          if (prev < 40) return prev + Math.random() * 8 + 3;      // Moderate progress at the start
+          if (prev < 75) return prev + Math.random() * 4 + 1;      // Slows down
+          if (prev < 90) return prev + Math.random() * 1.5 + 0.3;  // Slows down further
+          if (prev < 98) return prev + Math.random() * 0.4 + 0.05; // Drifts slowly up to 98%
           return prev;
         });
-      }, 80);
+      }, 150);
       return () => clearInterval(interval);
     } else {
       setLoadProgress(100);
@@ -215,7 +216,7 @@ export default function ResultsTabs({
                         width: `${loadProgress}%`, 
                         backgroundColor: 'var(--color-ec-copper)',
                         borderRadius: 2,
-                        transition: 'width 80ms ease-out'
+                        transition: 'width 150ms ease-out'
                       }} 
                     />
                   </div>

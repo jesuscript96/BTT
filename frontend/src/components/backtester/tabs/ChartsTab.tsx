@@ -673,8 +673,8 @@ export default function ChartsTab({
 
           </div>
 
-          {/* Middle Column: Chart comparison */}
-          <div className="flex-grow min-w-0 flex flex-col justify-start py-4 lg:py-0 pr-4">
+          {/* Middle Column: Chart comparison (expanded) */}
+          <div className="flex-grow min-w-0 flex flex-col justify-start py-4 lg:py-0">
             <WhatIfEquityChart
               originalEquity={globalEquity}
               originalDrawdown={globalDrawdown}
@@ -684,71 +684,8 @@ export default function ChartsTab({
               riskR={riskR}
               isDarkMode={isDarkMode}
               riskType={riskType}
+              metrics={metrics}
             />
-          </div>
-
-          {/* Right Column: results table */}
-          <div className="w-full lg:w-[260px] xl:w-[310px] flex-shrink-0 min-w-[240px] flex flex-col gap-4 pl-0 lg:pl-4">
-            <h4 className="text-[12px] font-semibold uppercase text-[var(--color-ec-text-primary)] mb-1 flex items-center gap-2 font-mono tracking-[0.12em]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]"></span>
-              Resultados Simulados
-            </h4>
-            
-            <div className="w-full">
-              <table className="w-full max-w-[260px] text-left border-collapse font-mono">
-                <colgroup>
-                  <col style={{ width: "auto" }} />
-                  <col style={{ width: "70px" }} />
-                  <col style={{ width: "70px" }} />
-                </colgroup>
-                <thead>
-                  <tr className="border-b border-[var(--color-ec-border)]">
-                    <th className="pb-[24px] text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
-                      Métrica
-                    </th>
-                    <th className="pb-[24px] text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
-                      Original
-                    </th>
-                    <th className="pb-[24px] text-right text-[11px] font-bold uppercase text-[var(--color-ec-text-secondary)] tracking-wider">
-                      Simulado
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    { label: "Días totales", base: metrics?.total_days ?? 0, sim: getSimValue("total_days") },
-                    { label: "Trades ejecutados", base: metrics?.total_trades ?? 0, sim: getSimValue("total_trades") },
-                    { label: "Win Rate", base: `${(metrics?.win_rate_pct ?? 0).toFixed(1)}%`, sim: getSimValue("win_rate_pct", v => `${v.toFixed(1)}%`) },
-                    { label: "Profit Factor", base: (metrics?.avg_profit_factor ?? 0).toFixed(2), sim: getSimValue("avg_profit_factor", v => v.toFixed(2)) },
-                    { label: "Retorno Total (PnL)", base: `${(metrics?.total_return_pct ?? 0).toFixed(1)}%`, sim: getSimValue("total_return_pct", v => `${v.toFixed(1)}%`) },
-                    { label: "Drawdown Máximo", base: `${(metrics?.max_drawdown_pct ?? 0).toFixed(1)}%`, sim: getSimValue("max_drawdown_pct", v => `${v.toFixed(1)}%`), danger: true },
-                    { label: "R promedio / Día", base: `${(metrics?.avg_r_per_day ?? 0).toFixed(2)}R`, sim: getSimValue("avg_r_per_day", v => `${v.toFixed(2)}R`) },
-                    { label: "Ratio Sharpe", base: (metrics?.avg_sharpe ?? 0).toFixed(2), sim: getSimValue("avg_sharpe", v => v.toFixed(2)) },
-                  ].map((m, idx) => (
-                    <tr
-                      key={idx}
-                      className="border-b border-dashed border-[var(--color-ec-border)] hover:bg-[rgba(255,255,255,0.015)] transition-colors"
-                    >
-                      <td className="py-[25px] text-[12px] text-[var(--color-ec-text-secondary)] font-medium">
-                        {m.label}
-                      </td>
-                      <td className="py-[25px] text-right text-[12px] text-[var(--color-ec-text-muted)] font-mono">
-                        {m.base}
-                      </td>
-                      <td className={`py-[25px] text-right text-[13px] font-bold font-mono ${
-                        m.sim === "---" 
-                          ? "text-[var(--color-ec-text-muted)]"
-                          : m.danger 
-                            ? "text-[var(--color-ec-loss)]" 
-                            : "text-[var(--color-ec-copper-bright)]"
-                      }`}>
-                        {m.sim}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </div>
         </div>
       </div>
@@ -1012,6 +949,7 @@ function WhatIfEquityChart({
   riskR,
   isDarkMode = false,
   riskType = "FIXED",
+  metrics,
 }: {
   originalEquity: GlobalEquityPoint[];
   originalDrawdown: DrawdownPoint[];
@@ -1021,6 +959,7 @@ function WhatIfEquityChart({
   riskR: number;
   isDarkMode?: boolean;
   riskType?: string;
+  metrics: Record<string, any> | null;
 }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const ddContainerRef = useRef<HTMLDivElement>(null);
@@ -1054,6 +993,78 @@ function WhatIfEquityChart({
       }
     }
     return p.value; // Already in %
+  };
+
+  const formatPnL = (valuePct: number | undefined, valuePnlUsd: number | undefined) => {
+    if (valuePct === undefined) return "---";
+    if (wiViewMode === "%") {
+      return `${valuePct.toFixed(1)}%`;
+    }
+    if (wiViewMode === "R") {
+      if (riskType === "PERCENT") {
+        const ratio = Math.max(0.0001, (initCash + (valuePnlUsd ?? 0)) / initCash);
+        const ln_base = Math.log(1 + riskR / 100);
+        const val = ln_base > 0 ? Math.log(ratio) / ln_base : 0;
+        return `${val.toFixed(2)}R`;
+      } else {
+        const pnl = valuePnlUsd ?? (valuePct / 100) * initCash;
+        const val = riskR > 0 ? pnl / riskR : 0;
+        return `${val.toFixed(2)}R`;
+      }
+    }
+    const pnl = valuePnlUsd ?? (valuePct / 100) * initCash;
+    return `$${pnl.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+  };
+
+  const getSimPnL = () => {
+    if (!simResult || !simResult.aggregate_metrics) return "---";
+    return formatPnL(simResult.aggregate_metrics.total_return_pct, simResult.aggregate_metrics.total_pnl);
+  };
+
+  const getOrigPnL = () => {
+    if (!metrics) return "---";
+    return formatPnL(metrics.total_return_pct, metrics.total_pnl);
+  };
+
+  const formatDD = (valuePct: number | undefined) => {
+    if (valuePct === undefined) return "---";
+    if (wiViewMode === "%") {
+      return `${valuePct.toFixed(1)}%`;
+    }
+    if (wiViewMode === "R") {
+      if (riskType === "PERCENT") {
+        return riskR > 0 ? `${(valuePct / riskR).toFixed(2)}R` : "0.00R";
+      } else {
+        const ddUsd = (valuePct / 100) * initCash;
+        const val = riskR > 0 ? ddUsd / riskR : 0;
+        return `${val.toFixed(2)}R`;
+      }
+    }
+    const ddUsd = (valuePct / 100) * initCash;
+    return `$${ddUsd.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+  };
+
+  const getSimDD = () => {
+    if (!simResult || !simResult.aggregate_metrics) return "---";
+    return formatDD(simResult.aggregate_metrics.max_drawdown_pct);
+  };
+
+  const getOrigDD = () => {
+    if (!metrics) return "---";
+    return formatDD(metrics.max_drawdown_pct);
+  };
+
+  const getRowColor = (val: number | undefined, isSim: boolean, isDrawdown: boolean = false) => {
+    if (val === undefined || val === null) {
+      return isSim ? "rgba(255, 255, 255, 0.3)" : "#ffffff";
+    }
+    if (isDrawdown) {
+      return "var(--color-ec-loss)";
+    }
+    if (val < 0) {
+      return "var(--color-ec-loss)";
+    }
+    return isSim ? "var(--color-ec-copper-bright)" : "#ffffff";
   };
 
   useEffect(() => {
@@ -1263,7 +1274,7 @@ function WhatIfEquityChart({
   }
 
   return (
-    <div>
+    <div className="relative">
       <div className="flex items-center justify-between mb-3.5">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
@@ -1293,8 +1304,124 @@ function WhatIfEquityChart({
           ))}
         </div>
       </div>
+
       <div ref={chartContainerRef} className="h-[480px] w-full rounded-t border border-b-0 border-[var(--color-ec-border)]" />
       <div ref={ddContainerRef} className="h-[120px] w-full rounded-b border border-[var(--color-ec-border)]" />
+
+      {/* Compact Terminal HUD Table in the upper-left corner of the chart */}
+      {simResult && simResult.aggregate_metrics && (
+        <div
+          style={{
+            position: "absolute",
+            top: 34,
+            left: 12,
+            backgroundColor: "transparent",
+            backdropFilter: "none",
+            border: "none",
+            borderRadius: 0,
+            padding: "0",
+            pointerEvents: "none",
+            zIndex: 15,
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: "9px",
+            color: "#ffffff",
+            minWidth: 175,
+            boxShadow: "none",
+            lineHeight: 1.3,
+          }}
+        >
+          <div style={{ fontWeight: 800, fontSize: "10px", color: "var(--color-ec-text-muted)", letterSpacing: "0.06em", marginBottom: 6, textTransform: "uppercase" }}>
+            Resultados Simulados
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.15)", color: "#ffffff" }}>
+                <th style={{ textAlign: "left", paddingBottom: 3, fontWeight: 500, fontSize: "8px" }}>METRIC</th>
+                <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px", paddingLeft: 8 }}>ORIG</th>
+                <th style={{ textAlign: "right", paddingBottom: 3, fontWeight: 500, fontSize: "8px", paddingLeft: 8 }}>SIM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { 
+                  label: "Días totales", 
+                  orig: metrics?.total_days ?? 0, 
+                  sim: simResult.aggregate_metrics.total_days ?? 0,
+                  origColor: getRowColor(metrics?.total_days, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.total_days, true)
+                },
+                { 
+                  label: "Trades", 
+                  orig: metrics?.total_trades ?? 0, 
+                  sim: simResult.aggregate_metrics.total_trades ?? 0,
+                  origColor: getRowColor(metrics?.total_trades, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.total_trades, true)
+                },
+                { 
+                  label: "Win Rate", 
+                  orig: metrics?.win_rate_pct !== undefined ? `${metrics.win_rate_pct.toFixed(1)}%` : "---", 
+                  sim: simResult.aggregate_metrics.win_rate_pct !== undefined ? `${simResult.aggregate_metrics.win_rate_pct.toFixed(1)}%` : "---",
+                  origColor: getRowColor(metrics?.win_rate_pct, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.win_rate_pct, true)
+                },
+                { 
+                  label: "Profit Factor", 
+                  orig: metrics?.avg_profit_factor !== undefined ? metrics.avg_profit_factor.toFixed(2) : "---", 
+                  sim: simResult.aggregate_metrics.avg_profit_factor !== undefined ? simResult.aggregate_metrics.avg_profit_factor.toFixed(2) : "---",
+                  origColor: getRowColor(metrics?.avg_profit_factor, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.avg_profit_factor, true)
+                },
+                { 
+                  label: "PnL", 
+                  orig: getOrigPnL(), 
+                  sim: getSimPnL(),
+                  origColor: getRowColor(metrics?.total_return_pct, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.total_return_pct, true)
+                },
+                { 
+                  label: "Max DD", 
+                  orig: getOrigDD(), 
+                  sim: getSimDD(),
+                  origColor: getRowColor(metrics?.max_drawdown_pct, false, true),
+                  simColor: getRowColor(simResult.aggregate_metrics.max_drawdown_pct, true, true)
+                },
+                { 
+                  label: "R / Día", 
+                  orig: metrics?.avg_r_per_day !== undefined ? `${metrics.avg_r_per_day.toFixed(2)}R` : "---", 
+                  sim: simResult.aggregate_metrics.avg_r_per_day !== undefined ? `${simResult.aggregate_metrics.avg_r_per_day.toFixed(2)}R` : "---",
+                  origColor: getRowColor(metrics?.avg_r_per_day, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.avg_r_per_day, true)
+                },
+                { 
+                  label: "Sharpe", 
+                  orig: metrics?.avg_sharpe !== undefined ? metrics.avg_sharpe.toFixed(2) : "---", 
+                  sim: simResult.aggregate_metrics.avg_sharpe !== undefined ? simResult.aggregate_metrics.avg_sharpe.toFixed(2) : "---",
+                  origColor: getRowColor(metrics?.avg_sharpe, false),
+                  simColor: getRowColor(simResult.aggregate_metrics.avg_sharpe, true)
+                },
+              ].map((row, idx) => (
+                <tr key={idx} style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
+                  <td style={{ textAlign: "left", padding: "2px 0", color: "#ffffff" }}>
+                    {row.label}
+                  </td>
+                  <td style={{ textAlign: "right", padding: "2px 0", color: row.origColor, paddingLeft: 8 }}>
+                    {row.orig}
+                  </td>
+                  <td style={{ 
+                    textAlign: "right", 
+                    padding: "2px 0", 
+                    fontWeight: 700, 
+                    paddingLeft: 8,
+                    color: row.simColor
+                  }}>
+                    {row.sim}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
