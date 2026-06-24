@@ -553,6 +553,10 @@ export default function BacktestPanel({
       if (savedState.riskType !== undefined) setRiskType(savedState.riskType);
       if (savedState.feeType !== undefined) setFeeType(savedState.feeType);
       if (savedState.isPercent !== undefined) setIsPercent(savedState.isPercent);
+      if (savedState.useLocates !== undefined) setUseLocates(savedState.useLocates);
+      if (savedState.locatesCost !== undefined) setLocatesCost(savedState.locatesCost);
+      if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
+      if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
 
     setLoadError(failed);
@@ -701,6 +705,10 @@ export default function BacktestPanel({
         riskType,
         feeType,
         isPercent,
+        useLocates,
+        locatesCost,
+        useMonthlyExpenses,
+        monthlyExpenses,
       };
       sessionStorage.setItem("backtester_panel_state", JSON.stringify(panelState));
     } catch (e) {
@@ -709,7 +717,8 @@ export default function BacktestPanel({
   }, [
     selectedDataset, selectedStrategy, initCash, riskR, fees, slippage,
     startDate, endDate, marketSessions, customStartTime, customEndTime,
-    riskType, feeType, isPercent, loadingData
+    riskType, feeType, isPercent, loadingData,
+    useLocates, locatesCost, useMonthlyExpenses, monthlyExpenses
   ]);
 
   // Synchronize dataset selection with the selected strategy's associated dataset
