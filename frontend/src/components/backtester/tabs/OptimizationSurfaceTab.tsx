@@ -578,15 +578,16 @@ export default function OptimizationSurfaceTab({
                   ? "Inicializando datos de mercado..."
                   : `Procesando: ${Math.min(gridSteps * gridSteps, Math.round(((progress - 5) / 95) * (gridSteps * gridSteps)))} / ${gridSteps * gridSteps} backtests`}
               </p>
+              {activeTaskId && (
+                <button
+                  onClick={handleCancel}
+                  className="w-full h-[28px] bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] hover:bg-[var(--color-ec-copper-bright)] rounded text-[11px] font-mono font-bold uppercase tracking-[0.1em] flex items-center justify-center transform active:scale-[0.98] transition-all cursor-pointer mx-auto"
+                  style={{ marginTop: '5px' }}
+                >
+                  Cancelar optimización
+                </button>
+              )}
             </div>
-            {activeTaskId && (
-              <button
-                onClick={handleCancel}
-                className="mt-4 px-4 py-2 bg-transparent border border-[var(--color-ec-border)] hover:border-[var(--color-ec-copper)] rounded text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)] transition-all cursor-pointer mx-auto flex items-center justify-center"
-              >
-                Cancelar optimización
-              </button>
-            )}
           </div>
         </div>
       )}
