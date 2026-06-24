@@ -40,6 +40,28 @@ OPTIMIZATION_PROGRESS = {}
 # Global dict to store completed optimization results (in-memory for local use)
 OPTIMIZATION_RESULTS = {}
 
+# Global dict to store timestamps of in-memory optimization entries
+OPTIMIZATION_TIMESTAMPS = {}
+
+# 10 minutes TTL for in-memory results/progress to avoid memory leaks
+_IN_MEMORY_TTL_SECONDS = 600
+
+
+def _prune_in_memory_cache() -> None:
+    """Prune expired optimization results and progress entries from memory."""
+    try:
+        now = time.time()
+        expired_ids = [
+            task_id for task_id, ts in OPTIMIZATION_TIMESTAMPS.items()
+            if now - ts > _IN_MEMORY_TTL_SECONDS
+        ]
+        for task_id in expired_ids:
+            OPTIMIZATION_RESULTS.pop(task_id, None)
+            OPTIMIZATION_PROGRESS.pop(task_id, None)
+            OPTIMIZATION_TIMESTAMPS.pop(task_id, None)
+    except Exception as e:
+        logger.warning(f"Error pruning in-memory optimization cache: {e}")
+
 
 # ─── Redis-backed accessors for progress / results ──────────────────────────
 # Redis lets progress and results survive restarts/redeploys and be shared
@@ -74,6 +96,8 @@ def set_progress(task_id: str, value: float) -> None:
         except Exception as e:
             logger.warning(f"[REDIS] set progress failed for {task_id}: {e}")
     OPTIMIZATION_PROGRESS[task_id] = value
+    OPTIMIZATION_TIMESTAMPS[task_id] = time.time()
+    _prune_in_memory_cache()
 
 
 def get_progress(task_id: str, default: float = 0.0):
@@ -111,21 +135,22 @@ def store_result(task_id: str, result) -> None:
             logger.warning(f"[REDIS] set result failed for {task_id}: {e}")
     # In-memory fallback keeps the original semantics (stores dict or Exception)
     OPTIMIZATION_RESULTS[task_id] = result
+    OPTIMIZATION_TIMESTAMPS[task_id] = time.time()
+    _prune_in_memory_cache()
 
 
 def pop_result(task_id: str):
-    """Pop a completed result and clear its progress entry.
-
-    Returns a 3-tuple (found: bool, is_error: bool, payload). payload is the
-    result dict on success or the error message string on failure.
+    """Retrieve a completed result and its status.
+    NOTE: To prevent client-side Network Errors or polling failures from permanently
+    losing optimization results, we no longer delete the results on retrieve. Instead,
+    they are retained with a TTL (1 hour in Redis, 10 minutes in memory fallback).
     """
     r = get_redis()
     if r:
         try:
             raw = r.get(f"opt:result:{task_id}")
             if raw is not None:
-                r.delete(f"opt:result:{task_id}")
-                r.delete(f"opt:progress:{task_id}")
+                # Do NOT delete the keys immediately! Let the Redis TTL handle cleanup.
                 env = json.loads(raw)
                 if env.get("__opt_error__"):
                     return True, True, env.get("error", "Unknown error")
@@ -134,8 +159,8 @@ def pop_result(task_id: str):
             logger.warning(f"[REDIS] pop result failed for {task_id}: {e}")
     # In-memory fallback (also catches a result that fell back on a Redis error)
     if task_id in OPTIMIZATION_RESULTS:
-        result = OPTIMIZATION_RESULTS.pop(task_id)
-        OPTIMIZATION_PROGRESS.pop(task_id, None)
+        # Do NOT pop/delete the key! Let the in-memory TTL pruning handle cleanup.
+        result = OPTIMIZATION_RESULTS[task_id]
         if isinstance(result, Exception):
             return True, True, str(result)
         return True, False, result

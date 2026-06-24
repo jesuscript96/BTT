@@ -73,9 +73,14 @@ export default function OptimizationSurfaceTab({
       window.clearInterval(pollIntervalRef.current);
     }
 
+    let consecutiveErrors = 0;
+    const maxErrors = 5;
+
     const interval = window.setInterval(async () => {
       try {
         const res = await fetchOptimizationResult(taskId);
+        consecutiveErrors = 0; // Reset error count on successful request
+
         if ("status" in res && res.status === "running") {
           setProgress(res.progress);
           setVisualProgress((prev) => {
@@ -104,13 +109,18 @@ export default function OptimizationSurfaceTab({
           }, 300);
         }
       } catch (e: any) {
-        if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-        localStorage.removeItem("active_optimization_task");
-        console.error("Error polling optimization result", e);
-        const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
-        setError(msg);
-        setLoading(false);
+        consecutiveErrors++;
+        console.warn(`Error polling optimization result (attempt ${consecutiveErrors}/${maxErrors}):`, e);
+
+        if (consecutiveErrors >= maxErrors) {
+          if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          localStorage.removeItem("active_optimization_task");
+          console.error("Error polling optimization result", e);
+          const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
+          setError(msg);
+          setLoading(false);
+        }
       }
     }, 800);
 
