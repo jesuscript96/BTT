@@ -221,13 +221,61 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
 
 @router.post("/", response_model=SavedQuery)
 def create_saved_query(query: SavedQuery, user_id: Optional[str] = Depends(get_current_user_id)):
+    # Phase A — check for existing query with same filters
+    existing_id = None
+    existing_name = None
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            scope_sql, scope_params = scope_clause(user_id)
+            rows = con.execute(
+                f"SELECT id, name, filters FROM saved_queries WHERE 1=1{scope_sql}",
+                scope_params
+            ).fetchall()
+            for row_id, row_name, row_filters_raw in rows:
+                row_filters = _parse_filters(row_filters_raw)
+                if row_filters == query.filters:
+                    existing_id = row_id
+                    existing_name = row_name
+                    break
+        finally:
+            con.close()
+
+    if existing_id:
+        # Check precache status
+        state = get_precache_state(existing_id)
+        status = state.get("status") if state else None
+        
+        # If already completed or running, just return it immediately!
+        if status in ("completed", "running"):
+            print(f"[DEDUPLICATE] Reusing existing dataset {existing_id} (status: {status})")
+            return {"id": existing_id, "name": existing_name, "filters": query.filters}
+            
+        # Otherwise, restart background work to populate pairs and cache it
+        print(f"[DEDUPLICATE] Reusing existing dataset {existing_id} (status: {status}), restarting pre-cache")
+        _write_precache_state(existing_id, "pending", 0.0)
+        
+        def _background_work():
+            try:
+                pairs_df, date_from, date_to = _populate_dataset_pairs(existing_id, query.filters)
+                from app.gcs_sync import upload_user_db
+                try:
+                    upload_user_db()
+                    print(f"[GCS] users.duckdb uploaded after dataset deduplication restart")
+                except Exception as e:
+                    print(f"[WARN] GCS upload failed: {e}")
+                _precache_dataset_intraday(pairs_df, date_from, date_to, existing_id)
+            except Exception as e:
+                print(f"[ERROR] Background dataset creation failed for deduplicated {existing_id}: {e}")
+                _write_precache_state(existing_id, "error", 0.0)
+
+        threading.Thread(target=_background_work, daemon=False).start()
+        return {"id": existing_id, "name": existing_name, "filters": query.filters}
+
+    # If no existing query, create a new one
     query_id = str(uuid4())
 
-    # Phase A — synchronous and fast: register the dataset so it is listable
-    # immediately, then return. The heavy pair computation must not block the
-    # HTTP response (in prod it exceeded the frontend timeout and caused
-    # duplicate saves).
-    lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
         try:

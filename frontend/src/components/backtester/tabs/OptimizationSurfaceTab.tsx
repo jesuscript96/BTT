@@ -348,6 +348,7 @@ export default function OptimizationSurfaceTab({
           yaxis: { title: { text: p[1].label }, gridcolor: gridColor, color: fg },
           margin: { l: 60, r: 20, t: 30, b: 60 },
           autosize: true,
+          uirevision: metric,
         },
       };
     }
@@ -390,6 +391,7 @@ export default function OptimizationSurfaceTab({
           },
           margin: { l: 0, r: 0, t: 30, b: 0 },
           autosize: true,
+          uirevision: metric,
         },
       };
     }
