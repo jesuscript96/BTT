@@ -1,0 +1,22 @@
+meta {
+  name: OpenAPI document
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/openapi.json
+  body: none
+  auth: none
+}
+
+tests {
+  test("200 and valid OpenAPI envelope", function () {
+    expect(res.getStatus()).to.equal(200);
+    const body = res.getBody();
+    expect(body.openapi).to.be.a("string");
+    expect(body.info).to.be.an("object");
+    expect(body.paths).to.have.property("/v1/health");
+    expect(body.paths).to.have.property("/v1/backtests");
+  });
+}

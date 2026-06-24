@@ -1,0 +1,21 @@
+meta {
+  name: Backtest retrieve - by id
+  type: http
+  seq: 19
+}
+
+get {
+  url: {{baseUrl}}/v1/backtests/{{jobId}}
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("200 and same result for the stored job", function () {
+    expect(bru.getVar("jobId")).to.be.a("string");
+    expect(res.getStatus()).to.equal(200);
+    const body = res.getBody();
+    expect(body.job_id).to.equal(bru.getVar("jobId"));
+    expect(body.result.aggregate_metrics.total_trades).to.equal(3);
+  });
+}

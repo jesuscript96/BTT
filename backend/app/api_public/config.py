@@ -45,6 +45,12 @@ DATABASE_URL = os.getenv("EDGECUTE_DATABASE_URL")  # reserved for Postgres (v2)
 # When False, requests resolve to a synthetic principal (dev only). Prod = True.
 AUTH_REQUIRED = os.getenv("EDGECUTE_AUTH_REQUIRED", "true").lower() in ("1", "true", "yes")
 
+# ── Demo/sandbox facade (testing only — NEVER on in prod) ─────────────────────
+# When on, the backtest facade returns deterministic canned data with NO engine
+# or external data. Lets the HTTP-level test suite (backend/bruno/) exercise the
+# full surface (run/retrieve/intraday/cancel) without MotherDuck/GCS.
+DEMO_FACADE = os.getenv("EDGECUTE_DEMO_FACADE", "false").lower() in ("1", "true", "yes")
+
 # ── Developer console (control plane) ────────────────────────────────────────
 DOCS_URL = os.getenv("EDGECUTE_DOCS_URL", "https://docs.edgecute.com")
 # Where the "upgrade plan" CTA points. Empty until the pricing/Stripe flow exists

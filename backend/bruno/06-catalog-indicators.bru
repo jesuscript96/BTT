@@ -1,0 +1,19 @@
+meta {
+  name: Catalog - all indicators
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/catalog/indicators
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("200 and known indicators present", function () {
+    expect(res.getStatus()).to.equal(200);
+    const names = res.getBody().indicators.map((i) => i.name);
+    expect(names).to.include.members(["VWAP", "RSI", "PM High", "Bar Close"]);
+  });
+}

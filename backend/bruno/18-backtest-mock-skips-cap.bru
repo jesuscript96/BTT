@@ -1,0 +1,53 @@
+meta {
+  name: Backtest run - mock dataset skips cap
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/v1/backtests
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "universe": {
+      "dataset_ref": "mock_dataset_1",
+      "date_from": "2024-01-01",
+      "date_to": "2024-01-31"
+    },
+    "strategy": {
+      "name": "VWAP fade short",
+      "bias": "short",
+      "apply_day": "gap_day",
+      "entry_logic": {
+        "timeframe": "1m",
+        "root_condition": {
+          "type": "group",
+          "operator": "AND",
+          "conditions": [
+            {
+              "type": "indicator_comparison",
+              "source": { "name": "Bar Close" },
+              "comparator": "CROSSES_BELOW",
+              "target": { "name": "VWAP" }
+            }
+          ]
+        }
+      },
+      "risk_management": {
+        "use_hard_stop": true,
+        "hard_stop": { "type": "Percentage", "value": 3.0 }
+      }
+    }
+  }
+}
+
+tests {
+  test("200 and ticker_days 0 (cap path bypassed)", function () {
+    expect(res.getStatus()).to.equal(200);
+    expect(res.getBody().status).to.equal("succeeded");
+    expect(res.getBody().meta.ticker_days).to.equal(0);
+  });
+}

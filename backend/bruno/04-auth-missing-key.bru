@@ -1,0 +1,19 @@
+meta {
+  name: Auth - missing key
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/v1/catalog/indicators
+  body: none
+  auth: none
+}
+
+tests {
+  test("401 unauthorized when no key", function () {
+    expect(res.getStatus()).to.equal(401);
+    expect(res.getBody().error.code).to.equal("unauthorized");
+    expect(res.getBody().error.request_id).to.match(/^req_/);
+  });
+}

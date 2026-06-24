@@ -1,0 +1,56 @@
+meta {
+  name: Backtest run - include trades (paginated)
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{baseUrl}}/v1/backtests
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "universe": {
+      "dataset_ref": "ds_123",
+      "date_from": "2024-01-01",
+      "date_to": "2024-01-31"
+    },
+    "strategy": {
+      "name": "VWAP fade short",
+      "bias": "short",
+      "apply_day": "gap_day",
+      "entry_logic": {
+        "timeframe": "1m",
+        "root_condition": {
+          "type": "group",
+          "operator": "AND",
+          "conditions": [
+            {
+              "type": "indicator_comparison",
+              "source": { "name": "Bar Close" },
+              "comparator": "CROSSES_BELOW",
+              "target": { "name": "VWAP" }
+            }
+          ]
+        }
+      },
+      "risk_management": {
+        "use_hard_stop": true,
+        "hard_stop": { "type": "Percentage", "value": 3.0 }
+      }
+    },
+    "execution": { "init_cash": 10000, "market_sessions": ["RTH"] },
+    "include": ["metrics", "trades"]
+  }
+}
+
+tests {
+  test("200 and trades page populated", function () {
+    expect(res.getStatus()).to.equal(200);
+    const trades = res.getBody().result.trades;
+    expect(trades.page.total).to.equal(3);
+    expect(trades.items).to.have.lengthOf(3);
+  });
+}

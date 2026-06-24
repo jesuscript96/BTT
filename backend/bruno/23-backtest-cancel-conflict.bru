@@ -1,0 +1,18 @@
+meta {
+  name: Backtest cancel - already finished
+  type: http
+  seq: 23
+}
+
+post {
+  url: {{baseUrl}}/v1/backtests/{{jobId}}/cancel
+  body: none
+  auth: inherit
+}
+
+tests {
+  test("409 conflict - sync job already finished", function () {
+    expect(res.getStatus()).to.equal(409);
+    expect(res.getBody().error.code).to.equal("conflict");
+  });
+}

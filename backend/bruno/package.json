@@ -1,0 +1,14 @@
+{
+  "name": "edgecute-api-bruno",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Automated HTTP tests for the Edgecute Backtest API (Bruno collection).",
+  "scripts": {
+    "test": "./run.sh",
+    "test:ci": "bru run -r --env local",
+    "bru": "bru"
+  },
+  "devDependencies": {
+    "@usebruno/cli": "^1.40.0"
+  }
+}

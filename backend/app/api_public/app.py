@@ -70,6 +70,13 @@ def create_app() -> FastAPI:
             logger.error("Failed to mount module '%s': %s", name, exc)
     logger.info("Edgecute API mounted modules: %s", mounted)
 
+    # Optional deterministic sandbox facade (no engine/data) for HTTP-level test
+    # suites (backend/bruno/) and local demos. Opt-in via env; never on in prod.
+    if config.DEMO_FACADE:
+        from app.api_public._demo import install_demo_facade
+        install_demo_facade()
+        logger.warning("EDGECUTE_DEMO_FACADE=on — serving deterministic demo data (no engine).")
+
     @app.get(f"{config.API_PREFIX}/modules", tags=["meta"])
     def list_mounted_modules():
         return {"modules": mounted}

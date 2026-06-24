@@ -1,0 +1,27 @@
+meta {
+  name: Backtest retrieve - trades page 2 (cursor)
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/v1/backtests/{{jobId}}?include=trades&trades_cursor={{tradesCursor}}
+  body: none
+  auth: inherit
+}
+
+params:query {
+  include: trades
+  trades_cursor: {{tradesCursor}}
+}
+
+tests {
+  test("200 final page exhausts the cursor", function () {
+    expect(bru.getVar("tradesCursor")).to.be.a("string").that.is.not.empty;
+    expect(res.getStatus()).to.equal(200);
+    const page = res.getBody().result.trades.page;
+    expect(page.total).to.equal(3);
+    expect(page.returned).to.equal(1);
+    expect(page.next_cursor == null).to.equal(true);
+  });
+}

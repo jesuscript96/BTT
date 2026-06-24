@@ -1,0 +1,22 @@
+meta {
+  name: Universe preview - missing dataset_ref
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/v1/universe/preview
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {}
+}
+
+tests {
+  test("422 invalid_universe when nothing provided", function () {
+    expect(res.getStatus()).to.equal(422);
+    expect(res.getBody().error.code).to.equal("invalid_universe");
+  });
+}
