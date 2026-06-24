@@ -234,6 +234,10 @@ app.include_router(assistant.router)
 # manages API keys / usage / billing. Declares its own prefix="/api/console".
 from app.routers import api_console
 app.include_router(api_console.router)
+# Entitlements (tiers / feature access) — Clerk-authed. Exposes
+# GET /api/users/me/entitlements; policy lives in app.entitlements.policy.
+from app.routers.entitlements import router as entitlements_router
+app.include_router(entitlements_router, prefix="/api/users", tags=["Entitlements"])
 
 @app.get("/health")
 def read_health():
