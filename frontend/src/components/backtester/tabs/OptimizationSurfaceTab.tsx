@@ -7,6 +7,7 @@ import {
   runOptimizationSurface,
   fetchOptimizationProgress,
   fetchOptimizationResult,
+  cancelOptimization,
   type OptimizationParam,
   type OptimizationResult,
   type OptimizationParamConfig,
@@ -56,6 +57,7 @@ export default function OptimizationSurfaceTab({
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [visualProgress, setVisualProgress] = useState<number>(0);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
   const pollIntervalRef = useRef<number | null>(null);
 
@@ -69,6 +71,7 @@ export default function OptimizationSurfaceTab({
   }, []);
 
   const startPolling = useCallback((taskId: string, currentMetric: string) => {
+    setActiveTaskId(taskId);
     if (pollIntervalRef.current) {
       window.clearInterval(pollIntervalRef.current);
     }
@@ -101,6 +104,7 @@ export default function OptimizationSurfaceTab({
           if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
           localStorage.removeItem("active_optimization_task");
+          setActiveTaskId(null);
           setProgress(100);
           setVisualProgress(100);
           setTimeout(() => {
@@ -116,6 +120,7 @@ export default function OptimizationSurfaceTab({
           if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
           localStorage.removeItem("active_optimization_task");
+          setActiveTaskId(null);
           console.error("Error polling optimization result", e);
           const msg = e.response?.data?.detail || e.message || "Error al recuperar resultados de optimización";
           setError(msg);
@@ -260,11 +265,31 @@ export default function OptimizationSurfaceTab({
       if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
       localStorage.removeItem("active_optimization_task");
+      setActiveTaskId(null);
       console.error("Error starting optimization:", err);
       const msg = err.response?.data?.detail || err.message || "Error al iniciar la optimización";
       setError(msg);
       setLoading(false);
     }
+  };
+
+  const handleCancel = async () => {
+    if (!activeTaskId) return;
+    try {
+      await cancelOptimization(activeTaskId);
+    } catch (e) {
+      console.warn("Error cancelando la optimización:", e);
+    }
+    if (pollIntervalRef.current) {
+      window.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    localStorage.removeItem("active_optimization_task");
+    setActiveTaskId(null);
+    setProgress(0);
+    setVisualProgress(0);
+    setLoading(false);
+    setError("Optimización cancelada por el usuario.");
   };
 
   // Plotly data
@@ -554,6 +579,14 @@ export default function OptimizationSurfaceTab({
                   : `Procesando: ${Math.min(gridSteps * gridSteps, Math.round(((progress - 5) / 95) * (gridSteps * gridSteps)))} / ${gridSteps * gridSteps} backtests`}
               </p>
             </div>
+            {activeTaskId && (
+              <button
+                onClick={handleCancel}
+                className="mt-4 px-4 py-2 bg-transparent border border-[var(--color-ec-border)] hover:border-[var(--color-ec-copper)] rounded text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)] transition-all cursor-pointer mx-auto flex items-center justify-center"
+              >
+                Cancelar optimización
+              </button>
+            )}
           </div>
         </div>
       )}

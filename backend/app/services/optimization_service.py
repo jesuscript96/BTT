@@ -47,6 +47,33 @@ OPTIMIZATION_TIMESTAMPS = {}
 _IN_MEMORY_TTL_SECONDS = 600
 
 
+def cancel_optimization_task(task_id: str) -> None:
+    """Mark an optimization task as cancelled. Redis when available, in-memory dict as fallback."""
+    r = get_redis()
+    if r:
+        try:
+            r.setex(f"opt:cancelled:{task_id}", _OPT_REDIS_TTL, "true")
+            r.delete(f"opt:progress:{task_id}")
+            return
+        except Exception as e:
+            logger.warning(f"[REDIS] cancel failed for {task_id}: {e}")
+    OPTIMIZATION_PROGRESS[task_id] = -2.0
+    OPTIMIZATION_TIMESTAMPS[task_id] = time.time()
+
+
+def is_optimization_cancelled(task_id: str) -> bool:
+    """Check if an optimization task has been cancelled."""
+    if not task_id:
+        return False
+    r = get_redis()
+    if r:
+        try:
+            return r.exists(f"opt:cancelled:{task_id}") > 0
+        except Exception as e:
+            logger.warning(f"[REDIS] check cancel failed for {task_id}: {e}")
+    return OPTIMIZATION_PROGRESS.get(task_id) == -2.0
+
+
 def _prune_in_memory_cache() -> None:
     """Prune expired optimization results and progress entries from memory."""
     try:
@@ -801,6 +828,12 @@ def run_optimization_grid(
             with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as pool:
                 futures = {pool.submit(_run_grid_chunk, chunk): chunk for chunk in chunks}
                 for future in as_completed(futures):
+                    if is_optimization_cancelled(task_id):
+                        logger.info(f"[OPT] Task {task_id} cancelled during parallel grid sweep. Terminating pool.")
+                        for f in futures:
+                            f.cancel()
+                        pool.shutdown(wait=False)
+                        raise RuntimeError("OPTIMIZATION_CANCELLED")
                     chunk = futures[future]
                     try:
                         for idx, metric_val, detail in future.result():
@@ -822,6 +855,9 @@ def run_optimization_grid(
     else:
         signal_cache = {} if is_risk_only else None
         for idx in range(n_points):
+            if is_optimization_cancelled(task_id):
+                logger.info(f"[OPT] Task {task_id} cancelled during sequential grid sweep.")
+                raise RuntimeError("OPTIMIZATION_CANCELLED")
             _, metric_val, detail = _run_grid_point(idx, ctx, signal_cache)
             results_flat[idx] = metric_val
             details_flat[idx] = detail
