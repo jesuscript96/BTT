@@ -6,6 +6,7 @@ import {
     Play,
     Briefcase,
     Radar,
+    MessageSquarePlus,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -28,7 +29,7 @@ const wordmarkStyle: React.CSSProperties = {
     color: "var(--color-ec-text-high)",
 };
 
-export const Sidebar = () => {
+export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => {
     const pathname = usePathname();
     const [isHovered, setIsHovered] = useState(false);
     const { user } = useUser();
@@ -196,6 +197,21 @@ export const Sidebar = () => {
                     <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Baúl</span>
                 </Link>
+
+                {/* Feedback / votación de roadmap (abre modal, no es una página) */}
+                <button
+                    type="button"
+                    onClick={() => onOpenFeedback?.()}
+                    title="Feedback"
+                    style={{
+                        ...linkBase(isCollapsed),
+                        background: 'transparent',
+                        border: 'none',
+                    }}
+                >
+                    <MessageSquarePlus style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Feedback</span>
+                </button>
             </nav>
 
             {/* Bottom Profile */}

@@ -5,6 +5,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { dark } from "@clerk/themes";
 import { PHProvider } from "./providers";
 import PostHogPageView from "@/components/PostHogPageView";
+import PostHogIdentify from "@/components/PostHogIdentify";
 import { Suspense } from "react";
 
 export const metadata: Metadata = {
@@ -202,6 +203,7 @@ export default function RootLayout({
             <Suspense fallback={null}>
               <PostHogPageView />
             </Suspense>
+            <PostHogIdentify />
             <LayoutShell>{children}</LayoutShell>
           </PHProvider>
         </body>

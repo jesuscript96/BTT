@@ -209,6 +209,7 @@ from app.routers import data, strategies, backtest, query, market, strategy_sear
 from app.routers import optimization, users, edgie
 from app.routers import screener
 from app.routers import assistant
+from app.routers import feedback
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -230,6 +231,8 @@ app.include_router(news.router, prefix="/api", tags=["News"])
 app.include_router(edgie.router, prefix="/api/edgie", tags=["Edgie"])
 # assistant.router already declares prefix="/api/assistant" (Edgie AI Gateway: streaming + function calling)
 app.include_router(assistant.router)
+# Feedback & feature-voting board (declares its own prefix="/api/feedback").
+app.include_router(feedback.router)
 
 @app.get("/health")
 def read_health():
