@@ -1475,8 +1475,9 @@ export default function BacktestPanel({
                 step="0.01"
                 value={locatesCost}
                 onChange={(e) => setLocatesCost(Number(e.target.value))}
-                className="w-20 border border-[var(--color-ec-border)]"
+                className="border border-[var(--color-ec-border)]"
                 style={{
+                  width: '55px',
                   backgroundColor: 'var(--color-ec-bg-elevated)',
                   borderRadius: 5,
                   padding: '6px 8px',
@@ -1514,8 +1515,9 @@ export default function BacktestPanel({
                 step="1"
                 value={monthlyExpenses}
                 onChange={(e) => setMonthlyExpenses(Number(e.target.value))}
-                className="w-20 border border-[var(--color-ec-border)]"
+                className="border border-[var(--color-ec-border)]"
                 style={{
+                  width: '55px',
                   backgroundColor: 'var(--color-ec-bg-elevated)',
                   borderRadius: 5,
                   padding: '6px 8px',
