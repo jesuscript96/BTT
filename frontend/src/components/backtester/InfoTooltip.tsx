@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 interface InfoTooltipProps {
   text: string;
@@ -12,69 +13,92 @@ interface InfoTooltipProps {
 
 export default function InfoTooltip({ text, position = "top", style, width, title }: InfoTooltipProps) {
   const [hovered, setHovered] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0, height: 0 });
+  const iconRef = useRef<HTMLSpanElement>(null);
 
-  const getPositionStyles = () => {
+  const updateCoords = () => {
+    if (iconRef.current) {
+      const rect = iconRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+  };
+
+  const handleMouseEnter = () => {
+    updateCoords();
+    setHovered(true);
+  };
+
+  // Recalculate coordinates if window is resized or scrolled (in capture phase to catch container scrolling)
+  useEffect(() => {
+    if (hovered) {
+      window.addEventListener("scroll", updateCoords, { capture: true, passive: true });
+      window.addEventListener("resize", updateCoords);
+      return () => {
+        window.removeEventListener("scroll", updateCoords, { capture: true });
+        window.removeEventListener("resize", updateCoords);
+      };
+    }
+  }, [hovered]);
+
+  const getFixedStyles = () => {
     switch (position) {
       case "top-right-aligned":
         return {
-          bottom: "110%",
-          left: 0,
-          right: "auto",
-          transform: "none",
+          top: coords.top,
+          left: coords.left,
+          transform: "translate(0, -100%) translateY(-6px)",
         };
       case "left":
         return {
-          bottom: "140%",
-          left: 0,
-          right: "auto",
-          transform: "none",
+          top: coords.top,
+          left: coords.left,
+          transform: "translate(0, -100%) translateY(-6px)",
         };
       case "right":
         return {
-          bottom: "140%",
-          left: "auto",
-          right: 0,
-          transform: "none",
+          top: coords.top,
+          left: coords.left + coords.width,
+          transform: "translate(-100%, -100%) translateY(-6px)",
         };
       case "top-left":
         return {
-          bottom: "140%",
-          left: "50%",
-          right: "auto",
-          transform: "translateX(-75%)",
+          top: coords.top,
+          left: coords.left + coords.width / 2,
+          transform: "translate(-75%, -100%) translateY(-6px)",
         };
       case "top-right":
         return {
-          bottom: "140%",
-          left: "50%",
-          right: "auto",
-          transform: "translateX(-25%)",
+          top: coords.top,
+          left: coords.left + coords.width / 2,
+          transform: "translate(-25%, -100%) translateY(-6px)",
         };
       case "bottom":
         return {
-          top: "140%",
-          bottom: "auto",
-          left: "50%",
-          right: "auto",
-          transform: "translateX(-50%)",
+          top: coords.top + coords.height,
+          left: coords.left + coords.width / 2,
+          transform: "translate(-50%, 0) translateY(6px)",
         };
       case "top":
       default:
         return {
-          bottom: "140%",
-          left: "50%",
-          right: "auto",
-          transform: "translateX(-50%)",
+          top: coords.top,
+          left: coords.left + coords.width / 2,
+          transform: "translate(-50%, -100%) translateY(-6px)",
         };
     }
   };
 
   return (
     <span
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setHovered(false)}
+      ref={iconRef}
       style={{
-        position: "relative",
         display: "inline-flex",
         alignItems: "center",
         ...style
@@ -93,10 +117,10 @@ export default function InfoTooltip({ text, position = "top", style, width, titl
       >
         (?)
       </span>
-      {hovered && (
+      {hovered && typeof document !== "undefined" && createPortal(
         <span
           style={{
-            position: "absolute",
+            position: "fixed",
             width: width ?? "240px",
             backgroundColor: "var(--color-ec-bg-elevated)",
             border: "0.5px solid var(--color-ec-border)",
@@ -109,12 +133,12 @@ export default function InfoTooltip({ text, position = "top", style, width, titl
             fontWeight: 500,
             lineHeight: "1.4",
             boxShadow: "0 4px 20px rgba(0, 0, 0, 0.45)",
-            zIndex: 99999,
+            zIndex: 100005,
             pointerEvents: "none",
             textTransform: "none",
             letterSpacing: "normal",
             whiteSpace: "pre-line",
-            ...getPositionStyles(),
+            ...getFixedStyles(),
           }}
         >
           {title && (
@@ -123,7 +147,8 @@ export default function InfoTooltip({ text, position = "top", style, width, titl
             </div>
           )}
           {text}
-        </span>
+        </span>,
+        document.body
       )}
     </span>
   );

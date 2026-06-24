@@ -424,7 +424,6 @@ export default function BacktestPanel({
   const [customEndTime, setCustomEndTime] = useState("16:00");
   const [locatesCost, setLocatesCost] = useState(0);
   const [useLocates, setUseLocates] = useState(false);
-  const [locateType, setLocateType] = useState<"FLAT" | "PERCENT">("FLAT");
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -556,7 +555,6 @@ export default function BacktestPanel({
       if (savedState.isPercent !== undefined) setIsPercent(savedState.isPercent);
       if (savedState.useLocates !== undefined) setUseLocates(savedState.useLocates);
       if (savedState.locatesCost !== undefined) setLocatesCost(savedState.locatesCost);
-      if (savedState.locateType !== undefined) setLocateType(savedState.locateType);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -709,7 +707,6 @@ export default function BacktestPanel({
         isPercent,
         useLocates,
         locatesCost,
-        locateType,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -721,7 +718,7 @@ export default function BacktestPanel({
     selectedDataset, selectedStrategy, initCash, riskR, fees, slippage,
     startDate, endDate, marketSessions, customStartTime, customEndTime,
     riskType, feeType, isPercent, loadingData,
-    useLocates, locatesCost, locateType, useMonthlyExpenses, monthlyExpenses
+    useLocates, locatesCost, useMonthlyExpenses, monthlyExpenses
   ]);
 
   // Synchronize dataset selection with the selected strategy's associated dataset
@@ -770,7 +767,7 @@ export default function BacktestPanel({
       custom_start_time: marketSessions.includes("custom") ? customStartTime : undefined,
       custom_end_time: marketSessions.includes("custom") ? customEndTime : undefined,
       locates_cost: useLocates ? locatesCost : 0,
-      locate_type: useLocates ? locateType : "FLAT",
+      locate_type: useLocates ? "PERCENT" : "FLAT",
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -1447,7 +1444,7 @@ export default function BacktestPanel({
             alignItems: 'center',
             gap: 8,
           }}>
-            <label className="flex items-center gap-2 cursor-pointer">
+            <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
               <input
                 type="checkbox"
                 checked={useLocates}
@@ -1464,53 +1461,33 @@ export default function BacktestPanel({
                   fontSize: 11,
                   fontWeight: 500,
                   color: 'var(--color-ec-text-secondary)',
-                }}>{locateType === "PERCENT" ? "% Locates asumibles/riesgo" : "Locates estimados $/100"}</span>
+                }}>% Locates/riesgo</span>
                 <InfoTooltip
                   position="left"
                   width={280}
-                  text={locateType === "PERCENT" ? "El % de la cantidad de 'riesgo' (dinero a apostar) que asumimos en cada trade en concepto de comisiones por cada 100 acciones. Ejemplo: si arriesgas 1000€ y configuras un 3%, pagas 30€ de comisión por cada 100 acciones. Si controlas 1000 acciones (10 locates), la comisión será de 300€." : "Estimación de precio medio por locate, al aplicar este dato se restará por ticker en concepto de comisiones, esta cantidad de precio por locate. Trata de calcular, aproximadamente, la media de precios por locates que estimas que te cobrarán por ticker"}
+                  text="El % de la cantidad de riesgo (dinero a apostar) que asumimos en cada trade en concepto de comisiones por cada 100 acciones (locates asumibles). Ejemplo: si arriesgas 1000€ y configuras un 3% de locates asumibles, pagas 30€ de comisión por cada 100 acciones. Si controlas 1000 acciones (10 locates), la comisión será de 300€."
                   style={{ display: 'inline-flex' }}
                 />
               </span>
             </label>
             {useLocates && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={locatesCost}
-                  onChange={(e) => setLocatesCost(Number(e.target.value))}
-                  className="border border-[var(--color-ec-border)]"
-                  style={{
-                    width: '55px',
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    borderRadius: 5,
-                    padding: '6px 8px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                  }}
-                />
-                <select
-                  value={locateType}
-                  onChange={(e) => setLocateType(e.target.value as "FLAT" | "PERCENT")}
-                  className="border border-[var(--color-ec-border)]"
-                  style={{
-                    backgroundColor: 'var(--color-ec-bg-elevated)',
-                    borderRadius: 5,
-                    padding: '5px 8px',
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 11,
-                    color: 'var(--color-ec-text-primary)',
-                    outline: 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
-                  <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
-                </select>
-              </div>
+              <input
+                type="number"
+                step="0.01"
+                value={locatesCost}
+                onChange={(e) => setLocatesCost(Number(e.target.value))}
+                className="border border-[var(--color-ec-border)]"
+                style={{
+                  width: '55px',
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  borderRadius: 5,
+                  padding: '6px 8px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                }}
+              />
             )}
           </div>
 

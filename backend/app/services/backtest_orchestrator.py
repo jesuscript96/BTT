@@ -38,7 +38,7 @@ class BacktestRequest(BaseModel):
     custom_start_time: str | None = None
     custom_end_time: str | None = None
     locates_cost: float = 0.0
-    locate_type: str = "FLAT"
+    locate_type: str = "PERCENT"
     look_ahead_prevention: bool = False
 
 
