@@ -5,6 +5,17 @@ import BacktestPanel, { type BacktestPanelParams } from "@/components/backtester
 import InlineStrategyBuilder, { type Draft } from "@/components/backtester/InlineStrategyBuilder";
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
 import StrategyModeSelector from "@/components/strategy-builder/StrategyModeSelector";
+import { GraduationCap } from "lucide-react";
+import { useBacktestHelper, hasSeenHelper } from "@/components/backtester/helper/useBacktestHelper";
+import {
+  EXAMPLE_STRATEGY,
+  EXAMPLE_CONFIG,
+  EXAMPLE_DATASET,
+  RESET_DATASET,
+  RESET_CONFIG,
+  FILL_CONFIG_EVENT,
+  FILL_DATASET_EVENT,
+} from "@/components/backtester/helper/exampleBacktest";
 import WizardStrategyBuilder from "@/components/strategy-builder/WizardStrategyBuilder";
 import MetricsCard from "@/components/backtester/MetricsCard";
 import MaeScatterChart from "@/components/backtester/MaeScatterChart";
@@ -112,6 +123,55 @@ export default function Home() {
   const [includeWhatIfInSave, setIncludeWhatIfInSave] = useState(true);
   const [hoveredSaveBtn, setHoveredSaveBtn] = useState(false);
   const [activeSaveBtn, setActiveSaveBtn] = useState(false);
+  const [helperActive, setHelperActive] = useState(false);
+  const [hoveredHelperBtn, setHoveredHelperBtn] = useState(false);
+  // El tour es una demo: guardamos el borrador previo y marcamos qué ha
+  // rellenado para poder LIMPIARLO al salir (no dejar el ejemplo metido en los
+  // formularios del usuario — p. ej. la sesión 09:30–11:00 de la estrategia).
+  const preHelperDraftRef = useRef<Draft | null>(null);
+  const exampleLoadedRef = useRef(false);
+  const datasetFilledRef = useRef(false);
+  const configFilledRef = useRef(false);
+
+  // Tour guiado del backtester (driver.js). El controller le da al helper los
+  // setters que necesita: cambiar de panel, precargar la estrategia de ejemplo
+  // y disparar los rellenos de dataset/config (reviviendo el contrato fill-*).
+  const { startHelper } = useBacktestHelper({
+    setMode: (m) => setMode(m),
+    loadExampleStrategy: () =>
+      setBuilderDraft((prev) => {
+        if (!exampleLoadedRef.current) {
+          preHelperDraftRef.current = prev;
+          exampleLoadedRef.current = true;
+        }
+        return EXAMPLE_STRATEGY;
+      }),
+    fillDataset: () => {
+      datasetFilledRef.current = true;
+      window.dispatchEvent(new CustomEvent(FILL_DATASET_EVENT, { detail: EXAMPLE_DATASET }));
+    },
+    fillConfig: () => {
+      configFilledRef.current = true;
+      window.dispatchEvent(new CustomEvent(FILL_CONFIG_EVENT, { detail: EXAMPLE_CONFIG }));
+    },
+    setHelperActive,
+    // Al cerrar/saltar el tour: restaura el borrador previo y devuelve dataset y
+    // sesión de config a sus valores por defecto (solo lo que el tour tocó).
+    cleanup: () => {
+      if (exampleLoadedRef.current) {
+        setBuilderDraft(preHelperDraftRef.current);
+        exampleLoadedRef.current = false;
+      }
+      if (datasetFilledRef.current) {
+        window.dispatchEvent(new CustomEvent(FILL_DATASET_EVENT, { detail: RESET_DATASET }));
+        datasetFilledRef.current = false;
+      }
+      if (configFilledRef.current) {
+        window.dispatchEvent(new CustomEvent(FILL_CONFIG_EVENT, { detail: RESET_CONFIG }));
+        configFilledRef.current = false;
+      }
+    },
+  });
 
   const handleSaveToBaulClick = async () => {
     if (draftStrategy) {
@@ -833,6 +893,14 @@ export default function Home() {
     }
   }, []);
 
+  // Tour guiado: arranca solo la primera vez que se visita el backtester (desktop).
+  useEffect(() => {
+    if (!hasSeenHelper() && typeof window !== "undefined" && window.innerWidth > 1024) {
+      const t = setTimeout(() => startHelper(), 800);
+      return () => clearTimeout(t);
+    }
+  }, [startHelper]);
+
   const toggleDarkMode = () => {
     const newVal = !isDarkMode;
     setIsDarkMode(newVal);
@@ -996,6 +1064,31 @@ export default function Home() {
             color: 'var(--color-ec-text-high)',
             letterSpacing: '-0.3px',
           }}>Backtester</h1>
+          <button
+            type="button"
+            onClick={startHelper}
+            onMouseEnter={() => setHoveredHelperBtn(true)}
+            onMouseLeave={() => setHoveredHelperBtn(false)}
+            title="Ver el tutorial guiado del backtester"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 10px',
+              borderRadius: 5,
+              border: `0.5px solid ${hoveredHelperBtn ? 'transparent' : 'var(--color-ec-border)'}`,
+              backgroundColor: hoveredHelperBtn ? 'var(--color-ec-copper)' : 'transparent',
+              color: hoveredHelperBtn ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+              fontFamily: 'var(--color-ec-sans)',
+              fontSize: 11,
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+          >
+            <GraduationCap size={13} strokeWidth={2} />
+            ¿Cómo funciona?
+          </button>
         </div>
       </header>
 
@@ -1719,8 +1812,8 @@ export default function Home() {
 
         {/* Backdrop blur overlay for the main content area */}
         {(mode === 'builder_choice' || mode === 'builder' || mode === 'wizard' || mode === 'dataset') && (
-          <div 
-            onClick={() => setMode('config')}
+          <div
+            onClick={() => { if (!helperActive) setMode('config'); }}
             style={{
               position: 'absolute',
               inset: 0,

@@ -574,6 +574,26 @@ export default function BacktestPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tour guiado / asistente Edgie: rellena el formulario desde un evento externo
+  // (mismo contrato que dispararía backtest.fill_form). Solo aplica las claves enviadas.
+  useEffect(() => {
+    const onFill = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      if (d.initCash !== undefined) setInitCash(Number(d.initCash));
+      if (d.riskType !== undefined) setRiskType(d.riskType);
+      if (d.riskR !== undefined) setRiskR(Number(d.riskR));
+      if (d.feeType !== undefined) setFeeType(d.feeType);
+      if (d.fees !== undefined) setFees(Number(d.fees));
+      if (d.slippage !== undefined) setSlippage(Number(d.slippage));
+      if (Array.isArray(d.marketSessions)) setMarketSessions(d.marketSessions);
+      if (d.customStartTime !== undefined) setCustomStartTime(d.customStartTime);
+      if (d.customEndTime !== undefined) setCustomEndTime(d.customEndTime);
+      if (d.isPercent !== undefined) setIsPercent(Number(d.isPercent));
+    };
+    window.addEventListener("fill-backtest-form", onFill);
+    return () => window.removeEventListener("fill-backtest-form", onFill);
+  }, []);
+
   useEffect(() => {
     if (isInitialMountRef.current) return;
     const ds = datasets.find(d => d.id === selectedDataset);
@@ -792,7 +812,7 @@ export default function BacktestPanel({
 
 
   return (
-    <div style={{
+    <div data-helper="panel-root" style={{
       display: 'flex',
       flexDirection: 'column',
       gap: 16,
@@ -1242,7 +1262,7 @@ export default function BacktestPanel({
           </div>
         </div>
 
-        <div style={{
+        <div data-helper="cfg-capital" style={{
           display: 'grid',
           gridTemplateColumns: '1fr 1fr',
           gap: 8,
@@ -1667,6 +1687,7 @@ export default function BacktestPanel({
 
 
       <button
+        data-helper="cfg-run"
         onClick={handleRun}
         disabled={loading || !selectedStrategy || isSelectedStratRiskInvalid || !(selectedDataset || stratDef?.universe_filters)}
         onMouseEnter={() => setHoveredBtn("run")}

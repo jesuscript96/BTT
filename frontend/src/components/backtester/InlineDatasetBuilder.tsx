@@ -155,6 +155,31 @@ export default function InlineDatasetBuilder({
     };
   }, [expandedSections, values, onExpandedChange]);
 
+  // Tour guiado / asistente Edgie: rellena el Dataset Builder desde un evento
+  // externo (mismo contrato que dispararía dataset.fill). Solo aplica lo enviado.
+  useEffect(() => {
+    const onFill = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      if (d.name !== undefined) setName(d.name);
+      if (d.dateFrom !== undefined) setDateFrom(d.dateFrom);
+      if (d.dateTo !== undefined) setDateTo(d.dateTo);
+      if (d.values && typeof d.values === "object") {
+        setValues((prev) => ({ ...prev, ...d.values }));
+        // Expande las secciones con filtros para que se vean en pantalla.
+        setExpandedSections((prev) => {
+          const next = { ...prev };
+          Object.keys(d.values).forEach((k) => {
+            if (Object.keys(d.values[k] || {}).length > 0) next[k as SectionId] = true;
+          });
+          return next;
+        });
+      }
+      if (Array.isArray(d.includedConditions)) setIncludedConditions(d.includedConditions);
+    };
+    window.addEventListener("fill-dataset-builder", onFill);
+    return () => window.removeEventListener("fill-dataset-builder", onFill);
+  }, []);
+
   const [activeTooltip, setActiveTooltip] = useState<{
     text: string;
     x: number;
@@ -433,6 +458,7 @@ export default function InlineDatasetBuilder({
       <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 16 }}>
         {/* Date Range Selector Card */}
         <div
+          data-helper="ds-dates"
           style={{
             border: "0.5px solid var(--color-ec-border)",
             borderRadius: 6,
@@ -505,6 +531,7 @@ export default function InlineDatasetBuilder({
           return (
             <div
               key={sectionId}
+              data-helper={sectionId === "gap_day" ? "ds-gapday" : undefined}
               style={{
                 border: "0.5px solid var(--color-ec-border)",
                 borderRadius: 6,

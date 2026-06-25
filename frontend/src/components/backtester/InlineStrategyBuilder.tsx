@@ -1285,7 +1285,7 @@ export default function InlineStrategyBuilder({
         </div>
 
         {/* SECTION: DIRECTION BIAS */}
-        <div style={{
+        <div data-helper="st-bias" style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 12,
@@ -1875,7 +1875,7 @@ export default function InlineStrategyBuilder({
         </div>
 
         {/* SECTION: SESIÓN DE EJECUCIÓN DE LA ESTRATEGIA */}
-        <div style={{
+        <div data-helper="st-sessions" style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 12,
@@ -2063,6 +2063,7 @@ export default function InlineStrategyBuilder({
 
 
 
+        <div data-helper="st-entry" style={{ display: 'contents' }}>
         <EntryLogicBuilder logic={entryLogic} onChange={setEntryLogic}>
           {/* Sub-panel de Ventanas de Horario de Entrada */}
           <div style={{
@@ -2285,9 +2286,12 @@ export default function InlineStrategyBuilder({
             )}
           </div>
         </EntryLogicBuilder>
+        </div>
 
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
+        <div data-helper="st-risk" style={{ display: 'contents' }}>
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
+        </div>
       </div>
 
       {/* Strategy Summary Panel */}
