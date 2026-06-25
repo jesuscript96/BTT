@@ -152,16 +152,18 @@ export const Sidebar = () => {
                 )}
 
                 {/* Screener */}
-                <Link
-                    href="/screener"
-                    style={{
-                        ...linkBase(isCollapsed),
-                        ...linkActive("/screener"),
-                    }}
-                >
-                    <Radar style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Screener</span>
-                </Link>
+                {can("screener.access") && (
+                    <Link
+                        href="/screener"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/screener"),
+                        }}
+                    >
+                        <Radar style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Screener</span>
+                    </Link>
+                )}
 
                 {/* Market Analysis */}
                 <Link
