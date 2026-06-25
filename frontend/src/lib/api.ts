@@ -381,6 +381,84 @@ export function getTickerFinvizNews(
 }
 
 
+// ─── Social (Stocktwits) ────────────────────────────────────
+// Todas estas llamadas pegan al backend (/api/market/social/*), que cachea con
+// SWR y sanea el payload. El frontend nunca ve credenciales de Stocktwits.
+
+export interface SocialTrendingItem {
+  symbol: string;
+  name: string;
+  market_cap: number | null;
+  daily_volume: number | null;
+  trending_score: number | null;
+  sentiment_score: number | null;
+  price: number | null;
+  change_pct: number | null;
+}
+
+export interface SocialSummary {
+  symbol: string;
+  why_trending: string | null;
+  updated_at: string;
+}
+
+export interface SocialSentiment {
+  symbol: string;
+  sentiment_score: number;
+  sentiment_label: "Bullish" | "Bearish" | "Neutral";
+  message_volume_score: number;
+  message_volume_label: "High" | "Medium" | "Low";
+  updated_at: string;
+}
+
+export interface SocialStreamMessage {
+  message_id: number | null;
+  body: string;
+  created_at: string;
+  username: string;
+  avatar_url: string;
+  user_sentiment: "Bullish" | "Bearish" | null;
+  likes_count: number;
+}
+
+export interface SocialNewsletterItem {
+  title: string;
+  published_at: string;
+  author: string;
+  content_html: string;
+  charts: string[];
+  link: string;
+}
+
+export function getSocialTrending(): Promise<SocialTrendingItem[]> {
+  return apiRequest<SocialTrendingItem[]>("/market/social/trending");
+}
+
+export function getSocialSummary(symbol: string): Promise<SocialSummary> {
+  return apiRequest<SocialSummary>(
+    `/market/social/ticker/${encodeURIComponent(symbol)}/summary`,
+  );
+}
+
+export function getSocialSentiment(symbol: string): Promise<SocialSentiment> {
+  return apiRequest<SocialSentiment>(
+    `/market/social/ticker/${encodeURIComponent(symbol)}/sentiment`,
+  );
+}
+
+export function getSocialStream(
+  symbol: string,
+  limit = 15,
+): Promise<SocialStreamMessage[]> {
+  return apiRequest<SocialStreamMessage[]>(
+    `/market/social/ticker/${encodeURIComponent(symbol)}/stream?limit=${limit}`,
+  );
+}
+
+export function getSocialNewsletter(): Promise<SocialNewsletterItem[]> {
+  return apiRequest<SocialNewsletterItem[]>("/market/social/newsletter");
+}
+
 // ─── Market Data ────────────────────────────────────────────
 export function getScreener(
   params: URLSearchParams | string,

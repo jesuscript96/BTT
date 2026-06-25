@@ -8,6 +8,7 @@ import {
     Radar,
     KeyRound,
     MessageSquarePlus,
+    Flame,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -177,6 +178,20 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     <LayoutDashboard style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Ticker Analysis</span>
                 </Link>
+
+                {/* Market Sentiment (Stocktwits) */}
+                {can("market.sentiment.access") && (
+                    <Link
+                        href="/market-sentiment"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/market-sentiment"),
+                        }}
+                    >
+                        <Flame style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Market Sentiment</span>
+                    </Link>
+                )}
 
                 {/* Backtester */}
                 <Link
