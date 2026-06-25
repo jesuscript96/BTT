@@ -5,6 +5,7 @@ import { Flame, Search, MousePointerClick } from "lucide-react";
 import { RadarMomentum } from "./RadarMomentum";
 import { SentimentGauge, WhyTrendingBox } from "./SentimentGauge";
 import { StocktwitsStream } from "./StocktwitsStream";
+import { CompanyNews } from "./CompanyNews";
 
 // Página dedicada "Market Sentiment" — agrega TODO lo de la integración
 // Stocktwits en un solo lugar, sin mezclarse con Ticker Analysis ni el Screener:
@@ -15,10 +16,15 @@ import { StocktwitsStream } from "./StocktwitsStream";
 export default function MarketSentiment() {
     const [selected, setSelected] = useState<string>("");
     const [searchText, setSearchText] = useState<string>("");
+    const [activeTab, setActiveTab] = useState<"debate" | "news">("debate");
 
     const submit = (raw: string) => {
         const t = raw.toUpperCase().trim();
-        if (t) setSelected(t);
+        if (t) {
+            setSelected(t);
+            // Optional: reset to debate tab when a new ticker is searched/selected
+            setActiveTab("debate");
+        }
     };
 
     return (
@@ -136,14 +142,61 @@ export default function MarketSentiment() {
                                 <WhyTrendingBox symbol={selected} />
                             </div>
 
-                            {/* Debate */}
-                            <div>
-                                <h3 style={{
-                                    fontFamily: "'General Sans', sans-serif", fontSize: 8, fontWeight: 700,
-                                    color: "var(--color-ec-copper)", textTransform: "uppercase", letterSpacing: "1.5px",
-                                    borderBottom: "1px solid var(--color-ec-border)", paddingBottom: 4, marginBottom: 16,
-                                }}>Debate Stocktwits</h3>
-                                <StocktwitsStream symbol={selected} />
+                            {/* Navigation Tabs for Social Debate and News */}
+                            <div style={{ marginTop: 8 }}>
+                                <div style={{
+                                    display: "flex",
+                                    gap: 20,
+                                    borderBottom: "1px solid var(--color-ec-border)",
+                                    marginBottom: 16,
+                                }}>
+                                    <button
+                                        onClick={() => setActiveTab("debate")}
+                                        style={{
+                                            fontFamily: "var(--ec-sans, 'General Sans', sans-serif)",
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            color: activeTab === "debate" ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
+                                            textTransform: "uppercase",
+                                            letterSpacing: "1.5px",
+                                            background: "none",
+                                            border: "none",
+                                            padding: "0 0 10px 0",
+                                            borderBottom: activeTab === "debate" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                                            cursor: "pointer",
+                                            transition: "all 150ms ease",
+                                        }}
+                                        className="hover:text-[var(--color-ec-text-primary)]"
+                                    >
+                                        Debate Stocktwits
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab("news")}
+                                        style={{
+                                            fontFamily: "var(--ec-sans, 'General Sans', sans-serif)",
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            color: activeTab === "news" ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
+                                            textTransform: "uppercase",
+                                            letterSpacing: "1.5px",
+                                            background: "none",
+                                            border: "none",
+                                            padding: "0 0 10px 0",
+                                            borderBottom: activeTab === "news" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                                            cursor: "pointer",
+                                            transition: "all 150ms ease",
+                                        }}
+                                        className="hover:text-[var(--color-ec-text-primary)]"
+                                    >
+                                        Noticias de la Empresa
+                                    </button>
+                                </div>
+
+                                {activeTab === "debate" ? (
+                                    <StocktwitsStream symbol={selected} />
+                                ) : (
+                                    <CompanyNews symbol={selected} />
+                                )}
                             </div>
                         </>
                     )}
