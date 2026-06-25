@@ -15,8 +15,12 @@
   --color-ec-text-high: #E4E2DF;
   --color-ec-profit: #4A9D7F;
   --color-ec-loss: #C94D3F;
+  --color-ec-warning: #C9A23F;
+  --color-ec-info: #5B8BB0;
+  --color-ec-surface-hover: #232528;
   --font-sans: 'General Sans', sans-serif;
   --font-serif: 'Fraunces', serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 :root {
@@ -45,6 +49,63 @@
   --color-ec-text-high: #E4E2DF;
   --color-ec-profit: #4A9D7F;
   --color-ec-loss: #C94D3F;
+  --color-ec-warning: #C9A23F;
+  --color-ec-info: #5B8BB0;
+  --color-ec-surface-hover: #232528;
+
+  /* Font family aliases — referenced directly via var() in inline styles.
+     These MUST exist or ~300 `fontFamily: var(--color-ec-sans)` usages
+     silently fall back to the browser default. Do not remove. */
+  --color-ec-sans: 'General Sans', sans-serif;
+  --color-ec-serif: 'Fraunces', serif;
+  --color-ec-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* ── Spacing scale (4px base grid) ───────────────────────────── */
+  --ec-space-1: 4px;
+  --ec-space-2: 8px;
+  --ec-space-3: 12px;
+  --ec-space-4: 16px;
+  --ec-space-5: 20px;
+  --ec-space-6: 24px;
+  --ec-space-8: 32px;
+  --ec-space-10: 40px;
+  --ec-space-12: 48px;
+
+  /* ── Border radius scale ─────────────────────────────────────── */
+  --ec-radius-xs: 4px;   /* chips, tags, small inputs */
+  --ec-radius-sm: 5px;   /* buttons, inputs */
+  --ec-radius-md: 7px;   /* cards, panels, segmented controls */
+  --ec-radius-lg: 8px;   /* dropdowns, code blocks, large cards */
+  --ec-radius-xl: 12px;  /* modals */
+  --ec-radius-pill: 9999px;
+
+  /* ── Border width ────────────────────────────────────────────── */
+  --ec-border-hairline: 0.5px; /* default separators / card borders */
+  --ec-border-accent: 2px;     /* active tab / featured card left rail */
+
+  /* ── Elevation (shadows) — dark UI: shadows are deep, not soft ── */
+  --ec-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --ec-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --ec-shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.60); /* dropdowns, popovers */
+  --ec-shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.70); /* modals */
+  --ec-ring-copper: 0 0 0 2px rgba(216, 122, 61, 0.35); /* focus ring */
+
+  /* ── Z-index scale ───────────────────────────────────────────── */
+  --ec-z-base: 0;
+  --ec-z-sticky: 10;     /* sticky table/section headers */
+  --ec-z-dropdown: 50;   /* menus, selects, popovers */
+  --ec-z-overlay: 90;    /* modal/drawer backdrop */
+  --ec-z-modal: 100;     /* modal/drawer panel */
+  --ec-z-toast: 120;     /* toasts above everything */
+  --ec-z-tooltip: 130;
+
+  /* ── Motion ──────────────────────────────────────────────────── */
+  --ec-ease: cubic-bezier(0.22, 1, 0.36, 1); /* standard ease-out */
+  --ec-dur-fast: 120ms;
+  --ec-dur-base: 150ms;
+  --ec-dur-slow: 250ms;
+  --ec-dur-slower: 400ms;
 
   /* Typography scale for config-guided panels (Alvaro Build Spec v1.0) */
   --ec-fs-panel-title: 26px;
@@ -54,6 +115,36 @@
   --ec-fs-step-tag: 12px;
   --ec-dot-size: 8px;
   --ec-dot-gap: 7px;
+}
+
+/* ── Light theme ──────────────────────────────────────────────────
+   Toggle with: document.documentElement.classList.toggle('light')
+   Only neutrals shift. Brand copper and P&L (profit/loss) never change. */
+html.light {
+  --background: #F5F4F1;
+  --foreground: #2C2A26;
+  --card: #FAFAF8;
+  --muted: #FFFFFF;
+  --border: #D6D4CE;
+  --sidebar: #EDEDEA;
+  --sidebar-foreground: #75726C;
+
+  --color-ec-bg-sidebar: #EDEDEA;
+  --color-ec-bg-base: #F5F4F1;
+  --color-ec-bg-surface: #FAFAF8;
+  --color-ec-bg-elevated: #FFFFFF;
+  --color-ec-surface-hover: #EDEDEA;
+  --color-ec-border: #D6D4CE;
+  --color-ec-text-muted: #95918A;
+  --color-ec-text-secondary: #75726C;
+  --color-ec-text-primary: #2C2A26;
+  --color-ec-text-high: #1A1815;
+
+  /* Shadows are softer on a light background */
+  --ec-shadow-sm: 0 1px 2px rgba(28, 26, 22, 0.06);
+  --ec-shadow-md: 0 4px 12px rgba(28, 26, 22, 0.10);
+  --ec-shadow-lg: 0 10px 30px rgba(28, 26, 22, 0.14);
+  --ec-shadow-xl: 0 24px 60px rgba(28, 26, 22, 0.18);
 }
 
 * {
@@ -68,11 +159,44 @@
   40% { opacity: 1; }
 }
 
+/* Design-system motion primitives */
+@keyframes ec-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes ec-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ec-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ec-toast-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes ec-shimmer {
+  100% { transform: translateX(100%); }
+}
+
 body {
-  background-color: #16181A;
-  color: #D4D2CF;
+  background-color: var(--color-ec-bg-base);
+  color: var(--color-ec-text-primary);
   font-family: 'General Sans', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background-color var(--ec-dur-slow) var(--ec-ease), color var(--ec-dur-slow) var(--ec-ease);
+}
+
+/* Respect reduced-motion preference globally */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Ticker Analysis responsive grid layout */
