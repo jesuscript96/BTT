@@ -1,0 +1,150 @@
+/* Tema del popover del tour guiado (driver.js) con los tokens de Edgecute.
+   Se activa vía `popoverClass: "ec-helper-popover"`. Ver useBacktestHelper.ts. */
+
+.driver-popover.ec-helper-popover {
+  background-color: var(--color-ec-bg-surface);
+  border: 0.5px solid var(--color-ec-border);
+  border-radius: 8px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  max-width: 340px;
+  padding: 18px 18px 14px 18px;
+  font-family: var(--color-ec-sans);
+}
+
+/* Identidad de Edgie (cabecera del popover). */
+.driver-popover.ec-helper-popover .ec-helper-edgie {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.driver-popover.ec-helper-popover .ec-helper-edgie-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.driver-popover.ec-helper-popover .ec-helper-edgie-avatar svg {
+  display: block;
+}
+
+.driver-popover.ec-helper-popover .ec-helper-edgie-name {
+  font-family: var(--color-ec-sans);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-ec-text-high);
+  letter-spacing: -0.1px;
+}
+
+.driver-popover.ec-helper-popover .ec-helper-edgie-tag {
+  font-family: var(--color-ec-sans);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-ec-text-muted);
+  padding-left: 2px;
+}
+
+.driver-popover.ec-helper-popover .driver-popover-title {
+  font-family: var(--color-ec-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--color-ec-text-high);
+  margin-bottom: 8px;
+}
+
+.driver-popover.ec-helper-popover .driver-popover-description {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--color-ec-text-secondary);
+}
+
+.driver-popover.ec-helper-popover .driver-popover-description strong {
+  color: var(--color-ec-text-high);
+  font-weight: 600;
+}
+
+.driver-popover.ec-helper-popover .driver-popover-description em {
+  color: var(--color-ec-copper);
+  font-style: normal;
+}
+
+/* Pie: contador a la izquierda, botones a la derecha. */
+.driver-popover.ec-helper-popover .driver-popover-footer {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.driver-popover.ec-helper-popover .driver-popover-progress-text {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--color-ec-copper);
+}
+
+.driver-popover.ec-helper-popover .driver-popover-footer button {
+  font-family: var(--color-ec-sans);
+  text-shadow: none;
+}
+
+/* Botón "Entendido →" (acción primaria, cobre). */
+.driver-popover.ec-helper-popover .driver-popover-next-btn {
+  background-color: var(--color-ec-copper);
+  color: var(--color-ec-copper-text);
+  border: none;
+  border-radius: 5px;
+  padding: 7px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: box-shadow 150ms ease, transform 150ms ease;
+}
+
+.driver-popover.ec-helper-popover .driver-popover-next-btn:hover {
+  box-shadow: 0 0 14px rgba(216, 122, 61, 0.5);
+  transform: scale(1.02);
+}
+
+/* Botón "Saltar" (acción secundaria, sutil). Inyectado en footerButtons. */
+.driver-popover.ec-helper-popover .ec-helper-skip {
+  background: transparent;
+  border: none;
+  color: var(--color-ec-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 7px 8px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 150ms ease;
+}
+
+.driver-popover.ec-helper-popover .ec-helper-skip:hover {
+  color: var(--color-ec-text-secondary);
+}
+
+/* Flecha del popover en el color de la superficie. */
+.driver-popover.ec-helper-popover .driver-popover-arrow-side-left.driver-popover-arrow {
+  border-left-color: var(--color-ec-bg-surface);
+}
+.driver-popover.ec-helper-popover .driver-popover-arrow-side-right.driver-popover-arrow {
+  border-right-color: var(--color-ec-bg-surface);
+}
+.driver-popover.ec-helper-popover .driver-popover-arrow-side-top.driver-popover-arrow {
+  border-top-color: var(--color-ec-bg-surface);
+}
+.driver-popover.ec-helper-popover .driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-bottom-color: var(--color-ec-bg-surface);
+}
