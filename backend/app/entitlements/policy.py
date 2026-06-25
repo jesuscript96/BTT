@@ -29,6 +29,9 @@ FEATURE_TYPES: Dict[str, str] = {
     "vault.max_strategies": "limit",
     "api.access": "boolean",
     "api.runs_per_month": "limit",
+    "screener.access": "boolean",
+    "api.portal.access": "boolean",
+    "market.sentiment.access": "boolean",
     # Internal flag: unlocks features still in development. Admin-only.
     "admin.preview_features": "boolean",
 }
@@ -56,6 +59,9 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,
         "api.access": True,
         "api.runs_per_month": -1,
+        "screener.access": True,
+        "api.portal.access": True,
+        "market.sentiment.access": True,
         "admin.preview_features": True,   # only Admin sees in-development features
     },
     "Pro": {
@@ -69,6 +75,9 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,       # prod: -1
         "api.access": True,
         "api.runs_per_month": -1,         # prod: -1
+        "screener.access": False,         # activar cuando se decida
+        "api.portal.access": False,
+        "market.sentiment.access": False,
         "admin.preview_features": False,
     },
     "Mid": {
@@ -82,6 +91,9 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,       # prod: 25
         "api.access": True,               # prod: False
         "api.runs_per_month": -1,         # prod: 0
+        "screener.access": False,
+        "api.portal.access": False,
+        "market.sentiment.access": False,
         "admin.preview_features": False,
     },
     "Free": {
@@ -95,6 +107,9 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,       # prod: 3
         "api.access": True,               # prod: False
         "api.runs_per_month": -1,         # prod: 0
+        "screener.access": False,
+        "api.portal.access": False,
+        "market.sentiment.access": False,
         "admin.preview_features": False,
     },
 }

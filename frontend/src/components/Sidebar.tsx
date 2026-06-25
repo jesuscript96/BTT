@@ -11,6 +11,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, useClerk } from "@clerk/nextjs";
+import { useEntitlements } from "@/lib/entitlements";
 
 const ISOTIPO = (
     <svg width="24" height="24" viewBox="0 0 90 90" className="flex-shrink-0">
@@ -34,6 +35,7 @@ export const Sidebar = () => {
     const [isHovered, setIsHovered] = useState(false);
     const { user } = useUser();
     const { signOut } = useClerk();
+    const { can } = useEntitlements();
 
     const isCollapsed = !isHovered;
 
@@ -199,16 +201,18 @@ export const Sidebar = () => {
                 </Link>
 
                 {/* Developer API console */}
-                <Link
-                    href="/developers"
-                    style={{
-                        ...linkBase(isCollapsed),
-                        ...linkActive("/developers"),
-                    }}
-                >
-                    <KeyRound style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>API</span>
-                </Link>
+                {can("api.portal.access") && (
+                    <Link
+                        href="/developers"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/developers"),
+                        }}
+                    >
+                        <KeyRound style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>API</span>
+                    </Link>
+                )}
             </nav>
 
             {/* Bottom Profile */}
