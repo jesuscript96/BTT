@@ -7,6 +7,7 @@ import {
     Briefcase,
     Radar,
     KeyRound,
+    Flame,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -171,6 +172,18 @@ export const Sidebar = () => {
                 >
                     <LayoutDashboard style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Ticker Analysis</span>
+                </Link>
+
+                {/* Market Sentiment (Stocktwits) */}
+                <Link
+                    href="/market-sentiment"
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/market-sentiment"),
+                    }}
+                >
+                    <Flame style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Market Sentiment</span>
                 </Link>
 
                 {/* Backtester */}

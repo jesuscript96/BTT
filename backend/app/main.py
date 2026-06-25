@@ -227,6 +227,10 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(screener.router)
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
+# Stocktwits social integration (Radar de Momentum, Sentiment Gauge, Why Trending,
+# Zona de Debate, Newsletters). Declara su propio prefix="/api/market/social".
+from app.routers import social
+app.include_router(social.router)
 app.include_router(edgie.router, prefix="/api/edgie", tags=["Edgie"])
 # assistant.router already declares prefix="/api/assistant" (Edgie AI Gateway: streaming + function calling)
 app.include_router(assistant.router)
