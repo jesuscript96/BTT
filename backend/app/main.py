@@ -209,6 +209,7 @@ from app.routers import data, strategies, backtest, query, market, strategy_sear
 from app.routers import optimization, users, edgie
 from app.routers import screener
 from app.routers import assistant
+from app.routers import feedback
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -238,6 +239,8 @@ app.include_router(api_console.router)
 # GET /api/users/me/entitlements; policy lives in app.entitlements.policy.
 from app.routers.entitlements import router as entitlements_router
 app.include_router(entitlements_router, prefix="/api/users", tags=["Entitlements"])
+# Feedback & feature-voting board (declares its own prefix="/api/feedback").
+app.include_router(feedback.router)
 
 @app.get("/health")
 def read_health():

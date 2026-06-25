@@ -239,6 +239,60 @@ def init_db():
             )
         """)
 
+        # ── Feedback & feature-voting board (in-app widget) ──────────────────
+        # feature_options: the single-answer list shown in the widget.
+        # feature_votes:   one vote per user per release (PK round_id+user_id).
+        # feature_suggestions: free-text "¿Qué echas de menos en Edgecute?".
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS feature_options (
+                id VARCHAR PRIMARY KEY,
+                label VARCHAR,
+                description VARCHAR,
+                sort_order INTEGER DEFAULT 0,
+                archived BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS feature_votes (
+                round_id VARCHAR,
+                user_id VARCHAR,
+                option_id VARCHAR,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (round_id, user_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS feature_suggestions (
+                id VARCHAR PRIMARY KEY,
+                user_id VARCHAR,
+                message VARCHAR,
+                round_id VARCHAR,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Seed PLACEHOLDER roadmap options once. Edit/replace these freely — the
+        # widget reads them live; nothing here is a product commitment.
+        try:
+            _seeded = conn.execute("SELECT COUNT(*) FROM feature_options").fetchone()
+            if _seeded and _seeded[0] == 0:
+                _opts = [
+                    ("alertas_setups", "Alertas en tiempo real de setups", "Avísame cuando un ticker cumpla mi estrategia", 1),
+                    ("mas_indicadores", "Más indicadores en el builder", "Ampliar el catálogo de indicadores técnicos", 2),
+                    ("export_informes", "Exportar backtests a PDF/Excel", "Descargar resultados para compartir", 3),
+                    ("app_movil", "App móvil", "Consultar screener y alertas desde el móvil", 4),
+                    ("optim_rapida", "Optimización multi-estrategia más rápida", "Reducir el tiempo de las búsquedas", 5),
+                ]
+                for _oid, _label, _desc, _order in _opts:
+                    conn.execute(
+                        "INSERT INTO feature_options (id, label, description, sort_order, archived) "
+                        "VALUES (?, ?, ?, ?, FALSE)",
+                        [_oid, _label, _desc, _order],
+                    )
+        except Exception as e:
+            print(f"[WARN] Could not seed feature_options: {e}")
+
         # Clerk Phase 2 migration: add nullable user_id to user-owned tables.
         # Nullable so legacy rows (and the read-only GCS parquet fallback) keep
         # working — reads use NULL-tolerant scoping (see app.auth.scope_clause).

@@ -1,12 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
+import WhatsNewModal from "@/components/WhatsNewModal";
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAuthRoute =
     pathname?.startsWith("/sign-in") || pathname?.startsWith("/sign-up");
+
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   return (
     <div
@@ -16,7 +21,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         overflow: "hidden",
       }}
     >
-      {!isAuthRoute && <Sidebar />}
+      {!isAuthRoute && <Sidebar onOpenFeedback={() => setFeedbackOpen(true)} />}
       <main
         style={{
           flex: 1,
@@ -28,6 +33,13 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
+
+      {!isAuthRoute && (
+        <>
+          <FeedbackWidget open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+          <WhatsNewModal />
+        </>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import type {
   BacktestResult,
 } from "@/types/backtest";
 import { clearDatasetsCache } from "./api_backtester";
+import { track, EVENTS } from "./analytics";
 
 // ─── Base URL ───────────────────────────────────────────────
 const RAW_BASE =
@@ -180,13 +181,15 @@ export function getStrategy(id: string): Promise<Strategy> {
   return apiRequest<Strategy>(`/strategies/${encodeURIComponent(id)}`);
 }
 
-export function createStrategy(
+export async function createStrategy(
   data: Strategy,
 ): Promise<Strategy> {
-  return apiRequest<Strategy>("/strategies/", {
+  const res = await apiRequest<Strategy>("/strategies/", {
     method: "POST",
     body: JSON.stringify(data),
   });
+  track(EVENTS.STRATEGY_CREATED, { name: data.name });
+  return res;
 }
 
 export function updateStrategy(
@@ -227,6 +230,7 @@ export async function createQuery(
     timeoutMs: 300_000, // dataset_pairs insert + GCS upload can take minutes in prod
   });
   clearDatasetsCache();
+  track(EVENTS.DATASET_CREATED, { name: data.name });
   return res;
 }
 
@@ -247,6 +251,10 @@ export function searchStrategies(params: {
   date_to: string;
   pass_criteria: Record<string, number | null>;
 }): Promise<{ strategies: unknown[] }> {
+  track(EVENTS.STRATEGY_SEARCH_RUN, {
+    mode: params.search_mode,
+    space: params.search_space,
+  });
   return apiRequest<{ strategies: unknown[] }>(
     "/strategy-search/filter",
     {
@@ -295,9 +303,11 @@ export function toggleBacktestValidation(
 
 
 // ─── Backtest ───────────────────────────────────────────────
-export function runBacktest(
+export async function runBacktest(
   data: BacktestRequest,
 ): Promise<BacktestResponse> {
+  const n = (data as { strategy_ids?: unknown[] }).strategy_ids?.length;
+  track(EVENTS.BACKTEST_RUN, { strategies: n });
   return apiRequest<BacktestResponse>("/backtest/run", {
     method: "POST",
     body: JSON.stringify(data),
@@ -324,6 +334,7 @@ export function getBacktestResults(
 export function getTickerAnalysis(
   ticker: string,
 ): Promise<unknown> {
+  track(EVENTS.TICKER_ANALYSIS_OPENED, { ticker });
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}`,
   );
