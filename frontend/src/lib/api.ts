@@ -324,6 +324,7 @@ export function getBacktestResults(
 export function getTickerAnalysis(
   ticker: string,
 ): Promise<unknown> {
+  track(EVENTS.TICKER_ANALYSIS_OPENED, { ticker });
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}`,
   );

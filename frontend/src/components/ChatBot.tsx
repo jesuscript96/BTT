@@ -5,6 +5,7 @@ import {
     Send, X, RotateCcw, AlertCircle, Paperclip, FileText
 } from 'lucide-react';
 import { API_BASE, getAuthHeaders } from '@/lib/api';
+import { track, EVENTS } from '@/lib/analytics';
 
 interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
@@ -199,6 +200,11 @@ export function ChatBot() {
 
         const userText = input.trim();
         setInput('');
+
+        track(EVENTS.ASSISTANT_MESSAGE_SENT, {
+            length: userText.length,
+            has_attachment: !!attachedFile,
+        });
 
         // Prepare query content (append attached file if present)
         let queryContent = userText;
