@@ -179,6 +179,8 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
     "https://www.mystrategybuilder.fun",
     "https://mystrategybuilder.fun",
+    "https://app.edgecute.com",
+    "https://www.edgecute.com",
 ]
 
 app.add_middleware(
@@ -196,7 +198,10 @@ async def add_cors_headers_to_all_responses(request, call_next):
     """Ensure CORS headers are on every response so 4xx/5xx from our app are not reported as CORS errors."""
     response = await call_next(request)
     origin = request.headers.get("origin")
-    if origin and (origin in ALLOWED_ORIGINS or origin.startswith("https://") and "vercel.app" in origin):
+    if origin and (
+        origin in ALLOWED_ORIGINS or
+        (origin.startswith("https://") and "vercel.app" in origin)
+    ):
         response.headers["Access-Control-Allow-Origin"] = origin
     elif origin is None and request.url.path.startswith("/api/"):
         response.headers["Access-Control-Allow-Origin"] = "https://www.mystrategybuilder.fun"
