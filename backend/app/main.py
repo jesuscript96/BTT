@@ -159,11 +159,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] DB not available at startup: {e}. App will start; first API request may fail or be slow.")
 
+    # Live screener (internal, Admin-gated): warm the in-RAM state and connect
+    # to Massive's WS in the background. Best-effort — a WS/account/network
+    # hiccup must never block or slow startup.
+    try:
+        import asyncio as _asyncio
+        from app.services.live_screener_service import live_screener_service
+        app.state.live_screener_task = _asyncio.create_task(live_screener_service.start())
+    except Exception as e:
+        print(f"[WARN] Live screener service failed to start: {e}")
+
     start_scheduler()
     yield
     # Shutdown
     print("Shutdown: Cleaning up...")
     
+    try:
+        from app.services.live_screener_service import live_screener_service
+        await live_screener_service.stop()
+    except Exception:
+        pass
+
     # Upload user DB back to GCS explicitly on graceful shutdown
     upload_user_db()
 

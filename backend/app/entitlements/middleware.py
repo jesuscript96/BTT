@@ -37,7 +37,16 @@ def get_tier(user_id: Optional[str]) -> str:
 
     Fails open to Free on any of: no user_id (auth disabled / anonymous),
     no CLERK_SECRET_KEY, missing/unknown tier, or a network/HTTP error.
+
+    Local-dev escape hatch: if DEV_TIER is set to a known tier it overrides
+    resolution, so Admin-gated features (e.g. the screener) are testable
+    without Clerk auth. It is unset in every real environment, so production
+    gating is unaffected.
     """
+    dev_tier = os.getenv("DEV_TIER", "").strip()
+    if dev_tier in policy.POLICY:
+        return dev_tier
+
     if not user_id:
         return policy.FREE_TIER
 

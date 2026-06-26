@@ -528,6 +528,10 @@ export interface ScreenerRecord {
   high_spike_pct: number;
   low_spike_pct: number;
   range_pct: number;
+  // Live screener (real-time) extras — optional so the daily EOD payload still fits.
+  pmh_gap_pct?: number;
+  amh_gap_pct?: number;
+  rvol?: number;
 }
 
 export interface ScreenerDailyResponse {

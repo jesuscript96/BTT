@@ -1,8 +1,20 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from app.database import get_db_connection
+import asyncio
+import logging
 import math
 import threading
+import time
 from datetime import datetime, timedelta
+
+from app.services.live_screener_service import (
+    live_screener_service,
+    current_session,
+    VALID_TABS,
+    TAB_GAINERS,
+)
+
+logger = logging.getLogger("btt.screener")
 
 router = APIRouter(
     prefix="/api/screener",
@@ -192,3 +204,56 @@ def get_screener_daily(limit: int = 100):
     finally:
         if con:
             con.close()
+
+
+# ─── Live screener WebSocket ─────────────────────────────────────────────────
+# Internal app backend only — deliberately NOT exposed through the commercial
+# public API (api_public). The page itself is Admin-gated (LockedFeature).
+@router.websocket("/live")
+async def screener_live(websocket: WebSocket):
+    """Stream the top movers for the subscribed tab once per second.
+
+    Client → server: {"action": "subscribe", "tab": "RTH Gainers"}
+    Server → client: {"tab", "timestamp", "session", "ws_connected", "records": [...]}
+    """
+    await websocket.accept()
+    state = {"tab": TAB_GAINERS}
+    tab_changed = asyncio.Event()
+
+    async def receiver():
+        # Listen for tab switches; on any error, unblock the sender so it can
+        # notice the disconnect and tear down cleanly.
+        try:
+            while True:
+                msg = await websocket.receive_json()
+                if isinstance(msg, dict) and msg.get("action") == "subscribe":
+                    tab = msg.get("tab")
+                    if tab in VALID_TABS:
+                        state["tab"] = tab
+                        tab_changed.set()
+        except Exception:
+            tab_changed.set()
+
+    recv_task = asyncio.create_task(receiver())
+    try:
+        while True:
+            tab = state["tab"]
+            await websocket.send_json({
+                "tab": tab,
+                "timestamp": int(time.time()),
+                "session": current_session(),
+                "ws_connected": live_screener_service.ws_connected,
+                "records": live_screener_service.get_top(tab),
+            })
+            # Re-emit every second, or immediately when the client switches tab.
+            try:
+                await asyncio.wait_for(tab_changed.wait(), timeout=1.0)
+                tab_changed.clear()
+            except asyncio.TimeoutError:
+                pass
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[LIVE] ws client error: %s", e)
+    finally:
+        recv_task.cancel()
