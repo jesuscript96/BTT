@@ -967,13 +967,23 @@ def _fetch_and_cache_month(
     if df_month is None or df_month.empty:
         return None
 
-    # 6. Filter to requested (ticker, date) pairs — UNCHANGED post-cache logic.
+    # 6. Filter to requested (ticker, date) pairs.
     try:
-        vp_copy = valid_pairs_month.copy()
-        vp_copy["date"] = pd.to_datetime(vp_copy["date"]).dt.strftime("%Y-%m-%d")
-        df_month["date"] = pd.to_datetime(df_month["date"]).dt.strftime("%Y-%m-%d")
+        # Merge on native datetime64 (int64-backed) keys instead of formatting BOTH
+        # sides to "%Y-%m-%d" strings first — object-string merges are far slower.
+        # normalize() floors any time component so the date-only match is identical
+        # to the old strftime-based one. assign() builds a new frame, so df_month
+        # (which may alias a RAM-cache entry when it's a single part) is never
+        # mutated in place. The canonical "%Y-%m-%d" string is restored once, on the
+        # smaller merged result, to preserve the downstream output schema.
+        vp_copy = valid_pairs_month[["ticker", "date"]].copy()
+        vp_copy["date"] = pd.to_datetime(vp_copy["date"]).dt.normalize()
+        df_dates = pd.to_datetime(df_month["date"]).dt.normalize()
 
-        intraday = df_month.merge(vp_copy, on=["ticker", "date"], how="inner")
+        intraday = df_month.assign(date=df_dates).merge(
+            vp_copy, on=["ticker", "date"], how="inner"
+        )
+        intraday["date"] = intraday["date"].dt.strftime("%Y-%m-%d")
 
         if intraday.empty:
             logger.warning(f"  [WARN] Month {y}-{m:02d}: merged 0 rows for requested pairs.")
