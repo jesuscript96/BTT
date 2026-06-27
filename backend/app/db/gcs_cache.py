@@ -789,11 +789,22 @@ _RAM_CACHE_LOCK = threading.Lock()
 # concat + merge-to-valid_pairs + downcast + sort), keyed by the exact (ticker,
 # date) pairs requested plus kind/year/month. A re-run with the same dataset
 # universe skips the 8-13s reassembly entirely. `kind` is in the key so opt/raw
-# never collide. Bounded FIFO; stores a pristine copy and hands out copies so a
-# downstream mutation can't poison the cache.
+# never collide. Stores a pristine copy and hands out copies so a downstream
+# mutation can't poison the cache.
+#
+# Bounded by TOTAL BYTES (not entry count): a gap-month frame is ~5-30MB but a
+# BROAD-universe month is ~100-300MB, so a fixed entry count let a few BROAD
+# frames blow up RAM and OOM-kill the box (incident 2026-06-27). Frames larger
+# than the per-frame limit are NOT cached at all (BROAD months stay uncached;
+# their re-run pays the reassembly but never threatens RAM). Sizes are measured
+# with memory_usage(deep=True) — deep=False ignores the object string columns
+# (date/ticker dominate) and would under-count a 200MB frame as ~5MB, defeating
+# the guard. A companion dict tracks each frame's MB so eviction never rescans.
 _MONTH_CACHE: dict = {}               # (sig, kind, y, m) -> pd.DataFrame
+_MONTH_CACHE_SIZES: dict = {}         # (sig, kind, y, m) -> float (MB)
 _MONTH_CACHE_LOCK = threading.Lock()
-_MONTH_CACHE_MAX_ENTRIES = int(os.getenv("INTRADAY_MONTH_CACHE_MAX", "100"))
+_MONTH_CACHE_MAX_MB = int(os.getenv("INTRADAY_MONTH_CACHE_MAX_MB", "500"))
+_MONTH_CACHE_MAX_FRAME_MB = int(os.getenv("INTRADAY_MONTH_CACHE_MAX_FRAME_MB", "50"))
 
 
 def _ram_get(kind: str, y: int, m: int, ticker: str):
@@ -998,13 +1009,29 @@ def _fetch_and_cache_month(
         intraday = intraday.sort_values(["date", "ticker", "timestamp"])
         logger.info(f"  [DONE] Month {y}-{m:02d}: processed {len(intraday):,} rows in {round(time.time()-t_month_start, 2)}s")
 
-        # MONTH CACHE store: keep a pristine snapshot, return the original to this
-        # caller. Bounded FIFO eviction (oldest inserted first).
+        # MONTH CACHE store, bounded by bytes (deep=True counts the object string
+        # columns; see the cache declaration). Skip frames too big to be safe —
+        # BROAD-universe months are never cached, so they can't OOM the box.
+        frame_mb = float(intraday.memory_usage(deep=True).sum()) / 1024 / 1024
+        if frame_mb > _MONTH_CACHE_MAX_FRAME_MB:
+            logger.info(
+                f"  [MONTH SKIP] {y}-{m:02d} ({_mc_sig[:8]}) {frame_mb:.0f}MB "
+                f"> {_MONTH_CACHE_MAX_FRAME_MB}MB frame limit — not cached (BROAD)"
+            )
+            return intraday
+        snapshot = intraday.copy()  # pristine; caller gets the original
         with _MONTH_CACHE_LOCK:
-            if len(_MONTH_CACHE) >= _MONTH_CACHE_MAX_ENTRIES:
-                del _MONTH_CACHE[next(iter(_MONTH_CACHE))]
-            _MONTH_CACHE[_mc_key] = intraday.copy()
-        logger.info(f"  [MONTH SET] {y}-{m:02d} ({_mc_sig[:8]}) stored")
+            total_mb = sum(_MONTH_CACHE_SIZES.values())
+            while total_mb + frame_mb > _MONTH_CACHE_MAX_MB and _MONTH_CACHE:
+                old_key = next(iter(_MONTH_CACHE))
+                del _MONTH_CACHE[old_key]
+                ev = _MONTH_CACHE_SIZES.pop(old_key, 0.0)
+                total_mb -= ev
+                logger.info(f"  [MONTH EVICT] freed {ev:.0f}MB")
+            _MONTH_CACHE[_mc_key] = snapshot
+            _MONTH_CACHE_SIZES[_mc_key] = frame_mb
+            cache_mb = total_mb + frame_mb
+        logger.info(f"  [MONTH SET] {y}-{m:02d} ({_mc_sig[:8]}) {frame_mb:.0f}MB, cache ~{cache_mb:.0f}MB")
         return intraday
     except Exception as e:
         logger.error(f"  [ERROR] Filtering month {y}-{m:02d} failed: {e}")

@@ -1,4 +1,10 @@
 import logging
+import os
+
+try:
+    import psutil
+except ImportError:  # optional dep — the memory guard degrades to a no-op if absent
+    psutil = None
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -17,6 +23,24 @@ logger = logging.getLogger("backtester.backtest")
 router = APIRouter(prefix="/api", tags=["backtest"])
 
 backtest_progress = {}
+
+# Minimum host memory (GB) required to START a backtest. Safety net: blocks
+# piling a heavy run on top of one already in flight, or starting during the
+# RAM-cache reload after a restart. NOTE: this does NOT prevent a single BROAD
+# run from OOMing on its own (idle has ~19GB free → the pre-check passes, then
+# the run itself allocates the memory). The real BROAD bound is fewer stream
+# workers + not caching giant month frames. Env-tunable; 0 disables the guard.
+_BACKTEST_MIN_AVAIL_GB = float(os.getenv("BACKTEST_MIN_AVAIL_GB", "4.0"))
+
+
+def _memory_available_gb():
+    """Host memory available in GB, or None if psutil is unavailable/fails."""
+    if psutil is None:
+        return None
+    try:
+        return psutil.virtual_memory().available / 1024 ** 3
+    except Exception:
+        return None
 
 @router.get("/backtest/progress/{dataset_id}")
 def get_backtest_progress(dataset_id: str):
@@ -52,6 +76,22 @@ class WhatIfRequest(BaseModel):
 
 @router.post("/backtest")
 def run_backtest_endpoint(req: BacktestRequest):
+    # Memory guard: refuse to start when the host is already critically low on
+    # RAM (e.g. another heavy run in flight, or the RAM-cache reload after a
+    # restart). Swap=0 on prod → an OOM-kill takes the whole backend down, so a
+    # clean 503 is far better than letting a second run tip it over.
+    avail = _memory_available_gb()
+    if _BACKTEST_MIN_AVAIL_GB > 0 and avail is not None and avail < _BACKTEST_MIN_AVAIL_GB:
+        logger.warning(f"[MEMORY GUARD] rejected backtest: {avail:.1f}GB available < {_BACKTEST_MIN_AVAIL_GB}GB")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "insufficient_memory",
+                "message": f"Servidor con poca memoria disponible ({avail:.1f}GB). Intenta en unos minutos.",
+                "available_gb": round(avail, 1),
+            },
+        )
+
     current = backtest_progress.get(req.dataset_id, {})
 
     # Guard anti-doble-run: if one is already running for this dataset, return the
