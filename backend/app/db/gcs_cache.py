@@ -1010,9 +1010,10 @@ def iter_intraday_groups_streamed(
     n_months = len(ym_paths)
     total_groups = 0
 
-    logger.info(f"  [INIT] Streaming {n_months} month partition(s) via 3-worker ThreadPool")
+    _STREAM_WORKERS = int(os.getenv("INTRADAY_STREAM_WORKERS", "3"))
+    logger.info(f"  [INIT] Streaming {n_months} month partition(s) via {_STREAM_WORKERS}-worker ThreadPool")
 
-    executor = ThreadPoolExecutor(max_workers=3)
+    executor = ThreadPoolExecutor(max_workers=_STREAM_WORKERS)
     futures = []
     q_dates = pd.to_datetime(qualifying_df["date"])
 
