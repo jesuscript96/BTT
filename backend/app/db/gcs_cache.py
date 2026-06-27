@@ -689,6 +689,25 @@ def _release_tickers(kind: str, y: int, m: int, tickers: list[str]) -> None:
             _INFLIGHT_FETCH.discard((kind, y, m, t))
 
 
+def _downcast_intraday(df: pd.DataFrame) -> pd.DataFrame:
+    """Shrink intraday OHLCV in place: category for repeated string keys,
+    float32 for prices, int32 for counts. Idempotent — safe to re-apply on a
+    DataFrame that is already downcast (the prewarm→disk→RAM path runs it twice).
+    Cuts the RAM cache footprint roughly 3x (object/float64 -> category/float32)."""
+    if "ticker" in df.columns:
+        df["ticker"] = df["ticker"].astype("category")
+    if "date" in df.columns:
+        df["date"] = df["date"].astype("category")
+    for col in ["open", "high", "low", "close"]:
+        if col in df.columns:
+            df[col] = df[col].astype("float32")
+    if "volume" in df.columns:
+        df["volume"] = df["volume"].astype("int32")
+    if "transactions" in df.columns:
+        df["transactions"] = df["transactions"].astype("int32")
+    return df
+
+
 def _gcs_fetch_tickers(path: str, y: int, m: int, tickers: list[str]) -> pd.DataFrame | None:
     """ONE GCS query for the given tickers in month (y, m). Returns a DataFrame
     (ticker,date,timestamp,OHLCV) or None on query failure."""
@@ -707,6 +726,7 @@ def _gcs_fetch_tickers(path: str, y: int, m: int, tickers: list[str]) -> pd.Data
         t_sql = time.time()
         df = conn.execute(sql).fetchdf()
         logger.info(f"  [FETCH GCS]   {y}-{m:02d}: {len(df):,} rows for {len(tickers)} ticker(s) ({round(time.time()-t_sql, 2)}s)")
+        df = _downcast_intraday(df)
         return df
     except Exception as e:
         logger.error(f"  [ERROR] Failed downloading month {y}-{m:02d}: {e}")
@@ -1155,6 +1175,7 @@ def load_ram_cache() -> None:
                 if os.path.exists(fp):
                     try:
                         df = pd.read_parquet(fp)
+                        df = _downcast_intraday(df)
                         with _RAM_CACHE_LOCK:
                             _RAM_CACHE[(kind, y, m, ticker)] = df
                         loaded += 1
