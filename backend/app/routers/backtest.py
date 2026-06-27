@@ -52,8 +52,21 @@ class WhatIfRequest(BaseModel):
 
 @router.post("/backtest")
 def run_backtest_endpoint(req: BacktestRequest):
+    current = backtest_progress.get(req.dataset_id, {})
+
+    # Guard anti-doble-run: if one is already running for this dataset, return the
+    # in-progress state instead of launching a second concurrent run (two identical
+    # runs compete for disk/CPU and ~2x the wall time — observed in prod).
+    if current.get("status") == "running":
+        return {
+            "status": "already_running",
+            "dataset_id": req.dataset_id,
+            "progress": current,
+            "message": "Un backtest ya está corriendo para este dataset",
+        }
+
     # Clear cancelled state if this is a fresh run
-    if req.dataset_id in backtest_progress and backtest_progress[req.dataset_id].get("status") == "cancelled":
+    if current.get("status") == "cancelled":
         backtest_progress.pop(req.dataset_id, None)
 
     return run_backtest_orchestrator(req)
