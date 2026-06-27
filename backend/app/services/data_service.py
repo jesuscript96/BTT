@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import time
 
 import numpy as np
@@ -543,7 +544,19 @@ def _evaluate_rules_on_df(df: pd.DataFrame, rules: list) -> pd.DataFrame:
 # is edited). Everything is best-effort: any failure falls through to a normal
 # recompute, so behavior is identical when Redis is unavailable.
 _QUALIFYING_REDIS_TTL = 300  # 5 min
-_QUALIFYING_MAX_CACHE_BYTES = 20 * 1024 * 1024  # 20 MB — don't saturate Redis
+# Cache the qualifying result by its REAL serialized size (Arrow IPC + base64),
+# NOT pandas memory_usage(deep=True) which over-counts object strings ~20-40x.
+# Small results go to Redis; bigger ones fall back to a local feather file under
+# the same md5 key with a manual mtime TTL. All three knobs are env-tunable.
+_QUALIFYING_MAX_REDIS_BYTES = int(os.getenv(
+    "QUALIFYING_MAX_REDIS_BYTES", str(100 * 1024 * 1024)  # 100 MB default
+))
+_QUALIFYING_MAX_DISK_BYTES = int(os.getenv(
+    "QUALIFYING_MAX_DISK_BYTES", str(500 * 1024 * 1024)  # 500 MB default
+))
+_QUALIFYING_DISK_CACHE_DIR = os.getenv(
+    "QUALIFYING_DISK_CACHE_DIR", "/tmp/btt_qualifying_cache"
+)
 
 
 def _qualifying_cache_key(
@@ -601,23 +614,44 @@ def fetch_qualifying_data(
     """
     r = get_redis()
     cache_key = None
-    if r:
+    # Build the cache key UNCONDITIONALLY (not gated on Redis) so the disk
+    # fallback works even when Redis is unavailable. Resolving filters here is a
+    # cheap local users.duckdb read, negligible next to the GCS qualifying query.
+    try:
+        key_filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+        if key_filters:
+            cache_key = _qualifying_cache_key(
+                dataset_id, key_filters, req_start_date,
+                req_end_date, preconditions, apply_day,
+            )
+    except Exception as e:
+        logger.warning(f"[CACHE] qualifying key build failed: {e}")
+        cache_key = None
+
+    # 1. Redis hit?
+    if r and cache_key:
         try:
-            # Resolve filters here ONLY to build the cache key. The uncached
-            # path resolves them again for the actual query — a cheap local
-            # users.duckdb read, negligible next to the GCS qualifying query.
-            key_filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
-            if key_filters:
-                cache_key = _qualifying_cache_key(
-                    dataset_id, key_filters, req_start_date,
-                    req_end_date, preconditions, apply_day,
-                )
-                cached = r.get(cache_key)
-                if cached:
-                    return _deserialize_qualifying_df(cached)
+            cached = r.get(cache_key)
+            if cached:
+                logger.info("[REDIS] qualifying hit")
+                return _deserialize_qualifying_df(cached)
         except Exception as e:
             logger.warning(f"[REDIS] qualifying cache read failed: {e}")
-            cache_key = None
+
+    # 2. Disk hit? (manual TTL via file mtime; mirrors the Redis TTL)
+    if cache_key:
+        disk_path = os.path.join(_QUALIFYING_DISK_CACHE_DIR, f"{cache_key}.feather")
+        try:
+            if os.path.exists(disk_path):
+                age = time.time() - os.path.getmtime(disk_path)
+                if age < _QUALIFYING_REDIS_TTL:
+                    df_disk = pd.read_feather(disk_path)
+                    logger.info(f"[DISK] qualifying hit ({age:.0f}s old)")
+                    return df_disk
+                else:
+                    os.remove(disk_path)  # expired
+        except Exception as e:
+            logger.warning(f"[DISK] qualifying cache read failed: {e}")
 
     df = _fetch_qualifying_data_uncached(
         dataset_id,
@@ -627,22 +661,26 @@ def fetch_qualifying_data(
         apply_day=apply_day,
     )
 
-    if r and cache_key and df is not None and not df.empty:
+    # Write-through: measure the REAL serialized size, then Redis (small) or the
+    # local disk cache (bigger). base64 ASCII string is what Redis stores; the
+    # disk file holds the decoded Arrow IPC bytes (read back via pd.read_feather).
+    if cache_key and df is not None and not df.empty:
         try:
-            size = int(df.memory_usage(deep=True).sum())
-            if size <= _QUALIFYING_MAX_CACHE_BYTES:
-                r.setex(
-                    cache_key,
-                    _QUALIFYING_REDIS_TTL,
-                    _serialize_qualifying_df(df),
-                )
+            serialized = _serialize_qualifying_df(df)
+            size = len(serialized)
+            if r and size <= _QUALIFYING_MAX_REDIS_BYTES:
+                r.setex(cache_key, _QUALIFYING_REDIS_TTL, serialized)
+                logger.info(f"[REDIS] qualifying cached ({size/1024/1024:.1f}MB)")
+            elif size <= _QUALIFYING_MAX_DISK_BYTES:
+                os.makedirs(_QUALIFYING_DISK_CACHE_DIR, exist_ok=True)
+                disk_path = os.path.join(_QUALIFYING_DISK_CACHE_DIR, f"{cache_key}.feather")
+                with open(disk_path, "wb") as f:
+                    f.write(base64.b64decode(serialized))
+                logger.info(f"[DISK] qualifying cached ({size/1024/1024:.1f}MB) → {disk_path}")
             else:
-                logger.info(
-                    f"[REDIS] qualifying result {size} bytes > "
-                    f"{_QUALIFYING_MAX_CACHE_BYTES} — not cached"
-                )
+                logger.info(f"[CACHE] qualifying result {size/1024/1024:.1f}MB > disk cap — not cached")
         except Exception as e:
-            logger.warning(f"[REDIS] qualifying cache write failed: {e}")
+            logger.warning(f"[CACHE] qualifying cache write failed: {e}")
 
     return df
 
