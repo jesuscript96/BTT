@@ -785,6 +785,16 @@ RAM_CACHE_ENABLED = os.getenv("INTRADAY_RAM_CACHE_ENABLED", "false").strip().low
 _RAM_CACHE: dict = {}                 # (kind, y, m, ticker) -> pd.DataFrame
 _RAM_CACHE_LOCK = threading.Lock()
 
+# Memoizes the FULLY assembled per-month intraday frame (after read_parquet +
+# concat + merge-to-valid_pairs + downcast + sort), keyed by the exact (ticker,
+# date) pairs requested plus kind/year/month. A re-run with the same dataset
+# universe skips the 8-13s reassembly entirely. `kind` is in the key so opt/raw
+# never collide. Bounded FIFO; stores a pristine copy and hands out copies so a
+# downstream mutation can't poison the cache.
+_MONTH_CACHE: dict = {}               # (sig, kind, y, m) -> pd.DataFrame
+_MONTH_CACHE_LOCK = threading.Lock()
+_MONTH_CACHE_MAX_ENTRIES = int(os.getenv("INTRADAY_MONTH_CACHE_MAX", "100"))
+
 
 def _ram_get(kind: str, y: int, m: int, ticker: str):
     """Return the cached month DataFrame for a ticker if the RAM cache is on and
@@ -812,6 +822,22 @@ def _fetch_and_cache_month(
         return None
 
     kind = "opt" if "optimized" in path else "raw"
+
+    # MONTH CACHE: skip the whole reassembly if this exact (pairs, kind, y, m)
+    # was already built this process. valid_pairs_month already encodes the exact
+    # (ticker, date) set, so its signature fully identifies the requested slice.
+    _mc_sig = hashlib.md5(
+        valid_pairs_month[["ticker", "date"]]
+        .sort_values(["ticker", "date"])
+        .to_csv(index=False)
+        .encode()
+    ).hexdigest()
+    _mc_key = (_mc_sig, kind, y, m)
+    with _MONTH_CACHE_LOCK:
+        _mc_hit = _MONTH_CACHE.get(_mc_key)
+    if _mc_hit is not None:
+        logger.info(f"  [MONTH HIT] {y}-{m:02d} ({_mc_sig[:8]}) — skipping reassembly")
+        return _mc_hit.copy()
 
     # 1. Split requested tickers into disk HITs and MISSes.
     parts: list[pd.DataFrame] = []
@@ -961,6 +987,14 @@ def _fetch_and_cache_month(
 
         intraday = intraday.sort_values(["date", "ticker", "timestamp"])
         logger.info(f"  [DONE] Month {y}-{m:02d}: processed {len(intraday):,} rows in {round(time.time()-t_month_start, 2)}s")
+
+        # MONTH CACHE store: keep a pristine snapshot, return the original to this
+        # caller. Bounded FIFO eviction (oldest inserted first).
+        with _MONTH_CACHE_LOCK:
+            if len(_MONTH_CACHE) >= _MONTH_CACHE_MAX_ENTRIES:
+                del _MONTH_CACHE[next(iter(_MONTH_CACHE))]
+            _MONTH_CACHE[_mc_key] = intraday.copy()
+        logger.info(f"  [MONTH SET] {y}-{m:02d} ({_mc_sig[:8]}) stored")
         return intraday
     except Exception as e:
         logger.error(f"  [ERROR] Filtering month {y}-{m:02d} failed: {e}")
