@@ -274,6 +274,223 @@ export function ${C}({ days }: ${C}Props) {
   },
 };
 
+// ── Robustness module (docs/robustez) ──────────────────────────────────────
+const montecarloSpaghetti: ComponentSpec = {
+  id: "montecarlo-spaghetti",
+  module: "robustness",
+  title: "Monte Carlo spaghetti",
+  description: "Curvas de capital por percentiles (p5..p95) de un bootstrap Montecarlo.",
+  include: ["montecarlo"],
+  peerDeps: ["recharts"],
+  defaultName: "MontecarloSpaghetti",
+  render: (o) => {
+    const C = name(o, "MontecarloSpaghetti");
+    return `import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+
+export interface CurvePoint { time: number; value: number; }
+export interface MontecarloResult { percentiles: Record<string, CurvePoint[]>; }
+
+/** Spaghetti chart. Feed it the /robustness/montecarlo response. */
+export function ${C}({ data, height = 300 }: { data: MontecarloResult; height?: number }) {
+  const keys = Object.keys(data.percentiles);
+  const len = keys.length ? data.percentiles[keys[0]].length : 0;
+  const rows = Array.from({ length: len }, (_, i) => {
+    const r: Record<string, number> = { idx: i };
+    keys.forEach((k) => { r[k] = data.percentiles[k][i]?.value ?? 0; });
+    return r;
+  });
+  const colors = ["#5B8BB0", "#8A8D92", "#4A9D7F", "#D87A3D", "#C94D3F"];
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={rows}>
+        <CartesianGrid stroke="#2C2F33" strokeDasharray="3 3" vertical={false} />
+        <XAxis dataKey="idx" tick={{ fill: "#6A6D72", fontSize: 11 }} />
+        <YAxis tick={{ fill: "#6A6D72", fontSize: 11 }} />
+        <Tooltip />
+        {keys.map((k, i) => (
+          <Line key={k} type="monotone" dataKey={k} stroke={colors[i % colors.length]} dot={false} strokeWidth={k === "p50" ? 2 : 1} />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+`;
+  },
+};
+
+const drawdownHistogram: ComponentSpec = {
+  id: "drawdown-histogram",
+  module: "robustness",
+  title: "Drawdown distribution",
+  description: "Distribución del drawdown máximo (mediana, P95, P99, peor) de un Montecarlo.",
+  include: ["montecarlo"],
+  peerDeps: ["recharts"],
+  defaultName: "DrawdownHistogram",
+  render: (o) => {
+    const C = name(o, "DrawdownHistogram");
+    return `import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+
+export interface MontecarloResult {
+  median_drawdown: number; extreme_drawdown_p95: number; extreme_drawdown_p99: number; worst_drawdown: number;
+}
+
+/** Drawdown bars. Feed it the /robustness/montecarlo response. */
+export function ${C}({ data, height = 200 }: { data: MontecarloResult; height?: number }) {
+  const rows = [
+    { name: "Mediana", value: data.median_drawdown },
+    { name: "P95", value: data.extreme_drawdown_p95 },
+    { name: "P99", value: data.extreme_drawdown_p99 },
+    { name: "Peor", value: data.worst_drawdown },
+  ];
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={rows}>
+        <CartesianGrid stroke="#2C2F33" strokeDasharray="3 3" vertical={false} />
+        <XAxis dataKey="name" tick={{ fill: "#6A6D72", fontSize: 11 }} />
+        <YAxis tick={{ fill: "#6A6D72", fontSize: 11 }} />
+        <Tooltip />
+        <Bar dataKey="value" fill="#C94D3F" radius={[4, 4, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+`;
+  },
+};
+
+const locateSensitivityChart: ComponentSpec = {
+  id: "locate-sensitivity-chart",
+  module: "robustness",
+  title: "Locate sensitivity",
+  description: "Equity bajo distintos costes de locate + umbral crítico (sensibilidad estocástica).",
+  include: ["sensitivity"],
+  peerDeps: ["recharts"],
+  defaultName: "LocateSensitivityChart",
+  render: (o) => {
+    const C = name(o, "LocateSensitivityChart");
+    return `import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
+
+export interface CurvePoint { time: number; value: number; }
+export interface SensitivityResult { critical_locate_threshold: number | null; curves: Record<string, CurvePoint[]>; }
+
+/** Multi-line equity by locate cost. Feed it the /robustness/sensitivity response. */
+export function ${C}({ data, height = 320 }: { data: SensitivityResult; height?: number }) {
+  const keys = Object.keys(data.curves);
+  const len = keys.length ? data.curves[keys[0]].length : 0;
+  const rows = Array.from({ length: len }, (_, i) => {
+    const r: Record<string, number> = { idx: i };
+    keys.forEach((k) => { r[k] = data.curves[k][i]?.value ?? 0; });
+    return r;
+  });
+  const colors = ["#5B8BB0", "#8A8D92", "#4A9D7F", "#C9A23F", "#D87A3D", "#C94D3F"];
+  return (
+    <div>
+      {data.critical_locate_threshold !== null && (
+        <div style={{ color: "#D87A3D", fontSize: 13, marginBottom: 8 }}>
+          Umbral Crítico de Locates: {data.critical_locate_threshold.toFixed(2)}%
+        </div>
+      )}
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={rows}>
+          <CartesianGrid stroke="#2C2F33" strokeDasharray="3 3" vertical={false} />
+          <XAxis dataKey="idx" tick={{ fill: "#6A6D72", fontSize: 11 }} />
+          <YAxis tick={{ fill: "#6A6D72", fontSize: 11 }} />
+          <Tooltip />
+          <Legend />
+          {keys.map((k, i) => (
+            <Line key={k} type="monotone" dataKey={k} stroke={colors[i % colors.length]} dot={false} strokeWidth={1.5} />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+`;
+  },
+};
+
+const blackswanMatrix: ComponentSpec = {
+  id: "blackswan-sensitivity-matrix",
+  module: "robustness",
+  title: "Black Swan matrix",
+  description: "Matriz Tamaño de posición × Severidad coloreada por zona (verde/amarillo/rojo).",
+  include: ["black_swan"],
+  peerDeps: [],
+  defaultName: "BlackSwanMatrix",
+  render: (o) => {
+    const C = name(o, "BlackSwanMatrix");
+    return `export interface BlackSwanCell {
+  position_size_pct: number; severity_multiplier: number; ruin_probability: number; max_drawdown: number; zone: "GREEN" | "YELLOW" | "RED";
+}
+export interface BlackSwanResult { sensitivity_matrix: BlackSwanCell[]; }
+
+const ZONE: Record<string, string> = { GREEN: "#4A9D7F", YELLOW: "#D87A3D", RED: "#C94D3F" };
+
+/** Capital sensitivity heat-matrix. Feed it the /robustness/black-swan response. */
+export function ${C}({ data }: { data: BlackSwanResult }) {
+  const positions = [...new Set(data.sensitivity_matrix.map((c) => c.position_size_pct))].sort((a, b) => a - b);
+  const severities = [...new Set(data.sensitivity_matrix.map((c) => c.severity_multiplier))].sort((a, b) => a - b);
+  const at = (p: number, s: number) => data.sensitivity_matrix.find((c) => c.position_size_pct === p && c.severity_multiplier === s);
+  return (
+    <table style={{ borderCollapse: "separate", borderSpacing: 4 }}>
+      <thead><tr><th style={{ fontSize: 11, color: "#6A6D72" }}>Pos% \\ Sev×</th>{severities.map((s) => (<th key={s} style={{ fontSize: 11, color: "#6A6D72" }}>×{s}</th>))}</tr></thead>
+      <tbody>
+        {positions.map((p) => (
+          <tr key={p}>
+            <td style={{ fontSize: 11, color: "#6A6D72" }}>{p}%</td>
+            {severities.map((s) => { const c = at(p, s); return (
+              <td key={s} title={c ? "Ruina " + c.ruin_probability + "% / DD " + c.max_drawdown + "%" : ""}
+                  style={{ background: c ? ZONE[c.zone] : "transparent", color: "#0E0E0E", borderRadius: 8, padding: "12px 14px", textAlign: "center", fontWeight: 600, fontSize: 12 }}>
+                {c ? c.ruin_probability + "%" : ""}
+              </td>); })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+`;
+  },
+};
+
+const wfeHeatmap: ComponentSpec = {
+  id: "wfe-heatmap",
+  module: "robustness",
+  title: "Walk-Forward heatmap",
+  description: "Mapa de calor paramétrico (score IS por combinación) del Walk-Forward.",
+  include: ["walk_forward"],
+  peerDeps: [],
+  defaultName: "WfeHeatmap",
+  render: (o) => {
+    const C = name(o, "WfeHeatmap");
+    return `export interface HeatCell { values: number[]; is_score: number; }
+export interface WalkForwardResult { heatmap_matrix?: { parameters: string[]; data: HeatCell[] }; wfe?: number; win_rate_penalty?: number; }
+
+/** WFO parameter heatmap. Feed it the /robustness/walk-forward result. */
+export function ${C}({ data }: { data: WalkForwardResult }) {
+  const heat = data.heatmap_matrix;
+  if (!heat || heat.data.length === 0) return <div style={{ color: "#6A6D72" }}>Sin datos de heatmap.</div>;
+  const scores = heat.data.map((d) => d.is_score);
+  const min = Math.min(...scores), max = Math.max(...scores);
+  const color = (v: number) => { const t = max === min ? 0.5 : (v - min) / (max - min); return t < 0.5 ? "#C94D3F" : t < 0.75 ? "#D87A3D" : "#4A9D7F"; };
+  return (
+    <div>
+      <div style={{ color: "#8A8D92", fontSize: 12, marginBottom: 8 }}>WFE {data.wfe ?? 0}% · Win Rate Penalty {data.win_rate_penalty ?? 0}%</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        {heat.data.map((d, i) => (
+          <div key={i} title={heat.parameters.join("/") + ": " + d.values.join(", ")}
+               style={{ background: color(d.is_score), color: "#0E0E0E", borderRadius: 6, padding: "10px 12px", fontSize: 11, fontWeight: 600, textAlign: "center", minWidth: 64 }}>
+            {d.values.join("/")}<div style={{ fontWeight: 400, fontSize: 10 }}>{d.is_score}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+`;
+  },
+};
+
 export const COMPONENTS: ComponentSpec[] = [
   equityChart,
   drawdownChart,
@@ -281,6 +498,11 @@ export const COMPONENTS: ComponentSpec[] = [
   metricsGrid,
   tradesTable,
   dayResultsTable,
+  montecarloSpaghetti,
+  drawdownHistogram,
+  locateSensitivityChart,
+  blackswanMatrix,
+  wfeHeatmap,
 ];
 
 export function listComponents(module?: string): ComponentSpec[] {
@@ -295,6 +517,11 @@ export const MODULES = [
   {
     name: "backtest",
     description: "Backtests de gaps/short-selling: métricas, equity, trades, días.",
+    status: "available",
+  },
+  {
+    name: "robustness",
+    description: "Stress-test de estrategias: Montecarlo, sensibilidad de locates y Black Swan.",
     status: "available",
   },
   { name: "screener", description: "Screener de universo (v2).", status: "planned" },

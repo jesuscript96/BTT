@@ -14,8 +14,25 @@ describe("component catalog", () => {
   });
 
   it("filters by module", () => {
-    expect(listComponents("backtest").length).toBe(COMPONENTS.length);
+    // Multi-module catalog: backtest + robustness. Filtering returns a subset.
+    const backtest = listComponents("backtest");
+    const robustness = listComponents("robustness");
+    expect(backtest.length).toBe(6);
+    expect(robustness.length).toBe(5);
+    expect(backtest.length + robustness.length).toBe(COMPONENTS.length);
+    expect(backtest.every((c) => c.module === "backtest")).toBe(true);
+    expect(robustness.every((c) => c.module === "robustness")).toBe(true);
     expect(listComponents("nope").length).toBe(0);
+  });
+
+  it("exposes the robustness components", () => {
+    const ids = listComponents("robustness").map((c) => c.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "montecarlo-spaghetti", "drawdown-histogram", "locate-sensitivity-chart",
+        "blackswan-sensitivity-matrix", "wfe-heatmap",
+      ]),
+    );
   });
 
   it("each component renders non-empty TSX that references its name", () => {

@@ -9,6 +9,7 @@ import {
     KeyRound,
     MessageSquarePlus,
     Flame,
+    ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -216,6 +217,18 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                 >
                     <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Baúl</span>
+                </Link>
+
+                {/* Robustez */}
+                <Link
+                    href="/robustness"
+                    style={{
+                        ...linkBase(isCollapsed),
+                        ...linkActive("/robustness"),
+                    }}
+                >
+                    <ShieldCheck style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                    <span style={labelFade(isCollapsed)}>Robustez</span>
                 </Link>
 
                 {/* Developer API console */}

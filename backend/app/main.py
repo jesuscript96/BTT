@@ -250,6 +250,10 @@ from app.routers.entitlements import router as entitlements_router
 app.include_router(entitlements_router, prefix="/api/users", tags=["Entitlements"])
 # Feedback & feature-voting board (declares its own prefix="/api/feedback").
 app.include_router(feedback.router)
+# Robustness module (Montecarlo/WFO/Sensitivity/Black Swan over saved Baúl runs).
+# Declares its own prefix="/api/robustness". Logic in services/robustness_service.py.
+from app.routers import robustness
+app.include_router(robustness.router)
 
 @app.get("/health")
 def read_health():

@@ -19,6 +19,13 @@ export const EVENTS = {
   FEEDBACK_SUBMITTED: 'feedback_submitted',
   ROADMAP_VOTED: 'roadmap_voted',
   WHATSNEW_VIEWED: 'whatsnew_viewed',
+  // ─── Robustness module ───────────────────────────────────────
+  ROBUSTNESS_STRATEGY_SELECTED: 'robustness_strategy_selected',
+  ROBUSTNESS_MODULE_VIEWED: 'robustness_module_viewed',
+  ROBUSTNESS_MONTECARLO_RUN: 'robustness_montecarlo_run',
+  ROBUSTNESS_WFO_RUN: 'robustness_wfo_run',
+  ROBUSTNESS_SENSITIVITY_RUN: 'robustness_sensitivity_run',
+  ROBUSTNESS_BLACKSWAN_RUN: 'robustness_blackswan_run',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

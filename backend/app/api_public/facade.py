@@ -77,6 +77,62 @@ class Facade:
         except Exception as exc:  # noqa: BLE001
             raise ApiError("job_failed", "El backtest no se pudo completar.") from exc
 
+    # ── Robustness module ────────────────────────────────────────────────────
+    # Bridges to app.services.robustness_service (which only calls existing
+    # services — never the JIT engine). Lazy imports keep this file cheap and
+    # keep the IP-isolation guard green.
+
+    def _robustness_trades(self, run_id: str) -> list:
+        from app.services.robustness_service import _load_trades, RobustnessError
+
+        try:
+            trades, _ = _load_trades(run_id)
+            return trades
+        except RobustnessError as exc:
+            raise self._robustness_api_error(exc) from exc
+
+    @staticmethod
+    def _robustness_api_error(exc) -> ApiError:
+        status = 500 if exc.code == "PROCESSING_ERROR" else 422
+        return ApiError(exc.code.lower(), exc.message, status=status)
+
+    def robustness_montecarlo(self, run_id: str, **kwargs) -> dict:
+        from app.services import robustness_service
+
+        trades = self._robustness_trades(run_id)
+        try:
+            return robustness_service.run_montecarlo_bootstrap(trades, **kwargs)
+        except robustness_service.RobustnessError as exc:
+            raise self._robustness_api_error(exc) from exc
+        except Exception as exc:  # noqa: BLE001 — never leak internals
+            raise ApiError("processing_error", "El análisis no se pudo completar.") from exc
+
+    def robustness_sensitivity(self, run_id: str, **kwargs) -> dict:
+        from app.services import robustness_service
+
+        trades = self._robustness_trades(run_id)
+        try:
+            return robustness_service.run_sensitivity(trades, **kwargs)
+        except robustness_service.RobustnessError as exc:
+            raise self._robustness_api_error(exc) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("processing_error", "El análisis no se pudo completar.") from exc
+
+    def robustness_black_swan(self, run_id: str, **kwargs) -> dict:
+        from app.services import robustness_service
+
+        trades = self._robustness_trades(run_id)
+        try:
+            return robustness_service.run_black_swan(trades, **kwargs)
+        except robustness_service.RobustnessError as exc:
+            raise self._robustness_api_error(exc) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("processing_error", "El análisis no se pudo completar.") from exc
+
+    def robustness_trade_count(self, run_id: str) -> int:
+        """Number of trades behind a run (for metering)."""
+        return len(self._robustness_trades(run_id))
+
 
 # ── Injectable singleton ─────────────────────────────────────────────────────
 _facade: Optional[Facade] = None
