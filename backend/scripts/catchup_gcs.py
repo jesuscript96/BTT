@@ -63,6 +63,43 @@ def _get_with_retry(url: str, params: dict, max_retries: int = 4,
             time.sleep(wait)
 
 
+def _to_ny_naive(ms_series):
+    """Convierte timestamps Unix-ms de Massive (UTC real) a NY wall-clock naive.
+
+    Massive entrega `t` en UTC-ms (campo t de /v2/aggs, Polygon-compatible). El
+    backtester y los masks de sesión (premarket/RTH/AM) asumen NY wall-clock
+    naive, así que hay que convertir explícitamente UTC -> America/New_York
+    (DST-aware) -> naive. Sin esto, el dato reciente quedaba en UTC y los gaps se
+    calculaban contra barras equivocadas (rth_open salía de una barra premarket
+    -> gap con signo invertido).
+
+    Guard de invariante: tras convertir, ninguna barra de equity US debe caer
+    antes de las 04:00 ET (apertura premarket) ni después de las 20:00 ET. Si se
+    viola, Massive cambió su contrato de TZ -> se aborta el batch en vez de
+    escribir datos corruptos. Usa min/max de la sesión completa, robusto a
+    tickers ilíquidos cuya primera barra es 09:30 (no da falso positivo).
+    """
+    ny = (
+        pd.to_datetime(ms_series, unit="ms")
+        .dt.tz_localize("UTC")
+        .dt.tz_convert("America/New_York")
+        .dt.tz_localize(None)
+    )
+    if len(ny) > 0:
+        hours = ny.dt.hour
+        mn, mx = int(hours.min()), int(hours.max())
+        if mn < 4 or mx > 20:
+            logger.warning(
+                f"[TZ GUARD] sesión fuera de rango ET (min_hour={mn}, "
+                f"max_hour={mx}; esperado 4-20). ¿Cambió el contrato TZ de "
+                f"Massive? No se escribe este batch."
+            )
+            raise ValueError(
+                f"TZ invariant violated: session hours [{mn}..{mx}] outside [4..20] ET"
+            )
+    return ny
+
+
 def get_grouped_daily(date_str: str) -> list[dict]:
     """OHLCV diario para todo el mercado en una fecha."""
     url = f"{BASE_URL}/v2/aggs/grouped/locale/us/market/stocks/{date_str}"
@@ -94,7 +131,7 @@ def get_1m_bars(ticker: str, date_str: str) -> pd.DataFrame:
     df = df.rename(columns={"t": "timestamp", "o": "open", "h": "high",
                               "l": "low", "c": "close", "v": "volume",
                               "vw": "vwap", "n": "transactions"})
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df["timestamp"] = _to_ny_naive(df["timestamp"])
     df["ticker"] = ticker
     return df[["timestamp", "ticker", "open", "high", "low", "close",
                "volume", "transactions"]]
