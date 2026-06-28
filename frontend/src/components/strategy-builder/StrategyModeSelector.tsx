@@ -117,7 +117,7 @@ export default function StrategyModeSelector({ onSelectFree, onSelectWizard, onB
         </div>
 
         {/* Cards container */}
-        <div style={{
+        <div data-helper="mode-selector" style={{
           display: "flex",
           flexDirection: "column",
           gap: 12,

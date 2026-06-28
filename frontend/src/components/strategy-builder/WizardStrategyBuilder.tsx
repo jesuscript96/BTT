@@ -645,6 +645,19 @@ export default function WizardStrategyBuilder({
     }
   }, [initialStrategy, marketSessions, customStartTime, customEndTime]);
 
+  // Pilotaje externo del Wizard para el tour guiado (helper de Edgie): coloca el
+  // wizard en un paso concreto sincronizado con el popover. Ver
+  // components/backtester/helper/useBacktestHelper.ts (evento "wizard-set-step").
+  useEffect(() => {
+    const onSetStep = (e: Event) => {
+      const key = (e as CustomEvent<{ step: string }>).detail?.step;
+      const i = STEPS.findIndex((s) => s.key === key);
+      if (i >= 0) setCurrentStep(i);
+    };
+    window.addEventListener("wizard-set-step", onSetStep);
+    return () => window.removeEventListener("wizard-set-step", onSetStep);
+  }, []);
+
   // Universe (Dataset) States
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loadingDatasets, setLoadingDatasets] = useState(true);
@@ -6447,10 +6460,14 @@ export default function WizardStrategyBuilder({
                 </div>
               )}
             </div>
- 
-            {renderStep()}
+
+            {/* Ancla del tour guiado: data-helper="wiz-<paso>" para que Edgie
+                resalte el contenido del paso activo del wizard. */}
+            <div data-helper={`wiz-${STEPS[currentStep]?.key ?? ""}`}>
+              {renderStep()}
+            </div>
           </div>
- 
+
           {/* Navigation Footer */}
           <div style={{
             display: "flex",
