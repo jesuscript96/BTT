@@ -488,11 +488,20 @@ def main():
         logger.info(f"INTRADAY_BACKFILL_FROM set → forcing start at {last_date}")
     else:
         last_date = get_last_gcs_date()
-    today = date.today()
-    trading_days = get_trading_days(last_date, today)
+
+    # Optional end bound (one-shot backfill chunking / reprocessing). Default:
+    # today, so the nightly cron (no env) behaves exactly as before. Note
+    # get_trading_days is exclusive of last_date and inclusive of end_date.
+    backfill_to = os.getenv("INTRADAY_BACKFILL_TO")
+    if backfill_to:
+        end_date = date.fromisoformat(backfill_to)
+        logger.info(f"INTRADAY_BACKFILL_TO set → forcing end at {end_date}")
+    else:
+        end_date = date.today()
+    trading_days = get_trading_days(last_date, end_date)
 
     logger.info(f"Last GCS date: {last_date}")
-    logger.info(f"Today: {today}")
+    logger.info(f"End date: {end_date}")
     logger.info(f"Trading days to process: {len(trading_days)}")
 
     # 2. Mantener prev_closes en memoria, sembrados desde GCS
