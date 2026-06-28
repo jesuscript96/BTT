@@ -53,12 +53,32 @@ def _init_connection_views(con, provider):
     except Exception as e:
         print(f"[WARN] Failed to setup massive views on connection: {e}")
 
+def _apply_duckdb_limits(con):
+    """Cap DuckDB memory and route intermediate spills to disk.
+
+    Prod is CCX33 with Swap=0, so an unbounded scan (e.g. a BROAD backtest)
+    OOM-kills the whole process instantly. A memory_limit forces DuckDB to spill
+    to temp_directory instead of dying. Env-tunable; reuses DUCKDB_MEMORY_LIMIT
+    (already set in Coolify but previously unwired — nothing read it before).
+    """
+    memory_limit = os.getenv("DUCKDB_MEMORY_LIMIT", "4GB")
+    spill_dir = os.getenv("DUCKDB_SPILL_DIR", "/tmp/duckdb_spill")
+    try:
+        os.makedirs(spill_dir, exist_ok=True)
+        con.execute(f"SET memory_limit='{memory_limit}'")
+        con.execute(f"SET temp_directory='{spill_dir}'")
+        con.execute("SET max_temp_directory_size='20GB'")
+    except Exception as e:
+        print(f"[WARN] Could not apply DuckDB memory limits: {e}")
+
+
 def _establish_connection():
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
     try:
         if provider == "gcs":
             con = duckdb.connect()
             con.execute("SET enable_progress_bar = false;")
+            _apply_duckdb_limits(con)
             print("[INFO] Connected to in-memory database (GCS data mode)")
             access_key = os.getenv("GCS_HMAC_KEY")
             secret = os.getenv("GCS_HMAC_SECRET")
@@ -76,6 +96,7 @@ def _establish_connection():
         elif provider == "local":
             con = duckdb.connect('local_data.duckdb')
             con.execute("SET enable_progress_bar = false;")
+            _apply_duckdb_limits(con)
             _init_connection_views(con, "local")
             return con
         else:
@@ -90,6 +111,7 @@ def _establish_connection():
         con = duckdb.connect()
         try:
             con.execute("SET enable_progress_bar = false;")
+            _apply_duckdb_limits(con)
         except:
             pass
         return con

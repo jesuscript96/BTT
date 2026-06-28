@@ -64,6 +64,8 @@ Thumbs.db
 !tsconfig.json
 !composer.json
 backend/*.json
+# Golden-test fixtures must be committed (regression anchors, no secrets)
+!backend/tests/fixtures/*.json
 backend/gcs-key*.json
 .env*
 

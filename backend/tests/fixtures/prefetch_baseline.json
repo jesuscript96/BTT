@@ -1,0 +1,1977 @@
+{
+  "tickers": [
+    "MVSTW",
+    "KORU",
+    "ORGNW",
+    "EVGOW",
+    "SOXS"
+  ],
+  "lookbacks": [
+    5,
+    20,
+    60,
+    200
+  ],
+  "probes": [
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.2099
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.135
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.31
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.135
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.4088
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.135
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 1.83
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.135
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.245
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.185
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.304
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.185
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.34
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.1485
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.4088
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.135
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.16
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.131
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.16
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.125
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.2975
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.1
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.4
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.1
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.028
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.0181
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.0299
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0151
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.045928
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0151
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.34
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2024-07-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0151
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.52
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.255
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.52
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.1
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.52
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0161
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.52
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.015
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.439
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.3166
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.471
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.3166
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.471
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.1498
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.54
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0161
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.135
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.073
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.23
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.073
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.6522
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.073
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.6522
+    },
+    {
+      "ticker": "MVSTW",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.073
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 8.0795
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 7.38
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 8.7494
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 7.205
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 9.53
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 4.56
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 19.2
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 4.56
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "high",
+      "value": 9.85
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "low",
+      "value": 8.8
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "high",
+      "value": 11.31
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "low",
+      "value": 8.8
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "high",
+      "value": 11.31
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "low",
+      "value": 7.72
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "high",
+      "value": 11.48
+    },
+    {
+      "ticker": "KORU",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "low",
+      "value": 4.56
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 9.73
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 8.68
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 9.73
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 7.275
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 9.73
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 5.37
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 11.31
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 5.37
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 8.59
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 8.01
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 8.59
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 7.2771
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 9.095
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 6.8
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 9.9001
+    },
+    {
+      "ticker": "KORU",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 5.37
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 3.84
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 3.41
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 4.48
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 3.41
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 6.825
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 3.41
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 9.9001
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 3.41
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "high",
+      "value": 84.19
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "low",
+      "value": 76.42
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "high",
+      "value": 84.19
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "low",
+      "value": 61.87
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "high",
+      "value": 84.19
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "low",
+      "value": 27.16
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "high",
+      "value": 84.19
+    },
+    {
+      "ticker": "KORU",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "low",
+      "value": 3.41
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 190.9064
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 164.8
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 190.9064
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 139.28
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 201.9163
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 106.36
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 201.9163
+    },
+    {
+      "ticker": "KORU",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 27.16
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 1.03
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.6526
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 1.15
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.6526
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 1.18
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.6526
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 1.68
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.6526
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.85
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.6768
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.867
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.6768
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.885
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.52
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "high",
+      "value": 1.3
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.52
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.048
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.0202
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.0499
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0202
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.1
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0202
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.885
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0202
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.0749
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.04
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.0749
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0376
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.0899
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.03
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.1139
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0177
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.134
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.0805
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.1475
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0805
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.1478
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0512
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.2
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0182
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.0193
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.0155
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.0284
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0089
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.06
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0089
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.2
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0089
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.0109
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.0026
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.015899
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0026
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.049
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0026
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.09
+    },
+    {
+      "ticker": "ORGNW",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0026
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.755
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.53
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 1.34
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.53
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 2.1
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.53
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 4.41
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.53
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.6941
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.54
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.755
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.465
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.97
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.4554
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "high",
+      "value": 2.4999
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.4554
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.33
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.24
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.33
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.1711
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.3664
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.1499
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 1.15
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.1499
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.16
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.12
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.17
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.12
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.19
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.12
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.5151
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.12
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.7445
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.51
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 1.24
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.51
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 1.99
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.51
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 1.99
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.12
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.22
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.1878
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.29
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.17
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.38
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.142
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "high",
+      "value": 1.99
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.142
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 0.0788
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 0.0552
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 0.1388
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 0.0552
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 0.2496
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 0.0552
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 0.38
+    },
+    {
+      "ticker": "EVGOW",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 0.0552
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 44.14
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 38.84
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 44.14
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 26.8
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 89.59
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 26.8
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 89.59
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-01-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 3.46
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "high",
+      "value": 11.32
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 5,
+      "kind": "low",
+      "value": 9.54
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "high",
+      "value": 12.62
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 20,
+      "kind": "low",
+      "value": 9.48
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "high",
+      "value": 23.22
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 60,
+      "kind": "low",
+      "value": 9.48
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "high",
+      "value": 89.59
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2023-07-05",
+      "lookback": 200,
+      "kind": "low",
+      "value": 9.48
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 6.12
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 5.56
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 9.01
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 5.56
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 14.42
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 5.56
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 23.22
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 5.56
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "high",
+      "value": 23.97
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 5,
+      "kind": "low",
+      "value": 21.28
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "high",
+      "value": 28.68
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 20,
+      "kind": "low",
+      "value": 19.54
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "high",
+      "value": 46.84
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 60,
+      "kind": "low",
+      "value": 3.19
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "high",
+      "value": 46.84
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2024-07-03",
+      "lookback": 200,
+      "kind": "low",
+      "value": 2.76
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 22.745
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 19.78
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 24.71
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 19.4801
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 25.83
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 17.77
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 46.84
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 2.98
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "high",
+      "value": 8.37
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 5,
+      "kind": "low",
+      "value": 7.38
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "high",
+      "value": 11.2399
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 20,
+      "kind": "low",
+      "value": 7.38
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "high",
+      "value": 50.17
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 60,
+      "kind": "low",
+      "value": 7.38
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "high",
+      "value": 53.43
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2025-07-07",
+      "lookback": 200,
+      "kind": "low",
+      "value": 7.38
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "high",
+      "value": 3.14
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 5,
+      "kind": "low",
+      "value": 2.94
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "high",
+      "value": 3.8
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 20,
+      "kind": "low",
+      "value": 2.8
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "high",
+      "value": 5.15
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 60,
+      "kind": "low",
+      "value": 2.8
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "high",
+      "value": 53.43
+    },
+    {
+      "ticker": "SOXS",
+      "date": "2026-01-02",
+      "lookback": 200,
+      "kind": "low",
+      "value": 2.8
+    }
+  ]
+}

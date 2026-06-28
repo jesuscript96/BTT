@@ -31,6 +31,27 @@ _PATCH_END = datetime.time(8, 45)
 # so all days with identical intraday structure share one entry.
 _sessions_mask_cache: dict = {}
 
+# The ONLY indicators that consume the prefetched daily OHLC cache
+# (indicators.py). If a strategy references none of them, the prefetch is dead
+# work and is skipped entirely (F1 CAMBIO 1 — kills the cold-start scan).
+_DAILY_LOOKBACK_INDICATORS = (
+    "High of last X days", "Low of last X days",
+    "Max of last X days", "Min of last X days",
+)
+
+
+def _uses_daily_lookback_indicator(strategy_def) -> bool:
+    """True if the strategy references 'High/Low of last X days'.
+
+    Conservative by design: a false positive merely runs the (now ticker-pruned)
+    prefetch; a false negative is harmless because the indicator falls back to a
+    per-ticker query when its ticker is absent from the cache.
+    """
+    if not strategy_def:
+        return False
+    blob = str(strategy_def)
+    return any(name in blob for name in _DAILY_LOOKBACK_INDICATORS)
+
 
 
 def _release_memory():
@@ -74,7 +95,11 @@ def run_backtest(
 
     # Proactively prefetch daily historical metrics for the tickers involved in this backtest
     # to speed up 'High/Low of last X days' indicators and avoid individual database queries inside the loop.
-    if qualifying_df is not None and not qualifying_df.empty:
+    # F1 CAMBIO 1: only when the strategy actually uses that indicator — otherwise
+    # the prefetch is a pure cold-start cost (full GCS scan) that buys nothing.
+    if not _uses_daily_lookback_indicator(strategy_def):
+        logger.info("[PREFETCH SKIP] strategy does not use 'High/Low of last X days' — skipping daily_metrics prefetch")
+    elif qualifying_df is not None and not qualifying_df.empty:
         try:
             tickers = list(qualifying_df["ticker"].unique())
             from app.services.indicators import prefetch_daily_ohlc

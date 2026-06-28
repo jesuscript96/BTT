@@ -31,53 +31,61 @@ def _safe_float(val) -> float:
         return np.nan
 
 
-# Global cache for "High of last X days" and "Low of last X days" lookup
+# Per-ticker cache for "High/Low of last X days" lookups. Keyed by ticker ->
+# DataFrame indexed by date string with rth_high / rth_low columns.
 _ticker_daily_ohlc_cache = {}
-_global_daily_metrics_df = None
 
 def prefetch_daily_ohlc(tickers: list[str]):
     """
-    Prefetches all daily historical metrics for the given tickers from the database
-    and stores them in the process-global cache _ticker_daily_ohlc_cache.
-    This prevents individual slow GCS queries during the backtest loop.
+    Prefetches daily historical metrics for the given tickers and stores them in
+    the process-global per-ticker cache _ticker_daily_ohlc_cache. This avoids
+    individual slow GCS queries during the backtest loop.
+
+    F1 (perf + correctness):
+      * The query is PRUNED to the requested tickers only — no full-table scan
+        (the old `SELECT ... FROM daily_metrics ORDER BY ticker, timestamp` over
+        the whole universe was the cold-start killer, ~minutes on GCS).
+      * NO year filter: 'High/Low of last X days' looks BACKWARD from the gap
+        date, so a `WHERE YEAR >= min_year` cut would truncate the lookback
+        across the year boundary and silently change results.
+      * The previous `_global_daily_metrics_df` full-table memo was removed:
+        combined with ticker pruning it caused cross-backtest cache poisoning (a
+        later run with different tickers reused a frame holding only the first
+        run's tickers). Per-ticker accumulation is correct across runs because
+        `tickers_to_fetch` already excludes anything cached.
     """
-    global _ticker_daily_ohlc_cache, _global_daily_metrics_df
+    global _ticker_daily_ohlc_cache
     if not tickers:
         return
-        
+
     # Only fetch tickers that are not already cached
     tickers_to_fetch = [t for t in tickers if t and t not in _ticker_daily_ohlc_cache]
     if not tickers_to_fetch:
         return
-        
+
     import time
     from app.database import get_db_connection
     con = get_db_connection()
     try:
-        if _global_daily_metrics_df is None:
-            print("[INFO] Fetching entire daily_metrics table for global cache...")
-            t0 = time.time()
-            df_all = con.execute("""
-                SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low 
-                FROM daily_metrics 
-                ORDER BY ticker, "timestamp"
-            """).fetchdf()
-            # Convert date to string format
-            df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
-            _global_daily_metrics_df = df_all
-            print(f"[INFO] Fetched and prepared {len(df_all):,} daily metrics in {time.time()-t0:.2f}s")
-        else:
-            df_all = _global_daily_metrics_df
+        t0 = time.time()
+        placeholders = ",".join(["?"] * len(tickers_to_fetch))
+        df_all = con.execute(f"""
+            SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low
+            FROM daily_metrics
+            WHERE ticker IN ({placeholders})
+            ORDER BY ticker, "timestamp"
+        """, tickers_to_fetch).fetchdf()
+        # Convert date to string format
+        df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
+        print(f"[INFO] Prefetched {len(df_all):,} daily metrics for "
+              f"{len(tickers_to_fetch)} tickers in {time.time()-t0:.2f}s")
 
-        # Filter to tickers_to_fetch in Pandas
-        df_filtered = df_all[df_all["ticker"].isin(tickers_to_fetch)]
-        
         # Group by ticker and store in cache
-        for ticker_symbol, group in df_filtered.groupby("ticker"):
+        for ticker_symbol, group in df_all.groupby("ticker"):
             group_indexed = group.set_index("date")
             group_indexed = group_indexed[~group_indexed.index.duplicated(keep='first')]
             _ticker_daily_ohlc_cache[ticker_symbol] = group_indexed
-            
+
         # Ensure that any tickers that returned no data are cached as empty DataFrames
         # to avoid repeated queries
         for t in tickers_to_fetch:

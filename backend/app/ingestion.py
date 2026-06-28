@@ -11,6 +11,46 @@ load_dotenv()
 API_KEY = os.getenv("MASSIVE_API_KEY")
 BASE_URL = os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")
 
+
+def _to_ny_naive(ms_series):
+    """Convierte timestamps Unix-ms de Massive (UTC real) a NY wall-clock naive.
+
+    Massive entrega `t` en UTC-ms (campo t de /v2/aggs, Polygon-compatible). El
+    backtester y los masks de sesión (premarket/RTH/AM) asumen NY wall-clock
+    naive, así que hay que convertir explícitamente UTC -> America/New_York
+    (DST-aware) -> naive. Sin esto, el dato reciente quedaba en UTC y los gaps se
+    calculaban contra barras equivocadas (rth_open salía de una barra premarket
+    -> gap con signo invertido).
+
+    Guard de invariante: tras convertir, ninguna barra de equity US debe caer
+    antes de las 04:00 ET (apertura premarket) ni después de las 20:00 ET. Si se
+    viola, Massive cambió su contrato de TZ -> se aborta el batch en vez de
+    escribir datos corruptos. Usa min/max de la sesión completa, robusto a
+    tickers ilíquidos cuya primera barra es 09:30 (no da falso positivo).
+    """
+    import logging
+    import pandas as pd
+    ny = (
+        pd.to_datetime(ms_series, unit="ms")
+        .dt.tz_localize("UTC")
+        .dt.tz_convert("America/New_York")
+        .dt.tz_localize(None)
+    )
+    if len(ny) > 0:
+        hours = ny.dt.hour
+        mn, mx = int(hours.min()), int(hours.max())
+        if mn < 4 or mx > 20:
+            logging.getLogger(__name__).warning(
+                f"[TZ GUARD] sesión fuera de rango ET (min_hour={mn}, "
+                f"max_hour={mx}; esperado 4-20). ¿Cambió el contrato TZ de "
+                f"Massive? No se escribe este batch."
+            )
+            raise ValueError(
+                f"TZ invariant violated: session hours [{mn}..{mx}] outside [4..20] ET"
+            )
+    return ny
+
+
 class MassiveClient:
     def __init__(self):
         self.session = requests.Session()
@@ -255,7 +295,7 @@ def ingest_ticker_history_range(client, ticker, from_date, to_date, con=None, sk
                 'h': 'high', 'l': 'low', 't': 'timestamp', 'vw': 'vwap'
             })
             
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df['timestamp'] = _to_ny_naive(df['timestamp'])
             df['ticker'] = ticker
             
             target_columns = [
