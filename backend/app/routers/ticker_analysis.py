@@ -1177,22 +1177,42 @@ def get_ticker_balance_sheet(ticker: str):
         charts = {
             "cash_history": [],
             "debt_history": [],
-            "working_capital_history": []
+            "working_capital_history": [],
+            "equity_history": [],
+            "shares_outstanding_history": []
         }
         working_capital = None
 
         if not bs.empty:
             bs_T = bs.T.sort_index()
-            
+
             def get_series(key_pattern):
                 col = next((c for c in bs_T.columns if key_pattern in str(c).lower()), None)
                 if col:
                     return [{"date": str(d.date()), "value": safe_float(v)} for d, v in bs_T[col].items()]
                 return []
 
+            def get_series_first(*key_patterns):
+                """Devuelve la serie de la primera fila cuyo nombre contenga alguno
+                de los patrones. yfinance varía los nombres entre tickers
+                (ej: 'Ordinary Shares Number' vs 'Share Issued')."""
+                for kp in key_patterns:
+                    series = get_series(kp)
+                    if series:
+                        return series
+                return []
+
             charts["cash_history"] = get_series("cash")
             charts["debt_history"] = get_series("debt")
-            
+            # Patrimonio neto: priorizar 'Stockholders Equity' sobre métricas más amplias.
+            charts["equity_history"] = get_series_first(
+                "stockholders equity", "total equity", "common stock equity"
+            )
+            # Acciones en circulación: clave para detectar dilución histórica.
+            charts["shares_outstanding_history"] = get_series_first(
+                "ordinary shares number", "share issued", "common stock shares outstanding"
+            )
+
             if "Total Current Assets" in bs_T.columns and "Total Current Liabilities" in bs_T.columns:
                 wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
                 charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]

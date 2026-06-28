@@ -60,6 +60,10 @@ export function ChatBot() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Último ticker para el que ya se notificó "cargado". Evita el spam de
+    // mensajes durante la carga progresiva (data, filings y news llegan por
+    // separado y disparan el evento varias veces).
+    const lastNotifiedTickerRef = useRef<string | null>(null);
 
     // Initial conversation message
     const initWelcomeMessage = (tickerName: string | null) => {
@@ -92,16 +96,25 @@ export function ChatBot() {
         const handleTickerLoaded = (e: Event) => {
             const customEvent = e as CustomEvent;
             const payload = customEvent.detail;
-            if (payload && payload.ticker) {
-                setActiveTicker(payload.ticker);
-                setTickerData(payload);
-                
-                // Add a system notification in the chat
+            if (!payload || !payload.ticker) return;
+
+            // Siempre actualizamos el snapshot para que Edgie lea lo último.
+            setActiveTicker(payload.ticker);
+            setTickerData(payload);
+
+            // Solo notificamos UNA vez por ticker, y únicamente cuando la carga
+            // está completa (data, filings y news resueltos), no en cada evento
+            // progresivo intermedio.
+            const fullyLoaded =
+                payload.data != null && payload.filings != null && payload.finvizNews != null;
+            const isNewTicker = lastNotifiedTickerRef.current !== payload.ticker;
+            if (fullyLoaded && isNewTicker) {
+                lastNotifiedTickerRef.current = payload.ticker;
                 setMessages(prev => [
                     ...prev,
-                    { 
-                        role: 'system', 
-                        content: `Edgie ha cargado exitosamente la base de conocimiento de **${payload.ticker}**.` 
+                    {
+                        role: 'system',
+                        content: `Edgie ha cargado exitosamente la base de conocimiento de **${payload.ticker}**.`
                     }
                 ]);
             }

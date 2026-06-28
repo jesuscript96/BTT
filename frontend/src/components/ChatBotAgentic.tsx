@@ -23,6 +23,12 @@ import {
     NavigateSchema,
 } from '@/lib/assistant';
 import type { ChatApiMessage, ToolCall, ConfirmLevel } from '@/lib/assistant';
+import {
+    getTickerAnalysis,
+    getTickerSecFilings,
+    getTickerBalanceSheet,
+    getTickerFinvizNews,
+} from '@/lib/api';
 
 interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
@@ -41,6 +47,20 @@ interface PendingConfirmation {
 
 const MAX_TOOL_ITERATIONS = 15;
 const MAX_CONTEXT_CHARS = 6000;
+
+// Esquema de la herramienta global de análisis de ticker. Permite a Edgie
+// analizar cualquier ticker desde cualquier página (Backtester, Screener…) sin
+// que el usuario abra Ticker Analysis. Ver docs/dilution-runner-assessment/03.
+const TICKER_GET_ANALYSIS_SCHEMA = {
+    type: 'object' as const,
+    properties: {
+        ticker: {
+            type: 'string' as const,
+            description: 'Símbolo de la acción (ej: AAPL, MULN)',
+        },
+    },
+    required: ['ticker'],
+};
 
 // Utility to format large financial numbers into readable strings
 const formatValue = (num: number | null | undefined, isCurrency = true) => {
@@ -108,6 +128,9 @@ export function ChatBot() {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Último ticker notificado como "cargado" (ver ChatBot.tsx): evita el spam
+    // de mensajes durante la carga progresiva del ticker.
+    const lastNotifiedTickerRef = useRef<string | null>(null);
 
     // Conversation engine state for the paused tool-call loop (confirmations)
     const turnRef = useRef<{
@@ -127,6 +150,56 @@ export function ChatBot() {
         handler: ({ to }) => {
             router.push(String(to));
             return { ok: true, result: { navigated: to, hint: 'Espera a que las acciones de la página se registren antes de usarlas.' } };
+        },
+    });
+
+    // ── Global action: análisis de ticker bajo demanda ───────────────
+    // Disponible en cualquier página: recopila Profile, Balance Sheet, Filings y
+    // News del ticker en paralelo y devuelve el objeto estructurado para que
+    // Edgie elabore el reporte de dilución/runner sin que el usuario navegue a
+    // Ticker Analysis. Ver docs/dilution-runner-assessment/.
+    useAssistantAction({
+        name: 'ticker.get_analysis',
+        description:
+            'Obtiene la información completa de análisis de un ticker (perfil, métricas de mercado, balance sheet, SEC filings recientes y noticias) para evaluar dilución/runner o responder dudas. Úsala cuando el usuario pida analizar un ticker desde cualquier página.',
+        parameters: TICKER_GET_ANALYSIS_SCHEMA,
+        confirm: 'auto',
+        handler: async ({ ticker }) => {
+            const sym = String(ticker || '').trim().toUpperCase();
+            if (!sym) return { ok: false, error: 'Falta el símbolo del ticker.' };
+            try {
+                const [analysis, filings, balance, news] = await Promise.all([
+                    getTickerAnalysis(sym).catch(() => null),
+                    getTickerSecFilings(sym).catch(() => null),
+                    getTickerBalanceSheet(sym).catch(() => null),
+                    getTickerFinvizNews(sym).catch(() => null),
+                ]);
+                if (!analysis && !filings && !balance && !news) {
+                    return { ok: false, error: `No se pudieron recuperar datos para ${sym}.` };
+                }
+                const a = (analysis ?? {}) as any;
+                const b = (balance ?? {}) as any;
+                const result = {
+                    ticker: sym,
+                    profile: a.profile ?? null,
+                    market: a.market ?? null,
+                    financials: {
+                        ...(a.financials ?? {}),
+                        // working_capital llega por el endpoint de balance-sheet
+                        working_capital: b.working_capital ?? a.financials?.working_capital ?? null,
+                    },
+                    gap_stats: a.gap_stats ?? null,
+                    balance_charts: b.charts ?? null,
+                    filings: filings ?? null,
+                    news: news ?? null,
+                };
+                // Publicar el snapshot para que el resto del chat lo tenga en contexto.
+                setActiveTicker(sym);
+                setTickerData({ ticker: sym, data: { ...a, charts: b.charts }, filings, finvizNews: news });
+                return { ok: true, result };
+            } catch (e) {
+                return { ok: false, error: `Error recuperando análisis de ${sym}: ${String(e)}` };
+            }
         },
     });
 
@@ -167,11 +240,19 @@ export function ChatBot() {
         const handleTickerLoaded = (e: Event) => {
             const customEvent = e as CustomEvent;
             const payload = customEvent.detail;
-            if (payload && payload.ticker) {
-                setActiveTicker(payload.ticker);
-                setTickerData(payload);
+            if (!payload || !payload.ticker) return;
 
-                // Add a system notification in the chat
+            // Siempre actualizamos el snapshot para que Edgie lea lo último.
+            setActiveTicker(payload.ticker);
+            setTickerData(payload);
+
+            // Notificar UNA sola vez por ticker y solo cuando la carga esté
+            // completa (data, filings y news), no en cada evento progresivo.
+            const fullyLoaded =
+                payload.data != null && payload.filings != null && payload.finvizNews != null;
+            const isNewTicker = lastNotifiedTickerRef.current !== payload.ticker;
+            if (fullyLoaded && isNewTicker) {
+                lastNotifiedTickerRef.current = payload.ticker;
                 setMessages(prev => [
                     ...prev,
                     {
