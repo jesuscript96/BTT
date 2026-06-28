@@ -59,6 +59,8 @@ interface TickerAnalysisData {
         cash_history?: FinancialHistoryPoint[];
         debt_history?: FinancialHistoryPoint[];
         working_capital_history?: FinancialHistoryPoint[];
+        equity_history?: FinancialHistoryPoint[];
+        shares_outstanding_history?: FinancialHistoryPoint[];
     };
     daily_history?: DailyDataPoint[];
     know_the_float?: FloatData;
@@ -1790,6 +1792,228 @@ const BalanceSheetTrendsCard = ({ data }: { data: TickerAnalysisData | null }) =
     );
 };
 
+// Tabla compacta del histórico trimestral de balance (pestaña "Balance").
+// Muestra la evolución de Cash, Debt, Working Capital, Equity y Shares; resalta
+// en rojo los trimestres con un incremento de Shares > 15% (dilución severa).
+const BalanceSheetTable = ({ charts }: { charts?: TickerAnalysisData['charts'] }) => {
+    const fmtMoney = (v: number | null | undefined): string => {
+        if (v === null || v === undefined || Number.isNaN(v)) return '—';
+        const neg = v < 0;
+        const a = Math.abs(v);
+        let s: string;
+        if (a >= 1e9) s = `${(a / 1e9).toFixed(1)}B`;
+        else if (a >= 1e6) s = `${(a / 1e6).toFixed(1)}M`;
+        else if (a >= 1e3) s = `${(a / 1e3).toFixed(1)}K`;
+        else s = a.toFixed(0);
+        return `${neg ? '-' : ''}$${s}`;
+    };
+    const fmtShares = (v: number | null | undefined): string => {
+        if (v === null || v === undefined || Number.isNaN(v)) return '—';
+        const a = Math.abs(v);
+        if (a >= 1e9) return `${(a / 1e9).toFixed(1)}B`;
+        if (a >= 1e6) return `${(a / 1e6).toFixed(1)}M`;
+        if (a >= 1e3) return `${(a / 1e3).toFixed(1)}K`;
+        return a.toFixed(0);
+    };
+
+    const toMap = (arr?: FinancialHistoryPoint[]) => {
+        const m = new Map<string, number | null>();
+        (arr ?? []).forEach(p => { if (p && p.date) m.set(p.date, p.value ?? null); });
+        return m;
+    };
+    const cash = toMap(charts?.cash_history);
+    const debt = toMap(charts?.debt_history);
+    const wc = toMap(charts?.working_capital_history);
+    const equity = toMap(charts?.equity_history);
+    const shares = toMap(charts?.shares_outstanding_history);
+
+    const dates = Array.from(new Set([
+        ...cash.keys(), ...debt.keys(), ...wc.keys(), ...equity.keys(), ...shares.keys(),
+    ])).sort((a, b) => (a < b ? 1 : -1)); // descendente: más reciente primero
+
+    if (dates.length === 0) {
+        return (
+            <div style={{ textAlign: 'center', color: 'var(--color-ec-text-muted)', fontSize: 11, fontStyle: 'italic', padding: '16px 0' }}>
+                Sin datos de balance trimestral disponibles para este ticker.
+            </div>
+        );
+    }
+
+    const thStyle: React.CSSProperties = {
+        fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)',
+        textTransform: 'uppercase', letterSpacing: '0.5px',
+        padding: '6px 8px', borderBottom: '0.5px solid var(--color-ec-border)',
+    };
+    const tdStyle: React.CSSProperties = {
+        fontSize: 12, color: 'var(--color-ec-text-primary)',
+        padding: '6px 8px', borderBottom: '0.5px solid color-mix(in srgb, var(--color-ec-border) 50%, transparent)',
+        fontFamily: 'ui-monospace, monospace', textAlign: 'right',
+    };
+
+    return (
+        <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--color-ec-bg-base)' }}>
+                <thead>
+                    <tr>
+                        <th style={{ ...thStyle, textAlign: 'left' }}>Periodo</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Cash</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Debt</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Working Cap.</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Equity</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Shares</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {dates.map((d, idx) => {
+                        const curShares = shares.get(d);
+                        // Comparar con el trimestre anterior (la fila siguiente, más antigua).
+                        const prevShares = idx < dates.length - 1 ? shares.get(dates[idx + 1]) : null;
+                        const severeDilution =
+                            typeof curShares === 'number' && typeof prevShares === 'number' &&
+                            prevShares > 0 && (curShares - prevShares) / prevShares > 0.15;
+                        return (
+                            <tr key={d}>
+                                <td style={{ ...tdStyle, textAlign: 'left', fontFamily: "'General Sans', sans-serif", color: 'var(--color-ec-text-secondary)' }}>{d}</td>
+                                <td style={tdStyle}>{fmtMoney(cash.get(d))}</td>
+                                <td style={tdStyle}>{fmtMoney(debt.get(d))}</td>
+                                <td style={tdStyle}>{fmtMoney(wc.get(d))}</td>
+                                <td style={tdStyle}>{fmtMoney(equity.get(d))}</td>
+                                <td style={{
+                                    ...tdStyle,
+                                    color: severeDilution ? 'var(--color-ec-loss)' : 'var(--color-ec-text-primary)',
+                                    fontWeight: severeDilution ? 700 : 400,
+                                }} title={severeDilution ? 'Incremento de acciones > 15% vs trimestre anterior (dilución severa)' : undefined}>
+                                    {fmtShares(curShares)}
+                                </td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+// Tabla de Estructura Accionarial (Ownership) del reporte de Edgie.
+// Ordena personas físicas primero (insiders) y luego instituciones, cada grupo
+// descendente por % de participación. Lee aiMetrics.ownership_list.
+interface OwnershipEntry {
+    name?: string;
+    type?: 'PERSON' | 'INSTITUTION' | string;
+    percentage?: number | null;
+    details?: string;
+    source?: string;
+    date?: string;
+}
+const OwnershipTable = ({ list }: { list?: OwnershipEntry[] }) => {
+    if (!Array.isArray(list) || list.length === 0) return null;
+
+    const byPct = (a: OwnershipEntry, b: OwnershipEntry) => (b.percentage ?? -1) - (a.percentage ?? -1);
+    const persons = list.filter(e => e.type === 'PERSON').sort(byPct);
+    const institutions = list.filter(e => e.type !== 'PERSON').sort(byPct);
+    const ordered = [...persons, ...institutions];
+
+    const thStyle: React.CSSProperties = {
+        fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)',
+        textTransform: 'uppercase', letterSpacing: '0.5px',
+        padding: '6px 8px', borderBottom: '0.5px solid var(--color-ec-border)', textAlign: 'left',
+    };
+    const tdStyle: React.CSSProperties = {
+        fontSize: 12, color: 'var(--color-ec-text-primary)', padding: '6px 8px',
+        borderBottom: '0.5px solid color-mix(in srgb, var(--color-ec-border) 50%, transparent)',
+    };
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+                Estructura Accionarial y Transacciones (Ownership)
+            </span>
+            <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--color-ec-bg-base)' }}>
+                    <thead>
+                        <tr>
+                            <th style={thStyle}>Accionista</th>
+                            <th style={thStyle}>Tipo</th>
+                            <th style={{ ...thStyle, textAlign: 'right' }}>%</th>
+                            <th style={thStyle}>Acción / Detalle</th>
+                            <th style={thStyle}>Fuente</th>
+                            <th style={thStyle}>Fecha</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {ordered.map((e, i) => {
+                            const isPerson = e.type === 'PERSON';
+                            return (
+                                <tr key={`${e.name}-${i}`}>
+                                    <td style={{ ...tdStyle, fontWeight: 600, color: 'var(--color-ec-text-high)' }}>{e.name ?? '—'}</td>
+                                    <td style={tdStyle}>
+                                        <span style={{
+                                            fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 3,
+                                            backgroundColor: isPerson ? 'rgba(216, 122, 61, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                                            color: isPerson ? 'var(--color-ec-copper)' : 'var(--color-ec-text-primary)',
+                                        }}>
+                                            {isPerson ? 'PERSONA' : 'INSTITUCIÓN'}
+                                        </span>
+                                    </td>
+                                    <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'ui-monospace, monospace' }}>
+                                        {typeof e.percentage === 'number' ? `${e.percentage.toFixed(1)}%` : '—'}
+                                    </td>
+                                    <td style={{ ...tdStyle, color: 'var(--color-ec-text-secondary)' }}>{e.details ?? '—'}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11, color: 'var(--color-ec-text-muted)' }}>{e.source ?? '—'}</td>
+                                    <td style={{ ...tdStyle, fontSize: 11, color: 'var(--color-ec-text-muted)', fontFamily: 'ui-monospace, monospace' }}>{e.date ?? '—'}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
+// Sección de Warrants (techos de peligro y zonas de volatilidad) del reporte.
+// Lee aiMetrics.warrants_triggers.
+interface WarrantTrigger {
+    type?: 'EXERCISE' | 'REDEMPTION' | string;
+    price?: number | null;
+    shares?: number | null;
+    notes?: string;
+}
+const WarrantsSection = ({ triggers }: { triggers?: WarrantTrigger[] }) => {
+    if (!Array.isArray(triggers) || triggers.length === 0) return null;
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px' }}>
+                Warrants — Niveles de Precio Críticos
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {triggers.map((w, i) => {
+                    const isRedemption = w.type === 'REDEMPTION';
+                    return (
+                        <div key={i} style={{
+                            display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                            borderRadius: 4, border: '1px solid var(--color-ec-border)',
+                            backgroundColor: isRedemption ? 'rgba(201, 77, 63, 0.06)' : 'rgba(216, 122, 61, 0.06)',
+                        }}>
+                            <span style={{
+                                fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3,
+                                color: isRedemption ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)',
+                                border: `0.5px solid ${isRedemption ? 'var(--color-ec-loss)' : 'var(--color-ec-copper)'}`,
+                            }}>
+                                {isRedemption ? 'REDEMPTION' : 'EXERCISE'}
+                            </span>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: 'ui-monospace, monospace' }}>
+                                {typeof w.price === 'number' ? `$${w.price.toFixed(2)}` : '—'}
+                            </span>
+                            <span style={{ fontSize: 11, color: 'var(--color-ec-text-secondary)', lineHeight: 1.3 }}>{w.notes ?? ''}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 export default function TickerAnalysis({ ticker: initialTicker, availableTickers }: TickerAnalysisProps) {
     const [selectedTicker, setSelectedTicker] = useState<string>(initialTicker || '');
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
@@ -1803,6 +2027,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [aiLoading, setAiLoading] = useState<boolean>(false);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiMetrics, setAiMetrics] = useState<any | null>(null);
+    const [activeSecTab, setActiveSecTab] = useState<'filings' | 'balance'>('filings');
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
     // ── Edgie assistant integration (AssistantBus) ───────────────
     useAssistantAction({
@@ -2088,10 +2313,10 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             const systemPrompt =
                 "You are Edgie AI, an expert quantitative data processor integrated into a professional short-selling trading terminal.\n" +
                 "Your task is to analyze the provided financial metrics, SEC filings history (especially S-1, S-3 shelf registrations, and 424B offerings), and SEC EDGAR XBRL facts for the ticker.\n" +
-                "You must construct a highly dense, structured, raw data report focused on Dilution Risk, Share Structure, Cash Runway, and Squeeze probability.\n\n" +
+                "You must construct a highly dense, structured, raw data report focused on Dilution Risk, Share Structure, Cash Runway, Ownership and Squeeze probability.\n\n" +
                 "CRITICAL OUTPUT FORMATTING:\n" +
                 "You MUST prepend your response with a structured JSON block enclosed in <edgie_metrics>...</edgie_metrics> XML tags.\n" +
-                "The JSON must have the following keys and type values:\n" +
+                "The JSON must be VALID (no comments, no trailing commas) with the following keys and type values:\n" +
                 "{\n" +
                 "  \"dilution_rating\": \"LOW\" | \"MEDIUM\" | \"HIGH\" | \"CRITICAL\",\n" +
                 "  \"dilution_score\": number (0 to 100 representing the probability of immediate dilution),\n" +
@@ -2099,25 +2324,36 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 "  \"float_percentage\": number | null (float shares as % of outstanding shares, from 0 to 100),\n" +
                 "  \"runner_assessment\": \"FADER\" | \"SQUEEZE\" | \"NEUTRAL\",\n" +
                 "  \"shelf_capacity_usd\": number | null (remaining shelf capacity in USD, or null),\n" +
-                "  \"pending_s1\": boolean (true if there is a pending S-1 registration, false otherwise)\n" +
+                "  \"pending_s1\": boolean (true if there is a pending S-1 registration, false otherwise),\n" +
+                "  \"active_atm_usd\": number | null (size in USD of an ATM offering ONLY if declared Effective/Active; null if none or Pending),\n" +
+                "  \"hired_banks\": string[] (normalized names of placement agents / underwriters found in S-1, F-1, S-3, F-3, 424B, or ATM 8-K/6-K. Empty array if none),\n" +
+                "  \"ownership_list\": [ { \"name\": string, \"type\": \"PERSON\" | \"INSTITUTION\", \"percentage\": number | null, \"details\": string, \"source\": string, \"date\": string } ],\n" +
+                "  \"warrants_triggers\": [ { \"type\": \"EXERCISE\" | \"REDEMPTION\", \"price\": number, \"shares\": number | null, \"notes\": string } ],\n" +
+                "  \"nasdaq_compliance\": { \"below_one_dollar_days\": number | null, \"below_ten_cents_days\": number | null, \"equity_usd\": number | null, \"market_cap_usd\": number | null, \"compliance_risk\": \"OK\" | \"WARNING\" | \"DEFICIENT\" | \"DELISTING\" }\n" +
                 "}\n\n" +
                 "After the </edgie_metrics> tag, output your detailed qualitative analysis in clean Spanish Markdown, using headers, bullet lists, and tables.\n\n" +
+                "ADVANCED DILUTION RULES (apply rigorously):\n" +
+                "A. PLACEMENT AGENTS: In the Underwriting / Plan of Distribution sections of S-1/F-1/S-3/F-3 and 424B prospectuses, identify the hired bank (e.g. H.C. Wainwright, Maxim Group, Aegis Capital, Roth Capital). Return normalized names in hired_banks. The presence of these toxic placement agents raises the dilution rating. Honor any 'CONTEXTO HISTÓRICO DE BANCOS DILUSORES' provided in the conversation.\n" +
+                "B. ACTIVE ATM: Detect At-The-Market offerings in 8-K/6-K. Mark as high danger ONLY if Effective/Active (set active_atm_usd). If Pending SEC approval, treat as informational (active_atm_usd = null) and say it is pending.\n" +
+                "C. TOXIC CONVERTIBLES: If 8-K, Schedule 13G or Exhibits 4.1/10.1 contain variable-price discounts over future VWAP (e.g. 'convertible at a 20% discount of the lowest VWAP of the last 5 trading days'), flag MAXIMUM alert: funds are mathematically incentivized to crush the price in premarket. Search terms: 'Warrant Agency Agreement', 'Convertible Note', 'Securities Purchase Agreement'.\n" +
+                "D. WARRANT PRICE TRIGGERS: Add to warrants_triggers an EXERCISE entry at the warrant exercise price (the 'danger ceiling' funds push toward to exercise and dump) and a REDEMPTION entry for call/redemption clauses (e.g. 'redemption if closing price exceeds $7.50 for 10 consecutive days').\n" +
+                "E. STRUCTURAL/REGULATORY FILTERS: (1) Jurisdiction: Cayman/BVI incorporation operating in China/Israel/Asia => high governance risk. (2) Public float < 5% of shares outstanding => 'Extremadamente manipulable'. (3) BABY SHELF RULE (S-3/F-3 Instruction I.B.6): if public float < $75M, the company can only sell via shelf/ATM up to 33.3% of public float per rolling 12 months (public float based on the highest closing price of the last 60 days). Alert if the company seems to push the price up artificially just to cross the $75M threshold and unlock massive dilution.\n" +
+                "F. NASDAQ COMPLIANCE: $1.00 rule (deficiency if closes < $1.00 for 30 consecutive business days; 180-day grace; cured by >$1.00 for 10+ days). Sudden-death $0.10 (below $0.10 for 10 consecutive business days => immediate suspension/delisting). MVLS >= $35M, Stockholders' Equity >= $2.5M, MVPHS > $1M, >= 500,000 public float shares. Fill nasdaq_compliance accordingly.\n\n" +
                 "CRITICAL CONTENT RULES:\n" +
                 "1. NO CHATTY INTRODUCTIONS OR GREETINGS. Do NOT say 'Hola', 'Aquí tienes...', 'Espero que te sirva...', etc. Start immediately with the <edgie_metrics> tag.\n" +
-                "2. NO FRIENDLY CONCLUSIONS OR SUMMARY PARAGRAPHS. Keep the style technical, objective, and data-focused.\n" +
+                "2. NO CANDLESTICK / PRICE-ACTION PREDICTIONS. Do NOT interpret candle patterns (e.g. inverted hammer, gap-up with long wick) as dilution signals. ONLY use structural price levels derived from warrants (exercise/redemption prices), regulatory thresholds (Nasdaq $1.00 cure price, $0.10, $75M baby-shelf) and support/resistance tied to those levels.\n" +
                 "3. ALWAYS format key data comparisons into Markdown Tables. Avoid giant paragraphs of text. Use bulleted lists for key bullet statistics.\n" +
-                "4. Assess and list:\n" +
-                "   - Active/Pending Offerings: List any registrations (S-1, S-3) or recent 424B filings with dates and details.\n" +
-                "   - Cash Burn & Runway: Estimate how many months of cash runway the company has based on Cash vs Cash Burn Rate.\n" +
-                "   - Dilution Probability Rating: Assess as LOW, MEDIUM, HIGH, or CRITICAL based on necessity (low cash/high debt) and capacity (active shelf registration).\n" +
-                "   - Runner Squeezability: Classify if a price spike makes it an 'All-Day Fader' (high dilution probability) or a 'Mega Squeeze Candidate' (low float, no active dilution mechanisms).\n" +
-                "5. Always respond in Spanish (the markdown part), matching the language of the application. Make sure the numbers are exact as given in the facts.";
+                "4. STRUCTURE THE MARKDOWN: Start with a section titled 'Resumen' (max 2 paragraphs) with practical conclusions and the critical price levels for the trader. Then a section titled 'Desarrollo de las conclusiones' with the details (offerings, cash runway, dilution rating rationale, ownership, warrants, Nasdaq compliance, runner squeezability).\n" +
+                "5. Always respond in Spanish (the markdown part), matching the language of the application. Make sure the numbers are exact as given in the facts. If a datum is unknown, use null in the JSON and '—' in the markdown rather than inventing it.";
 
-            // Via the backend AI Gateway (/api/assistant/chat) — provider key stays server-side.
-            const response = await fetch(`${API_BASE}/assistant/chat`, {
+            // Via the backend AI Gateway (/api/assistant/dilution-report) — provider key
+            // stays server-side. Este endpoint inyecta el histórico de bancos dilusores
+            // antes de llamar al LLM y registra los nuevos bancos detectados tras la respuesta.
+            const response = await fetch(`${API_BASE}/assistant/dilution-report`, {
                 method: 'POST',
                 headers: await getAuthHeaders(),
                 body: JSON.stringify({
+                    ticker: tickerName.toUpperCase(),
                     messages: [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: userPrompt },
@@ -2904,30 +3140,68 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         </div>
                     </div>
 
-                    {/* SEC Filings Section */}
+                    {/* SEC Filings Section con pestañas Filings / Balance */}
                     <div style={{ paddingTop: 8 }}>
-                        <h3 style={{
-                            fontFamily: "'General Sans', sans-serif",
-                            fontSize: 8,
-                            fontWeight: 700,
-                            color: 'var(--color-ec-copper)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '1.5px',
-                            marginBottom: 16
-                        }}>Latest SEC Filings</h3>
-                        
                         <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                            gap: 24
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: 8,
+                            marginBottom: 16
                         }}>
-                            <FilingList title="Financials (10-K/Q)" items={filings?.financials} />
-                            <FilingList title="News & Events (8-K)" items={filings?.news} />
-                            <FilingList title="Offerings (424B/S-1)" items={filings?.prospectuses} />
-                            <FilingList title="Ownership (13G/D, 3/4)" items={filings?.ownership} />
-                            <FilingList title="Proxies (14A)" items={filings?.proxies} />
-                            <FilingList title="Other Forms" items={filings?.others} />
+                            <h3 style={{
+                                fontFamily: "'General Sans', sans-serif",
+                                fontSize: 8,
+                                fontWeight: 700,
+                                color: 'var(--color-ec-copper)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1.5px',
+                                margin: 0
+                            }}>Latest SEC Filings</h3>
+
+                            {/* Tab Bar */}
+                            <div style={{ display: 'flex', gap: 4 }}>
+                                {(['filings', 'balance'] as const).map(tab => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setActiveSecTab(tab)}
+                                        style={{
+                                            backgroundColor: activeSecTab === tab ? 'var(--color-ec-bg-sidebar)' : 'transparent',
+                                            border: '1px solid var(--color-ec-border)',
+                                            borderRadius: '4px',
+                                            color: activeSecTab === tab ? 'var(--color-ec-text-high)' : 'var(--color-ec-text-muted)',
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            padding: '4px 12px',
+                                            cursor: 'pointer',
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.5px',
+                                            transition: 'all 150ms ease'
+                                        }}
+                                    >
+                                        {tab === 'filings' ? 'Filings' : 'Balance'}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
+
+                        {activeSecTab === 'filings' ? (
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                                gap: 24
+                            }}>
+                                <FilingList title="Financials (10-K/Q)" items={filings?.financials} />
+                                <FilingList title="News & Events (8-K)" items={filings?.news} />
+                                <FilingList title="Offerings (424B/S-1)" items={filings?.prospectuses} />
+                                <FilingList title="Ownership (13G/D, 3/4)" items={filings?.ownership} />
+                                <FilingList title="Proxies (14A)" items={filings?.proxies} />
+                                <FilingList title="Other Forms" items={filings?.others} />
+                            </div>
+                        ) : (
+                            <BalanceSheetTable charts={data?.charts} />
+                        )}
                     </div>
 
                     {/* Edgie AI Dilution & Runner Assessment Section */}
@@ -3065,10 +3339,10 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                     {aiMetrics && (
                                         <div style={{
                                             display: 'grid',
-                                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                                            gap: 16,
+                                            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                                            gap: 12,
                                             borderBottom: '1.5px solid var(--color-ec-border)',
-                                            paddingBottom: 20,
+                                            paddingBottom: 16,
                                             marginBottom: 8
                                         }}>
                                             {/* Card 1: Dilution Score Gauge */}
@@ -3076,13 +3350,13 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                 backgroundColor: 'var(--color-ec-bg-base)',
                                                 border: '1px solid var(--color-ec-border)',
                                                 borderRadius: '6px',
-                                                padding: '16px',
+                                                padding: '10px',
                                                 display: 'flex',
                                                 flexDirection: 'column',
-                                                gap: 10
+                                                gap: 6
                                             }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                                         Probabilidad de Dilución
                                                     </span>
                                                     <span style={{
@@ -3104,12 +3378,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                     </span>
                                                 </div>
                                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                                                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
+                                                    <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
                                                         {aiMetrics.dilution_score}%
                                                     </span>
                                                     <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>score</span>
                                                 </div>
-                                                <div style={{ height: '6px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <div style={{ height: '4px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
                                                     <div style={{
                                                         height: '100%',
                                                         width: `${aiMetrics.dilution_score}%`,
@@ -3127,13 +3401,13 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                 backgroundColor: 'var(--color-ec-bg-base)',
                                                 border: '1px solid var(--color-ec-border)',
                                                 borderRadius: '6px',
-                                                padding: '16px',
+                                                padding: '10px',
                                                 display: 'flex',
                                                 flexDirection: 'column',
-                                                gap: 10
+                                                gap: 6
                                             }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                                         Supervivencia de Caja
                                                     </span>
                                                     <span style={{
@@ -3150,12 +3424,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                     </span>
                                                 </div>
                                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                                                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
+                                                    <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
                                                         {aiMetrics.cash_runway_months !== null ? `${aiMetrics.cash_runway_months} m` : 'N/A'}
                                                     </span>
                                                     <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>de runway</span>
                                                 </div>
-                                                <div style={{ height: '6px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <div style={{ height: '4px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden' }}>
                                                     {aiMetrics.cash_runway_months !== null && (
                                                         <div style={{
                                                             height: '100%',
@@ -3175,13 +3449,13 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                 backgroundColor: 'var(--color-ec-bg-base)',
                                                 border: '1px solid var(--color-ec-border)',
                                                 borderRadius: '6px',
-                                                padding: '16px',
+                                                padding: '10px',
                                                 display: 'flex',
                                                 flexDirection: 'column',
-                                                gap: 10
+                                                gap: 6
                                             }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                    <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                                         Estructura del Float
                                                     </span>
                                                     <span style={{ fontSize: 9, fontWeight: 800, color: 'var(--color-ec-copper-bright)' }}>
@@ -3189,12 +3463,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                     </span>
                                                 </div>
                                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                                                    <span style={{ fontSize: 24, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
+                                                    <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-ec-text-high)', fontFamily: "'Fraunces', serif" }}>
                                                         {aiMetrics.float_percentage !== null ? `${(100 - aiMetrics.float_percentage).toFixed(0)}%` : 'N/A'}
                                                     </span>
                                                     <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>locked/insiders</span>
                                                 </div>
-                                                <div style={{ height: '6px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden', display: 'flex' }}>
+                                                <div style={{ height: '4px', width: '100%', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '3px', overflow: 'hidden', display: 'flex' }}>
                                                     {aiMetrics.float_percentage !== null && (
                                                         <>
                                                             <div style={{ height: '100%', width: `${aiMetrics.float_percentage}%`, backgroundColor: 'var(--color-ec-copper-bright)' }} title="Float Shares" />
@@ -3209,13 +3483,13 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                                 backgroundColor: 'var(--color-ec-bg-base)',
                                                 border: '1px solid var(--color-ec-border)',
                                                 borderRadius: '6px',
-                                                padding: '16px',
+                                                padding: '10px',
                                                 display: 'flex',
                                                 flexDirection: 'column',
                                                 justifyContent: 'space-between',
-                                                gap: 8
+                                                gap: 6
                                             }}>
-                                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                                <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                                     Runner Bias &amp; Squeezability
                                                 </span>
                                                 <div style={{
@@ -3258,6 +3532,8 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                             </div>
                                         </div>
                                     )}
+                                    {aiMetrics?.ownership_list && <OwnershipTable list={aiMetrics.ownership_list} />}
+                                    {aiMetrics?.warrants_triggers && <WarrantsSection triggers={aiMetrics.warrants_triggers} />}
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                         {renderAiContent(aiAnalysis)}
                                     </div>

@@ -206,6 +206,20 @@ def init_db():
             )
         """)
 
+        # dilution_banks_registry: histórico de agentes colocadores / bancos
+        # dilusores extraídos por Edgie de los filings SEC. Cada análisis inserta
+        # los bancos detectados; los conteos por banco elevan el rating de riesgo
+        # de dilución en análisis posteriores. Ver routers/assistant.py.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dilution_banks_registry (
+                ticker VARCHAR NOT NULL,
+                bank_name VARCHAR NOT NULL,
+                form_type VARCHAR,
+                date_filed DATE,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # precache_state: process-shared status of dataset intraday pre-caching.
         # Survives restarts so the backtest endpoint and clients can know whether
         # a precache is still running, finished, or failed without relying on
