@@ -293,6 +293,17 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
                     "percent": pct
                 }
 
+        # Session config fallback: when the request omits market_sessions /
+        # custom times, fall back to the values saved on the strategy before the
+        # safe RTH default. Without this, a strategy saved with premarket
+        # sessions ran RTH-only via paths that don't echo the field (e.g. the
+        # public API defaults market_sessions to ["RTH"]) → premarket entries
+        # were silently dropped. strategy_def may not be a dict — guard it.
+        _sdef = strategy_def if isinstance(strategy_def, dict) else {}
+        market_sessions = req.market_sessions or _sdef.get("market_sessions") or ["RTH"]
+        custom_start_time = req.custom_start_time or _sdef.get("custom_start_time")
+        custom_end_time = req.custom_end_time or _sdef.get("custom_end_time")
+
         results = run_backtest(
             qualifying_df=qualifying,
             strategy_def=strategy_def,
@@ -304,9 +315,9 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
             fees=req.fees,
             fee_type=req.fee_type,
             slippage=req.slippage,
-            market_sessions=req.market_sessions,
-            custom_start_time=req.custom_start_time,
-            custom_end_time=req.custom_end_time,
+            market_sessions=market_sessions,
+            custom_start_time=custom_start_time,
+            custom_end_time=custom_end_time,
             locates_cost=req.locates_cost,
             locate_type=req.locate_type,
             look_ahead_prevention=req.look_ahead_prevention,
