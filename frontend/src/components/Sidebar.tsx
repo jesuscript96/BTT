@@ -9,6 +9,7 @@ import {
     KeyRound,
     MessageSquarePlus,
     Flame,
+    PieChart,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -217,6 +218,20 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Baúl</span>
                 </Link>
+
+                {/* Portfolio (in development — Admin only via preview flag) */}
+                {can("admin.preview_features") && (
+                    <Link
+                        href="/portfolio"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/portfolio"),
+                        }}
+                    >
+                        <PieChart style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Portfolio</span>
+                    </Link>
+                )}
 
                 {/* Developer API console */}
                 {can("api.portal.access") && (

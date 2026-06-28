@@ -274,6 +274,176 @@ export function ${C}({ days }: ${C}Props) {
   },
 };
 
+// ── Portfolio module ─────────────────────────────────────────────────────────
+const portfolioEquityChart: ComponentSpec = {
+  id: "portfolio-equity-chart",
+  module: "portfolio",
+  title: "Combined portfolio equity",
+  description: "Curva de equity agregada de la cartera (combined_equity de /portfolio/combine).",
+  include: ["combine"],
+  peerDeps: ["lightweight-charts"],
+  defaultName: "PortfolioEquityChart",
+  render: (o) => {
+    const C = name(o, "PortfolioEquityChart");
+    return `import { useEffect, useRef } from "react";
+import { createChart, type IChartApi } from "lightweight-charts";
+
+export interface ${C}Props { timestamps: number[]; combinedEquity: number[]; height?: number; }
+
+/** Feed it \`result.timestamps\` and \`result.combined_equity\` from POST /portfolio/combine. */
+export function ${C}({ timestamps, combinedEquity, height = 320 }: ${C}Props) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const chart: IChartApi = createChart(ref.current, {
+      height,
+      layout: { background: { color: "transparent" }, textColor: "#9aa0a6" },
+      grid: { vertLines: { color: "#1f2329" }, horzLines: { color: "#1f2329" } },
+      timeScale: { timeVisible: true },
+    });
+    const series = chart.addAreaSeries({ lineColor: "#D87A3D", topColor: "rgba(216,122,61,0.4)", bottomColor: "rgba(216,122,61,0.02)" });
+    series.setData(timestamps.map((t, i) => ({ time: t as never, value: combinedEquity[i] })));
+    chart.timeScale().fitContent();
+    const onResize = () => chart.applyOptions({ width: ref.current?.clientWidth ?? 600 });
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => { window.removeEventListener("resize", onResize); chart.remove(); };
+  }, [timestamps, combinedEquity, height]);
+  return <div ref={ref} style={{ width: "100%" }} />;
+}
+`;
+  },
+};
+
+const correlationHeatmap: ComponentSpec = {
+  id: "correlation-heatmap",
+  module: "portfolio",
+  title: "Correlation heatmap",
+  description: "Mapa de calor de correlación (Pearson/Spearman). Rojo=+1 (sin diversificación), verde=-1 (cobertura).",
+  include: ["correlation"],
+  peerDeps: [],
+  defaultName: "CorrelationHeatmap",
+  render: (o) => {
+    const C = name(o, "CorrelationHeatmap");
+    return `import React from "react";
+
+export interface ${C}Props { labels: string[]; matrix: number[][]; }
+
+/** color: +1 red (correlated), 0 neutral, -1 green (hedge). */
+function cellColor(v: number): string {
+  const t = Math.max(-1, Math.min(1, v));
+  if (t >= 0) return "rgba(214,69,69," + (0.15 + 0.6 * t) + ")";
+  return "rgba(63,168,105," + (0.15 + 0.6 * Math.abs(t)) + ")";
+}
+
+/** Feed it \`result.labels\` and \`result.pearson\` (or \`result.spearman\`) from POST /portfolio/correlation. */
+export function ${C}({ labels, matrix }: ${C}Props) {
+  return (
+    <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+      <thead>
+        <tr>
+          <th />
+          {labels.map((l) => (<th key={l} style={{ padding: 4, color: "#9aa0a6" }}>{l}</th>))}
+        </tr>
+      </thead>
+      <tbody>
+        {matrix.map((row, i) => (
+          <tr key={labels[i]}>
+            <td style={{ padding: 4, color: "#9aa0a6" }}>{labels[i]}</td>
+            {row.map((v, j) => (
+              <td key={j} style={{ padding: "8px 10px", textAlign: "center", background: cellColor(v), color: "#e8eaed" }}>
+                {v.toFixed(2)}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+`;
+  },
+};
+
+const montecarloSpaghetti: ComponentSpec = {
+  id: "montecarlo-spaghetti",
+  module: "portfolio",
+  title: "Monte Carlo percentile bands",
+  description: "Bandas de percentiles (p5..p95) de la simulación de Montecarlo de la cartera.",
+  include: ["montecarlo"],
+  peerDeps: ["lightweight-charts"],
+  defaultName: "MontecarloChart",
+  render: (o) => {
+    const C = name(o, "MontecarloChart");
+    return `import { useEffect, useRef } from "react";
+import { createChart, type IChartApi } from "lightweight-charts";
+
+export interface ${C}Props { percentiles: Record<string, number[]>; height?: number; }
+
+const COLORS: Record<string, string> = { p5: "#d64545", p25: "#d8a13d", p50: "#D87A3D", p75: "#3fa869", p95: "#3f7fa8" };
+
+/** Feed it \`result.percentiles\` from POST /portfolio/montecarlo. */
+export function ${C}({ percentiles, height = 360 }: ${C}Props) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    const chart: IChartApi = createChart(ref.current, {
+      height,
+      layout: { background: { color: "transparent" }, textColor: "#9aa0a6" },
+      grid: { vertLines: { color: "#1f2329" }, horzLines: { color: "#1f2329" } },
+    });
+    for (const key of Object.keys(percentiles)) {
+      const s = chart.addLineSeries({ color: COLORS[key] ?? "#888", lineWidth: key === "p50" ? 2 : 1 });
+      s.setData(percentiles[key].map((value, i) => ({ time: (i + 1) as never, value })));
+    }
+    chart.timeScale().fitContent();
+    const onResize = () => chart.applyOptions({ width: ref.current?.clientWidth ?? 600 });
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => { window.removeEventListener("resize", onResize); chart.remove(); };
+  }, [percentiles, height]);
+  return <div ref={ref} style={{ width: "100%" }} />;
+}
+`;
+  },
+};
+
+const portfolioRiskGrid: ComponentSpec = {
+  id: "portfolio-risk-grid",
+  module: "portfolio",
+  title: "Portfolio risk metrics",
+  description: "Cuadro de métricas de la cartera (Sharpe, MaxDD, PnL%, VaR/CVaR).",
+  include: ["combine"],
+  peerDeps: [],
+  defaultName: "PortfolioRiskGrid",
+  render: (o) => {
+    const C = name(o, "PortfolioRiskGrid");
+    return `import React from "react";
+
+export interface ${C}Props { metrics: Record<string, number>; }
+
+const LABELS: Record<string, string> = {
+  total_return_pct: "PnL %", max_drawdown_pct: "Drawdown máx %", sharpe_ratio: "Sharpe",
+  volatility_pct: "Volatilidad %", win_rate_pct: "Win rate %", profit_factor: "Profit factor",
+};
+
+/** Feed it \`result.metrics\` from POST /portfolio/combine. */
+export function ${C}({ metrics }: ${C}Props) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+      {Object.entries(LABELS).filter(([k]) => k in metrics).map(([k, label]) => (
+        <div key={k} style={{ padding: 12, borderRadius: 10, background: "#15181d", border: "1px solid #1f2329" }}>
+          <div style={{ fontSize: 12, color: "#9aa0a6" }}>{label}</div>
+          <div style={{ fontSize: 20, color: "#e8eaed" }}>{metrics[k]}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+`;
+  },
+};
+
 export const COMPONENTS: ComponentSpec[] = [
   equityChart,
   drawdownChart,
@@ -281,6 +451,10 @@ export const COMPONENTS: ComponentSpec[] = [
   metricsGrid,
   tradesTable,
   dayResultsTable,
+  portfolioEquityChart,
+  correlationHeatmap,
+  montecarloSpaghetti,
+  portfolioRiskGrid,
 ];
 
 export function listComponents(module?: string): ComponentSpec[] {
@@ -295,6 +469,11 @@ export const MODULES = [
   {
     name: "backtest",
     description: "Backtests de gaps/short-selling: métricas, equity, trades, días.",
+    status: "available",
+  },
+  {
+    name: "portfolio",
+    description: "Cartera de estrategias: equity agregada, Monte Carlo/VaR/CVaR, correlación y asignación (Líderes/HRP).",
     status: "available",
   },
   { name: "screener", description: "Screener de universo (v2).", status: "planned" },

@@ -77,6 +77,74 @@ class Facade:
         except Exception as exc:  # noqa: BLE001
             raise ApiError("job_failed", "El backtest no se pudo completar.") from exc
 
+    # ── Portfolio ────────────────────────────────────────────────────────────
+    # Combine the owner's SAVED backtests (the Baul) into a portfolio and analyse
+    # its risk. Pure analytics over already-computed results — does NOT touch the
+    # heavy engine (no lazy engine import here, only the analytics service + DB
+    # loader). Monitoring (3-month re-run) is NOT exposed in the commercial API
+    # (it would hit the engine) — see docs/portfolio/04 §A.
+    def _portfolio_returns(self, owner_id: Optional[str], backtest_ids: list, init_cash: float):
+        from app.services.portfolio_loader import load_returns
+
+        returns, labels, bad = load_returns(backtest_ids, owner_id, init_cash)
+        if bad:
+            raise ApiError(
+                "invalid_backtest",
+                "Algunos backtests no se pueden combinar.",
+                details={"ids": bad},
+            )
+        return returns, labels
+
+    def portfolio_combine(self, owner_id: Optional[str], kwargs: dict) -> dict:
+        from app.services import portfolio_analytics_service as svc
+
+        init_cash = kwargs.get("init_cash", svc.DEFAULT_INIT_CASH)
+        returns, _ = self._portfolio_returns(owner_id, kwargs["backtest_ids"], init_cash)
+        try:
+            return svc.combine_returns(returns, kwargs.get("weights"), init_cash)
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("portfolio_failed", "No se pudo combinar la cartera.") from exc
+
+    def portfolio_montecarlo(self, owner_id: Optional[str], kwargs: dict) -> dict:
+        from app.services import portfolio_analytics_service as svc
+
+        init_cash = kwargs.get("init_cash", svc.DEFAULT_INIT_CASH)
+        returns, _ = self._portfolio_returns(owner_id, kwargs["backtest_ids"], init_cash)
+        try:
+            return svc.portfolio_montecarlo(
+                returns, kwargs.get("weights"), kwargs.get("simulations", 1000), init_cash
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("portfolio_failed", "No se pudo simular la cartera.") from exc
+
+    def portfolio_correlation(self, owner_id: Optional[str], kwargs: dict) -> dict:
+        from app.services import portfolio_analytics_service as svc
+
+        returns, labels = self._portfolio_returns(owner_id, kwargs["backtest_ids"], svc.DEFAULT_INIT_CASH)
+        if len(returns) < 2:
+            raise ApiError("insufficient_strategies", "Necesitas al menos 2 estrategias.")
+        try:
+            return svc.correlation_matrices(returns, labels)
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("portfolio_failed", "No se pudo calcular la correlación.") from exc
+
+    def portfolio_allocation(self, owner_id: Optional[str], kwargs: dict) -> dict:
+        from app.services import portfolio_analytics_service as svc
+
+        init_cash = kwargs.get("init_cash", svc.DEFAULT_INIT_CASH)
+        returns, _ = self._portfolio_returns(owner_id, kwargs["backtest_ids"], init_cash)
+        if kwargs["method"] == "hrp" and len(returns) < 2:
+            raise ApiError("insufficient_strategies", "HRP necesita al menos 2 estrategias.")
+        try:
+            return svc.capital_allocation(
+                returns, kwargs["method"], kwargs.get("lookback_days", 15),
+                kwargs.get("leaders_weights"), init_cash,
+            )
+        except ApiError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ApiError("portfolio_failed", "No se pudo calcular la asignación.") from exc
+
 
 # ── Injectable singleton ─────────────────────────────────────────────────────
 _facade: Optional[Facade] = None

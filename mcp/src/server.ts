@@ -12,7 +12,7 @@ import { COMPONENTS, getComponent, listComponents, MODULES } from "./components.
 import { generateApiClientFiles, generateTypes } from "./codegen.js";
 import { scaffoldComponent } from "./scaffold.js";
 import { listRecipes } from "./recipes.js";
-import { GETTING_STARTED, METRICS_GLOSSARY, STRATEGY_SCHEMA_NOTE } from "./docs.js";
+import { GETTING_STARTED, METRICS_GLOSSARY, STRATEGY_SCHEMA_NOTE, PORTFOLIO_GLOSSARY } from "./docs.js";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
@@ -217,6 +217,7 @@ export function buildServer(cfg: EdgecuteConfig = loadConfig()): McpServer {
   docResource("docs://getting-started", "getting-started", GETTING_STARTED);
   docResource("docs://metrics-glossary", "metrics-glossary", METRICS_GLOSSARY);
   docResource("docs://strategy-schema", "strategy-schema", STRATEGY_SCHEMA_NOTE);
+  docResource("docs://portfolio-glossary", "portfolio-glossary", PORTFOLIO_GLOSSARY);
 
   // schema://openapi — live OpenAPI from the API (needs a key).
   server.registerResource(

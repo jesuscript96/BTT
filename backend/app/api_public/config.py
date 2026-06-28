@@ -20,7 +20,7 @@ API_PREFIX = "/v1"
 # ── Modular composition ──────────────────────────────────────────────────────
 # Comma-separated list of enabled modules. MVP ships only `backtest`.
 ENABLED_MODULES = [
-    m.strip() for m in os.getenv("EDGECUTE_ENABLED_MODULES", "backtest").split(",") if m.strip()
+    m.strip() for m in os.getenv("EDGECUTE_ENABLED_MODULES", "backtest,portfolio").split(",") if m.strip()
 ]
 
 # ── Technical limits (NOT pricing — see docs/b2d-gateway/07 §B) ───────────────

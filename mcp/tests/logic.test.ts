@@ -14,8 +14,17 @@ describe("component catalog", () => {
   });
 
   it("filters by module", () => {
-    expect(listComponents("backtest").length).toBe(COMPONENTS.length);
+    expect(listComponents("backtest").length).toBe(6);
+    expect(listComponents("portfolio").length).toBe(4);
+    expect(listComponents("backtest").length + listComponents("portfolio").length).toBe(COMPONENTS.length);
     expect(listComponents("nope").length).toBe(0);
+  });
+
+  it("exposes the portfolio components", () => {
+    const ids = listComponents("portfolio").map((c) => c.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(["portfolio-equity-chart", "correlation-heatmap", "montecarlo-spaghetti", "portfolio-risk-grid"]),
+    );
   });
 
   it("each component renders non-empty TSX that references its name", () => {

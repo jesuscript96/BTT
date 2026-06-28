@@ -19,6 +19,15 @@ export const EVENTS = {
   FEEDBACK_SUBMITTED: 'feedback_submitted',
   ROADMAP_VOTED: 'roadmap_voted',
   WHATSNEW_VIEWED: 'whatsnew_viewed',
+  // ── Portfolio module (docs/portfolio/04 §C) ──
+  PORTFOLIO_BUILT: 'portfolio_built',
+  PORTFOLIO_MONTECARLO_RUN: 'portfolio_montecarlo_run',
+  PORTFOLIO_CORRELATION_VIEWED: 'portfolio_correlation_viewed',
+  PORTFOLIO_ALLOCATION_COMPUTED: 'portfolio_allocation_computed',
+  PORTFOLIO_SCALING_RUN: 'portfolio_scaling_run',
+  PORTFOLIO_WEIGHTS_SAVED: 'portfolio_weights_saved',
+  PORTFOLIO_MONITORING_REFRESHED: 'portfolio_monitoring_refreshed',
+  PORTFOLIO_JOURNAL_VIEWED: 'portfolio_journal_viewed',
 } as const
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS]

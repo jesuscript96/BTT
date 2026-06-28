@@ -31,6 +31,10 @@ ERROR_CODES = {
     "job_not_found": 404,
     "job_failed": 500,
     "conflict": 409,
+    # Portfolio module (docs/portfolio/03 §3.4)
+    "invalid_backtest": 422,
+    "insufficient_strategies": 422,
+    "portfolio_failed": 500,
     "internal_error": 500,
 }
 

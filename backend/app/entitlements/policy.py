@@ -32,6 +32,8 @@ FEATURE_TYPES: Dict[str, str] = {
     "screener.access": "boolean",
     "api.portal.access": "boolean",
     "market.sentiment.access": "boolean",
+    "portfolio.access": "boolean",
+    "portfolio.montecarlo_max_sims": "limit",
     # Internal flag: unlocks features still in development. Admin-only.
     "admin.preview_features": "boolean",
 }
@@ -62,6 +64,8 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "screener.access": True,
         "api.portal.access": True,
         "market.sentiment.access": True,
+        "portfolio.access": True,
+        "portfolio.montecarlo_max_sims": -1,   # prod: tier-dependent
         "admin.preview_features": True,   # only Admin sees in-development features
     },
     "Pro": {
@@ -78,6 +82,8 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "screener.access": False,         # activar cuando se decida
         "api.portal.access": False,
         "market.sentiment.access": False,
+        "portfolio.access": True,
+        "portfolio.montecarlo_max_sims": -1,   # prod: tier-dependent
         "admin.preview_features": False,
     },
     "Mid": {
@@ -94,6 +100,8 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "screener.access": False,
         "api.portal.access": False,
         "market.sentiment.access": False,
+        "portfolio.access": True,
+        "portfolio.montecarlo_max_sims": -1,   # prod: tier-dependent
         "admin.preview_features": False,
     },
     "Free": {
@@ -110,6 +118,8 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "screener.access": False,
         "api.portal.access": False,
         "market.sentiment.access": False,
+        "portfolio.access": True,
+        "portfolio.montecarlo_max_sims": -1,   # prod: tier-dependent
         "admin.preview_features": False,
     },
 }

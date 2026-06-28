@@ -98,3 +98,37 @@ La forma completa y autoritativa del objeto \`Strategy\` está en el OpenAPI viv
 
 Los indicadores válidos (\`source.name\` / \`target.name\`) salen de \`list_indicators\`.
 `;
+
+export const PORTFOLIO_GLOSSARY = `# Glosario didáctico de Portfolio
+
+Estos textos van LITERALES en la UI (tooltips/banners). Embébelos al construir la app.
+
+## VaR (Value at Risk) 95% / 99%
+Pérdida máxima esperable en un solo día bajo condiciones normales, para un nivel de
+confianza dado. Ejemplo: un VaR diario al 95% de -$250 significa que hay un 95% de
+probabilidad de que mañana tu cartera no pierda más de $250 (solo 1 de cada 20 días
+sufrirás una pérdida mayor).
+Fórmula: VaR_α(X) = -inf{ x : P(X ≤ x) > 1-α }, con X = retornos diarios agregados.
+
+## CVaR (Expected Shortfall) 95% / 99%
+"Si superamos la pérdida del VaR, ¿cuál es la pérdida media de ese peor escenario?".
+Media de la cola del peor 5% (o 1%) de los días. Ejemplo: VaR 95% -$250 pero CVaR 95%
+-$450 → si caes en ese 5% de peores días, la pérdida media esperada es $450.
+Fórmula: CVaR_α(X) = 1/(1-α) ∫_α^1 VaR_u(X) du.
+
+## Criterio de Kelly
+% óptimo de la cuenta a arriesgar según win rate (p) y payoff ratio (b) para maximizar
+crecimiento a largo plazo sin quebrar. Fractional Kelly (0.5, 0.25) reduce la volatilidad.
+Fórmula: f* = p - (1-p)/b, con b = ganancia media / |pérdida media|.
+
+## Correlación Pearson vs Spearman
+Pearson mide relación LINEAL (sube proporcional los mismos días → ~+1 rojo; opuesto → -1
+verde). Spearman mide relación NO lineal (monótona, por rangos): detecta si dos estrategias
+ganan/pierden a la vez aunque la magnitud no sea proporcional. Spearman 0.85 → no diversifican;
+-0.40 → cobertura que suaviza la curva.
+
+## HRP (Hierarchical Risk Parity)
+Método de López de Prado: clustering jerárquico sobre la covarianza, SIN invertir la matriz
+→ robusto frente al ruido y evita concentrar todo en una estrategia sobreoptimizada. En
+Edgecute se calcula in-house con scipy (sin riskfolio-lib).
+`;

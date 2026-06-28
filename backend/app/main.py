@@ -215,6 +215,7 @@ from app.routers import optimization, users, edgie
 from app.routers import screener
 from app.routers import assistant
 from app.routers import feedback
+from app.routers import portfolio
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -228,6 +229,7 @@ app.include_router(optimization.router)
 app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)
+app.include_router(portfolio.router)
 app.include_router(market.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(screener.router)
