@@ -6,6 +6,8 @@ import InlineStrategyBuilder, { type Draft } from "@/components/backtester/Inlin
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
 import StrategyModeSelector from "@/components/strategy-builder/StrategyModeSelector";
 import { GraduationCap } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { usePostHog } from "posthog-js/react";
 import { useBacktestHelper, hasSeenHelper } from "@/components/backtester/helper/useBacktestHelper";
 import {
   EXAMPLE_STRATEGY,
@@ -15,6 +17,7 @@ import {
   RESET_CONFIG,
   FILL_CONFIG_EVENT,
   FILL_DATASET_EVENT,
+  WIZARD_SET_STEP_EVENT,
 } from "@/components/backtester/helper/exampleBacktest";
 import WizardStrategyBuilder from "@/components/strategy-builder/WizardStrategyBuilder";
 import MetricsCard from "@/components/backtester/MetricsCard";
@@ -125,13 +128,20 @@ export default function Home() {
   const [activeSaveBtn, setActiveSaveBtn] = useState(false);
   const [helperActive, setHelperActive] = useState(false);
   const [hoveredHelperBtn, setHoveredHelperBtn] = useState(false);
-  // El tour es una demo: guardamos el borrador previo y marcamos qué ha
-  // rellenado para poder LIMPIARLO al salir (no dejar el ejemplo metido en los
-  // formularios del usuario — p. ej. la sesión 09:30–11:00 de la estrategia).
+  // El tour pre-rellena un ejemplo. Guardamos el borrador previo y marcamos qué
+  // ha rellenado para poder restaurarlo SI el usuario salta el tour. Si lo
+  // completa, el ejemplo se queda reflejado (ver cleanup).
   const preHelperDraftRef = useRef<Draft | null>(null);
   const exampleLoadedRef = useRef(false);
   const datasetFilledRef = useRef(false);
   const configFilledRef = useRef(false);
+
+  // Gating del helper: solo lo ven los usuarios Admin (mismo criterio que el
+  // Sidebar: publicMetadata.tier de Clerk).
+  const { user } = useUser();
+  const helperTier = (user?.publicMetadata?.tier as string) ?? "Free";
+  const isHelperAdmin = helperTier === "Admin";
+  const posthog = usePostHog();
 
   // Tour guiado del backtester (driver.js). El controller le da al helper los
   // setters que necesita: cambiar de panel, precargar la estrategia de ejemplo
@@ -154,10 +164,37 @@ export default function Home() {
       configFilledRef.current = true;
       window.dispatchEvent(new CustomEvent(FILL_CONFIG_EVENT, { detail: EXAMPLE_CONFIG }));
     },
+    setWizardStep: (step: string) => {
+      window.dispatchEvent(new CustomEvent(WIZARD_SET_STEP_EVENT, { detail: { step } }));
+    },
+    // Telemetría del tour: PostHog sabe QUIÉN lo consume (user_id/email/tier) y
+    // HASTA DÓNDE llega (eventos de inicio, paso visto y fin completado/saltado).
+    track: (event: string, props?: Record<string, unknown>) => {
+      try {
+        if (!posthog || !posthog.get_property("$device_id")) return; // no inicializado
+        posthog.capture(event, {
+          tier: helperTier,
+          user_id: user?.id ?? null,
+          email: user?.primaryEmailAddress?.emailAddress ?? null,
+          ...props,
+        });
+      } catch {
+        /* PostHog no disponible: ignorar */
+      }
+    },
     setHelperActive,
-    // Al cerrar/saltar el tour: restaura el borrador previo y devuelve dataset y
-    // sesión de config a sus valores por defecto (solo lo que el tour tocó).
-    cleanup: () => {
+    // Cierre del tour:
+    //  · completado → DEJAMOS el ejemplo reflejado (estrategia + config) para que
+    //    el usuario lo pueda guardar y correr; solo reseteamos los flags.
+    //  · saltado → restauramos el borrador previo y devolvemos dataset/config a
+    //    sus valores por defecto (solo lo que el tour tocó).
+    cleanup: (completed: boolean) => {
+      if (completed) {
+        exampleLoadedRef.current = false;
+        datasetFilledRef.current = false;
+        configFilledRef.current = false;
+        return;
+      }
       if (exampleLoadedRef.current) {
         setBuilderDraft(preHelperDraftRef.current);
         exampleLoadedRef.current = false;
@@ -893,13 +930,14 @@ export default function Home() {
     }
   }, []);
 
-  // Tour guiado: arranca solo la primera vez que se visita el backtester (desktop).
+  // Tour guiado: arranca solo la primera vez que se visita el backtester (desktop)
+  // y SOLO para usuarios Admin (es una función interna, no para clientes).
   useEffect(() => {
-    if (!hasSeenHelper() && typeof window !== "undefined" && window.innerWidth > 1024) {
+    if (isHelperAdmin && !hasSeenHelper() && typeof window !== "undefined" && window.innerWidth > 1024) {
       const t = setTimeout(() => startHelper(), 800);
       return () => clearTimeout(t);
     }
-  }, [startHelper]);
+  }, [startHelper, isHelperAdmin]);
 
   const toggleDarkMode = () => {
     const newVal = !isDarkMode;
@@ -1064,6 +1102,7 @@ export default function Home() {
             color: 'var(--color-ec-text-high)',
             letterSpacing: '-0.3px',
           }}>Backtester</h1>
+          {isHelperAdmin && (
           <button
             type="button"
             onClick={startHelper}
@@ -1089,6 +1128,7 @@ export default function Home() {
             <GraduationCap size={13} strokeWidth={2} />
             ¿Cómo funciona?
           </button>
+          )}
         </div>
       </header>
 

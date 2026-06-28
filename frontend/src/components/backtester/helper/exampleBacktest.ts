@@ -2,12 +2,12 @@
 // backtester (ver docs/helper-backtester/PRD_HELPER_BACKTESTER.md, §3).
 //
 // "Fade de gap parabólico (+70%)" — un short clásico de small-caps:
-//   · Universo: solo días con PMH Gap ≥ 70%.
-//   · Estrategia: corto el día del gap; entras con una vela M1 roja por encima
-//     del VWAP; stop al 50% del precio de entrada; sin reentradas; la "salida a
-//     las 11:00 NY" se codifica como sesión personalizada 09:30 → 11:00 ET
-//     (el builder no tiene salida por hora de reloj).
-//   · Ajustes: 10.000$ de capital, riesgo fijo de 100$ (1R).
+//   · Universo: solo días con PMH Gap ≥ 70% (va en universe_filters de la
+//     estrategia, para que el Wizard lo pinte en su paso "Universo").
+//   · Estrategia: corto el día del gap, en sesión RTH; entras cuando el Close
+//     M1 CRUZA POR DEBAJO del VWAP, solo en la ventana 09:30–11:00; stop al 20%
+//     del precio de entrada; hasta 2 reentradas.
+//   · Ajustes: 10.000$ de capital, riesgo fijo de 100$ (1R), OOS 20%.
 //
 // Todos los valores usan los enums reales de @/types/strategy para que
 // TypeScript valide el ejemplo (cero strings inventados).
@@ -71,25 +71,18 @@ export const EXAMPLE_STRATEGY: Draft = {
       type: "group",
       operator: "AND",
       conditions: [
-        // Vela M1 roja: el cierre queda por debajo de su apertura.
+        // Entrada corta: el Close de la vela M1 CRUZA POR DEBAJO del VWAP.
         {
           type: "indicator_comparison",
           source: { name: IndicatorType.BAR_CLOSE },
-          comparator: Comparator.LT,
-          target: { name: IndicatorType.BAR_OPEN },
-          timeframe: Timeframe.M1,
-        },
-        // ...y por encima del VWAP (rechazo en extensión).
-        {
-          type: "indicator_comparison",
-          source: { name: IndicatorType.BAR_CLOSE },
-          comparator: Comparator.GT,
+          comparator: Comparator.CROSSES_BELOW,
           target: { name: IndicatorType.VWAP },
           timeframe: Timeframe.M1,
         },
       ],
     },
-    entry_time_windows: [],
+    // Solo se aceptan entradas en la ventana volátil de apertura (09:30–11:00).
+    entry_time_windows: [{ from_time: "09:30", to_time: "11:00" }],
   },
   exit_logic: {
     // Sin condición de salida por indicador: sale por el stop (50%) o por el
@@ -99,22 +92,30 @@ export const EXAMPLE_STRATEGY: Draft = {
   },
   risk_management: {
     use_hard_stop: true,
-    hard_stop: { type: RiskType.PERCENTAGE, value: 50 }, // SL = 50% del precio de entrada
-    use_take_profit: false, // el "TP" es la salida por hora (sesión 09:30–11:00)
+    hard_stop: { type: RiskType.PERCENTAGE, value: 20 }, // SL = 20% del precio de entrada
+    use_take_profit: false, // sin TP por precio: salida por stop o fin de sesión
     take_profit_mode: TakeProfitMode.FULL,
     take_profit: { type: RiskType.PERCENTAGE, value: 6 }, // ignorado (use_take_profit=false)
     partial_take_profits: [],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
-    accept_reentries: false, // sin reentradas
-    max_reentries: -1,
+    accept_reentries: true, // permite reentrar si la operación va en contra
+    max_reentries: 2, // máximo 2 reentradas
     size_by_sl: false,
     swing_option: { active: false, target_day: "gap_1_day" },
   },
-  market_sessions: ["custom"],
+  market_sessions: ["rth"], // opera en horario de mercado (Regular Hours)
   custom_start_time: "09:30",
-  custom_end_time: "11:00", // ← fuerza la salida a las 11:00 NY
+  custom_end_time: "16:00",
   dataset_id: undefined,
-  universe_filters: undefined,
+  // Universo dentro de la propia estrategia (el Wizard lo pinta en su paso 1):
+  // solo días con PM High Gap ≥ 70%.
+  universe_filters: {
+    date_from: TWO_YEARS_AGO,
+    date_to: MAX_DATE,
+    rules: [
+      { metric: "PMH Gap %", operator: "GREATER_THAN_OR_EQUAL", valueType: "static", value: "70" },
+    ],
+  },
   created_at: new Date().toISOString(),
 };
 
@@ -139,15 +140,17 @@ export const EXAMPLE_CONFIG: ExampleConfig = {
   feeType: "PERCENT",
   fees: 0.01,
   slippage: 0.01,
-  marketSessions: ["custom"],
+  marketSessions: ["rth"],
   customStartTime: "09:30",
-  customEndTime: "11:00",
-  isPercent: 100,
+  customEndTime: "16:00",
+  isPercent: 80, // reparto 80% In-Sample / 20% Out-of-Sample
 };
 
 // Nombres de los eventos del contrato "rellenar formulario" (revividos por el helper).
 export const FILL_DATASET_EVENT = "fill-dataset-builder";
 export const FILL_CONFIG_EVENT = "fill-backtest-form";
+/** Posiciona el Wizard en un sub-paso concreto (lo escucha WizardStrategyBuilder). */
+export const WIZARD_SET_STEP_EVENT = "wizard-set-step";
 
 // ── Limpieza al salir del tour ───────────────────────────────────
 // El tour es una demostración: al cerrarse NO debe dejar el ejemplo metido en
