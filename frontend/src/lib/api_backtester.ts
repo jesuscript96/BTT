@@ -331,6 +331,66 @@ export async function runBacktestWithDefinition(params: {
   return data;
 }
 
+// ── Async backtest jobs (F3/F4) ──
+export interface BacktestJobResponse {
+  job_id: string;
+  dataset_id: string;
+  status: string;
+}
+
+export interface BacktestJobStatus {
+  job_id: string;
+  status: string; // running | succeeded | failed | cancelled
+  percent: number;
+  current: number;
+  total: number;
+  error?: string | null;
+}
+
+export interface DayEquityResponse {
+  date: string;
+  ticker?: string | null;
+  equity: EquityPoint[];
+}
+
+// Launch async (no X-Backtest-Sync header) → 202 + job_id.
+export async function startBacktest(
+  params: Parameters<typeof runBacktest>[0]
+): Promise<BacktestJobResponse> {
+  const { data } = await api.post("/backtest", params);
+  return data;
+}
+
+export async function startBacktestWithDefinition(
+  params: Parameters<typeof runBacktestWithDefinition>[0]
+): Promise<BacktestJobResponse> {
+  const { data } = await api.post("/backtest", params);
+  return data;
+}
+
+export async function fetchBacktestJobStatus(jobId: string): Promise<BacktestJobStatus> {
+  const { data } = await api.get(`/backtest/${encodeURIComponent(jobId)}?t=${Date.now()}`);
+  return data;
+}
+
+// Completed result WITHOUT equity_curves (served per-day via fetchBacktestEquity).
+export async function fetchBacktestResult(jobId: string): Promise<BacktestResult> {
+  const { data } = await api.get(`/backtest/${encodeURIComponent(jobId)}/result`);
+  return data;
+}
+
+export async function fetchBacktestEquity(
+  jobId: string,
+  date: string,
+  ticker?: string
+): Promise<DayEquityResponse> {
+  const { data } = await api.get(
+    `/backtest/${encodeURIComponent(jobId)}/equity/${encodeURIComponent(date)}`,
+    { params: ticker ? { ticker } : {} }
+  );
+  return data;
+}
+
 export async function fetchDayCandles(
   dataset_id: string,
   ticker: string,
