@@ -476,6 +476,82 @@ export function getAggregateIntraday(
   return apiRequest<unknown>(`/market/aggregate/intraday?${qs}`, { signal });
 }
 
+// ── Market Analysis (docs/market-analysis/PRD.md §4.1) ──────────────────────
+export interface MaKpiValue {
+  value: number | null;
+  prev?: number | null;
+  ticker?: string | null;
+  date?: string | null;
+}
+
+export interface MaRecentGap {
+  ticker: string;
+  date: string;
+  gap_at_open_pct: number;
+  open: number;
+  vol_rth: number;
+  vol_pm: number;
+  hod: number;
+  pmh: number;
+  close_red: boolean;
+}
+
+export interface MaHistogram {
+  buckets: Record<string, number>;
+  p25: number;
+  p50: number;
+  p75: number;
+  mean: number;
+}
+
+export interface MarketAnalysisResponse {
+  records: MaRecentGap[];
+  kpis: {
+    gappers_count: MaKpiValue;
+    avg_gap_pct: MaKpiValue;
+    pm_high_average: MaKpiValue;
+    close_red_pct: MaKpiValue;
+    close_lt_vwap_pct: MaKpiValue; // value null en MVP (Fase 2)
+    avg_fade_from_pmh: MaKpiValue;
+    max_fade_from_pmh: MaKpiValue;
+  };
+  distributions: {
+    hod_time: Record<string, number>;
+    lod_time: Record<string, number>;
+    pmh_time: Record<string, number>;
+  };
+  mae_mfe: {
+    rth: { mae: MaHistogram; mfe: MaHistogram };
+    pm: { mae: MaHistogram; mfe: MaHistogram };
+  };
+  source: string;
+  period: { start: string; end: string };
+}
+
+export function getMarketAnalysis(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MarketAnalysisResponse> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MarketAnalysisResponse>(`/market/screener?${qs}`, { signal });
+}
+
+// MA-04 Avg Change from Open — 12 meses naturales (PRD §4.2)
+export interface MaMonthCurve {
+  month: string;
+  label: string;
+  avg_gap_pct: number;
+  points: { time: string; avg_change: number }[];
+}
+
+export function getAvgChangeFromOpen(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MaMonthCurve[]> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MaMonthCurve[]>(`/market/aggregate/intraday?${qs}`, { signal });
+}
+
 export function getMarketNews(): Promise<unknown> {
   return apiRequest<unknown>("/market/news");
 }

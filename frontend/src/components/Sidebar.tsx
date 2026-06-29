@@ -9,6 +9,7 @@ import {
     KeyRound,
     MessageSquarePlus,
     Flame,
+    BarChart3,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -190,6 +191,20 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <Flame style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Market Sentiment</span>
+                    </Link>
+                )}
+
+                {/* Market Analysis (gappers) — admin-only en MVP */}
+                {can("market.analysis.access") && (
+                    <Link
+                        href="/market-analysis"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/market-analysis"),
+                        }}
+                    >
+                        <BarChart3 style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Market Analysis</span>
                     </Link>
                 )}
 
