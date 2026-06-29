@@ -9,8 +9,35 @@ import PostHogIdentify from "@/components/PostHogIdentify";
 import { Suspense } from "react";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")
+  ),
   title: "Edgecute",
   description: "Trading strategy platform",
+  icons: {
+    icon: "/logo.svg",
+    shortcut: "/favicon.ico",
+    apple: "/logo.png",
+  },
+  openGraph: {
+    title: "Edgecute",
+    description: "Trading strategy platform",
+    images: [
+      {
+        url: "/logo.png",
+        width: 1200,
+        height: 1200,
+        alt: "Edgecute Logo",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "Edgecute",
+    description: "Trading strategy platform",
+    images: ["/logo.png"],
+  },
 };
 
 export default function RootLayout({
