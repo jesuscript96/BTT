@@ -1,12 +1,13 @@
 import logging
 import os
+import threading
 
 try:
     import psutil
 except ImportError:  # optional dep — the memory guard degrades to a no-op if absent
     psutil = None
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.services.data_service import fetch_day_candles
@@ -15,6 +16,7 @@ from app.services.backtest_orchestrator import (
     run_backtest_orchestrator,
     generate_mock_candles,
 )
+from app.services import backtest_jobs
 from app.services.montecarlo_service import run_montecarlo
 from app.services.what_if_service import run_what_if
 
@@ -51,12 +53,15 @@ def get_backtest_progress(dataset_id: str):
 
 @router.post("/backtest/cancel/{dataset_id}")
 def cancel_backtest(dataset_id: str):
+    # Legacy dict (sync path + the orchestrator's in-loop cancel check).
     backtest_progress[dataset_id] = {
         "status": "cancelled",
         "percent": 0.0,
         "current": 0,
         "total": 0
     }
+    # Async path: flag the job for this dataset as cancelled in Redis too.
+    backtest_jobs.mark_dataset_cancelled(dataset_id)
     return {"status": "success", "message": "Backtest cancellation requested"}
 
 
@@ -74,8 +79,45 @@ class WhatIfRequest(BaseModel):
     params: dict
 
 
+def _run_backtest_in_background(req: BacktestRequest, job_id: str):
+    """Background thread (F3): run the orchestrator, mirror progress into the
+    job store, and persist the result to disk. Never raises — terminal states
+    are written to the job store instead."""
+    def on_progress(current, total, percent):
+        backtest_jobs.set_job_state(
+            job_id, req.dataset_id, "running",
+            percent=percent, current=current, total=total,
+        )
+
+    try:
+        result = run_backtest_orchestrator(req, on_progress=on_progress)
+        backtest_jobs.save_job_result(job_id, result)
+        n = len(result.get("day_results", []))
+        backtest_jobs.set_job_state(
+            job_id, req.dataset_id, "succeeded",
+            percent=100.0, current=n, total=n,
+        )
+        logger.info(f"[JOB] {job_id} succeeded ({n} days)")
+    except HTTPException as he:
+        # The orchestrator raises 400 "Backtest cancelado" on cancel, 500 on error.
+        detail = he.detail if isinstance(he.detail, str) else str(he.detail)
+        if he.status_code == 400 and "cancel" in detail.lower():
+            backtest_jobs.set_job_state(job_id, req.dataset_id, "cancelled")
+            logger.info(f"[JOB] {job_id} cancelled")
+        else:
+            backtest_jobs.set_job_state(job_id, req.dataset_id, "failed", error=detail)
+            logger.error(f"[JOB] {job_id} failed: {detail}")
+    except Exception as e:  # pragma: no cover - safety net
+        backtest_jobs.set_job_state(job_id, req.dataset_id, "failed", error=str(e))
+        logger.error(f"[JOB] {job_id} crashed: {e}", exc_info=True)
+
+
 @router.post("/backtest")
-def run_backtest_endpoint(req: BacktestRequest):
+def run_backtest_endpoint(
+    req: BacktestRequest,
+    response: Response,
+    x_backtest_sync: str | None = Header(default=None),
+):
     # Memory guard: refuse to start when the host is already critically low on
     # RAM (e.g. another heavy run in flight, or the RAM-cache reload after a
     # restart). Swap=0 on prod → an OOM-kill takes the whole backend down, so a
@@ -98,9 +140,11 @@ def run_backtest_endpoint(req: BacktestRequest):
     # in-progress state instead of launching a second concurrent run (two identical
     # runs compete for disk/CPU and ~2x the wall time — observed in prod).
     if current.get("status") == "running":
+        existing_job = backtest_jobs.get_job_for_dataset(req.dataset_id)
         return {
             "status": "already_running",
             "dataset_id": req.dataset_id,
+            "job_id": existing_job,
             "progress": current,
             "message": "Un backtest ya está corriendo para este dataset",
         }
@@ -109,7 +153,71 @@ def run_backtest_endpoint(req: BacktestRequest):
     if current.get("status") == "cancelled":
         backtest_progress.pop(req.dataset_id, None)
 
-    return run_backtest_orchestrator(req)
+    # ── Retrocompat: X-Backtest-Sync: true → original blocking behaviour ──
+    if x_backtest_sync and x_backtest_sync.strip().lower() == "true":
+        return run_backtest_orchestrator(req)
+
+    # ── Default: async job (202 + job_id) ──
+    backtest_jobs.cleanup_old_results()
+    job_id = backtest_jobs.new_job_id()
+    # Seed both stores as running so the anti-double-run guard and legacy poll
+    # see it immediately (before the thread's first progress tick).
+    backtest_progress[req.dataset_id] = {
+        "status": "running", "current": 0, "total": 0, "percent": 0.0,
+    }
+    backtest_jobs.set_job_state(job_id, req.dataset_id, "running")
+
+    thread = threading.Thread(
+        target=_run_backtest_in_background, args=(req, job_id), daemon=True,
+    )
+    thread.start()
+    logger.info(f"[JOB] {job_id} launched for dataset={req.dataset_id}")
+
+    response.status_code = status.HTTP_202_ACCEPTED
+    return {"job_id": job_id, "dataset_id": req.dataset_id, "status": "running"}
+
+
+@router.get("/backtest/{job_id}")
+def get_backtest_job(job_id: str):
+    """Async job status (no result payload)."""
+    state = backtest_jobs.get_job_state(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {
+        "job_id": job_id,
+        "status": state.get("status"),
+        "percent": state.get("percent", 0.0),
+        "current": state.get("current", 0),
+        "total": state.get("total", 0),
+        "error": state.get("error"),
+    }
+
+
+@router.get("/backtest/{job_id}/result")
+def get_backtest_job_result(job_id: str):
+    """Completed result WITHOUT equity_curves (served per-day via /equity)."""
+    state = backtest_jobs.get_job_state(job_id)
+    if state is not None and state.get("status") in ("running", None):
+        return {"status": "running", "percent": state.get("percent", 0.0)}
+    if state is not None and state.get("status") == "failed":
+        raise HTTPException(status_code=500, detail=state.get("error") or "Backtest failed")
+    if state is not None and state.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Backtest cancelado")
+
+    result = backtest_jobs.load_job_result_light(job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Result not found or expired")
+    return result
+
+
+@router.get("/backtest/{job_id}/equity/{date}")
+def get_backtest_job_equity(job_id: str, date: str, ticker: str | None = None):
+    """Equity curve for a single day, loaded on demand."""
+    equity = backtest_jobs.load_job_equity(job_id, date, ticker)
+    if equity is None:
+        # No equity for this day (e.g. a no-trade day) → empty, not an error.
+        return {"date": date, "ticker": ticker, "equity": []}
+    return equity
 
 
 @router.get("/candles")
