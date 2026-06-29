@@ -97,7 +97,10 @@ def sanitize_floats(obj):
     return obj
 
 
-def run_backtest_orchestrator(req: BacktestRequest) -> dict:
+def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
+    # on_progress: optional callback(current, total, percent) used by the async
+    # job runner (F3) to mirror progress into Redis keyed by job_id. When None
+    # (sync retrocompat path + public API facade) behaviour is unchanged.
     t0 = time.time()
     logger.info(f"BACKTEST START dataset={req.dataset_id} strategy={req.strategy_id or 'inline'}")
 
@@ -292,6 +295,12 @@ def run_backtest_orchestrator(req: BacktestRequest) -> dict:
                     "total": total,
                     "percent": pct
                 }
+                if on_progress is not None:
+                    try:
+                        on_progress(current, total, pct)
+                    except Exception:
+                        # Progress mirroring must never break the backtest itself.
+                        pass
 
         # Session config fallback: when the request omits market_sessions /
         # custom times, fall back to the values saved on the strategy before the
