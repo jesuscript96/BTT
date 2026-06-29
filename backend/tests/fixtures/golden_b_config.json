@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "name": "gap_case_1_sobri",
+      "request": {
+        "dataset_id": "83629261-7d3c-4ca3-bab0-a08101b12735",
+        "strategy_id": "05031957-0583-47ed-b256-a7077ecb37a3",
+        "start_date": "2026-01-01",
+        "end_date": "2026-06-24"
+      }
+    },
+    {
+      "name": "gap_case_2_simple",
+      "request": {
+        "dataset_id": "65fa9b4b-e857-413e-84a5-97ab66f74b39",
+        "strategy_id": "b6c771e0-4dda-4262-bff6-ed0c038bc407",
+        "start_date": "2026-01-01",
+        "end_date": "2026-06-24"
+      }
+    }
+  ]
+}
