@@ -1,0 +1,30 @@
+{
+  "aggregate_metrics": {
+    "avg_loss": 0,
+    "avg_mae": 0,
+    "avg_pnl": 0,
+    "avg_profit_factor": 0,
+    "avg_r_per_day": 0,
+    "avg_r_ui": 0.0,
+    "avg_return_per_day_pct": 0,
+    "avg_sharpe": 0,
+    "avg_win": 0,
+    "calmar_ratio": 0,
+    "dd_return_ratio": 0,
+    "expectancy": 0,
+    "max_consecutive_losses": 0,
+    "max_consecutive_wins": 0,
+    "max_drawdown_pct": 0,
+    "max_profit_pct": 0,
+    "payoff_ratio": 0,
+    "r_squared": 0,
+    "sortino_ratio": 0,
+    "total_days": 0,
+    "total_pnl": 0,
+    "total_return_pct": 0,
+    "total_trades": 0,
+    "win_rate_pct": 0
+  },
+  "n_trades_total": 0,
+  "trades_first_100": []
+}
