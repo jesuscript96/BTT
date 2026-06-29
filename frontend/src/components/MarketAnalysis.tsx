@@ -1,39 +1,27 @@
 "use client";
 
 /**
- * Market Analysis — página de inteligencia de gappers small-cap.
+ * Market Analysis — dashboard de inteligencia de gappers small-cap.
  * Contrato/diseño: docs/market-analysis/PRD.md (MVP v1.0).
  *
- * Módulos servidos desde un único GET /api/market/screener (getMarketAnalysis):
- *   · MA-01 KPIs (6 + Close<VWAP placeholder Fase 2)
- *   · MA-02 Time Distribution (HOD/LOD/PMH, toggle 5D/30D/90D por histograma)
- *   · MA-05 MAE/MFE (toggle PM/RTH)
- *   · MA-06 Recent Gaps Up (tabla ordenable, paginada 50, click→ticker)
- * MA-04 Avg Change from Open (12 meses) llega en F2 (endpoint aggregate aparte).
+ * Gráficos construidos con visx (./market-analysis/charts) — reemplazan a recharts
+ * SOLO en esta página. Layout pensado como panel (bento), no como pila de secciones:
+ *   · KPI strip   — pulso del periodo (hero Gappers + rail de métricas)
+ *   · Timing      — HOD/LOD/PM High superpuestos en un único eje intradía (MA-02)
+ *   · MAE / MFE   — histograma espejo riesgo↔recorrido (MA-05)
+ *   · Seasonality — 12 curvas mensuales de Avg Change from Open (MA-04)
+ *   · Recent Gaps — tabla ordenable (MA-06)
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  ReferenceLine,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Cell,
-} from "recharts";
-import { Filter, RotateCcw, TrendingDown } from "lucide-react";
+import { Filter, RotateCcw, TrendingDown, Clock, ArrowLeftRight, CalendarDays, Table2, Activity } from "lucide-react";
 import { color, font, Card, Button, Table, Th, Td, Tr, SegmentedControl, Input } from "@/components/ui";
+import { TimingChart, MaeMfeTornado, SeasonalityChart, SERIES_COLOR } from "@/components/market-analysis/charts";
 import {
   getMarketAnalysis,
   getAvgChangeFromOpen,
   type MarketAnalysisResponse,
   type MaRecentGap,
-  type MaHistogram,
   type MaMonthCurve,
 } from "@/lib/api";
 
@@ -110,16 +98,10 @@ export default function MarketAnalysis() {
 
   const params = useMemo(() => buildParams(filters), [filters]);
 
-  // setState solo dentro de los callbacks async (no en el cuerpo del efecto):
-  // así no se disparan renders en cascada (regla react-hooks/set-state-in-effect).
   const load = useCallback(
     (signal?: AbortSignal) => {
       return getMarketAnalysis(params, signal)
-        .then((res) => {
-          // El filtro Close Red (toggle 3 estados) se aplica en cliente sobre records.
-          setData(res);
-          setError(null);
-        })
+        .then((res) => { setData(res); setError(null); })
         .catch((e) => {
           if ((e as Error)?.name === "AbortError") return;
           setError((e as Error)?.message || "Error cargando Market Analysis");
@@ -145,7 +127,9 @@ export default function MarketAnalysis() {
   const nActive = activeFilterCount(filters);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden", background: color.bgBase, fontFamily: font.sans, color: color.textPrimary }}>
+    <div className="ma-dash" style={{ display: "flex", flexDirection: "column", height: "100dvh", overflow: "hidden", background: color.bgBase, fontFamily: font.sans, color: color.textPrimary }}>
+      <style dangerouslySetInnerHTML={{ __html: DASH_CSS }} />
+
       {/* ── Header ── */}
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "14px 24px", borderBottom: `1px solid ${color.border}`, flexShrink: 0 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -202,7 +186,7 @@ export default function MarketAnalysis() {
       )}
 
       {/* ── Cuerpo ── */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 18 }}>
         {error ? (
           <ErrorState message={error} onRetry={() => { setError(null); setLoading(true); void load(); }} />
         ) : loading && !data ? (
@@ -211,21 +195,36 @@ export default function MarketAnalysis() {
           <EmptyState onClear={() => setFilters((f) => ({ ...DEFAULTS, period: f.period }))} />
         ) : data ? (
           <>
-            <KpiRow data={data} />
-            <Section title="Distribución temporal" subtitle="¿Cuándo ocurre el HOD, el LOD y el PM High?">
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
-                <DistributionChart kind="hod" title="Distribución HOD" baseParams={params} fallback={data.distributions.hod_time} />
-                <DistributionChart kind="lod" title="Distribución LOD" baseParams={params} fallback={data.distributions.lod_time} />
-                <DistributionChart kind="pmh" title="Distribución PM High" baseParams={params} fallback={data.distributions.pmh_time} />
-              </div>
-            </Section>
-            <MaeMfeSection data={data} />
-            <Section title="Avg Change from Open" subtitle="Perfil medio del día por mes · últimos 12 meses naturales">
-              <AvgChangeFromOpen baseParams={params} />
-            </Section>
-            <Section title="Recent Gaps Up" subtitle={`${recordsFiltered.length} gappers · click en ticker para abrir el detalle`}>
+            <KpiStrip data={data} />
+
+            <div className="ma-mid">
+              <Panel
+                icon={<Clock size={14} />}
+                title="Distribución temporal"
+                subtitle="Cuándo ocurre el HOD, el LOD y el PM High"
+                right={<TimingLegend />}
+              >
+                <TimingModule baseParams={params} fallback={data.distributions} />
+              </Panel>
+
+              <MaeMfePanel data={data} />
+            </div>
+
+            <Panel
+              icon={<CalendarDays size={14} />}
+              title="Avg Change from Open"
+              subtitle="Perfil intradía medio · 12 meses superpuestos"
+            >
+              <SeasonalityModule baseParams={params} />
+            </Panel>
+
+            <Panel
+              icon={<Table2 size={14} />}
+              title="Recent Gaps Up"
+              subtitle={`${recordsFiltered.length} gappers · click en el ticker para abrir el detalle`}
+            >
               <RecentGapsTable records={recordsFiltered} onTicker={(t) => router.push(`/analysis/${t}`)} />
-            </Section>
+            </Panel>
           </>
         ) : null}
       </div>
@@ -233,120 +232,138 @@ export default function MarketAnalysis() {
   );
 }
 
-// ── KPIs (MA-01) ─────────────────────────────────────────────────────────────
-function KpiRow({ data }: { data: MarketAnalysisResponse }) {
+// ── KPI strip (MA-01) ────────────────────────────────────────────────────────
+function KpiStrip({ data }: { data: MarketAnalysisResponse }) {
   const k = data.kpis;
-  const cards = [
-    { label: "Gappers", v: fmtInt(k.gappers_count.value), prev: k.gappers_count.prev, raw: k.gappers_count.value },
-    { label: "Avg Gap %", v: fmtPct(k.avg_gap_pct.value), prev: k.avg_gap_pct.prev, raw: k.avg_gap_pct.value },
-    { label: "PM High Avg", v: fmtPrice(k.pm_high_average.value), prev: k.pm_high_average.prev, raw: k.pm_high_average.value },
-    { label: "Close Red %", v: fmtPct(k.close_red_pct.value), prev: k.close_red_pct.prev, raw: k.close_red_pct.value },
-    { label: "Close < VWAP %", v: "Fase 2", prev: null, raw: null, muted: true },
-    { label: "Avg Fade PMH", v: fmtPct(k.avg_fade_from_pmh.value), prev: k.avg_fade_from_pmh.prev, raw: k.avg_fade_from_pmh.value },
+  const rail = [
+    { label: "PM High Avg", v: fmtPrice(k.pm_high_average.value), raw: k.pm_high_average.value, prev: k.pm_high_average.prev },
+    { label: "Close Red %", v: fmtPct(k.close_red_pct.value), raw: k.close_red_pct.value, prev: k.close_red_pct.prev },
+    { label: "Avg Fade PMH", v: fmtPct(k.avg_fade_from_pmh.value), raw: k.avg_fade_from_pmh.value, prev: k.avg_fade_from_pmh.prev },
     {
       label: "Max Fade PMH",
       v: fmtPct(k.max_fade_from_pmh.value),
+      raw: null as number | null, // sin "vs ant." — es un extremo puntual
       prev: null,
-      raw: k.max_fade_from_pmh.value,
       hint: k.max_fade_from_pmh.ticker ? `${k.max_fade_from_pmh.ticker} · ${k.max_fade_from_pmh.date}` : undefined,
     },
+    { label: "Close < VWAP %", v: "Fase 2", raw: null, prev: null, muted: true },
   ];
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-      {cards.map((c) => {
-        const delta = c.raw != null && c.prev != null ? c.raw - c.prev : null;
-        return (
-          <Card key={c.label} padded style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{c.label}</span>
-            <span style={{ fontSize: 22, fontWeight: 600, color: c.muted ? color.textMuted : color.textHigh, letterSpacing: "-0.5px" }} title={c.hint}>{c.v}</span>
-            {delta != null ? (
-              <span style={{ fontSize: 10, fontWeight: 600, color: delta >= 0 ? color.profit : color.loss }}>
-                {delta >= 0 ? "▲" : "▼"} {Math.abs(delta).toFixed(1)} vs ant.
-              </span>
-            ) : (
-              <span style={{ fontSize: 10, color: color.textMuted }}>{c.hint || " "}</span>
-            )}
-          </Card>
-        );
-      })}
+    <div className="ma-kpi-strip">
+      {/* Hero — pulso del periodo */}
+      <Card featured padded style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <Activity size={13} style={{ color: color.copper }} />
+          <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, color: color.copper }}>Pulso del periodo</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 18, flexWrap: "wrap" }}>
+          <HeroStat label="Gappers" value={fmtInt(k.gappers_count.value)} raw={k.gappers_count.value} prev={k.gappers_count.prev} />
+          <HeroStat label="Avg Gap" value={fmtPct(k.avg_gap_pct.value)} raw={k.avg_gap_pct.value} prev={k.avg_gap_pct.prev} />
+        </div>
+      </Card>
+
+      {/* Rail — métricas secundarias */}
+      <div className="ma-kpi-rail">
+        {rail.map((c) => {
+          const delta = c.raw != null && c.prev != null ? c.raw - c.prev : null;
+          return (
+            <Card key={c.label} padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{c.label}</span>
+              <span style={{ fontSize: 20, fontWeight: 600, color: c.muted ? color.textMuted : color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }} title={c.hint}>{c.v}</span>
+              <DeltaLine delta={delta} hint={c.hint} />
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-// ── Time Distribution (MA-02) ────────────────────────────────────────────────
+function HeroStat({ label, value, raw, prev }: { label: string; value: string; raw: number | null; prev?: number | null }) {
+  const delta = raw != null && prev != null ? raw - prev : null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: color.textMuted }}>{label}</span>
+      <span style={{ fontFamily: font.serif, fontSize: 38, fontWeight: 600, color: "#F0EEEA", letterSpacing: "-1px", lineHeight: 1 }}>{value}</span>
+      <DeltaLine delta={delta} />
+    </div>
+  );
+}
+
+/** Delta vs periodo anterior — neutro a propósito (no implica bueno/malo). */
+function DeltaLine({ delta, hint }: { delta: number | null; hint?: string }) {
+  if (delta == null) return <span style={{ fontSize: 10, color: color.textMuted }}>{hint || " "}</span>;
+  const up = delta >= 0;
+  return (
+    <span style={{ fontSize: 10, fontWeight: 600, color: color.textSecondary, display: "inline-flex", alignItems: "center", gap: 4, fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ color: up ? color.profit : color.loss }}>{up ? "▲" : "▼"}</span>
+      {Math.abs(delta).toFixed(1)} <span style={{ color: color.textMuted, fontWeight: 500 }}>vs ant.</span>
+    </span>
+  );
+}
+
+// ── Timing (MA-02) — un único chart con ventana 5D/30D/90D ───────────────────
 const DIST_WINDOWS = [
   { id: "5d", label: "5D" },
   { id: "30d", label: "30D" },
   { id: "90d", label: "90D" },
 ] as const;
 type DistWindow = (typeof DIST_WINDOWS)[number]["id"];
-const DIST_KEY = { hod: "hod_time", lod: "lod_time", pmh: "pmh_time" } as const;
 
-function DistributionChart({
-  kind,
-  title,
-  baseParams,
-  fallback,
-}: {
-  kind: "hod" | "lod" | "pmh";
-  title: string;
-  baseParams: URLSearchParams;
-  fallback: Record<string, number>;
-}) {
+function TimingLegend() {
+  const items: [keyof typeof SERIES_COLOR, string][] = [["hod", "HOD"], ["lod", "LOD"], ["pmh", "PM High"]];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      {items.map(([k, lbl]) => (
+        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: color.textSecondary }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: SERIES_COLOR[k] }} />
+          {lbl}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; fallback: MarketAnalysisResponse["distributions"] }) {
   const [win, setWin] = useState<DistWindow>("30d");
-  const [dist, setDist] = useState<Record<string, number>>(fallback);
+  const [dist, setDist] = useState(fallback);
 
   useEffect(() => {
     const ctrl = new AbortController();
     const p = new URLSearchParams(baseParams);
-    p.set("period", win); // periodo independiente del selector global (PRD MA-02)
+    p.set("period", win); // ventana independiente del selector global (PRD MA-02)
     getMarketAnalysis(p, ctrl.signal)
-      .then((res) => setDist(res.distributions[DIST_KEY[kind]] || {}))
+      .then((res) => setDist(res.distributions))
       .catch(() => {});
     return () => ctrl.abort();
-  }, [kind, win, baseParams]);
+  }, [win, baseParams]);
 
-  const entries = Object.entries(dist).sort((a, b) => a[0].localeCompare(b[0]));
-  const chartData = entries.map(([franja, pct]) => ({ franja, pct }));
-  const dominant = entries.reduce<[string, number]>((acc, e) => (e[1] > acc[1] ? e : acc), ["", 0]);
+  const dominant = (rec: Record<string, number>) =>
+    Object.entries(rec).reduce<[string, number]>((acc, e) => (e[1] > acc[1] ? e : acc), ["—", 0]);
+  const [domF, domP] = dominant(dist.hod_time);
 
   return (
-    <Card padded style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ fontFamily: font.serif, fontSize: 14, color: color.textHigh }}>{title}</span>
-          <span style={{ fontSize: 10, fontWeight: 600, color: color.copper }}>
-            {dominant[0] ? `${dominant[0]} · ${dominant[1].toFixed(1)}%` : "—"}
-          </span>
-        </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <span style={{ fontSize: 11, color: color.textSecondary }}>
+          Pico HOD más probable: <strong style={{ color: color.copper }}>{domF}</strong>{domP ? ` · ${domP.toFixed(1)}%` : ""}
+        </span>
         <SegmentedControl<DistWindow> size="sm" options={DIST_WINDOWS.map((w) => ({ id: w.id, label: w.label }))} value={win} onChange={setWin} />
       </div>
-      <div style={{ height: 180, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={color.border} vertical={false} />
-            <XAxis dataKey="franja" stroke={color.textMuted} fontSize={8} tickLine={false} axisLine={false} interval={0} angle={-45} textAnchor="end" height={42} />
-            <YAxis stroke={color.textMuted} fontSize={9} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-            <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${Number(v).toFixed(1)}%`, "% gappers"]} />
-            <Bar dataKey="pct" fill={color.copper} radius={[2, 2, 0, 0]}>
-              {chartData.map((d) => (
-                <Cell key={d.franja} fill={d.franja === dominant[0] ? color.copperBright : color.copper} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </Card>
+      <TimingChart hod={dist.hod_time} lod={dist.lod_time} pmh={dist.pmh_time} height={240} />
+    </div>
   );
 }
 
 // ── MAE / MFE (MA-05) ────────────────────────────────────────────────────────
-function MaeMfeSection({ data }: { data: MarketAnalysisResponse }) {
+function MaeMfePanel({ data }: { data: MarketAnalysisResponse }) {
   const [mode, setMode] = useState<"rth" | "pm">("rth");
   const block = data.mae_mfe[mode];
   return (
-    <Section
-      title="MAE / MFE Distribution"
+    <Panel
+      icon={<ArrowLeftRight size={14} />}
+      title="MAE / MFE"
       subtitle={mode === "rth" ? "Referencia: open 09:30 (RTH)" : "Referencia: cierre día anterior (PM)"}
       right={
         <SegmentedControl<"rth" | "pm">
@@ -357,82 +374,89 @@ function MaeMfeSection({ data }: { data: MarketAnalysisResponse }) {
         />
       }
     >
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
-        <HistogramCard title="MAE — excursión adversa" hist={block.mae} />
-        <HistogramCard title="MFE — excursión favorable" hist={block.mfe} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <MaeMfeTornado mae={block.mae} mfe={block.mfe} height={256} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <StatTriplet title="MAE" hist={block.mae} tone={color.loss} />
+          <StatTriplet title="MFE" hist={block.mfe} tone={color.copper} />
+        </div>
       </div>
-    </Section>
+    </Panel>
   );
 }
 
-function HistogramCard({ title, hist }: { title: string; hist: MaHistogram }) {
-  const chartData = Object.entries(hist.buckets).map(([bucket, pct]) => ({ bucket, pct }));
+function StatTriplet({ title, hist, tone }: { title: string; hist: MarketAnalysisResponse["mae_mfe"]["rth"]["mae"]; tone: string }) {
   return (
-    <Card padded style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ border: `0.5px solid ${color.border}`, borderRadius: 8, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <span style={{ fontFamily: font.serif, fontSize: 14, color: color.textHigh }}>{title}</span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: color.copper }}>medio · {hist.mean.toFixed(1)}%</span>
+        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: tone }}>{title}</span>
+        <span style={{ fontSize: 11, color: color.textHigh, fontVariantNumeric: "tabular-nums" }}>x̄ {hist.mean.toFixed(1)}%</span>
       </div>
-      <div style={{ display: "flex", gap: 12, fontSize: 9, color: color.textMuted }}>
-        <span>P25 {hist.p25.toFixed(1)}%</span>
-        <span>P50 {hist.p50.toFixed(1)}%</span>
-        <span>P75 {hist.p75.toFixed(1)}%</span>
+      <div style={{ display: "flex", gap: 10, fontSize: 9, color: color.textMuted, fontVariantNumeric: "tabular-nums" }}>
+        <span>P25 {hist.p25.toFixed(1)}</span>
+        <span>P50 {hist.p50.toFixed(1)}</span>
+        <span>P75 {hist.p75.toFixed(1)}</span>
       </div>
-      <div style={{ height: 180, width: "100%" }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={color.border} vertical={false} />
-            <XAxis dataKey="bucket" stroke={color.textMuted} fontSize={9} tickLine={false} axisLine={false} />
-            <YAxis stroke={color.textMuted} fontSize={9} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-            <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${Number(v).toFixed(1)}%`, "% gappers"]} />
-            <Bar dataKey="pct" fill={color.copper} radius={[2, 2, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </Card>
+    </div>
   );
 }
 
 // ── Avg Change from Open (MA-04) ─────────────────────────────────────────────
-function AvgChangeFromOpen({ baseParams }: { baseParams: URLSearchParams }) {
+function SeasonalityModule({ baseParams }: { baseParams: URLSearchParams }) {
   const [months, setMonths] = useState<MaMonthCurve[]>([]);
+  const [highlight, setHighlight] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const ctrl = new AbortController();
     getAvgChangeFromOpen(baseParams, ctrl.signal)
-      .then((res) => { setMonths(res); setFailed(false); })
+      .then((res) => {
+        setMonths(res);
+        setHighlight(res.length ? res[res.length - 1].month : "");
+        setFailed(false);
+      })
       .catch((e) => { if ((e as Error)?.name !== "AbortError") setFailed(true); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
   }, [baseParams]);
 
-  if (loading) return <span style={{ fontSize: 11, color: color.textMuted }}>Cargando perfiles mensuales…</span>;
-  if (failed || months.length === 0) return <span style={{ fontSize: 11, color: color.textMuted }}>Sin datos de perfil mensual.</span>;
+  if (loading) return <ChartSkeleton label="Cargando perfiles mensuales…" />;
+  if (failed || months.length === 0)
+    return <div style={{ minHeight: 120, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: color.textMuted }}>Sin datos de perfil mensual.</div>;
+
+  const sel = months.find((m) => m.month === highlight) ?? months[months.length - 1];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
-      {months.map((m) => (
-        <Card key={m.month} padded style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: color.textHigh }}>{m.label}</span>
-            <span style={{ fontSize: 9, color: color.copper }}>gap {m.avg_gap_pct.toFixed(0)}%</span>
-          </div>
-          <div style={{ height: 90, width: "100%" }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={m.points} margin={{ top: 4, right: 4, bottom: 0, left: -28 }}>
-                <YAxis stroke={color.textMuted} fontSize={7} tickLine={false} axisLine={false} width={28} />
-                <XAxis dataKey="time" hide />
-                <ReferenceLine y={0} stroke={color.border} strokeDasharray="2 2" />
-                <ReferenceLine x="09:30" stroke={color.textMuted} strokeDasharray="3 3" />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${Number(v).toFixed(2)}%`, "Δ open"]} />
-                <Line type="monotone" dataKey="avg_change" stroke={color.copper} strokeWidth={1.5} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, color: color.textSecondary }}>
+          Resaltado: <strong style={{ color: color.copper }}>{sel.label}</strong>
+          <span style={{ color: color.textMuted }}> · avg gap {sel.avg_gap_pct.toFixed(0)}%</span>
+        </span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {months.map((m) => {
+            const active = m.month === highlight;
+            return (
+              <button
+                key={m.month}
+                onClick={() => setHighlight(m.month)}
+                style={{
+                  fontFamily: font.sans, fontSize: 10, fontWeight: 600, cursor: "pointer",
+                  padding: "3px 9px", borderRadius: 999,
+                  border: `0.5px solid ${active ? color.copper : color.border}`,
+                  background: active ? "rgba(216,122,61,0.12)" : "transparent",
+                  color: active ? color.copperBright : color.textMuted,
+                  transition: "all .15s ease",
+                }}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <SeasonalityChart months={months} highlight={highlight} height={260} />
     </div>
   );
 }
@@ -500,12 +524,12 @@ function RecentGapsTable({ records, onTicker }: { records: MaRecentGap[]; onTick
                   </button>
                 </Td>
                 <Td style={{ color: color.textMuted }}>{r.date}</Td>
-                <Td style={{ textAlign: "right" }}>{r.gap_at_open_pct.toFixed(1)}%</Td>
-                <Td style={{ textAlign: "right" }}>{fmtPrice(r.open)}</Td>
-                <Td style={{ textAlign: "right" }}>{fmtVol(r.vol_rth)}</Td>
-                <Td style={{ textAlign: "right" }}>{fmtVol(r.vol_pm)}</Td>
-                <Td style={{ textAlign: "right" }}>{fmtPrice(r.hod)}</Td>
-                <Td style={{ textAlign: "right" }}>{fmtPrice(r.pmh)}</Td>
+                <Td style={{ textAlign: "right", color: color.copperBright, fontVariantNumeric: "tabular-nums" }}>{r.gap_at_open_pct.toFixed(1)}%</Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtPrice(r.open)}</Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtVol(r.vol_rth)}</Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtVol(r.vol_pm)}</Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtPrice(r.hod)}</Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtPrice(r.pmh)}</Td>
                 <Td style={{ textAlign: "center" }}>
                   <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: r.close_red ? color.loss : color.profit }} />
                 </Td>
@@ -526,18 +550,30 @@ function RecentGapsTable({ records, onTicker }: { records: MaRecentGap[]; onTick
 }
 
 // ── piezas comunes ───────────────────────────────────────────────────────────
-function Section({ title, subtitle, right, children }: { title: string; subtitle?: string; right?: React.ReactNode; children: React.ReactNode }) {
+function Panel({ icon, title, subtitle, right, children }: { icon?: React.ReactNode; title: string; subtitle?: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <h2 style={{ fontFamily: font.serif, fontSize: 16, fontWeight: 500, color: color.textHigh, margin: 0 }}>{title}</h2>
-          {subtitle && <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: color.textMuted }}>{subtitle}</span>}
+    <Card padded style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          {icon && <span style={{ color: color.copper, display: "flex", marginTop: 1 }}>{icon}</span>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <h2 style={{ fontFamily: font.serif, fontSize: 16, fontWeight: 500, color: color.textHigh, margin: 0, letterSpacing: "-0.2px" }}>{title}</h2>
+            {subtitle && <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: color.textMuted }}>{subtitle}</span>}
+          </div>
         </div>
         {right}
       </div>
       {children}
-    </section>
+    </Card>
+  );
+}
+
+function ChartSkeleton({ label }: { label: string }) {
+  return (
+    <div style={{ minHeight: 200, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: color.textMuted }}>
+      <div style={{ width: 24, height: 24, border: `2px solid ${color.border}`, borderTop: `2px solid ${color.copper}`, borderRadius: "50%", animation: "ma-spin 1s linear infinite" }} />
+      <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1.5 }}>{label}</span>
+    </div>
   );
 }
 
@@ -555,7 +591,6 @@ function LoadingState() {
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 400, gap: 16, color: color.textMuted }}>
       <div style={{ width: 32, height: 32, border: `3px solid ${color.border}`, borderTop: `3px solid ${color.copper}`, borderRadius: "50%", animation: "ma-spin 1s linear infinite" }} />
       <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 2 }}>Analizando gappers…</span>
-      <style dangerouslySetInnerHTML={{ __html: "@keyframes ma-spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}" }} />
     </div>
   );
 }
@@ -581,4 +616,21 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 const labelStyle: React.CSSProperties = { fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted };
-const tooltipStyle: React.CSSProperties = { backgroundColor: color.bgSurface, border: `1px solid ${color.border}`, borderRadius: 6, padding: "6px 10px", fontFamily: font.sans, fontSize: 11, color: color.textPrimary };
+
+// Layout responsivo del dashboard (media queries → no se pueden hacer inline).
+const DASH_CSS = `
+@keyframes ma-spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
+.ma-dash .ma-kpi-strip { display: grid; grid-template-columns: minmax(230px, 0.85fr) minmax(0, 2.3fr); gap: 14px; }
+.ma-dash .ma-kpi-rail { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.ma-dash .ma-mid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1180px) {
+  .ma-dash .ma-kpi-rail { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 1000px) {
+  .ma-dash .ma-mid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .ma-dash .ma-kpi-strip { grid-template-columns: 1fr; }
+  .ma-dash .ma-kpi-rail { grid-template-columns: repeat(2, 1fr); }
+}
+`;
