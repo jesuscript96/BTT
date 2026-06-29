@@ -102,19 +102,22 @@ const fmtShares = (v: number | null | undefined) => {
   return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 };
 
-const fmtPct = (v: number) => {
+const fmtPct = (v: number | null | undefined) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
   const s = v.toFixed(2);
   return v > 0 ? `+${s}%` : `${s}%`;
 };
 
-const fmtVol = (v: number) => {
+const fmtVol = (v: number | null | undefined) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
   return v.toFixed(0);
 };
 
-const fmtPrice = (v: number) => {
+const fmtPrice = (v: number | null | undefined) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (v >= 1000) return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return v.toFixed(2);
 };
@@ -1430,16 +1433,17 @@ export default function Screener() {
                 const rec = records.find((r) => r.ticker === selectedTicker) || null;
                 if (!rec) return null;
                 return (
-                  <DetailSection title="Today's Session">
+                  <DetailSection title="Live Session">
                     <DetailGrid>
-                      <DetailItem label="Open" value={`$${fmtPrice(rec.open)}`} />
+                      <DetailItem label="Last" value={`$${fmtPrice(rec.price)}`} />
+                      <DetailItem label="Change %" value={fmtPct(rec.change_pct)} color={(rec.change_pct ?? 0) >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="Prev Close" value={`$${fmtPrice(rec.prev_close)}`} />
                       <DetailItem label="High" value={`$${fmtPrice(rec.high)}`} />
                       <DetailItem label="Low" value={`$${fmtPrice(rec.low)}`} />
-                      <DetailItem label="Close" value={`$${fmtPrice(rec.price)}`} />
-                      <DetailItem label="Prev Close" value={`$${fmtPrice(rec.prev_close)}`} />
                       <DetailItem label="Volume" value={fmtVol(rec.volume)} />
-                      <DetailItem label="Gap %" value={fmtPct(rec.gap_pct)} color={rec.gap_pct >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
-                      <DetailItem label="Return %" value={fmtPct(rec.return_pct)} color={rec.return_pct >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="Gap %" value={fmtPct(rec.gap_pct)} color={(rec.gap_pct ?? 0) >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="Return %" value={fmtPct(rec.return_pct)} color={(rec.return_pct ?? 0) >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="RVol" value={rec.rvol != null ? `${rec.rvol.toFixed(2)}×` : "—"} />
                     </DetailGrid>
                   </DetailSection>
                 );
