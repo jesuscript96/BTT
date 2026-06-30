@@ -255,11 +255,22 @@ def _evaluate_single_condition(
     cond_type = cond.get("type", "")
     tf = cond.get("timeframe") or parent_tf or "1m"
 
-    # Evaluate the condition on its own resampled dataframe
-    cond_df = _resample_if_needed(df_1m, tf)
-
     # Use a timeframe-specific cache to avoid key collisions of indicators across timeframes
     tf_cache = cache.setdefault(tf, {}) if cache is not None else None
+
+    # Evaluate the condition on its own resampled dataframe.
+    # Memoize the resample per (day, timeframe): within a day df_1m is fixed, so the
+    # resampled frame is identical for every condition sharing this tf. Indicators
+    # cache their Series in tf_cache and never mutate cond_df, so sharing it across
+    # conditions is result-identical — it only avoids recomputing the same resample.
+    # (Indicator cache keys are tuples; "__resampled__" cannot collide with them.)
+    if tf_cache is not None:
+        cond_df = tf_cache.get("__resampled__")
+        if cond_df is None:
+            cond_df = _resample_if_needed(df_1m, tf)
+            tf_cache["__resampled__"] = cond_df
+    else:
+        cond_df = _resample_if_needed(df_1m, tf)
 
     if cond_type == "indicator_comparison":
         res_tf = _eval_indicator_comparison(cond, cond_df, daily_stats, tf_cache)
