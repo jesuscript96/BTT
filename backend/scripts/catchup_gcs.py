@@ -30,17 +30,30 @@ GCS_HMAC_SECRET = os.getenv('GCS_HMAC_SECRET', '')
 
 GAP_PCT_MIN = 5.0        # candidatos con gap >= 5%
 PM_RUNNER_MIN = 10.0     # candidatos con pmh estimado >= 10%
-MAX_WORKERS = 10
-SLEEP_BETWEEN_DAYS = 0.5  # segundos entre días
+
+# Throttling artificial de FREE TIER (5 req/min). El plan pago de Massive/Polygon
+# tiene llamadas ilimitadas (soft-limit ~100 req/s), así que por defecto NO se
+# aplica. Poner MASSIVE_THROTTLE_ENABLED=true vuelve al comportamiento free-tier.
+MASSIVE_THROTTLE_ENABLED = os.getenv("MASSIVE_THROTTLE_ENABLED", "false") == "true"
+# Sleep entre días: SOLO en free tier. En plan pago = 0 (sin throttle artificial).
+SLEEP_BETWEEN_DAYS = 0.5 if MASSIVE_THROTTLE_ENABLED else 0.0
+
+# Concurrencia: a MAX_WORKERS=10 con ~200ms/req el pico es ~50 req/s, bajo el
+# soft-limit de ~100 req/s recomendado por Massive. Configurable por env; mantener
+# <=16 (~80 req/s) para conservar margen de seguridad.
+MAX_WORKERS = max(1, int(os.getenv("MASSIVE_MAX_WORKERS", "10")))
 
 # ─── Massive client ───────────────────────────────────
 
-def _get_with_retry(url: str, params: dict, max_retries: int = 4,
+def _get_with_retry(url: str, params: dict, max_retries: int = 5,
                     backoff: float = 2.0, timeout: int = 15):
     """
-    GET con retry exponencial ante fallos de red transitorios
-    (SSL handshake, conexión cortada, timeout). HTTP no-2xx NO se
-    reintenta — el caller decide qué hacer con cada status code.
+    GET con retry ante (a) fallos de red transitorios (SSL handshake, conexión
+    cortada, timeout) y (b) HTTP 429 (rate limit), reintentado con backoff
+    exponencial (cap 30s). El resto de status no-2xx NO se reintenta — el caller
+    decide qué hacer (y debe loguearlo como [ERROR], no descartarlo en silencio).
+    Si se agotan los reintentos con un 429 persistente, devuelve esa respuesta 429
+    para que el caller la marque como error visible.
     """
     transient = (
         requests.exceptions.SSLError,
@@ -48,9 +61,10 @@ def _get_with_retry(url: str, params: dict, max_retries: int = 4,
         requests.exceptions.Timeout,
         requests.exceptions.ChunkedEncodingError,
     )
+    resp = None
     for attempt in range(max_retries):
         try:
-            return requests.get(url, params=params, verify=False, timeout=timeout)
+            resp = requests.get(url, params=params, verify=False, timeout=timeout)
         except transient as e:
             if attempt == max_retries - 1:
                 raise
@@ -61,6 +75,20 @@ def _get_with_retry(url: str, params: dict, max_retries: int = 4,
                 f"Retrying in {wait:.1f}s..."
             )
             time.sleep(wait)
+            continue
+        # Rate limit: reintentar con backoff exponencial (cap 30s).
+        if resp.status_code == 429:
+            if attempt == max_retries - 1:
+                break  # sin más reintentos; el caller maneja el 429 como [ERROR]
+            wait_time = min(2 ** attempt, 30)
+            logger.warning(
+                f"[429] Rate limited en {url.rsplit('/', 2)[-1]}, esperando "
+                f"{wait_time}s (intento {attempt + 1}/{max_retries})"
+            )
+            time.sleep(wait_time)
+            continue
+        return resp
+    return resp
 
 
 def _to_ny_naive(ms_series):
@@ -108,9 +136,10 @@ def get_grouped_daily(date_str: str) -> list[dict]:
     except Exception as e:
         logger.error(f"grouped_daily {date_str} failed after retries: {e}")
         return []
-    if r.status_code == 200:
+    if r is not None and r.status_code == 200:
         return r.json().get("results", [])
-    logger.warning(f"grouped_daily {date_str}: HTTP {r.status_code}")
+    status = r.status_code if r is not None else "no-response"
+    logger.error(f"[ERROR] grouped_daily {date_str}: HTTP {status} — día NO procesado")
     return []
 
 def get_1m_bars(ticker: str, date_str: str) -> pd.DataFrame:
@@ -120,9 +149,14 @@ def get_1m_bars(ticker: str, date_str: str) -> pd.DataFrame:
         r = _get_with_retry(url, {"apiKey": API_KEY, "adjusted": "true",
                                   "sort": "asc", "limit": 50000})
     except Exception as e:
-        logger.warning(f"  {ticker} {date_str} 1m fetch failed after retries: {e}")
+        logger.error(f"[ERROR] {ticker} {date_str} 1m fetch failed after retries: {e} — datos NO ingeridos")
         return pd.DataFrame()
-    if r.status_code != 200:
+    if r is None or r.status_code != 200:
+        # Visible, NO silencioso: un 429 persistente o cualquier no-200 se loguea
+        # con ticker+fecha+status para poder re-fetchear (antes se descartaba mudo,
+        # indistinguible de "sin datos ese día").
+        status = r.status_code if r is not None else "no-response"
+        logger.error(f"[ERROR] {ticker} {date_str} 1m: HTTP {status} — datos NO ingeridos (revisar/re-fetch)")
         return pd.DataFrame()
     results = r.json().get("results", [])
     if not results:
@@ -587,7 +621,10 @@ def main():
         prev_closes.update(new_prev_closes)
         write_checkpoint(dt.date())
 
-        time.sleep(SLEEP_BETWEEN_DAYS)
+        # Throttle artificial SOLO en free tier (MASSIVE_THROTTLE_ENABLED=true).
+        # En plan pago se omite por completo (sin sleeps innecesarios en el backfill).
+        if MASSIVE_THROTTLE_ENABLED:
+            time.sleep(SLEEP_BETWEEN_DAYS)
 
     # 4. Flush del último mes pendiente
     if prev_month_key is not None:
