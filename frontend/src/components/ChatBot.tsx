@@ -243,6 +243,9 @@ export function ChatBot() {
                 "- Answer only what was asked. Do NOT dump the full knowledge base or add unrequested context, preambles, or summaries.\n" +
                 "- No greetings, no filler, no closing remarks (e.g. 'espero que te sirva').\n" +
                 "- If a thorough answer would be long, give the key conclusion first and ASK whether the user wants more detail instead of expanding on your own.\n" +
+                "DATA, NOT OPINIONS — be prudent: report facts and figures, not valuations. Do NOT give trading or position-management advice (no 'no te cases con la posición', no 'revisa tu stop loss', no buy/sell/hold/long/short recommendations). State the data and stop.\n" +
+                "FLOAT & SQUEEZE — get the direction right (our traders go SHORT): a small float is NORMAL and what they look for, NOT a danger by itself; the real risks to flag are MICROFLOAT (< 1,000,000 shares) and ADR/foreign issuers (China/Asia, Cayman/BVI) or Asian control of the board. A short squeeze forms with a SMALL/MICRO float plus high short interest, NOT with a large float — never say the opposite.\n" +
+                "LIVE SEC TOOLS — you can actually READ filings: you have tools (list_filings, read_filing, get_insiders) to open and read real SEC EDGAR documents. For concrete company facts (directors/board, offerings, dilution, warrants, beneficial owners, insiders) USE them and answer from the document. NEVER claim to have read a filing you did not open, and NEVER invent names or figures — if a tool returns nothing, say it is not available in the filings. Cite the source (form + date).\n" +
                 "Always respond in Spanish, matching the language the user speaks. Use clean, minimal Markdown.";
 
             if (activeTicker && tickerData) {
@@ -336,14 +339,18 @@ export function ChatBot() {
                     .map(m => ({ role: m.role, content: m.content }))
             ];
 
-            // 5. Query DeepSeek via the backend proxy (API key stays server-side)
-            const response = await fetch(`${API_BASE}/edgie/chat`, {
+            // 5. Agentic gateway: Edgie can call SEC EDGAR tools (list_filings,
+            // read_filing, get_insiders) to READ real documents instead of guessing.
+            // Same response shape as the old proxy (choices[0].message.content).
+            const response = await fetch(`${API_BASE}/assistant/agentic-chat`, {
                 method: 'POST',
                 headers: await getAuthHeaders(),
                 body: JSON.stringify({
-                    model: 'deepseek-chat',
+                    ticker: activeTicker || undefined,
                     messages: apiMessages,
-                    temperature: 0.2
+                    temperature: 0.2,
+                    stream: false,
+                    page: '/edgie/chat',
                 })
             });
 

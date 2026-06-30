@@ -13,6 +13,7 @@ import {
     getTickerGapStats,
     getTickerFinvizNews,
     getTickerLogo,
+    getTickerInsiders,
     API_BASE,
     getAuthHeaders,
     type TickerLogoData
@@ -2310,6 +2311,40 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 });
             }
 
+            // Add Management & Insiders (yfinance officers roster + SEC Form 3/4/5 insider transactions).
+            // Feeds ownership_list / directors so Edgie reports real names instead of guessing.
+            const officers = (profile as any).officers;
+            if (Array.isArray(officers) && officers.length > 0) {
+                userPrompt += `\n### Management (Company Officers):\n`;
+                officers.slice(0, 12).forEach((o: any) => {
+                    const title = o.title || o.position || '—';
+                    const pay = o.totalPay != null ? ` (totalPay: $${o.totalPay})` : '';
+                    userPrompt += `- ${o.name}: ${title}${pay}\n`;
+                });
+            }
+            // Insiders (SEC Forms 3/4/5) — fetched lazily here so the manual report
+            // is the only thing that pays the SEC round-trips; tolerant to failure.
+            let insiders: any[] = [];
+            try {
+                const res = await getTickerInsiders(tickerName.toUpperCase());
+                insiders = Array.isArray(res?.insiders) ? res.insiders : [];
+            } catch (e) {
+                console.warn('No se pudieron cargar insiders (Forms 3/4/5):', e);
+            }
+            if (Array.isArray(insiders) && insiders.length > 0) {
+                userPrompt += `\n### Insiders (SEC Forms 3/4/5 — recent transactions):\n`;
+                insiders.slice(0, 20).forEach((t: any) => {
+                    const role = t.role || '—';
+                    const action = t.acquired_disposed === 'A' ? 'ACQUIRED' : t.acquired_disposed === 'D' ? 'DISPOSED' : (t.code_label || t.code || '—');
+                    const shares = t.shares != null ? `${t.shares} sh` : '—';
+                    const price = t.price != null ? ` @ $${t.price}` : '';
+                    userPrompt += `- [${t.date || '—'}] ${t.name} (${role}): ${action} ${shares}${price} [code ${t.code || '—'}]\n`;
+                });
+            }
+            if ((!Array.isArray(officers) || officers.length === 0) && (!Array.isArray(insiders) || insiders.length === 0)) {
+                userPrompt += `\n### Management & Insiders: No officer roster or SEC Form 3/4/5 insider data available for this ticker.\n`;
+            }
+
             const systemPrompt =
                 "You are Edgie AI, an expert quantitative data processor integrated into a professional short-selling trading terminal.\n" +
                 "Your task is to analyze the provided financial metrics, SEC filings history (especially S-1, S-3 shelf registrations, and 424B offerings), and SEC EDGAR XBRL facts for the ticker.\n" +
@@ -2337,14 +2372,17 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 "B. ACTIVE ATM: Detect At-The-Market offerings in 8-K/6-K. Mark as high danger ONLY if Effective/Active (set active_atm_usd). If Pending SEC approval, treat as informational (active_atm_usd = null) and say it is pending.\n" +
                 "C. TOXIC CONVERTIBLES: If 8-K, Schedule 13G or Exhibits 4.1/10.1 contain variable-price discounts over future VWAP (e.g. 'convertible at a 20% discount of the lowest VWAP of the last 5 trading days'), flag MAXIMUM alert: funds are mathematically incentivized to crush the price in premarket. Search terms: 'Warrant Agency Agreement', 'Convertible Note', 'Securities Purchase Agreement'.\n" +
                 "D. WARRANT PRICE TRIGGERS: Add to warrants_triggers an EXERCISE entry at the warrant exercise price (the 'danger ceiling' funds push toward to exercise and dump) and a REDEMPTION entry for call/redemption clauses (e.g. 'redemption if closing price exceeds $7.50 for 10 consecutive days').\n" +
-                "E. STRUCTURAL/REGULATORY FILTERS: (1) Jurisdiction: Cayman/BVI incorporation operating in China/Israel/Asia => high governance risk. (2) Public float < 5% of shares outstanding => 'Extremadamente manipulable'. (3) BABY SHELF RULE (S-3/F-3 Instruction I.B.6): if public float < $75M, the company can only sell via shelf/ATM up to 33.3% of public float per rolling 12 months (public float based on the highest closing price of the last 60 days). Alert if the company seems to push the price up artificially just to cross the $75M threshold and unlock massive dilution.\n" +
-                "F. NASDAQ COMPLIANCE: $1.00 rule (deficiency if closes < $1.00 for 30 consecutive business days; 180-day grace; cured by >$1.00 for 10+ days). Sudden-death $0.10 (below $0.10 for 10 consecutive business days => immediate suspension/delisting). MVLS >= $35M, Stockholders' Equity >= $2.5M, MVPHS > $1M, >= 500,000 public float shares. Fill nasdaq_compliance accordingly.\n\n" +
+                "E. STRUCTURAL/REGULATORY FILTERS: (1) JURISDICTION & CONTROL (the real danger): Cayman/BVI/PRC incorporation, operations in China/Hong Kong/Asia, ADR/foreign issuer (F-1/F-3/6-K/20-F), or Chinese/Asian individuals controlling management/board => HIGH governance & pump-and-dump risk. THIS — not a small float — is what you must warn about. (2) FLOAT SIZE — do not get this backwards: a SMALL float is NORMAL and EXPECTED for these setups and is NOT a red flag by itself; our users actively look for low-float names, so do NOT frame a small float as dangerous. The genuine structural danger is MICROFLOAT (< 1,000,000 shares) => extreme manipulation/squeeze risk. A larger/high float is relatively SAFER (harder to squeeze) — state it neutrally, not as a positive catalyst. (3) BABY SHELF RULE (S-3/F-3 Instruction I.B.6) — DO THE MATH: if public float < $75M, the company can only sell via shelf/ATM up to 33.3% of public float per rolling 12 months (public float based on the highest closing price of the last 60 days). When this applies, COMPUTE and report: the price needed to cross a $75M market cap (= 75,000,000 / shares_outstanding), the gap from the current price (absolute and %), and the read that — being below that level and capped at 33% — the company/insiders are incentivised to let the price PUMP toward that target to unlock full ($75M+) dilution capacity before issuing (a POSSIBLE LONG / pump-to-unlock-dilution scenario, stated as a structural observation, NOT advice). If shares_outstanding is unknown, say it is not calculable rather than inventing it.\n" +
+                "F. NASDAQ COMPLIANCE — ONLY IF PRICE-RELEVANT: discuss the $1.00 minimum-bid rule (deficiency if closes < $1.00 for 30 consecutive business days; 180-day grace; cured by >$1.00 for 10+ days) and the sudden-death $0.10 rule (below $0.10 for 10 consecutive business days => immediate suspension/delisting) ONLY when the current price is below $2.00 or within ~25% of the threshold. If the price is comfortably above (e.g. $10), DO NOT mention the $1.00 / $0.10 rules at all — it is irrelevant noise; set nasdaq_compliance.compliance_risk = OK and omit it from the markdown. Still verify the other listing standards (MVLS >= $35M, Stockholders' Equity >= $2.5M, MVPHS > $1M, >= 500,000 public float shares) and fill nasdaq_compliance accordingly.\n\n" +
                 "CRITICAL CONTENT RULES:\n" +
                 "1. NO CHATTY INTRODUCTIONS OR GREETINGS. Do NOT say 'Hola', 'Aquí tienes...', 'Espero que te sirva...', etc. Start immediately with the <edgie_metrics> tag.\n" +
                 "2. NO CANDLESTICK / PRICE-ACTION PREDICTIONS. Do NOT interpret candle patterns (e.g. inverted hammer, gap-up with long wick) as dilution signals. ONLY use structural price levels derived from warrants (exercise/redemption prices), regulatory thresholds (Nasdaq $1.00 cure price, $0.10, $75M baby-shelf) and support/resistance tied to those levels.\n" +
                 "3. ALWAYS format key data comparisons into Markdown Tables. Avoid giant paragraphs of text. Use bulleted lists for key bullet statistics.\n" +
                 "4. STRUCTURE THE MARKDOWN: Start with a section titled 'Resumen' (max 2 paragraphs) with practical conclusions and the critical price levels for the trader. Then a section titled 'Desarrollo de las conclusiones' with the details (offerings, cash runway, dilution rating rationale, ownership, warrants, Nasdaq compliance, runner squeezability).\n" +
-                "5. Always respond in Spanish (the markdown part), matching the language of the application. Make sure the numbers are exact as given in the facts. If a datum is unknown, use null in the JSON and '—' in the markdown rather than inventing it.";
+                "5. Always respond in Spanish (the markdown part), matching the language of the application. Make sure the numbers are exact as given in the facts. If a datum is unknown, use null in the JSON and '—' in the markdown rather than inventing it.\n" +
+                "6. SQUEEZE LOGIC (our users trade SHORT, get the direction right): a short squeeze forms with a SMALL/MICRO float plus high short interest, NOT with a large float. Set runner_assessment = SQUEEZE when the float is small/micro and there is no active dilution mechanism to absorb buying; = FADER when active dilution mechanisms (effective ATM, toxic convertibles, effective shelf with capacity) cap the upside; = NEUTRAL otherwise. NEVER describe a large float as squeeze-prone.\n" +
+                "7. DATA, NOT OPINIONS: you are a data processor, not an advisor. Report facts, exact figures and structural price levels. Do NOT give trading or position-management advice — no 'no te cases con la posición', no 'revisa tu stop loss', no buy/sell/hold recommendations — beyond the neutral structural reads defined above (squeeze/fader classification, pump-to-unlock, warrant exercise/redemption levels, regulatory thresholds). When in doubt, give the datum and stop.\n" +
+                "8. OWNERSHIP & DIRECTORS: fill ownership_list and any mention of directors/officers/insiders ONLY from the 'Management & Insiders' data provided in the user message (company officers roster + SEC Form 3/4/5 insider transactions). If that section is empty or absent, state that director/insider data is not available — NEVER invent names.";
 
             // Via the backend AI Gateway (/api/assistant/dilution-report) — provider key
             // stays server-side. Este endpoint inyecta el histórico de bancos dilusores

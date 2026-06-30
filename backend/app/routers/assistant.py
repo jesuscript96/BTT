@@ -7,6 +7,7 @@ provider's SSE chunks straight through to the browser.
 See docs/plan_asistente_edgie.md and docs/assistant/arquitectura.md.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -19,6 +20,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+
+from app.services import edgar_service
 
 router = APIRouter(prefix="/api/assistant", tags=["Assistant"])
 
@@ -262,6 +265,41 @@ def register_dilution_banks(ticker: str, banks: list[str]) -> int:
     return inserted
 
 
+def _pre_extract_for_report(ticker: str) -> Optional[str]:
+    """Pre-extracción determinista para el informe: baja documentos SEC reales y
+    devuelve las secciones de directivos y de oferta/dilución, para que Edgie
+    rellene ownership_list / dilución con DATOS, no con invención. Tolerante."""
+    parts = []
+    # Directivos: 20-F Item 6 (emisor extranjero) o 10-K Item 10 (doméstico).
+    try:
+        for forms, item in ((["20-F"], 6), (["10-K"], 10)):
+            r = edgar_service.get_filing_item(ticker, forms=forms, item_no=item, max_chars=3500)
+            if r and r.get("section"):
+                parts.append(f"DIRECTIVOS / JUNTA (de {r['form']} {r['date']}, Item {item}):\n{r['section']}")
+                break
+    except Exception as e:
+        logger.warning("[REPORT] pre-extract directivos falló %s: %s", ticker, e)
+    # Oferta / dilución: 424B o S-1/S-3 — sección Plan of Distribution / Underwriting.
+    try:
+        cik = edgar_service.resolve_cik(ticker)
+        if cik:
+            fl = edgar_service.list_filings(cik, forms=["424B", "S-1", "S-3", "F-1", "F-3"], limit=3)
+            if fl:
+                f = fl[0]
+                text = edgar_service.fetch_document_text(cik, f["accession"], f["primary_document"])
+                if text:
+                    seg = edgar_service.read_relevant(
+                        text,
+                        "plan of distribution underwriting placement agent warrants exercise price at-the-market offering",
+                        max_chars=3500,
+                    )
+                    if seg:
+                        parts.append(f"OFERTA / DILUCIÓN (de {f['form']} {f['date']}):\n{seg}")
+    except Exception as e:
+        logger.warning("[REPORT] pre-extract oferta falló %s: %s", ticker, e)
+    return "\n\n".join(parts) if parts else None
+
+
 class DilutionReportRequest(ChatRequest):
     ticker: str = Field(..., description="Símbolo del ticker analizado (ej: MULN)")
 
@@ -299,6 +337,19 @@ async def dilution_report(req: DilutionReportRequest, request: Request):
         insert_at = 1 if req.messages and req.messages[0].get("role") == "system" else 0
         req.messages.insert(insert_at, context_msg)
 
+    # 1b. Pre-extracción de documentos SEC reales (directivos + oferta/dilución).
+    extracted = await asyncio.to_thread(_pre_extract_for_report, ticker)
+    if extracted:
+        insert_at = 1 if req.messages and req.messages[0].get("role") == "system" else 0
+        req.messages.insert(insert_at, {
+            "role": "system",
+            "content": (
+                "DATOS REALES EXTRAÍDOS DE DOCUMENTOS SEC PARA ESTE TICKER. "
+                "Úsalos como fuente para ownership_list/directivos y para la dilución; "
+                "NO inventes nombres ni cifras y cita el formulario:\n\n" + extracted[:8000]
+            ),
+        })
+
     # 2. Llamada no-streaming al proveedor LLM.
     req.stream = False
     payload = _build_payload(req)
@@ -334,6 +385,260 @@ async def dilution_report(req: DilutionReportRequest, request: Request):
         logger.warning("[ASSISTANT] interceptor de bancos falló: %s", exc)
 
     return JSONResponse(data)
+
+
+# ── Chat agentic con tools sobre SEC EDGAR ───────────────────────────────────
+# Edgie deja de responder "de memoria" (y de alucinar): se le dan herramientas
+# para LEER de verdad los documentos de EDGAR y razonar sobre su contenido.
+# Bucle de tool-calling no-streaming: el modelo pide tools -> las ejecutamos ->
+# le devolvemos el resultado -> repite hasta dar respuesta final.
+
+AGENTIC_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_filings",
+            "description": "Lista los filings recientes de SEC EDGAR de una empresa (tipo, fecha, descripción). Úsalo para saber QUÉ documentos existen antes de leerlos.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string", "description": "Símbolo (ej: SPCB). Si se omite, usa el ticker activo."},
+                    "form_type": {"type": "string", "description": "Filtro opcional por prefijo de formulario (ej: '20-F', '424B', '8-K', 'S-1', 'DEF 14A')."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_filing",
+            "description": "Abre y LEE el contenido real del filing más reciente de un tipo dado y devuelve la parte relevante. Para 20-F/10-K usa 'item' (ej. directivos de un 20-F = item 6; de un 10-K = item 10). Para prospectos (424B/S-1) usa 'query' (ej. 'plan of distribution', 'warrant exercise price'). Úsalo SIEMPRE antes de afirmar datos de un documento.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {"type": "string"},
+                    "form_type": {"type": "string", "description": "Formulario a abrir (ej: '20-F', '424B5', 'S-1', '8-K')."},
+                    "query": {"type": "string", "description": "Qué buscas dentro del documento (texto libre)."},
+                    "item": {"type": "integer", "description": "Nº de ITEM a extraer en filings estructurados (20-F/10-K/10-Q)."},
+                },
+                "required": ["form_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_insiders",
+            "description": "Transacciones de insiders (compras/ventas de directivos) desde SEC Forms 3/4/5. Útil para small caps US; los emisores extranjeros (20-F) suelen estar exentos.",
+            "parameters": {
+                "type": "object",
+                "properties": {"ticker": {"type": "string"}},
+            },
+        },
+    },
+]
+
+
+def _tool_list_filings(ticker=None, form_type=None, _default_ticker=None):
+    ticker = (ticker or _default_ticker or "").upper().strip()
+    if not ticker:
+        return {"error": "no ticker"}
+    cik = edgar_service.resolve_cik(ticker)
+    if not cik:
+        return {"error": f"No se encontró CIK para {ticker} (¿no cotiza en SEC?)."}
+    forms = [form_type] if form_type else None
+    fl = edgar_service.list_filings(cik, forms=forms, limit=15)
+    return {"ticker": ticker, "filings": [
+        {"form": x["form"], "date": x["date"], "description": x["description"]} for x in fl
+    ]}
+
+
+def _tool_read_filing(form_type, ticker=None, query="", item=None, _default_ticker=None):
+    ticker = (ticker or _default_ticker or "").upper().strip()
+    if not ticker:
+        return {"error": "no ticker"}
+    cik = edgar_service.resolve_cik(ticker)
+    if not cik:
+        return {"error": f"No se encontró CIK para {ticker}."}
+    fl = edgar_service.list_filings(cik, forms=[form_type], limit=5)
+    if not fl:
+        return {"error": f"No hay filings tipo {form_type} para {ticker}."}
+    f = fl[0]
+    text = edgar_service.fetch_document_text(cik, f["accession"], f["primary_document"])
+    if not text:
+        return {"error": "No se pudo descargar el documento."}
+    if item is not None:
+        seg = edgar_service.extract_item(text, int(item)) or edgar_service.read_relevant(text, query or str(item))
+    else:
+        seg = edgar_service.read_relevant(text, query)
+    return {
+        "form": f["form"], "date": f["date"],
+        "url": edgar_service._doc_url(cik, f["accession"], f["primary_document"]),
+        "content": (seg or "")[:9000],
+        "note": "Responde SOLO con lo que aparezca en 'content'. Si el dato no está, di que no está; no inventes.",
+    }
+
+
+def _tool_get_insiders(ticker=None, _default_ticker=None):
+    ticker = (ticker or _default_ticker or "").upper().strip()
+    if not ticker:
+        return {"error": "no ticker"}
+    from app.routers.ticker_analysis import get_insider_activity
+    return {"ticker": ticker, "insiders": get_insider_activity(ticker)[:25]}
+
+
+_TOOL_IMPL = {
+    "list_filings": _tool_list_filings,
+    "read_filing": _tool_read_filing,
+    "get_insiders": _tool_get_insiders,
+}
+
+_AGENTIC_PREAMBLE = (
+    "Tienes herramientas para consultar SEC EDGAR EN VIVO: list_filings, read_filing y get_insiders. "
+    "Cuando te pregunten por datos concretos de la empresa (directivos/junta, ofertas, dilución, warrants, "
+    "beneficial owners, insiders, etc.), DEBES usarlas para leer el documento real en vez de responder de memoria. "
+    "REGLA CRÍTICA: nunca afirmes haber leído un documento ni des datos 'según el Form X' si no lo has abierto con "
+    "read_filing en esta conversación. Si la herramienta no devuelve el dato, di 'no disponible en los filings' y "
+    "NO inventes nombres ni cifras. Cita siempre la fuente (formulario + fecha). "
+    "Pista de estructura: en un 20-F los directivos están en el Item 6; en un 10-K en el Item 10; "
+    "los agentes colocadores/ofertas en 424B y S-1/S-3 ('Plan of Distribution'/'Underwriting')."
+)
+
+
+def _sanitize_agentic_content(content: Optional[str]) -> str:
+    """Quita plantillas de tool-call que el modelo a veces filtra como TEXTO
+    (sobre todo al forzar respuesta sin tools): los marcadores DSML/invoke de
+    DeepSeek. Corta en el primer marcador; lo de antes es la respuesta legible."""
+    if not content:
+        return ""
+    for marker in ("<｜", "｜＞", "DSML", "<tool_call", "invoke name=", "<function"):
+        idx = content.find(marker)
+        if idx != -1:
+            content = content[:idx]
+    return content.strip()
+
+
+class AgenticChatRequest(ChatRequest):
+    ticker: Optional[str] = Field(None, description="Ticker activo para resolver las tools sin pedirlo.")
+    max_iterations: int = 8
+
+
+@router.post("/agentic-chat")
+async def agentic_chat(req: AgenticChatRequest, request: Request):
+    """Chat con bucle de tool-calling sobre EDGAR (no-streaming). Devuelve el
+    mismo formato que /chat (choices[0].message.content) para el frontend."""
+    api_key = _resolve_api_key(request)
+    default_ticker = (req.ticker or "").upper().strip() or None
+
+    messages: list[dict] = [{"role": "system", "content": _AGENTIC_PREAMBLE}]
+    if default_ticker:
+        messages.append({"role": "system", "content": f"Ticker activo: {default_ticker}."})
+    messages.extend(req.messages)
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    url = f"{PROVIDER_BASE}/chat/completions"
+    model = req.model or DEFAULT_MODEL
+    started = time.time()
+    last_data = None
+    converged = False
+
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        for _ in range(max(1, min(req.max_iterations, 8))):
+            payload = {
+                "model": model, "messages": messages,
+                "tools": AGENTIC_TOOLS, "tool_choice": "auto",
+                "temperature": req.temperature, "stream": False,
+            }
+            try:
+                resp = await client.post(url, json=payload, headers=headers)
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=502, detail=f"Error de red hacia el proveedor LLM: {exc}")
+            if resp.status_code != 200:
+                detail = resp.text[:500]
+                try:
+                    detail = resp.json().get("error", {}).get("message", detail)
+                except Exception:
+                    pass
+                raise HTTPException(status_code=resp.status_code, detail=detail)
+
+            last_data = resp.json()
+            choice = (last_data.get("choices") or [{}])[0]
+            msg = choice.get("message", {}) or {}
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                converged = True
+                break
+
+            # Reproduce el turno del asistente con sus tool_calls y resuelve cada uno.
+            messages.append({
+                "role": "assistant",
+                "content": msg.get("content") or "",
+                "tool_calls": tool_calls,
+            })
+            for tc in tool_calls:
+                fn = (tc.get("function") or {})
+                name = fn.get("name")
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    args = {}
+                impl = _TOOL_IMPL.get(name)
+                if impl is None:
+                    result = {"error": f"herramienta desconocida: {name}"}
+                else:
+                    try:
+                        result = await asyncio.to_thread(impl, _default_ticker=default_ticker, **args)
+                    except Exception as exc:
+                        logger.warning("[AGENTIC] tool %s falló: %s", name, exc)
+                        result = {"error": f"fallo ejecutando {name}: {exc}"}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id"),
+                    "content": json.dumps(result, ensure_ascii=False)[:9000],
+                })
+
+        # Si agotó iteraciones sin converger, fuerza una respuesta final SIN tools
+        # (el modelo redacta con lo que ya leyó) para no devolver content vacío.
+        if not converged:
+            try:
+                messages.append({
+                    "role": "system",
+                    "content": "Has alcanzado el límite de consultas. Da la respuesta FINAL ahora mismo con lo que ya leíste en los resultados de las herramientas. Si no encontraste el dato, di exactamente que no está disponible en los filings consultados y sugiere qué documento mirar. PROHIBIDO decir que vas a buscar más o usar sintaxis de herramientas.",
+                })
+                resp = await client.post(url, json={
+                    "model": model, "messages": messages,
+                    "tool_choice": "none",
+                    "temperature": req.temperature, "stream": False,
+                }, headers=headers)
+                if resp.status_code == 200:
+                    last_data = resp.json()
+            except httpx.HTTPError as exc:
+                logger.warning("[AGENTIC] cierre forzado falló: %s", exc)
+
+    # Limpia plantillas de tool-call filtradas como texto; si no queda nada útil,
+    # responde con un aviso en vez de basura o vacío.
+    try:
+        ch = (last_data or {}).get("choices") or [{}]
+        m = ch[0].get("message", {}) or {}
+        cleaned = _sanitize_agentic_content(m.get("content"))
+        # A veces el modelo deja una promesa incumplida ("voy a buscar…") como texto
+        # en vez de emitir un tool-call real → no es respuesta, da el fallback.
+        low = cleaned.lower()
+        unfulfilled = any(p in low for p in (
+            "voy a buscar", "voy a revisar", "buscaré", "déjame buscar",
+            "let me search", "let me look", "i'll search", "i will search",
+        ))
+        if not cleaned or unfulfilled:
+            cleaned = ("No he podido extraer ese dato de los filings disponibles. "
+                       "¿Quieres que revise otro documento (p. ej. el DEF 14A o el 10-K)?")
+        m["content"] = cleaned
+        ch[0]["message"] = m
+        last_data["choices"] = ch
+    except Exception:
+        pass
+
+    _log_usage(req.page, model, (last_data or {}).get("usage"), time.time() - started)
+    return JSONResponse(last_data or {"choices": [{"message": {"content": "No hubo respuesta del modelo."}}]})
 
 
 @router.get("/health")

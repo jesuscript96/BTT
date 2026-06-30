@@ -380,6 +380,28 @@ export function getTickerFinvizNews(
   );
 }
 
+// Transacciones de insiders (SEC Forms 3/4/5). Alimenta el informe de dilución
+// de Edgie para que nombre a los directivos sin inventar.
+export interface InsiderTransaction {
+  name: string;
+  role: string;
+  form_type: string;
+  date: string | null;
+  code: string | null;
+  code_label: string | null;
+  shares: number | null;
+  price: number | null;
+  acquired_disposed: string | null;
+}
+
+export function getTickerInsiders(
+  ticker: string,
+): Promise<{ ticker: string; insiders: InsiderTransaction[] }> {
+  return apiRequest<{ ticker: string; insiders: InsiderTransaction[] }>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/insiders`,
+  );
+}
+
 
 // ─── Social (Stocktwits) ────────────────────────────────────
 // Todas estas llamadas pegan al backend (/api/market/social/*), que cachea con
