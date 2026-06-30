@@ -3,8 +3,10 @@ Live screener service — real-time US stock screener fed by Massive's WebSocket
 
 Responsibilities (all in-process, no DB writes on the hot path):
   * Bootstrap a per-ticker state map from the REST snapshot (prev_close, last
-    price, session volume) + an avg-20d-volume lookup from DuckDB (for RVol) +
-    the US equities universe from `massive.tickers`.
+    price, session volume) + an avg-20d-volume lookup from DuckDB (for RVol).
+    The universe is an authoritative CS + ADRC allow-list built from the Massive
+    reference API (refreshed daily); ETFs, warrants, units, rights, preferred,
+    OTC, etc. are excluded, so they never reach the leaderboard.
   * Keep that state fresh by consuming Massive's second-aggregate stream
     (`A.*`) over `wss://socket.massive.com`. Each message is O(1): update last
     price, session high/low, accumulated volume and the RTH open.
@@ -27,8 +29,8 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, time as dtime, timedelta
+from typing import Any, Dict, List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -54,6 +56,11 @@ MIN_CHANGE_PCT = 15.0        # explosive-move threshold (gainers / pre / after)
 TOP_N = 50                   # rows streamed per tab
 SNAPSHOT_POLL_SECONDS = 20   # REST fallback cadence while WS is down / market closed
 TOP_CACHE_TTL = 1.0          # recompute a tab's leaderboard at most once per second
+
+# Allow-list: only these instrument types reach the screener (PRD §02). The set
+# is built from the Massive reference API and refreshed daily at this ET time.
+ALLOWED_TYPES = ("CS", "ADRC")
+ALLOWLIST_REFRESH_ET = dtime(4, 0)
 
 ET = ZoneInfo("America/New_York")
 
@@ -117,6 +124,7 @@ class LiveScreenerService:
 
     def __init__(self) -> None:
         self._states: Dict[str, TickerLiveState] = {}
+        self._allowlist: Set[str] = set()  # authoritative CS+ADRC universe
         self._lock = threading.RLock()
         self._ws_connected = False
         self._bootstrapped = False
@@ -130,7 +138,7 @@ class LiveScreenerService:
         has data immediately, then launch the WS consumer + poller. The avg-20d
         volume table (RVol only, non-critical) loads in the background so a slow
         or contended DuckDB query can never delay the live stream."""
-        await asyncio.to_thread(self._load_universe)
+        await asyncio.to_thread(self._refresh_allowlist)
         try:
             await asyncio.to_thread(self._refresh_from_snapshot)
         except Exception as e:  # noqa: BLE001
@@ -140,6 +148,7 @@ class LiveScreenerService:
         self._tasks = [
             loop.create_task(self._consume_massive_ws()),
             loop.create_task(self._poll_snapshot_loop()),
+            loop.create_task(self._allowlist_refresh_loop()),
             loop.create_task(asyncio.to_thread(self._load_avg_volume)),
         ]
         logger.info("[LIVE] screener service started (%d tickers in universe)", len(self._states))
@@ -153,25 +162,102 @@ class LiveScreenerService:
     def ws_connected(self) -> bool:
         return self._ws_connected
 
-    # ── bootstrap ────────────────────────────────────────────────────────────
+    # ── allow-list (universe = CS + ADRC, authoritative) ─────────────────────
+    def _fetch_allowlist(self) -> Tuple[Set[str], Dict[str, Tuple[str, str]]]:
+        """Fetch the active CS + ADRC US-stock universe from the Massive
+        reference API (paginated via next_url). Returns (symbols, meta) where
+        meta[ticker] = (name, primary_exchange). On any failure returns empties
+        so the caller keeps the previous allow-list."""
+        if not API_KEY:
+            return set(), {}
+        symbols: Set[str] = set()
+        meta: Dict[str, Tuple[str, str]] = {}
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                for typ in ALLOWED_TYPES:
+                    url: Optional[str] = f"{REST_BASE}/v3/reference/tickers"
+                    params: Optional[Dict[str, Any]] = {
+                        "market": "stocks", "active": "true", "type": typ,
+                        "limit": 1000, "apiKey": API_KEY,
+                    }
+                    pages = 0
+                    while url and pages < 50:  # ~7-8 pages expected; cap is a backstop
+                        resp = client.get(url, params=params)
+                        resp.raise_for_status()
+                        data = resp.json()
+                        for r in data.get("results") or []:
+                            tk = str(r.get("ticker", "") or "").upper()
+                            if not tk:
+                                continue
+                            symbols.add(tk)
+                            meta[tk] = (
+                                str(r.get("name", "") or tk),
+                                str(r.get("primary_exchange", "") or ""),
+                            )
+                        nxt = data.get("next_url")
+                        # next_url already carries cursor + filters; only the key is missing.
+                        url, params = (nxt, {"apiKey": API_KEY}) if nxt else (None, None)
+                        pages += 1
+            return symbols, meta
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[LIVE] allow-list fetch failed (%s)", e)
+            return set(), {}
+
+    def _refresh_allowlist(self) -> None:
+        """Rebuild the CS+ADRC allow-list and reconcile the universe: seed new
+        tickers (name/exchange) and prune anything no longer allow-listed. Keeps
+        the previous list if the fetch is empty; on a cold first failure, falls
+        back to massive.tickers so the screener is never empty."""
+        symbols, meta = self._fetch_allowlist()
+        if not symbols:
+            if self._allowlist:
+                logger.warning("[LIVE] allow-list refresh failed; keeping previous (%d symbols)", len(self._allowlist))
+            else:
+                logger.warning("[LIVE] allow-list unavailable on first run; falling back to massive.tickers")
+                self._load_universe()
+            return
+        with self._lock:
+            self._allowlist = symbols
+            for tk in symbols:
+                name, exch = meta.get(tk, (tk, ""))
+                st = self._states.get(tk)
+                if st is None:
+                    self._states[tk] = TickerLiveState(ticker=tk, name=name, exchange=exch)
+                else:
+                    if name:
+                        st.name = name
+                    if exch:
+                        st.exchange = exch
+            # Prune tickers that fell off the allow-list (delisted / re-typed).
+            for tk in [t for t in self._states if t not in symbols]:
+                del self._states[tk]
+        logger.info("[LIVE] allow-list = %d CS+ADRC symbols (universe pruned to match)", len(symbols))
+
     def _load_universe(self) -> None:
+        """Fallback universe from massive.tickers, used only when the REST
+        allow-list is unavailable on a cold start (broader than CS+ADRC, but
+        better than an empty screener)."""
         try:
             from app.services.cache_service import get_tickers_df
 
             df = get_tickers_df()
+            loaded: Set[str] = set()
             with self._lock:
                 for row in df.itertuples(index=False):
                     tk = str(getattr(row, "ticker", "") or "").upper()
                     if not tk:
                         continue
-                    self._states[tk] = TickerLiveState(
-                        ticker=tk,
-                        name=str(getattr(row, "name", "") or tk),
-                        exchange=str(getattr(row, "primary_exchange", "") or ""),
-                    )
-            logger.info("[LIVE] universe loaded: %d tickers", len(self._states))
+                    loaded.add(tk)
+                    if tk not in self._states:
+                        self._states[tk] = TickerLiveState(
+                            ticker=tk,
+                            name=str(getattr(row, "name", "") or tk),
+                            exchange=str(getattr(row, "primary_exchange", "") or ""),
+                        )
+                self._allowlist = loaded
+            logger.info("[LIVE] fallback universe from massive.tickers: %d tickers", len(loaded))
         except Exception as e:  # noqa: BLE001
-            logger.warning("[LIVE] universe load failed (%s); will rely on snapshot", e)
+            logger.warning("[LIVE] fallback universe load failed (%s)", e)
 
     def _load_avg_volume(self) -> None:
         """20-day average RTH volume per ticker from daily_metrics (for RVol)."""
@@ -217,8 +303,8 @@ class LiveScreenerService:
         with self._lock:
             for t in tickers:
                 sym = str(t.get("ticker", "")).upper()
-                if not sym:
-                    continue
+                if not sym or sym not in self._allowlist:
+                    continue  # allow-list gate: only CS + ADRC
                 st = self._states.get(sym)
                 if st is None:
                     st = TickerLiveState(ticker=sym)
@@ -251,6 +337,21 @@ class LiveScreenerService:
                 break
             except Exception as e:  # noqa: BLE001
                 logger.debug("[LIVE] snapshot poll error: %s", e)
+
+    async def _allowlist_refresh_loop(self) -> None:
+        """Rebuild the CS+ADRC allow-list once a day at ~4:00 AM ET (pre-market).
+        A failed refresh keeps the previous list (see _refresh_allowlist)."""
+        while not self._stop:
+            try:
+                await asyncio.sleep(_seconds_until_et(ALLOWLIST_REFRESH_ET))
+                if self._stop:
+                    break
+                await asyncio.to_thread(self._refresh_allowlist)
+            except asyncio.CancelledError:  # pragma: no cover
+                break
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[LIVE] allow-list refresh loop error: %s", e)
+                await asyncio.sleep(3600)
 
     # ── Massive WebSocket consumer ───────────────────────────────────────────
     async def _consume_massive_ws(self) -> None:
@@ -307,10 +408,13 @@ class LiveScreenerService:
         if not sym:
             return
         with self._lock:
+            if sym not in self._allowlist:
+                # Defensive allow-list gate (PRD §05.3): only CS + ADRC pass.
+                return
             st = self._states.get(sym)
             if st is None:
-                # Unknown symbol (not in our equities universe) — skip to stay light.
-                return
+                st = TickerLiveState(ticker=sym)
+                self._states[sym] = st
             price = _f(ev.get("c")) or _f(ev.get("vw")) or st.last_price
             if price is not None:
                 st.last_price = price
@@ -400,6 +504,15 @@ class LiveScreenerService:
         rows = rows[:limit]
         self._top_cache[tab] = (now, rows)
         return rows
+
+
+def _seconds_until_et(target: dtime) -> float:
+    """Seconds from now until the next occurrence of `target` time in ET."""
+    now = datetime.now(ET)
+    nxt = now.replace(hour=target.hour, minute=target.minute, second=0, microsecond=0)
+    if nxt <= now:
+        nxt += timedelta(days=1)
+    return max(60.0, (nxt - now).total_seconds())
 
 
 def _ts_in_rth(ts_ms: Any) -> bool:
