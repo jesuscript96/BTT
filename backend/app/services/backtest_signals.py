@@ -42,18 +42,15 @@ logger = logging.getLogger(__name__)
 def get_parallel_workers() -> int:
     """Nº de workers para la fase de señales.
 
-    Default: min(cpu_count()-2, 6) — deja 2 cores para OS/FastAPI/DuckDB y capea
-    en 6 para que quepan varios backtests concurrentes sin acaparar.
-    Override por env BACKTEST_PARALLEL_WORKERS.
+    Default: 1 (OPT-IN). El paralelismo NO se activa automáticamente: materializar
+    todos los day_df en el padre antes del fork re-introduce el riesgo de OOM en
+    BROAD sobre CCX33 (30GB, Swap=0). Se activa EXPLÍCITAMENTE poniendo
+    BACKTEST_PARALLEL_WORKERS=N en Coolify cuando el hardware lo permita (W-2295).
     """
-    env = os.getenv("BACKTEST_PARALLEL_WORKERS")
-    if env is not None:
-        try:
-            return max(1, int(env))
-        except (ValueError, TypeError):
-            pass
-    cpu = os.cpu_count() or 1
-    return max(1, min(cpu - 2, 6))
+    try:
+        return max(1, int(os.getenv("BACKTEST_PARALLEL_WORKERS", "1")))
+    except (ValueError, TypeError):
+        return 1
 
 
 def fork_available() -> bool:
