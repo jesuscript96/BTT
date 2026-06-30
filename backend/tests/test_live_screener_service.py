@@ -27,6 +27,7 @@ def _svc_with(states):
     svc = LiveScreenerService()
     for st in states:
         svc._states[st.ticker] = st
+    svc._allowlist = {st.ticker for st in states}
     return svc
 
 
@@ -121,6 +122,13 @@ class TestAggregate:
         svc = _svc_with([_state("XYZ", 10.0, 10.0)])
         svc._apply_aggregate({"ev": "A", "sym": "NOPE", "c": 5.0, "a": 999_999})
         assert "NOPE" not in svc._states
+
+    def test_apply_aggregate_drops_non_allowlisted(self):
+        # A symbol present in state but NOT in the allow-list is dropped (PRD §05.3).
+        svc = _svc_with([_state("XYZ", 10.0, 10.0)])
+        svc._states["ABC"] = _state("ABC", 5.0, 5.0)  # in state, not allow-listed
+        svc._apply_aggregate({"ev": "A", "sym": "ABC", "c": 9.0, "a": 999_999})
+        assert svc._states["ABC"].last_price == 5.0  # unchanged → was dropped
 
     def test_rth_open_captured_inside_regular_hours(self):
         svc = _svc_with([_state("OPN", 10.0, 11.0)])
