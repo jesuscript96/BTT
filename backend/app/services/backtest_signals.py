@@ -25,7 +25,7 @@ import logging
 import math
 import multiprocessing
 import os
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
 import numpy as np
 import pandas as pd
@@ -260,8 +260,79 @@ def _compute_signals_for_pair(
 
 
 # ---------------------------------------------------------------------------
-# Materialización en el padre (pre-proceso, copia verbatim de 281-347)
+# Pre-proceso por par en el padre (copia verbatim de 281-347)
 # ---------------------------------------------------------------------------
+
+def _preprocess_pair(date_raw, ticker_raw, day_df, qual_lookup, strategy_def, swing_intraday_cache):
+    """Aplica exclude_days + swing concat + sort/dedup a un grupo del stream.
+    Devuelve (date, ticker, day_df_limpio, daily_stats) o None si se descarta.
+    El I/O (swing fallback) ocurre AQUÍ, en el padre → los workers no abren DuckDB."""
+    from app.services.backtest_service import format_date_str, fetch_ticker_intraday_for_date
+
+    ticker = str(ticker_raw)
+    date = str(date_raw)[:10]
+
+    # Check day/month exclusions (288-302)
+    rm = strategy_def.get("risk_management", {}) if strategy_def else {}
+    exclude_active = rm.get("exclude_days_active", False)
+    if exclude_active:
+        exclude_days = rm.get("exclude_days", [])
+        exclude_months = rm.get("exclude_months", [])
+        if exclude_days or exclude_months:
+            try:
+                dt = datetime.datetime.strptime(date, "%Y-%m-%d")
+                if dt.weekday() in exclude_days:
+                    return None
+                if (dt.month - 1) in exclude_months:
+                    return None
+            except Exception as e:
+                logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
+
+    daily_stats = qual_lookup.get((ticker, date), {})
+
+    # Check swing option to fetch and concatenate subsequent days (306-346)
+    rm = strategy_def.get("risk_management", {}) if strategy_def else {}
+    swing_opt = rm.get("swing_option", {}) if isinstance(rm, dict) else {}
+    swing_active = swing_opt.get("active", False) if isinstance(swing_opt, dict) else False
+
+    if swing_active:
+        swing_target = swing_opt.get("target_day", "gap_1_day")
+        apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
+
+        dates_to_fetch = []
+        if apply_day == 'gap_day':
+            if swing_target == 'gap_1_day':
+                t1_date = daily_stats.get('lead_timestamp_1')
+                if t1_date:
+                    dates_to_fetch.append(t1_date)
+            elif swing_target == 'gap_2_day':
+                t1_date = daily_stats.get('lead_timestamp_1')
+                t2_date = daily_stats.get('lead_timestamp_2')
+                if t1_date:
+                    dates_to_fetch.append(t1_date)
+                if t2_date:
+                    dates_to_fetch.append(t2_date)
+        elif apply_day == 'gap_1_day':
+            if swing_target == 'gap_2_day':
+                t2_date = daily_stats.get('lead_timestamp_2')
+                if t2_date:
+                    dates_to_fetch.append(t2_date)
+
+        for d_val in dates_to_fetch:
+            d_str = format_date_str(d_val)
+            if d_str:
+                sub_df = swing_intraday_cache.get((ticker, d_str))
+                if sub_df is None or sub_df.empty:
+                    sub_df = fetch_ticker_intraday_for_date(ticker, d_str)
+                if sub_df is not None and not sub_df.empty:
+                    day_df = pd.concat([day_df, sub_df], ignore_index=True)
+
+    day_df = day_df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
+    if len(day_df) < 5:
+        return None
+
+    return (date, ticker, day_df, daily_stats)
+
 
 def materialize_pairs(
     group_source,
@@ -272,82 +343,17 @@ def materialize_pairs(
     swing_intraday_cache,
     progress_callback=None,
 ):
-    """Consume el stream y devuelve [(date, ticker, day_df_limpio, daily_stats)]
-    aplicando exclude_days + swing concat + sort/dedup (281-347). I/O (swing
-    fallback) ocurre AQUÍ, en el padre → los workers no abren DuckDB."""
-    from app.services.backtest_service import format_date_str, fetch_ticker_intraday_for_date
-
+    """[Fase 1 no-pipelined] Consume TODO el stream y devuelve la lista de pares
+    limpios. Mantiene compat; el path activo es `run_pipelined_signals` (Fase 1b)."""
     pairs = []
     scanned = 0
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
         if progress_callback is not None:
             progress_callback(scanned, n_groups)
-
-        ticker = str(ticker_raw)
-        date = str(date_raw)[:10]
-
-        # Check day/month exclusions (288-302)
-        rm = strategy_def.get("risk_management", {}) if strategy_def else {}
-        exclude_active = rm.get("exclude_days_active", False)
-        if exclude_active:
-            exclude_days = rm.get("exclude_days", [])
-            exclude_months = rm.get("exclude_months", [])
-            if exclude_days or exclude_months:
-                try:
-                    dt = datetime.datetime.strptime(date, "%Y-%m-%d")
-                    if dt.weekday() in exclude_days:
-                        continue
-                    if (dt.month - 1) in exclude_months:
-                        continue
-                except Exception as e:
-                    logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
-
-        daily_stats = qual_lookup.get((ticker, date), {})
-
-        # Check swing option to fetch and concatenate subsequent days (306-346)
-        rm = strategy_def.get("risk_management", {}) if strategy_def else {}
-        swing_opt = rm.get("swing_option", {}) if isinstance(rm, dict) else {}
-        swing_active = swing_opt.get("active", False) if isinstance(swing_opt, dict) else False
-
-        if swing_active:
-            swing_target = swing_opt.get("target_day", "gap_1_day")
-            apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
-
-            dates_to_fetch = []
-            if apply_day == 'gap_day':
-                if swing_target == 'gap_1_day':
-                    t1_date = daily_stats.get('lead_timestamp_1')
-                    if t1_date:
-                        dates_to_fetch.append(t1_date)
-                elif swing_target == 'gap_2_day':
-                    t1_date = daily_stats.get('lead_timestamp_1')
-                    t2_date = daily_stats.get('lead_timestamp_2')
-                    if t1_date:
-                        dates_to_fetch.append(t1_date)
-                    if t2_date:
-                        dates_to_fetch.append(t2_date)
-            elif apply_day == 'gap_1_day':
-                if swing_target == 'gap_2_day':
-                    t2_date = daily_stats.get('lead_timestamp_2')
-                    if t2_date:
-                        dates_to_fetch.append(t2_date)
-
-            for d_val in dates_to_fetch:
-                d_str = format_date_str(d_val)
-                if d_str:
-                    sub_df = swing_intraday_cache.get((ticker, d_str))
-                    if sub_df is None or sub_df.empty:
-                        sub_df = fetch_ticker_intraday_for_date(ticker, d_str)
-                    if sub_df is not None and not sub_df.empty:
-                        day_df = pd.concat([day_df, sub_df], ignore_index=True)
-
-        day_df = day_df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
-        if len(day_df) < 5:
-            continue
-
-        pairs.append((date, ticker, day_df, daily_stats))
-
+        pair = _preprocess_pair(date_raw, ticker_raw, day_df, qual_lookup, strategy_def, swing_intraday_cache)
+        if pair is not None:
+            pairs.append(pair)
     return pairs
 
 
@@ -419,6 +425,119 @@ def run_parallel_signals(pairs, ctx, n_workers, progress_callback=None, is_cance
     # Drop no-entry pairs and restore (date, ticker) order — reproduce el orden
     # del groupby original → orden de trades idéntico (gate tol-0).
     signals = [r for r in results if r is not None]
+    signals.sort(key=lambda s: (s["date"], s["ticker"]))
+    return signals
+
+
+# ---------------------------------------------------------------------------
+# Fase 1b — PIPELINE fetch‖señales
+# ---------------------------------------------------------------------------
+# Solapa el I/O (fetch del stream, que ya prefetchea meses vía STREAM_WORKERS y
+# libera el GIL durante red/disco) con la generación de señales (workers fork).
+# En vez de materializar TODOS los pares y luego forkear, mantiene un pool fork
+# persistente y despacha chunks conforme el stream produce pares → el fetch del
+# mes N+1 corre MIENTRAS los workers procesan las señales del mes N.
+#
+# El ctx constante (strategy_def, compiled, sesiones) se hereda por fork (global
+# fijado ANTES de crear el pool); los day_df (datos dinámicos) se picklean por
+# chunk al worker (IPC ~50-150KB/par, medido despreciable). Backpressure acota
+# los chunks en vuelo → reduce el pico de RAM del padre vs materializar-todo.
+# Tol-0: señales deterministas por par + reorden por (date,ticker) → bit-idéntico.
+
+_PIPE_CTX: dict = {}
+
+
+def _signal_chunk_data(pairs_data):
+    """Worker pipeline: recibe los datos de los pares (pickled) + el ctx constante
+    heredado por fork. Devuelve [signal_dict|None] (orden lo restaura el padre)."""
+    ctx = _PIPE_CTX
+    out = []
+    for (date, ticker, day_df, daily_stats) in pairs_data:
+        try:
+            res = _compute_signals_for_pair(
+                date, ticker, day_df, daily_stats,
+                ctx["strategy_def"], ctx["compiled_strategy"],
+                ctx["market_sessions"], ctx["custom_start_time"],
+                ctx["custom_end_time"], ctx["swing_active"],
+            )
+        except Exception as e:
+            logger.warning(f"[PIPELINE] signal gen failed {ticker} {date}: {e}")
+            res = None
+        out.append(res)
+    return out
+
+
+def run_pipelined_signals(
+    group_source,
+    qual_lookup,
+    strategy_def,
+    swing_intraday_cache,
+    ctx,
+    n_workers,
+    progress_callback=None,
+    chunk_size=64,
+):
+    """Fase 1b. Conduce el stream hacia un pool fork persistente, despachando
+    chunks conforme llegan los pares (solapa fetch‖señales). Devuelve la lista de
+    dicts de señales (sin None, REORDENADA por (date, ticker)) — salida idéntica a
+    run_parallel_signals, pero solapando I/O con CPU y con menor pico de RAM."""
+    global _PIPE_CTX
+    _PIPE_CTX = ctx  # set ANTES del fork → heredado por COW (constante, sin picklear)
+
+    max_outstanding = max(2, n_workers * 3)  # backpressure: chunks en vuelo
+    mp_ctx = multiprocessing.get_context("fork")
+    signals = []
+    submitted = 0
+    pending = set()
+    chunk = []
+
+    def _drain(done_set):
+        for f in done_set:
+            for r in f.result():
+                if r is not None:
+                    signals.append(r)
+        pending.difference_update(done_set)
+
+    try:
+        with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as pool:
+            for (date_raw, ticker_raw), day_df in group_source:
+                pair = _preprocess_pair(date_raw, ticker_raw, day_df, qual_lookup, strategy_def, swing_intraday_cache)
+                if pair is None:
+                    continue
+                chunk.append(pair)
+                if len(chunk) >= chunk_size:
+                    pending.add(pool.submit(_signal_chunk_data, chunk))
+                    submitted += len(chunk)
+                    chunk = []
+                    # backpressure: si hay demasiados chunks en vuelo, bloquea hasta
+                    # que alguno termine (acota cola de tareas + resultados en RAM)
+                    if len(pending) >= max_outstanding:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        _drain(done)
+                        if progress_callback is not None:
+                            progress_callback(len(signals), submitted)
+                else:
+                    # recoge oportunistamente los chunks ya terminados (no bloquea)
+                    done = {f for f in pending if f.done()}
+                    if done:
+                        _drain(done)
+            # tail
+            if chunk:
+                pending.add(pool.submit(_signal_chunk_data, chunk))
+                submitted += len(chunk)
+                chunk = []
+            # drena lo restante
+            for f in as_completed(list(pending)):
+                for r in f.result():
+                    if r is not None:
+                        signals.append(r)
+                if progress_callback is not None:
+                    progress_callback(len(signals), submitted)
+            pending.clear()
+    finally:
+        _PIPE_CTX = {}
+
+    # Restaura el orden (date, ticker) → orden de trades idéntico (gate tol-0).
     signals.sort(key=lambda s: (s["date"], s["ticker"]))
     return signals
 

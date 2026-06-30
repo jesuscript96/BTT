@@ -287,12 +287,7 @@ def run_backtest(
     from app.services import backtest_signals as _bsig
     _n_workers = _bsig.get_parallel_workers()
     if _bsig.should_parallelize(_signal_cache, _n_workers):
-        logger.info(f"[PARALLEL] signal generation with {_n_workers} workers (fork+COW)")
-        pairs_clean = _bsig.materialize_pairs(
-            group_source, n_groups, qual_lookup, strategy_def,
-            swing_active_global, swing_intraday_cache,
-            progress_callback=progress_callback,
-        )
+        logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
             "strategy_def": strategy_def,
             "compiled_strategy": compiled_strategy,
@@ -301,8 +296,11 @@ def run_backtest(
             "custom_end_time": custom_end_time,
             "swing_active": swing_active_global,
         }
-        signals_sorted = _bsig.run_parallel_signals(
-            pairs_clean, _ctx, _n_workers, progress_callback=progress_callback,
+        # Pipeline: el fetch del stream (I/O, prefetch STREAM_WORKERS) solapa con la
+        # generación de señales (workers fork). Menor pico de RAM que materializar-todo.
+        signals_sorted = _bsig.run_pipelined_signals(
+            group_source, qual_lookup, strategy_def, swing_intraday_cache,
+            _ctx, _n_workers, progress_callback=progress_callback,
         )
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
@@ -316,8 +314,8 @@ def run_backtest(
         all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
         days_with_entries = len(day_results)
         logger.info(
-            f"[PARALLEL] done: {len(pairs_clean)} pares materializados, "
-            f"{len(signals_sorted)} con señales, {days_with_entries} con trades"
+            f"[PARALLEL] pipeline done: {len(signals_sorted)} con señales, "
+            f"{days_with_entries} con trades"
         )
 
     for (date_raw, ticker_raw), day_df in group_source:
