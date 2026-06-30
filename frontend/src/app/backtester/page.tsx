@@ -29,13 +29,18 @@ import { createStrategy, createQuery, getStrategy, saveBacktest, updateStrategy 
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import { useEntitlements } from "@/lib/entitlements";
 import {
-  runBacktest,
-  runBacktestWithDefinition,
+  startBacktest,
+  startBacktestWithDefinition,
+  fetchBacktestJobStatus,
+  fetchBacktestResult,
+  fetchBacktestEquity,
   fetchDayCandles,
   fetchMultiDayCandles,
   type BacktestResult,
+  type BacktestJobResponse,
   type DayCandles,
   type MultiDayCandles,
+  type EquityPoint,
 } from "@/lib/api_backtester";
 
 
@@ -117,6 +122,9 @@ export default function Home() {
   const [strategiesRefresh, setStrategiesRefresh] = useState(0);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>("");
   const [result, setResult] = useState<BacktestResult | null>(null);
+  // F4: per-day equity is loaded on demand and cached here (key: "TICKER|DATE").
+  const [equityCache, setEquityCache] = useState<Map<string, EquityPoint[]>>(new Map());
+  const [equityLoading, setEquityLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [backtestProgress, setBacktestProgress] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -254,6 +262,44 @@ export default function Home() {
   const backtestParamsRef = useRef<Record<string, unknown>>({});
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const panelParamsRef = useRef<BacktestPanelParams | null>(null);
+  const jobIdRef = useRef<string | null>(null);
+
+  // F3/F4: launch an async backtest, poll its job status (by job_id), and
+  // return the light result (no equity_curves — those are fetched per day).
+  // Throws on failure/cancel so the existing call-site catch handles messaging.
+  const runJobAndLoad = async (
+    startPromise: Promise<BacktestJobResponse>
+  ): Promise<BacktestResult> => {
+    const { job_id } = await startPromise;
+    jobIdRef.current = job_id;
+    setEquityCache(new Map()); // fresh run → drop the previous run's equity cache
+    const final = await new Promise<{ status: string; error?: string | null }>((resolve) => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      pollTimerRef.current = setInterval(async () => {
+        try {
+          const s = await fetchBacktestJobStatus(job_id);
+          setBacktestProgress(s);
+          if (s.status === "succeeded" || s.status === "failed" || s.status === "cancelled") {
+            if (pollTimerRef.current) {
+              clearInterval(pollTimerRef.current);
+              pollTimerRef.current = null;
+            }
+            resolve(s);
+          }
+        } catch (err) {
+          // transient network error → keep polling
+          console.warn("Could not fetch backtest job status:", err);
+        }
+      }, 500);
+    });
+    if (final.status === "failed") {
+      throw new Error(final.error || "El backtest falló en el servidor.");
+    }
+    if (final.status === "cancelled") {
+      throw new Error("Backtest cancelado");
+    }
+    return await fetchBacktestResult(job_id);
+  };
   const [activeSessions, setActiveSessions] = useState<string[]>(["rth"]);
   const [activeCustomStartTime, setActiveCustomStartTime] = useState("09:30");
   const [activeCustomEndTime, setActiveCustomEndTime] = useState("16:00");
@@ -388,16 +434,8 @@ export default function Home() {
 
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
+    // Progress polling is now driven by job_id inside runJobAndLoad().
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    pollTimerRef.current = setInterval(async () => {
-      try {
-        const { fetchBacktestProgress } = await import("@/lib/api_backtester");
-        const prog = await fetchBacktestProgress(activeDatasetId);
-        setBacktestProgress(prog);
-      } catch (err) {
-        console.warn("Could not fetch backtest progress:", err);
-      }
-    }, 500);
 
     setError(null);
     setResult(null);
@@ -448,7 +486,7 @@ export default function Home() {
     };
 
     try {
-      const data = await runBacktestWithDefinition({
+      const data = await runJobAndLoad(startBacktestWithDefinition({
         dataset_id: activeDatasetId,
         strategy_definition: {
           name: draft.name,
@@ -480,7 +518,7 @@ export default function Home() {
         locates_cost: p?.locates_cost,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
-      });
+      }));
       setResult(data);
       if (data.trades && data.trades.length > 0) {
         const firstTrade = data.trades[0];
@@ -657,16 +695,8 @@ export default function Home() {
 
     setLoading(true);
     setBacktestProgress({ status: "running", percent: 0.0, current: 0, total: 0 });
+    // Progress polling is now driven by job_id inside runJobAndLoad().
     if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    pollTimerRef.current = setInterval(async () => {
-      try {
-        const { fetchBacktestProgress } = await import("@/lib/api_backtester");
-        const prog = await fetchBacktestProgress(params.dataset_id);
-        setBacktestProgress(prog);
-      } catch (err) {
-        console.warn("Could not fetch backtest progress:", err);
-      }
-    }, 500);
 
     setError(null);
     setResult(null);
@@ -700,7 +730,7 @@ export default function Home() {
     };
 
     try {
-      const data = await runBacktest(params);
+      const data = await runJobAndLoad(startBacktest(params));
       setResult(data);
       if (data.trades && data.trades.length > 0) {
         const firstTrade = data.trades[0];
@@ -859,6 +889,7 @@ export default function Home() {
       if (stored) {
         const saved = JSON.parse(stored);
         if (saved.result) setResult(saved.result);
+        if (saved.jobId) jobIdRef.current = saved.jobId;
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
           if (saved.activeStrategy.id && !saved.activeStrategy.id.startsWith("draft") && !saved.activeStrategy.id.startsWith("wizard_draft")) {
@@ -876,14 +907,12 @@ export default function Home() {
 
   // Save results state to sessionStorage on change
   useEffect(() => {
-    let lightweightResult = null;
-    if (result) {
-      // Strip equity_curves to prevent exceeding sessionStorage quota
-      const { equity_curves, ...rest } = result;
-      lightweightResult = rest;
-    }
+    // F4: equity_curves no longer travel in the result payload (served on
+    // demand by job_id), so the result is already light enough to persist.
+    const lightweightResult = result;
     const resultsState = {
       result: lightweightResult,
+      jobId: jobIdRef.current, // keep so equity can be re-fetched after a reload (within the 1h job TTL)
       activeStrategy,
       selectedDay,
       mode,
@@ -952,18 +981,42 @@ export default function Home() {
   };
 
   const selectedDayResult = result?.day_results?.[selectedDay];
-  const currentEquity = result?.equity_curves?.find(
-    (e) =>
-      selectedDayResult &&
-      e.ticker === selectedDayResult.ticker &&
-      e.date === selectedDayResult.date
-  );
+  // F4: equity_curves no longer travel in the result payload. The selected
+  // day's equity is fetched on demand and served from equityCache.
+  const equityKey = selectedDayResult
+    ? `${selectedDayResult.ticker}|${selectedDayResult.date}`
+    : null;
+  const currentEquity = equityKey ? equityCache.get(equityKey) : undefined;
   const currentTrades = result?.trades?.filter(
     (t) =>
       selectedDayResult &&
       t.ticker === selectedDayResult.ticker &&
       t.date === selectedDayResult.date
   );
+
+  // F4: lazily fetch the selected day's equity curve (only when a day is
+  // chosen and we have a live job_id), caching it so re-selecting is instant.
+  useEffect(() => {
+    const jid = jobIdRef.current;
+    if (!result || !jid || !selectedDayResult || !equityKey) return;
+    if (equityCache.has(equityKey)) return;
+    let aborted = false;
+    setEquityLoading(true);
+    fetchBacktestEquity(jid, selectedDayResult.date, selectedDayResult.ticker)
+      .then((res) => {
+        if (!aborted) setEquityCache((prev) => new Map(prev).set(equityKey, res.equity || []));
+      })
+      .catch(() => {
+        if (!aborted) setEquityCache((prev) => new Map(prev).set(equityKey, []));
+      })
+      .finally(() => {
+        if (!aborted) setEquityLoading(false);
+      });
+    return () => {
+      aborted = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, selectedDay, equityKey]);
 
   // ── IS/OOS filtering ──
   const currentIsPercent = (panelParamsRef.current?.is_percent as number) ?? 100;
@@ -1467,7 +1520,8 @@ export default function Home() {
                 strategyDefinition={activeStrategy?.definition}
                 candlesLoading={candlesLoading}
                 currentTrades={currentTrades || []}
-                currentEquity={currentEquity?.equity || []}
+                currentEquity={currentEquity || []}
+                equityLoading={equityLoading}
                 isDarkMode={isDarkMode}
                 strategyId={strategyIdRef.current}
                 datasetId={datasetIdRef.current}

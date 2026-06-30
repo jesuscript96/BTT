@@ -31,6 +31,7 @@ interface ResultsTabsProps {
   candlesLoading: boolean;
   currentTrades: TradeRecord[];
   currentEquity: EquityPoint[];
+  equityLoading?: boolean;
   isDarkMode?: boolean;
   strategyId?: string;
   datasetId?: string;
@@ -49,6 +50,7 @@ export default function ResultsTabs({
   candlesLoading,
   currentTrades,
   currentEquity,
+  equityLoading = false,
   isDarkMode = false,
   strategyId = "",
   datasetId = "",
@@ -222,6 +224,11 @@ export default function ResultsTabs({
                     />
                   </div>
                 </div>
+              </div>
+            )}
+            {!candlesLoading && equityLoading && (
+              <div style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', fontFamily: 'var(--color-ec-sans)', marginBottom: 4, textAlign: 'center' }}>
+                Cargando equity…
               </div>
             )}
             {!candlesLoading && dayCandles && dayCandles.candles.length > 0 && (
