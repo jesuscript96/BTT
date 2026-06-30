@@ -277,6 +277,49 @@ def run_backtest(
     current_date = None
     daily_pnl = 0.0
 
+    # ── Fase 1: generación de señales en PARALELO (gated) ───────────────────
+    # Solo para run_backtest directo (no el optimizer: _signal_cache=None) y si
+    # hay fork disponible. Materializa los pares en el padre (pre-warm swing +
+    # exclude + sort), corre la mitad A en workers y la mitad B (simulate +
+    # compounding) en serie por (date, ticker). El path secuencial de abajo queda
+    # intacto y, cuando se usa esta rama, opera sobre un group_source ya agotado
+    # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
+    from app.services import backtest_signals as _bsig
+    _n_workers = _bsig.get_parallel_workers()
+    if _bsig.should_parallelize(_signal_cache, _n_workers):
+        logger.info(f"[PARALLEL] signal generation with {_n_workers} workers (fork+COW)")
+        pairs_clean = _bsig.materialize_pairs(
+            group_source, n_groups, qual_lookup, strategy_def,
+            swing_active_global, swing_intraday_cache,
+            progress_callback=progress_callback,
+        )
+        _ctx = {
+            "strategy_def": strategy_def,
+            "compiled_strategy": compiled_strategy,
+            "market_sessions": market_sessions,
+            "custom_start_time": custom_start_time,
+            "custom_end_time": custom_end_time,
+            "swing_active": swing_active_global,
+        }
+        signals_sorted = _bsig.run_parallel_signals(
+            pairs_clean, _ctx, _n_workers, progress_callback=progress_callback,
+        )
+        _params = {
+            "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
+            "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
+            "fees": fees, "fee_type": fee_type, "slippage": slippage,
+            "locates_cost": locates_cost, "locate_type": locate_type,
+            "look_ahead_prevention": look_ahead_prevention,
+            "strategy_def": strategy_def,
+            "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
+        }
+        all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+        days_with_entries = len(day_results)
+        logger.info(
+            f"[PARALLEL] done: {len(pairs_clean)} pares materializados, "
+            f"{len(signals_sorted)} con señales, {days_with_entries} con trades"
+        )
+
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
         if progress_callback is not None:
