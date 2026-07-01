@@ -60,6 +60,23 @@ export default function ResultsTabs({
   const [activeTab, setActiveTab] = useState<TabId>("performance");
   const [chartsSubTab, setChartsSubTab] = useState<"charts" | "whatif_stress" | "optimization">("charts");
 
+  // Montaje perezoso: un tab solo monta su contenido la PRIMERA vez que se abre y
+  // luego se mantiene montado (se oculta con display:none). Así el render inicial
+  // del resultado monta solo el tab activo (Performance) en vez de los 5 a la vez
+  // (Trades con 60k filas + 2x ChartsTab con Recharts) → evita el freeze de ~6s y
+  // los cambios de tab trabados.
+  const [mountedTabs, setMountedTabs] = useState<Set<TabId>>(() => new Set<TabId>(["performance"]));
+  const [mountedChartsSub, setMountedChartsSub] = useState<Set<string>>(() => new Set<string>(["charts"]));
+
+  const selectTab = (id: TabId) => {
+    setActiveTab(id);
+    setMountedTabs((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
+  const selectChartsSub = (id: "charts" | "whatif_stress" | "optimization") => {
+    setChartsSubTab(id);
+    setMountedChartsSub((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
+
   const handleSelectTrade = (ticker: string, date: string) => {
     const dayIdx = result.day_results.findIndex(
       (d) => d.ticker === ticker && d.date === date
@@ -68,7 +85,7 @@ export default function ResultsTabs({
       if (onSelectDay) {
         onSelectDay(dayIdx);
       }
-      setActiveTab("analysis");
+      selectTab("analysis");
     }
   };
 
@@ -103,7 +120,7 @@ export default function ResultsTabs({
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => selectTab(tab.id)}
               style={activeTab === tab.id ? {
                 padding: '0 14px',
                 height: 36,
@@ -154,6 +171,7 @@ export default function ResultsTabs({
 
       <div className="pb-2">
         <div style={{ display: activeTab === "performance" ? "block" : "none" }}>
+          {mountedTabs.has("performance") && (
           <PerformanceTab
             dayResults={result.day_results}
             trades={result.trades}
@@ -161,17 +179,22 @@ export default function ResultsTabs({
             riskR={riskR}
             isDarkMode={isDarkMode}
           />
+          )}
         </div>
         <div style={{ display: activeTab === "calendar" ? "block" : "none" }}>
+          {mountedTabs.has("calendar") && (
           <CalendarTab
             dayResults={result.day_results}
             trades={result.trades}
             isDarkMode={isDarkMode}
             monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
           />
+          )}
         </div>
         <div style={{ display: activeTab === "trades" ? "block" : "none" }}>
+          {mountedTabs.has("trades") && (
           <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade} />
+          )}
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>
           <div style={{ minHeight: 520, display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -270,7 +293,7 @@ export default function ResultsTabs({
             paddingTop: 8,
           }}>
             <button
-              onClick={() => setChartsSubTab("charts")}
+              onClick={() => selectChartsSub("charts")}
               style={{
                 paddingBottom: 8,
                 paddingLeft: 4,
@@ -295,7 +318,7 @@ export default function ResultsTabs({
             </button>
             <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
             <button
-              onClick={() => setChartsSubTab("whatif_stress")}
+              onClick={() => selectChartsSub("whatif_stress")}
               style={{
                 paddingBottom: 8,
                 paddingLeft: 4,
@@ -320,7 +343,7 @@ export default function ResultsTabs({
             </button>
             <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
             <button
-              onClick={() => setChartsSubTab("optimization")}
+              onClick={() => selectChartsSub("optimization")}
               style={{
                 paddingBottom: 8,
                 paddingLeft: 4,
@@ -345,8 +368,9 @@ export default function ResultsTabs({
             </button>
           </div>
 
-          {/* Sub-tab content */}
+          {/* Sub-tab content (montaje perezoso: solo cuando se abre este tab + su sub-tab) */}
           <div style={{ display: chartsSubTab === "charts" ? "block" : "none" }}>
+            {mountedTabs.has("charts_optimization") && mountedChartsSub.has("charts") && (
             <ChartsTab
               trades={result.trades}
               dayResults={result.day_results}
@@ -360,8 +384,10 @@ export default function ResultsTabs({
               viewMode="charts"
               riskType={backtestParams?.risk_type as string}
             />
+            )}
           </div>
           <div style={{ display: chartsSubTab === "whatif_stress" ? "block" : "none" }}>
+            {mountedTabs.has("charts_optimization") && mountedChartsSub.has("whatif_stress") && (
             <ChartsTab
               trades={result.trades}
               dayResults={result.day_results}
@@ -375,8 +401,10 @@ export default function ResultsTabs({
               viewMode="whatif"
               riskType={backtestParams?.risk_type as string}
             />
+            )}
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>
+            {mountedTabs.has("charts_optimization") && mountedChartsSub.has("optimization") && (
             <LockedFeature feature="backtester.surface_3d" requiredTier="Pro">
               <OptimizationSurfaceTab
                 strategyId={strategyId}
@@ -386,6 +414,7 @@ export default function ResultsTabs({
                 backtestParams={backtestParams}
               />
             </LockedFeature>
+            )}
           </div>
         </div>
       </div>

@@ -301,6 +301,7 @@ def run_backtest(
         signals_sorted = _bsig.run_pipelined_signals(
             group_source, qual_lookup, strategy_def, swing_intraday_cache,
             _ctx, _n_workers, progress_callback=progress_callback,
+            total_hint=n_groups,
         )
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,

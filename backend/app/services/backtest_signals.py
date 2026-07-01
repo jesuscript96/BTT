@@ -467,6 +467,24 @@ def _signal_chunk_data(pairs_data):
     return out
 
 
+def _pool_warmup(_i=None):
+    """No-op para forzar el fork de un worker durante el PRE-SPAWN (con el padre
+    quieto, antes de arrancar los hilos de fetch). Evita el segfault de
+    fork-en-proceso-multihilo."""
+    import time as _t
+    _t.sleep(0.03)
+    return None
+
+
+def _init_pipe_ctx(ctx):
+    """Inicializador de cada worker (forkserver): fija el ctx constante. Con
+    forkserver el global del padre NO se hereda (no hay COW) → el ctx se pasa
+    pickled una sola vez por worker vía initargs (es un dict pequeño y picklable:
+    strategy_def/compiled/sesiones)."""
+    global _PIPE_CTX
+    _PIPE_CTX = ctx
+
+
 def run_pipelined_signals(
     group_source,
     qual_lookup,
@@ -476,30 +494,53 @@ def run_pipelined_signals(
     n_workers,
     progress_callback=None,
     chunk_size=64,
+    total_hint=None,
 ):
     """Fase 1b. Conduce el stream hacia un pool fork persistente, despachando
     chunks conforme llegan los pares (solapa fetch‖señales). Devuelve la lista de
     dicts de señales (sin None, REORDENADA por (date, ticker)) — salida idéntica a
     run_parallel_signals, pero solapando I/O con CPU y con menor pico de RAM."""
     global _PIPE_CTX
-    _PIPE_CTX = ctx  # set ANTES del fork → heredado por COW (constante, sin picklear)
+    _PIPE_CTX = ctx  # fallback si el contexto fuera "fork"; con forkserver va por initializer
 
     max_outstanding = max(2, n_workers * 3)  # backpressure: chunks en vuelo
-    mp_ctx = multiprocessing.get_context("fork")
+    # forkserver: los workers se forkean desde un proceso servidor LIMPIO (un solo
+    # hilo), inmune al segfault de fork-en-proceso-multihilo. Con "fork" normal, el
+    # hilo del live_screener (SSL nativo) + los de fetch (pyarrow/DuckDB) hacían
+    # reventar el fork (BrokenProcessPool). El ctx constante se pasa pickled vía
+    # initializer (dict pequeño); los day_df dinámicos por chunk como siempre.
+    mp_ctx = multiprocessing.get_context("forkserver")
     signals = []
     submitted = 0
+    processed = 0  # pares cuyos chunks ya completaron → progreso honesto 0→100
     pending = set()
     chunk = []
+    total = total_hint if (total_hint and total_hint > 0) else None
+
+    def _report():
+        if progress_callback is not None:
+            progress_callback(processed, total if total is not None else submitted)
 
     def _drain(done_set):
+        nonlocal processed
         for f in done_set:
-            for r in f.result():
+            res = f.result()
+            processed += len(res)
+            for r in res:
                 if r is not None:
                     signals.append(r)
         pending.difference_update(done_set)
 
     try:
-        with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as pool:
+        with ProcessPoolExecutor(
+            max_workers=n_workers, mp_context=mp_ctx,
+            initializer=_init_pipe_ctx, initargs=(ctx,),
+        ) as pool:
+            # PRE-WARM: arranca ya el proceso forkserver + los N workers (cada uno
+            # corre el initializer), para no pagar el arranque durante el fetch.
+            warm = [pool.submit(_pool_warmup) for _ in range(n_workers)]
+            wait(warm)
+
             for (date_raw, ticker_raw), day_df in group_source:
                 pair = _preprocess_pair(date_raw, ticker_raw, day_df, qual_lookup, strategy_def, swing_intraday_cache)
                 if pair is None:
@@ -514,13 +555,13 @@ def run_pipelined_signals(
                     if len(pending) >= max_outstanding:
                         done, _ = wait(pending, return_when=FIRST_COMPLETED)
                         _drain(done)
-                        if progress_callback is not None:
-                            progress_callback(len(signals), submitted)
+                        _report()
                 else:
                     # recoge oportunistamente los chunks ya terminados (no bloquea)
                     done = {f for f in pending if f.done()}
                     if done:
                         _drain(done)
+                        _report()
             # tail
             if chunk:
                 pending.add(pool.submit(_signal_chunk_data, chunk))
@@ -528,11 +569,12 @@ def run_pipelined_signals(
                 chunk = []
             # drena lo restante
             for f in as_completed(list(pending)):
-                for r in f.result():
+                res = f.result()
+                processed += len(res)
+                for r in res:
                     if r is not None:
                         signals.append(r)
-                if progress_callback is not None:
-                    progress_callback(len(signals), submitted)
+                _report()
             pending.clear()
     finally:
         _PIPE_CTX = {}
