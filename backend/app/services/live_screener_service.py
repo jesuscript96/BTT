@@ -370,13 +370,14 @@ class LiveScreenerService:
                 ssl_ctx = ssl.create_default_context()
         backoff = 1.0
         while not self._stop:
+            conn_start = None
             try:
                 async with websockets.connect(WS_URL, ssl=ssl_ctx, ping_interval=20, max_size=2**21) as ws:
                     await ws.send(json.dumps({"action": "auth", "params": API_KEY}))
                     # Second aggregates for the whole US market; filtered server-side.
                     await ws.send(json.dumps({"action": "subscribe", "params": "A.*"}))
                     self._ws_connected = True
-                    backoff = 1.0
+                    conn_start = time.monotonic()
                     logger.info("[LIVE] Massive WS connected, subscribed A.*")
                     async for raw in ws:
                         self._handle_ws_message(raw)
@@ -384,9 +385,20 @@ class LiveScreenerService:
                 break
             except Exception as e:  # noqa: BLE001
                 self._ws_connected = False
+                # Backoff CRECIENTE cuando nos echan al instante (p.ej. 1008
+                # max-connections porque otra instancia usa la misma API key): antes
+                # se reseteaba backoff=1.0 en cada connect, pero como el kick llega
+                # justo tras conectar, reconectaba cada 1s → tormenta de handshakes
+                # SSL nativos que (a) spamea logs y (b) sube la probabilidad del
+                # segfault de fork en los backtests paralelos. Solo se resetea a 1s si
+                # la conexión fue ESTABLE (>15s) = caída legítima que sí merece agilidad.
+                stable = conn_start is not None and (time.monotonic() - conn_start) > 15.0
+                if stable:
+                    backoff = 1.0
                 logger.warning("[LIVE] WS disconnected (%s); reconnecting in %.0fs", e, backoff)
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
+                if not stable:
+                    backoff = min(backoff * 2, 60.0)
         self._ws_connected = False
 
     def _handle_ws_message(self, raw: Any) -> None:

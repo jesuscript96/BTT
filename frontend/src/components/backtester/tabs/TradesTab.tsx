@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { TradeRecord } from "@/lib/api_backtester";
 
 interface TradesTabProps {
@@ -47,6 +47,9 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Render en ventana: cap inicial de filas para no meter 60k <tr> en el DOM de
+  // golpe (con search/sort operando sobre TODAS). "Mostrar más" agranda la ventana.
+  const [visibleCount, setVisibleCount] = useState(500);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -95,6 +98,13 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
       totalPnl: trades.reduce((a, t) => a + t.pnl, 0),
     };
   }, [trades]);
+
+  const shown = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+
+  // Reinicia la ventana al filtrar/reordenar (no arrastrar un count enorme).
+  useEffect(() => {
+    setVisibleCount(500);
+  }, [search, sortKey, sortDir]);
 
   if (!trades.length) {
     return <p className="text-[11px] text-[var(--muted)] font-mono">Sin trades</p>;
@@ -151,7 +161,7 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((t, i) => (
+            {shown.map((t, i) => (
               <tr
                 key={i}
                 className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
@@ -212,6 +222,21 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
           </tbody>
         </table>
       </div>
+
+      {filtered.length > shown.length && (
+        <div className="flex items-center justify-center gap-3 py-2">
+          <span className="text-[10px] text-[var(--color-ec-text-muted)] font-mono">
+            mostrando {shown.length.toLocaleString()} de {filtered.length.toLocaleString()}
+          </span>
+          <button
+            onClick={() => setVisibleCount((c) => c + 1000)}
+            className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--color-ec-text-high)]"
+            style={{ border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-secondary)', background: 'transparent' }}
+          >
+            Mostrar más (+1000)
+          </button>
+        </div>
+      )}
     </div>
   );
 }

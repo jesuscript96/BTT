@@ -280,27 +280,40 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             "total": n_qualifying,
             "percent": 0.0
         }
+        # Empuja el total (nº de pares) al estado async de inmediato → el frontend
+        # muestra "0 / N pares" desde el primer poll, sin esperar al primer chunk.
+        if on_progress is not None:
+            try:
+                on_progress(0, n_qualifying, 0.0)
+            except Exception:
+                pass
+
+        _prog_last = {"pct": -1.0}
 
         def update_prog(current, total):
             from app.routers.backtest import backtest_progress
             state = backtest_progress.get(req.dataset_id)
             if state and state.get("status") == "cancelled":
                 raise RuntimeError("BACKTEST_CANCELLED")
-            
-            if current % 10 == 0 or current == total:
-                pct = min(100.0, round((current / total) * 100.0, 1)) if total > 0 else 100.0
-                backtest_progress[req.dataset_id] = {
-                    "status": "running",
-                    "current": current,
-                    "total": total,
-                    "percent": pct
-                }
-                if on_progress is not None:
-                    try:
-                        on_progress(current, total, pct)
-                    except Exception:
-                        # Progress mirroring must never break the backtest itself.
-                        pass
+
+            pct = min(100.0, round((current / total) * 100.0, 1)) if total > 0 else 0.0
+            # Reporta solo cuando el % (a 1 decimal) cambió → barra fluida en el
+            # frontend sin escribir a Redis en cada chunk.
+            if pct == _prog_last["pct"] and current != total:
+                return
+            _prog_last["pct"] = pct
+            backtest_progress[req.dataset_id] = {
+                "status": "running",
+                "current": current,
+                "total": total,
+                "percent": pct,
+            }
+            if on_progress is not None:
+                try:
+                    on_progress(current, total, pct)
+                except Exception:
+                    # Progress mirroring must never break the backtest itself.
+                    pass
 
         # Session config fallback: when the request omits market_sessions /
         # custom times, fall back to the values saved on the strategy before the
