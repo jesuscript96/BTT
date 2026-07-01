@@ -532,6 +532,16 @@ export interface ScreenerRecord {
   pmh_gap_pct?: number;
   amh_gap_pct?: number;
   rvol?: number;
+  // Day-vs-session model (screener-dia-sesion PRD). Optional: tabs that don't
+  // carry them still satisfy the type.
+  day_change_pct?: number;
+  day_volume?: number;
+  after_pct?: number;       // move since the RTH close (Aftermarket tab)
+  after_volume?: number;
+  after_high?: number;
+  pre_pct?: number;         // pre-market peak gap (Premarket tab)
+  pre_volume?: number;
+  pre_high?: number;
 }
 
 export interface ScreenerDailyResponse {
