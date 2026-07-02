@@ -154,6 +154,15 @@ async def lifespan(app: FastAPI):
             # Background recovery enables resuming recently started dataset precaching.
             import threading as _threading
             _threading.Thread(target=_startup_recovery_precache, daemon=True).start()
+
+            # EPIC C (PRD rendimiento-backtester): réplica local de slabs + warm de
+            # page cache. Gated por BTT_REPLICA_SYNC_ENABLED (default OFF); daemon
+            # best-effort, nunca bloquea ni rompe el arranque.
+            try:
+                from app.db.replica_sync import start_replica_daemon
+                start_replica_daemon()
+            except Exception as e:
+                print(f"[REPLICA] daemon no arrancado: {e}")
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:
