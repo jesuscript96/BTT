@@ -810,10 +810,11 @@ def compute_indicator(
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
 ) -> pd.Series:
-    # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
-    # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}"
+    cache_key = (name, period, period2, period3, std_dev, multiplier, offset,
+                 days_lookback, calc_on_heikin, time_hour, time_minute, time_condition,
+                 band_line, orb_minutes, ap_session, range_minutes,
+                 pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots)
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -856,136 +857,6 @@ def compute_indicator(
     return result
 
 
-# N1a: Fast-path dict dispatch — O(1) lookup vs O(50) if/elif chain
-def _mk_fast(name, fn):
-    """Wrap an indicator function to match _compute_raw's signature."""
-    def _wrapper(close, high, low, open_, volume, period, period2, period3,
-                 std_dev, multiplier, days_lookback, time_hour, time_minute,
-                 time_condition, band_line, orb_minutes, ap_session, ds, df,
-                 range_minutes, pivot_window, tri_lookback, slope_tolerance,
-                 min_r_squared, min_pivots):
-        return fn(close, high, low, open_, volume, period, period2, period3,
-                  std_dev, multiplier, days_lookback, time_hour, time_minute,
-                  time_condition, band_line, orb_minutes, ap_session, ds, df,
-                  range_minutes, pivot_window, tri_lookback, slope_tolerance,
-                  min_r_squared, min_pivots)
-    return _wrapper
-
-
-def _raw_close(close, high, low, open_, volume, period, period2, period3,
-               std_dev, multiplier, days_lookback, time_hour, time_minute,
-               time_condition, band_line, orb_minutes, ap_session, ds, df,
-               range_minutes, pivot_window, tri_lookback, slope_tolerance,
-               min_r_squared, min_pivots):
-    return close
-
-def _raw_open(close, high, low, open_, volume, period, period2, period3,
-              std_dev, multiplier, days_lookback, time_hour, time_minute,
-              time_condition, band_line, orb_minutes, ap_session, ds, df,
-              range_minutes, pivot_window, tri_lookback, slope_tolerance,
-              min_r_squared, min_pivots):
-    return open_
-
-def _raw_high(close, high, low, open_, volume, period, period2, period3,
-              std_dev, multiplier, days_lookback, time_hour, time_minute,
-              time_condition, band_line, orb_minutes, ap_session, ds, df,
-              range_minutes, pivot_window, tri_lookback, slope_tolerance,
-              min_r_squared, min_pivots):
-    return high
-
-def _raw_low(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return low
-
-def _raw_volume(close, high, low, open_, volume, period, period2, period3,
-                std_dev, multiplier, days_lookback, time_hour, time_minute,
-                time_condition, band_line, orb_minutes, ap_session, ds, df,
-                range_minutes, pivot_window, tri_lookback, slope_tolerance,
-                min_r_squared, min_pivots):
-    return volume.astype(float)
-
-def _raw_sma(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return pd.Series(_sma(close.values, period or 20), index=close.index)
-
-def _raw_ema(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return pd.Series(_ema(close.values, period or 20), index=close.index)
-
-def _raw_vwap(close, high, low, open_, volume, period, period2, period3,
-              std_dev, multiplier, days_lookback, time_hour, time_minute,
-              time_condition, band_line, orb_minutes, ap_session, ds, df,
-              range_minutes, pivot_window, tri_lookback, slope_tolerance,
-              min_r_squared, min_pivots):
-    vals = _vwap(high.values.astype(np.float64), low.values.astype(np.float64),
-                 close.values.astype(np.float64), volume.values.astype(np.float64))
-    return pd.Series(vals, index=close.index)
-
-def _raw_rsi(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return pd.Series(_rsi(close.values, period or 14), index=close.index)
-
-def _raw_atr(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return pd.Series(_atr(high.values.astype(np.float64), low.values.astype(np.float64),
-                          close.values.astype(np.float64), period or 14), index=close.index)
-
-def _raw_macd(close, high, low, open_, volume, period, period2, period3,
-              std_dev, multiplier, days_lookback, time_hour, time_minute,
-              time_condition, band_line, orb_minutes, ap_session, ds, df,
-              range_minutes, pivot_window, tri_lookback, slope_tolerance,
-              min_r_squared, min_pivots):
-    fast = period or 12; slow = period2 or 26; signal = period3 or 9
-    macd_line, _, _ = _macd(close.values.astype(np.float64), fast, slow, signal)
-    return pd.Series(macd_line, index=close.index)
-
-def _raw_hod(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return high.cummax()
-
-def _raw_lod(close, high, low, open_, volume, period, period2, period3,
-             std_dev, multiplier, days_lookback, time_hour, time_minute,
-             time_condition, band_line, orb_minutes, ap_session, ds, df,
-             range_minutes, pivot_window, tri_lookback, slope_tolerance,
-             min_r_squared, min_pivots):
-    return low.cummin()
-
-def _raw_prev_close_bar(close, high, low, open_, volume, period, period2, period3,
-                        std_dev, multiplier, days_lookback, time_hour, time_minute,
-                        time_condition, band_line, orb_minutes, ap_session, ds, df,
-                        range_minutes, pivot_window, tri_lookback, slope_tolerance,
-                        min_r_squared, min_pivots):
-    return close.shift(1)
-
-
-_FAST_INDICATOR_DISPATCH = {
-    "Close": _raw_close, "Open": _raw_open, "High": _raw_high, "Low": _raw_low,
-    "Volume": _raw_volume, "Bar Close": _raw_close, "Bar Open": _raw_open,
-    "SMA": _raw_sma, "EMA": _raw_ema, "VWAP": _raw_vwap, "AVWAP": _raw_vwap,
-    "RSI": _raw_rsi, "ATR": _raw_atr, "MACD": _raw_macd,
-    "High of Day": _raw_hod, "Low of Day": _raw_lod,
-    "Prev. Close Bar": _raw_prev_close_bar, "Prev. Bar Close": _raw_prev_close_bar,
-}
-
-
 def _compute_raw(
     name: str,
     close: pd.Series,
@@ -1016,16 +887,7 @@ def _compute_raw(
 ) -> pd.Series:
     ds = daily_stats or {}
 
-    # N1a: Fast-path dict dispatch for hot indicators (avoids O(n) if/elif chain)
-    _fast = _FAST_INDICATOR_DISPATCH.get(name)
-    if _fast is not None:
-        return _fast(close, high, low, open_, volume, period, period2, period3,
-                     std_dev, multiplier, days_lookback, time_hour, time_minute,
-                     time_condition, band_line, orb_minutes, ap_session, ds, df,
-                     range_minutes, pivot_window, tri_lookback, slope_tolerance,
-                     min_r_squared, min_pivots)
-
-    # --- Fallback: legacy if/elif chain for uncommon indicators ---
+    # --- Price / Bars ---
     if name == "Close":
         return close
     if name == "Open":

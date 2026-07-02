@@ -30,7 +30,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_CO
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, translate_strategy_native, get_lowest_timeframe_mins
+from app.services.strategy_engine import translate_strategy, get_lowest_timeframe_mins
 
 logger = logging.getLogger(__name__)
 
@@ -82,188 +82,113 @@ def _compute_signals_for_pair(
     custom_end_time,
     swing_active,
 ):
-    """Devuelve el contrato de senales (dict de arrays numpy) o None si el par no
-    produce entradas. Optimizado N1e+N2a: timestamps parseados una vez, fast path
-    con numpy arrays nativos cuando _indicator_plan esta disponible."""
+    """Devuelve el contrato de señales (dict de arrays numpy) o None si el par no
+    produce entradas. Réplica exacta de la "mitad A" del loop original."""
 
-    # N1e: Parsear timestamps UNA vez — fast minutes-from-midnight via int64
-    ts_col = day_df["timestamp"]
-    if not pd.api.types.is_datetime64_any_dtype(ts_col):
-        ts_col = pd.to_datetime(ts_col)
-    if hasattr(ts_col, "values"):
-        ts_int64 = ts_col.values.astype("datetime64[ns]").astype(np.int64)
-    else:
-        ts_int64 = np.asarray(ts_col, dtype="datetime64[ns]").astype(np.int64)
-    minutes_np = (ts_int64 // 60_000_000_000) % 1440  # nanoseconds -> minutes since midnight
+    # --- Compute market structure levels on the full day_df (360-410) ---
+    high_series = day_df["high"]
+    low_series = day_df["low"]
+    hod_vals = high_series.cummax().values.astype(np.float64)
+    lod_vals = low_series.cummin().values.astype(np.float64)
 
-    # Numpy arrays directos (evitar .astype si ya son float64)
-    C = np.asarray(day_df["close"], dtype=np.float64)
-    O = np.asarray(day_df["open"], dtype=np.float64)
-    H = np.asarray(day_df["high"], dtype=np.float64)
-    L = np.asarray(day_df["low"], dtype=np.float64)
-    V = np.asarray(day_df["volume"], dtype=np.float64)
-    n_bars = len(C)
+    ts_series = pd.to_datetime(day_df["timestamp"])
+    pm_mask = (ts_series.dt.hour * 60 + ts_series.dt.minute >= 4 * 60) & (ts_series.dt.hour * 60 + ts_series.dt.minute < 9 * 60 + 30)
+    pm_high_val = day_df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
+    pm_low_val = day_df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
 
-    # --- Market structure (numpy puro, sin pandas .shift/.loc) ---
-    hod = np.maximum.accumulate(H)
-    lod = np.minimum.accumulate(L)
+    pm_highs_vals = np.full(len(day_df), pm_high_val, dtype=np.float64)
+    pm_lows_vals = np.full(len(day_df), pm_low_val, dtype=np.float64)
 
-    pm_mask = (minutes_np >= 240) & (minutes_np < 570)
-    pm_h = float(H[pm_mask].max()) if pm_mask.any() else np.nan
-    pm_l = float(L[pm_mask].min()) if pm_mask.any() else np.nan
+    prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)
+    prev_lows_vals = pd.Series(lod_vals).shift(1).fillna(low_series.iloc[0] if len(low_series) > 0 else 0.0).values.astype(np.float64)
 
-    prev_h = np.empty_like(hod); prev_h[0] = H[0]; prev_h[1:] = hod[:-1]
-    prev_l = np.empty_like(lod); prev_l[0] = L[0]; prev_l[1:] = lod[:-1]
+    prev_close_val = daily_stats.get("prev_close")
+    if prev_close_val is None or pd.isna(prev_close_val):
+        prev_close_val = day_df["close"].iloc[0] if len(day_df) > 0 else np.nan
+    prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
 
-    prev_close = daily_stats.get("prev_close")
-    if prev_close is None or pd.isna(prev_close):
-        prev_close = float(C[0]) if n_bars > 0 else np.nan
     yest_open_val = daily_stats.get("yesterday_open", daily_stats.get("lag_rth_open_1"))
     if yest_open_val is None or pd.isna(yest_open_val):
-        yest_open_val = float(O[0]) if n_bars > 0 else np.nan
+        yest_open_val = day_df["open"].iloc[0] if len(day_df) > 0 else np.nan
+    yest_opens_vals = np.full(len(day_df), yest_open_val, dtype=np.float64)
 
-    indicator_plan = compiled_strategy.get("_indicator_plan") if compiled_strategy else None
+    arrays = {
+        "ticker": np.full(len(day_df), ticker, dtype=object),
+        "open": day_df["open"].values.astype(np.float64),
+        "high": day_df["high"].values.astype(np.float64),
+        "low": day_df["low"].values.astype(np.float64),
+        "close": day_df["close"].values.astype(np.float64),
+        "volume": day_df["volume"].values,
+        "timestamp": day_df["timestamp"].values,
+        "hod": hod_vals,
+        "lod": lod_vals,
+        "pm_high": pm_highs_vals,
+        "pm_low": pm_lows_vals,
+        "prev_high": prev_highs_vals,
+        "prev_low": prev_lows_vals,
+        "prev_close": prev_closes_vals,
+        "yesterday_open": yest_opens_vals,
+    }
 
-    if indicator_plan is not None and not indicator_plan.get("has_special"):
-        # ═══ N2a FAST PATH: numpy arrays nativos, sin DataFrames ═══
-        arrays_native = {
-            "open": O, "high": H, "low": L, "close": C, "volume": V,
-            "minutes_arr": minutes_np,
-            "hod": hod, "lod": lod,
-            "pm_high": np.full(n_bars, pm_h if not np.isnan(pm_h) else 0.0, dtype=np.float64),
-            "pm_low": np.full(n_bars, pm_l if not np.isnan(pm_l) else 0.0, dtype=np.float64),
-            "prev_high": prev_h, "prev_low": prev_l,
-        }
-        try:
-            signals = translate_strategy_native(
-                arrays_native, compiled_strategy,
-                daily_stats=daily_stats,
-            )
-        except Exception:
-            return None
+    mini_df = pd.DataFrame(arrays)
 
-        entries_arr = signals["entries"]
-        exits_arr = signals["exits"]
-        sig_direction = signals["direction"]
-        sig_accept_reentries = signals.get("accept_reentries", False)
-        sig_max_reentries = signals.get("max_reentries", -1)
-        sig_sl_stop = signals["sl_stop"]
-        sig_sl_trail = signals["sl_trail"]
-        sig_tp_stop = signals["tp_stop"]
-        sig_tp_time_limit = signals.get("tp_time_limit")
-        sig_trail_pct = signals.get("trail_pct")
-        sig_partial_tps = signals.get("partial_take_profits")
-    else:
-        # ═══ LEGACY PATH (backward compatible) ═══
-        pm_highs_vals = np.full(n_bars, pm_h, dtype=np.float64)
-        pm_lows_vals = np.full(n_bars, pm_l, dtype=np.float64)
-        prev_closes_vals = np.full(n_bars, prev_close, dtype=np.float64)
-        yest_opens_vals = np.full(n_bars, yest_open_val, dtype=np.float64)
-
-        arrays_dict = {
-            "ticker": np.full(n_bars, ticker, dtype=object),
-            "open": O, "high": H, "low": L, "close": C, "volume": V,
-            "timestamp": ts_col.values if hasattr(ts_col, "values") else np.asarray(ts_col),
-            "hod": hod, "lod": lod,
-            "pm_high": pm_highs_vals, "pm_low": pm_lows_vals,
-            "prev_high": prev_h, "prev_low": prev_l,
-            "prev_close": prev_closes_vals, "yesterday_open": yest_opens_vals,
-        }
-        mini_df = pd.DataFrame(arrays_dict)
-
-        try:
-            signals = translate_strategy(
-                mini_df, strategy_def, daily_stats,
-                compiled=compiled_strategy,
-                precomputed_minutes=minutes_np,
-            )
-        except Exception:
-            return None
-        if not signals["entries"].any():
-            return None
-
-        entries_arr = signals["entries"].values if hasattr(signals["entries"], "values") else np.asarray(signals["entries"])
-        exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
-        sig_direction = signals["direction"]
-        sig_accept_reentries = signals.get("accept_reentries", False)
-        sig_max_reentries = signals.get("max_reentries", -1)
-        sig_sl_stop = signals["sl_stop"]
-        sig_sl_trail = signals["sl_trail"]
-        sig_tp_stop = signals["tp_stop"]
-        sig_tp_time_limit = signals.get("tp_time_limit")
-        sig_trail_pct = signals.get("trail_pct")
-        sig_partial_tps = signals.get("partial_take_profits")
-
-    # Fast return if no entries (only for legacy; fast path already returns arrays)
-    if indicator_plan is None and not np.any(entries_arr):
+    # --- Signal computation (432-452; el path con _signal_cache NO aplica aquí) ---
+    try:
+        signals = translate_strategy(mini_df, strategy_def, daily_stats, compiled=compiled_strategy)
+    except Exception:
+        return None
+    if not signals["entries"].any():
         return None
 
-    # --- swing entry suppression ---
+    entries_arr = signals["entries"].values if hasattr(signals["entries"], "values") else np.asarray(signals["entries"])
+    exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
+    sig_direction = signals["direction"]
+    sig_accept_reentries = signals.get("accept_reentries", False)
+    sig_max_reentries = signals.get("max_reentries", -1)
+    sig_sl_stop = signals["sl_stop"]
+    sig_sl_trail = signals["sl_trail"]
+    sig_tp_stop = signals["tp_stop"]
+    sig_tp_time_limit = signals.get("tp_time_limit")
+    sig_trail_pct = signals.get("trail_pct")
+    sig_partial_tps = signals.get("partial_take_profits")
+
+    # --- swing entry suppression (464-471) ---
     if swing_active:
-        # Fast date extraction from int64 nanoseconds: days since epoch
-        days_since_epoch = ts_int64 // 86_400_000_000_000
-        date_int = int(pd.Timestamp(date).value // 86_400_000_000_000)
-        is_subsequent_np = days_since_epoch != date_int
+        is_subsequent = pd.to_datetime(mini_df["timestamp"]).dt.strftime("%Y-%m-%d") != date
+        is_subsequent_np = is_subsequent.values if hasattr(is_subsequent, "values") else np.asarray(is_subsequent)
         if len(entries_arr) == len(is_subsequent_np):
             entries_arr = entries_arr.copy()
             entries_arr[is_subsequent_np] = False
 
-    # --- Session mask (numpy directo, sin _get_market_sessions_mask) ---
-    session_mask_np = np.ones(n_bars, dtype=bool)
+    # --- Trim DataFrame and signals to the selected market session window (473-505) ---
     if market_sessions and "all" not in market_sessions:
-        # Fast path: use precomputed minutes directly for common sessions
-        mask = np.zeros(n_bars, dtype=bool)
-        for s in market_sessions:
-            s = s.lower().strip()
-            if s in ("regular", "market", "rth"):
-                mask |= (minutes_np >= 570) & (minutes_np < 960)
-            elif s == "pre":
-                mask |= (minutes_np >= 240) & (minutes_np < 570)
-            elif s == "post":
-                mask |= (minutes_np >= 960) & (minutes_np < 1200)
-            elif s == "custom":
-                c_start = custom_start_time or "09:30"
-                c_end = custom_end_time or "16:00"
-                try:
-                    import datetime as _dt
-                    cs = _dt.datetime.strptime(c_start, "%H:%M")
-                    ce = _dt.datetime.strptime(c_end, "%H:%M")
-                    s_mins = cs.hour * 60 + cs.minute
-                    e_mins = ce.hour * 60 + ce.minute
-                    mask |= (minutes_np >= s_mins) & (minutes_np < e_mins)
-                except Exception:
-                    mask |= (minutes_np >= 570) & (minutes_np < 960)
-            else:
-                # Fallback to legacy function for unknown session types
-                from app.services.backtest_service import _get_market_sessions_mask
-                mask |= _get_market_sessions_mask(ts_col, [s], custom_start_time, custom_end_time)
-        session_mask_np = mask
-    else:
-        session_mask_np = np.ones(n_bars, dtype=bool)
+        from app.services.backtest_service import _get_market_sessions_mask
+        session_mask = _get_market_sessions_mask(
+            mini_df["timestamp"], market_sessions, custom_start_time, custom_end_time
+        )
+        mini_df = mini_df[session_mask].reset_index(drop=True)
+        if len(mini_df) < 2:
+            return None
+        arrays = {
+            "open": mini_df["open"].values.astype(np.float64),
+            "high": mini_df["high"].values.astype(np.float64),
+            "low": mini_df["low"].values.astype(np.float64),
+            "close": mini_df["close"].values.astype(np.float64),
+            "volume": mini_df["volume"].values,
+            "timestamp": mini_df["timestamp"].values,
+            "hod": mini_df["hod"].values.astype(np.float64),
+            "lod": mini_df["lod"].values.astype(np.float64),
+            "pm_high": mini_df["pm_high"].values.astype(np.float64),
+            "pm_low": mini_df["pm_low"].values.astype(np.float64),
+            "prev_high": mini_df["prev_high"].values.astype(np.float64),
+            "prev_low": mini_df["prev_low"].values.astype(np.float64),
+        }
 
-    trimmed_n = int(np.sum(session_mask_np))
-    if trimmed_n < 2:
-        return None
+        session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
+        entries_arr = entries_arr[session_mask_np]
+        exits_arr = exits_arr[session_mask_np]
 
-    entries_arr = entries_arr[session_mask_np]
-    exits_arr = exits_arr[session_mask_np]
-
-    arrays_out = {
-        "open": O[session_mask_np],
-        "high": H[session_mask_np],
-        "low": L[session_mask_np],
-        "close": C[session_mask_np],
-        "volume": V[session_mask_np],
-        "timestamp": ts_col.values[session_mask_np] if hasattr(ts_col, "values") else np.asarray(ts_col)[session_mask_np],
-        "hod": hod[session_mask_np],
-        "lod": lod[session_mask_np],
-        "pm_high": np.full(trimmed_n, pm_h if not np.isnan(pm_h) else 0.0, dtype=np.float64),
-        "pm_low": np.full(trimmed_n, pm_l if not np.isnan(pm_l) else 0.0, dtype=np.float64),
-        "prev_high": prev_h[session_mask_np],
-        "prev_low": prev_l[session_mask_np],
-    }
-
-    # --- candle_delay shift ---
+    # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays (507-537) ---
     if compiled_strategy:
         entry_candle_delay = compiled_strategy.get("entry_candle_delay")
         if entry_candle_delay is not None:
@@ -295,14 +220,19 @@ def _compute_signals_for_pair(
             except (ValueError, TypeError):
                 pass
 
-    # --- Misprint patch (08:00-08:45 = minutes 480-525) ---
-    patch_mask = ((minutes_np >= 480) & (minutes_np < 525))[session_mask_np]
+    # --- TEMPORARY PATCH FOR MISPRINTS (539-547): 8:00-8:45 restriction ---
+    ts_series = mini_df["timestamp"]
+    if not pd.api.types.is_datetime64_any_dtype(ts_series):
+        ts_series = pd.to_datetime(ts_series)
+    patch_mask = (ts_series.dt.hour == 8) & (ts_series.dt.minute >= 0) & (ts_series.dt.minute < 45)
+    patch_mask = patch_mask.values
 
+    # If after masking we have no entries, skip simulation (549-552)
     if not np.any(entries_arr):
         return None
 
-    # --- Timestamps para elapsed time ---
-    ts_arr = arrays_out["timestamp"]
+    # --- Prepare timestamps array for elapsed time logic (563-568) ---
+    ts_arr = arrays["timestamp"]
     if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
         timestamps_arr = ts_arr.astype("datetime64[ns]").astype(np.int64)
     else:
@@ -313,7 +243,7 @@ def _compute_signals_for_pair(
         "ticker": ticker,
         "entries_arr": entries_arr,
         "exits_arr": exits_arr,
-        "arrays": arrays_out,
+        "arrays": arrays,
         "patch_mask": patch_mask,
         "timestamps_arr": timestamps_arr,
         "sig_direction": sig_direction,
