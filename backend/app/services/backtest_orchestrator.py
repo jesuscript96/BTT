@@ -190,6 +190,9 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             f"({round(time.time()-t_fetch, 2)}s)"
         )
         print(f"[TIMING] qualifying: {qualifying_elapsed}s — {n_qualifying} filas")
+        from app.services.perf_timing import log_phase
+        log_phase("qualifying", (t_qualifying - t_fetch) * 1000, dataset=req.dataset_id,
+                  pairs=n_qualifying, tickers=n_tickers)
 
         # ── PHASE 2: resolve date range for streaming ──
         filters = _resolve_filters(req.dataset_id, req.start_date, req.end_date)
@@ -361,6 +364,8 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         n_trades = len(results.get("trades", []))
         n_days = len(results.get("day_results", []))
         print(f"[TIMING] total backtest: {total_elapsed}s")
+        log_phase("total", (t_end - t0) * 1000, dataset=req.dataset_id,
+                  pairs=n_qualifying, trades=n_trades, days=n_days)
         logger.info(
             f"BACKTEST DONE {n_days} days, {n_trades} trades, total={total_elapsed}s"
         )

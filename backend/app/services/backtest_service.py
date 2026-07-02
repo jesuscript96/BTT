@@ -298,11 +298,14 @@ def run_backtest(
         }
         # Pipeline: el fetch del stream (I/O, prefetch STREAM_WORKERS) solapa con la
         # generación de señales (workers fork). Menor pico de RAM que materializar-todo.
-        signals_sorted = _bsig.run_pipelined_signals(
-            group_source, qual_lookup, strategy_def, swing_intraday_cache,
-            _ctx, _n_workers, progress_callback=progress_callback,
-            total_hint=n_groups,
-        )
+        from app.services.perf_timing import PhaseTimer
+        with PhaseTimer("signals", workers=_n_workers, overlapped_fetch=1) as _pt_sig:
+            signals_sorted = _bsig.run_pipelined_signals(
+                group_source, qual_lookup, strategy_def, swing_intraday_cache,
+                _ctx, _n_workers, progress_callback=progress_callback,
+                total_hint=n_groups,
+            )
+            _pt_sig.pairs = len(signals_sorted)
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
@@ -312,7 +315,9 @@ def run_backtest(
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
         }
-        all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+        with PhaseTimer("simulate") as _pt_sim:
+            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            _pt_sim.pairs = len(signals_sorted)
         days_with_entries = len(day_results)
         logger.info(
             f"[PARALLEL] pipeline done: {len(signals_sorted)} con señales, "
@@ -721,6 +726,9 @@ def run_backtest(
     t_loop = time.time()
     total_days = days_with_entries
     print(f"[TIMING] loop completo ({total_days} días): {round(t_loop - t_total, 2)}s")
+    from app.services.perf_timing import log_phase as _log_phase
+    _log_phase("stream_build", (t_loop - t_total) * 1000, pairs=scanned,
+               days=total_days, mode="sequential" if scanned else "pipelined")
     logger.info(
         f"[STREAM] done: {days_with_entries} days with entries "
         f"({round(time.time()-t1, 2)}s)"
@@ -735,6 +743,8 @@ def run_backtest(
         day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses
     )
     logger.info(f"[AGG] aggregate+equity done ({round(time.time()-t4, 2)}s)")
+    _log_phase("aggregate", (time.time() - t4) * 1000, pairs=len(day_results),
+               trades=len(all_trades))
 
     logger.info(
         f"[DONE] {len(day_results)} days, {len(all_trades)} trades, "
