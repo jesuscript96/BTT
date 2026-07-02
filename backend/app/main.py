@@ -163,6 +163,17 @@ async def lifespan(app: FastAPI):
                 start_replica_daemon()
             except Exception as e:
                 print(f"[REPLICA] daemon no arrancado: {e}")
+
+            # EPIC D: pre-compilar el kernel Numba del simulador fuera del primer
+            # backtest (cache=True → tras el primer deploy es casi instantáneo).
+            if os.getenv("BACKTEST_NUMBA_SIM", "0").strip().lower() in ("1", "true", "yes", "on"):
+                def _warm_sim():
+                    try:
+                        from app.services.sim_dispatch import warmup
+                        print(f"[JIT] simulate kernel warm en {warmup():.1f}s")
+                    except Exception as e:
+                        print(f"[JIT] warmup falló (se usará el path Python): {e}")
+                _threading.Thread(target=_warm_sim, daemon=True).start()
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:

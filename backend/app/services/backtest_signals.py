@@ -673,8 +673,200 @@ def run_pipelined_signals(
 
 
 # ---------------------------------------------------------------------------
+# Fase 1-slab — señales sobre el slab store (PRD rendimiento-backtester §03.7)
+# ---------------------------------------------------------------------------
+
+def slab_stream_enabled() -> bool:
+    """Flag maestro del stream slab (default OFF — path legacy intacto)."""
+    return os.getenv("BTT_SLAB_STREAM_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _signal_chunk_slab(chunk):
+    """Worker slab: item = (date, ticker, daily_stats, payload). Los payload "ref"
+    viajan como índices y se resuelven aquí contra el mmap del worker (forkserver
+    no hereda memmaps; slab_store cachea el MonthSlab por proceso)."""
+    from app.db.slab_store import resolve_slab_item
+    ctx = _PIPE_CTX
+    out = []
+    for (date, ticker, daily_stats, payload) in chunk:
+        try:
+            arrs = resolve_slab_item(payload)
+            res = _compute_signals_for_pair(
+                date, ticker, None, daily_stats,
+                ctx["strategy_def"], ctx["compiled_strategy"],
+                ctx["market_sessions"], ctx["custom_start_time"],
+                ctx["custom_end_time"], ctx["swing_active"],
+                pair_arrays=arrs,
+            )
+        except Exception as e:
+            logger.warning(f"[SLAB] signal gen failed {ticker} {date}: {e}")
+            res = None
+        out.append(res)
+    return out
+
+
+def run_slab_signals(items_iter, ctx, n_workers, progress_callback=None,
+                     chunk_size=64, total_hint=None):
+    """Conduce el stream slab hacia señales. workers<=1 (o sin forkserver) → inline;
+    workers>1 → pool forkserver persistente con backpressure (mismo patrón que
+    run_pipelined_signals). Devuelve señales ordenadas por (date, ticker)."""
+    global _PIPE_CTX
+    from app.db.slab_store import resolve_slab_item
+
+    total = total_hint if (total_hint and total_hint > 0) else None
+    signals = []
+    processed = 0
+
+    def _report():
+        if progress_callback is not None:
+            progress_callback(processed, total if total is not None else processed)
+
+    if n_workers <= 1 or "forkserver" not in multiprocessing.get_all_start_methods():
+        for (date, ticker, daily_stats, payload) in items_iter:
+            processed += 1
+            try:
+                arrs = resolve_slab_item(payload)
+                res = _compute_signals_for_pair(
+                    date, ticker, None, daily_stats,
+                    ctx["strategy_def"], ctx["compiled_strategy"],
+                    ctx["market_sessions"], ctx["custom_start_time"],
+                    ctx["custom_end_time"], ctx["swing_active"],
+                    pair_arrays=arrs,
+                )
+            except Exception as e:
+                logger.warning(f"[SLAB] signal gen failed {ticker} {date}: {e}")
+                res = None
+            if res is not None:
+                signals.append(res)
+            if processed % 256 == 0:
+                _report()
+        _report()
+        signals.sort(key=lambda s: (s["date"], s["ticker"]))
+        return signals
+
+    # ── pool forkserver con backpressure ──
+    _PIPE_CTX = ctx
+    max_outstanding = max(2, n_workers * 3)
+    mp_ctx = multiprocessing.get_context("forkserver")
+    pending = set()
+    chunk = []
+
+    def _drain(done_set):
+        nonlocal processed
+        for f in done_set:
+            res = f.result()
+            processed += len(res)
+            for r in res:
+                if r is not None:
+                    signals.append(r)
+        pending.difference_update(done_set)
+
+    try:
+        with ProcessPoolExecutor(
+            max_workers=n_workers, mp_context=mp_ctx,
+            initializer=_init_pipe_ctx, initargs=(ctx,),
+        ) as pool:
+            warm = [pool.submit(_pool_warmup) for _ in range(n_workers)]
+            wait(warm)
+            for item in items_iter:
+                chunk.append(item)
+                if len(chunk) >= chunk_size:
+                    pending.add(pool.submit(_signal_chunk_slab, chunk))
+                    chunk = []
+                    if len(pending) >= max_outstanding:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        _drain(done)
+                        _report()
+                else:
+                    done = {f for f in pending if f.done()}
+                    if done:
+                        _drain(done)
+                        _report()
+            if chunk:
+                pending.add(pool.submit(_signal_chunk_slab, chunk))
+                chunk = []
+            for f in as_completed(list(pending)):
+                res = f.result()
+                processed += len(res)
+                for r in res:
+                    if r is not None:
+                        signals.append(r)
+                _report()
+            pending.clear()
+    finally:
+        _PIPE_CTX = {}
+
+    signals.sort(key=lambda s: (s["date"], s["ticker"]))
+    return signals
+
+
+# ---------------------------------------------------------------------------
 # Mitad B — simulate + acumulación SERIAL. Copia verbatim de 358 + 554-672.
 # ---------------------------------------------------------------------------
+
+def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct):
+    """Réplica exacta de backtest_service._enrich_trades sobre ndarrays (sin
+    pd.Series/.iloc por trade). Produce dicts IDÉNTICOS (test de equivalencia)."""
+    if not raw_trades:
+        return []
+    max_idx = len(ts_dt64) - 1
+    result = []
+    for t in raw_trades:
+        ei = min(t["entry_idx"], max_idx)
+        xi = min(t["exit_idx"], max_idx)
+        entry_ts = pd.Timestamp(ts_dt64[ei])
+        exit_ts = pd.Timestamp(ts_dt64[xi])
+        pnl = t["pnl"]
+        r_multiple = None if risk_unit_dollar <= 0 else round(pnl / risk_unit_dollar, 2)
+        result.append({
+            "ticker": ticker,
+            "date": date,
+            "entry_time": str(entry_ts),
+            "exit_time": str(exit_ts),
+            "entry_idx": t["entry_idx"],
+            "exit_idx": t["exit_idx"],
+            "entry_time_epoch": int(ts_epoch[ei]),
+            "exit_time_epoch": int(ts_epoch[xi]),
+            "entry_price": t["entry_price"],
+            "exit_price": t["exit_price"],
+            "pnl": pnl,
+            "fees": t.get("fees", 0.0),
+            "return_pct": t["return_pct"],
+            "direction": t["direction"],
+            "status": t["status"],
+            "size": t["size"],
+            "exit_reason": t["exit_reason"],
+            "mae": t["mae"],
+            "mfe": t.get("mfe", 0.0),
+            "r_multiple": r_multiple,
+            "entry_hour": entry_ts.hour,
+            "entry_weekday": entry_ts.weekday(),
+            "gap_pct": float(gap_pct) if gap_pct is not None else None,
+            "stop_loss": t.get("stop_loss", 0.0),
+        })
+    return result
+
+
+_MAX_EQ_POINTS = 200
+
+
+def _extract_equity_arr(eq_vals, ts_epoch):
+    """Réplica exacta de backtest_service._extract_equity_from_values sobre el
+    ts_epoch ya calculado (evita re-derivarlo de una pd.Series por par)."""
+    try:
+        n = min(len(eq_vals), len(ts_epoch))
+        if n == 0:
+            return []
+        te = ts_epoch[:n]
+        vals = eq_vals[:n].astype(np.float64)
+        if n > _MAX_EQ_POINTS:
+            idx = np.linspace(0, n - 1, _MAX_EQ_POINTS, dtype=int)
+            te = te[idx]
+            vals = vals[idx]
+        return [{"time": int(t), "value": float(v)} for t, v in zip(te, vals)]
+    except Exception:
+        return []
+
 
 def simulate_and_accumulate(signals_sorted, params):
     """Procesa las señales en orden de (date, ticker) ejecutando simulate +
@@ -685,7 +877,7 @@ def simulate_and_accumulate(signals_sorted, params):
     look_ahead_prevention, strategy_def, elapsed_limit, elapsed_operator.
     """
     from app.services.backtest_service import (
-        simulate, _enrich_trades, _extract_equity_from_values, _extract_day_stats_from_values,
+        simulate, _extract_day_stats_from_values,
     )
 
     init_cash = params["init_cash"]
@@ -808,13 +1000,13 @@ def simulate_and_accumulate(signals_sorted, params):
             daily_pnl += t["pnl"]
 
         # Avoid pd.to_datetime parsing if array is already datetime kind natively (631-638)
+        # (sin pd.Series por par: ndarrays directos — mismos valores, mismos dicts)
         ts_arr = arrays["timestamp"]
         if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
-            timestamps = pd.Series(ts_arr)
-            ts_epoch = ts_arr.astype("datetime64[s]").astype("int64")
+            ts_dt64 = ts_arr
         else:
-            timestamps = pd.Series(pd.to_datetime(ts_arr))
-            ts_epoch = timestamps.values.astype("datetime64[s]").astype("int64")
+            ts_dt64 = pd.to_datetime(ts_arr).values
+        ts_epoch = ts_dt64.astype("datetime64[s]").astype("int64")
 
         # --- Calculate Risk Unit for "R" reporting (640-646) ---
         if risk_type == "FIXED":
@@ -824,12 +1016,11 @@ def simulate_and_accumulate(signals_sorted, params):
         else:
             risk_unit_dollar = risk_r
 
-        trades_records = _enrich_trades(
-            raw_trades, timestamps, ticker, date, strategy_def, risk_unit_dollar,
-            gap_pct=gap_pct,
+        trades_records = _enrich_trades_arr(
+            raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct,
         )
 
-        equity = _extract_equity_from_values(eq_vals, timestamps)
+        equity = _extract_equity_arr(eq_vals, ts_epoch)
 
         stats = _extract_day_stats_from_values(eq_vals, ticker, date, trades_records, gap_pct)
 

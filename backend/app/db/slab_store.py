@@ -180,12 +180,17 @@ def _merge_swing_arrays(base: PairArrays, extras: list) -> PairArrays:
                       low=l[keep], close=c[keep], volume=v[keep])
 
 
-def iter_slab_groups(qualifying_df, months, strategy_def, qual_lookup):
+def iter_slab_items(qualifying_df, months, strategy_def, qual_lookup):
     """Itera pares desde slabs. months = [(year, month), ...] cronológico.
 
-    Yields (date: str, ticker: str, daily_stats: dict, PairArrays).
-    Los meses SIN slab no se emiten aquí — el caller decide el fallback legacy
-    (iter_slab_groups_with_fallback en data_service se ocupa de eso).
+    Yields (date: str, ticker: str, daily_stats: dict, payload) donde payload es:
+      ("ref", kind, year, month, row_start, row_end)  par = slice puro del slab
+        → IPC barato hacia workers: viajan índices, el worker abre su propio mmap;
+      ("arr", PairArrays)                             par con swing concatenado
+        → los arrays viajan ya materializados (no son un rango contiguo).
+
+    Los meses SIN slab no se emiten aquí — iter_slab_items_with_fallback añade el
+    path legacy para esos meses.
     """
     from app.services.backtest_service import format_date_str
 
@@ -226,12 +231,13 @@ def iter_slab_groups(qualifying_df, months, strategy_def, qual_lookup):
                 except Exception as e:
                     logger.warning(f"Error parsing date {date} for temporal exclusion: {e}")
 
-            arrs = slab.slice_pair(ticker, date)
-            if arrs is None:
+            rng = slab.lookup(ticker, date)
+            if rng is None:
                 continue  # el par no tiene datos este mes (como el groupby actual)
 
             daily_stats = qual_lookup.get((ticker, date), {})
 
+            extras = []
             if swing_active:
                 dates_to_fetch = []
                 if apply_day == "gap_day":
@@ -248,7 +254,6 @@ def iter_slab_groups(qualifying_df, months, strategy_def, qual_lookup):
                     if t2 is not None and not pd.isna(t2):
                         dates_to_fetch.append(t2)
 
-                extras = []
                 for d_val in dates_to_fetch:
                     d_str = format_date_str(d_val)
                     if not d_str:
@@ -260,13 +265,88 @@ def iter_slab_groups(qualifying_df, months, strategy_def, qual_lookup):
                     extra = s_slab.slice_pair(ticker, d_str)
                     if extra is not None and len(extra):
                         extras.append(extra)
-                if extras:
-                    arrs = _merge_swing_arrays(arrs, extras)
 
-            if len(arrs) < 5:
+            if extras:
+                arrs = _merge_swing_arrays(slab.slice(*rng), extras)
+                if len(arrs) < 5:
+                    continue
+                yield date, ticker, daily_stats, ("arr", arrs)
+            else:
+                if rng[1] - rng[0] < 5:
+                    continue
+                yield date, ticker, daily_stats, ("ref", slab.kind, y, m, rng[0], rng[1])
+
+
+def resolve_slab_item(payload) -> PairArrays:
+    """Materializa el payload de iter_slab_items (en el padre o en un worker)."""
+    if payload[0] == "arr":
+        return payload[1]
+    _, kind, y, m, s, e = payload
+    slab = get_month(kind, y, m)
+    if slab is None:
+        raise RuntimeError(f"slab {kind} {y}-{m:02d} no disponible al resolver ref")
+    return slab.slice(s, e)
+
+
+def iter_slab_groups(qualifying_df, months, strategy_def, qual_lookup):
+    """Adaptador: como iter_slab_items pero materializando (date, ticker,
+    daily_stats, PairArrays). Lo usan el bench y los tests."""
+    for date, ticker, daily_stats, payload in iter_slab_items(
+            qualifying_df, months, strategy_def, qual_lookup):
+        yield date, ticker, daily_stats, resolve_slab_item(payload)
+
+
+def iter_slab_items_with_fallback(qualifying_df, strategy_def, qual_lookup,
+                                  swing_intraday_cache=None):
+    """Stream completo para run_backtest: meses con slab → refs/arrays del slab;
+    meses SIN slab → path legacy (_fetch_and_cache_month + groupby +
+    _preprocess_pair) convertido al mismo contrato ("arr", PairArrays).
+
+    El orden global se mantiene: meses cronológicos, (date, ticker) dentro del mes.
+    """
+    from app.db.gcs_cache import _fetch_and_cache_month, _select_intraday_glob_for_month
+    from app.db.connection import get_connection
+
+    months = months_spanned_by_qualifying(qualifying_df)
+    q_dates = pd.to_datetime(qualifying_df["date"])
+
+    for (y, m) in months:
+        if get_month_any_kind(y, m) is not None:
+            yield from iter_slab_items(qualifying_df, [(y, m)], strategy_def, qual_lookup)
+            continue
+
+        # ── FALLBACK legacy para el mes (primera vez sin réplica aún) ──
+        logger.info(f"[SLAB] {y}-{m:02d} sin slab — fallback al path legacy para este mes")
+        mask = (q_dates.dt.year == y) & (q_dates.dt.month == m)
+        vp = qualifying_df.loc[mask, ["ticker", "date"]].drop_duplicates().copy()
+        if vp.empty:
+            continue
+        vp["date"] = pd.to_datetime(vp["date"]).dt.strftime("%Y-%m-%d")
+        try:
+            conn = get_connection()
+            path = _select_intraday_glob_for_month(conn, y, m) or "local/intraday_1m_optimized"
+        except Exception:
+            path = "local/intraday_1m_optimized"
+        df_month = _fetch_and_cache_month(y, m, path, vp, batch_size=500, mi=1, n_months=1)
+        if df_month is None or df_month.empty:
+            continue
+        from app.services.backtest_signals import _preprocess_pair
+        for (date, ticker), day_df in df_month.groupby(["date", "ticker"], observed=True):
+            pre = _preprocess_pair(date, ticker, day_df, qual_lookup, strategy_def,
+                                   swing_intraday_cache or {})
+            if pre is None:
                 continue
-
-            yield date, ticker, daily_stats, arrs
+            p_date, p_ticker, p_df, p_stats = pre
+            ts_ns = pd.to_datetime(p_df["timestamp"]).values.astype("datetime64[ns]").astype(np.int64)
+            arrs = PairArrays(
+                ts_ns=ts_ns,
+                open_=np.asarray(p_df["open"], dtype=np.float64),
+                high=np.asarray(p_df["high"], dtype=np.float64),
+                low=np.asarray(p_df["low"], dtype=np.float64),
+                close=np.asarray(p_df["close"], dtype=np.float64),
+                volume=np.asarray(p_df["volume"], dtype=np.float64),
+            )
+            yield p_date, p_ticker, p_stats, ("arr", arrs)
 
 
 def months_spanned_by_qualifying(qualifying_df) -> list:

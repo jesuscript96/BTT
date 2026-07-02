@@ -271,6 +271,41 @@ def run_pipeline(qualifying, n_months, stream_mode="legacy", sim_mode="py"):
     }
 
 
+def run_via_backtest(qualifying, n_months, workers=1, sim_mode="py", slab=True):
+    """E2E por el run_backtest REAL (el path de producción), midiendo total."""
+    from app.db.slab_store import ensure_slabs_from_ticker_cache
+    from app.services.backtest_service import run_backtest
+
+    os.environ["BTT_SLAB_STREAM_ENABLED"] = "1" if slab else "0"
+    os.environ["BACKTEST_PARALLEL_WORKERS"] = str(workers)
+    os.environ["BACKTEST_NUMBA_SIM"] = "1" if sim_mode == "jit" else "0"
+    if slab:
+        ensure_slabs_from_ticker_cache(_month_list(n_months))
+    if sim_mode == "jit":
+        from app.services.sim_dispatch import warmup
+        warmup()
+    _clear_month_caches()
+
+    t0 = time.perf_counter()
+    res = run_backtest(
+        qualifying_df=qualifying.copy(), strategy_def=STRATEGY,
+        init_cash=10000.0, risk_r=100.0, risk_type="FIXED",
+        market_sessions=MARKET_SESSIONS,
+        day_group_iter=iter(()), n_groups_hint=len(qualifying),
+    )
+    total_ms = (time.perf_counter() - t0) * 1000
+    agg = res["aggregate_metrics"]
+    return {
+        "total_ms": round(total_ms, 1),
+        "checksum": {
+            "n_trades": len(res["trades"]),
+            "total_pnl": round(float(agg.get("total_pnl", 0.0)), 4),
+            "win_rate_pct": agg.get("win_rate_pct"),
+            "n_days": len(res["day_results"]),
+        },
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tickers", type=int, default=DEFAULT_TICKERS_PER_MONTH)
@@ -279,9 +314,38 @@ def main():
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--stream", choices=["legacy", "slab"], default="legacy")
     ap.add_argument("--sim", choices=["py", "jit"], default="py")
+    ap.add_argument("--via-rb", dest="via_rb", type=int, default=None, metavar="WORKERS",
+                    help="E2E por run_backtest real (modo slab) con N workers")
     ap.add_argument("--check", action="store_true", help="smoke test rápido")
     ap.add_argument("--json", dest="json_out", default=None)
     args = ap.parse_args()
+
+    if args.via_rb is not None:
+        qualifying = build_synthetic_source(args.tickers, args.months, args.bars)
+        runs = []
+        for i in range(args.runs):
+            r = run_via_backtest(qualifying, args.months, workers=args.via_rb,
+                                 sim_mode=args.sim)
+            runs.append(r)
+            print(f"[bench] via-rb run {i+1}/{args.runs}: total={r['total_ms']}ms "
+                  f"checksum={r['checksum']}", file=sys.stderr)
+        med = round(statistics.median(r["total_ms"] for r in runs), 1)
+        result = {
+            "config": {"mode": "via_run_backtest", "workers": args.via_rb,
+                       "sim": args.sim, "tickers_per_month": args.tickers,
+                       "months": args.months, "bars": args.bars},
+            "median_total_ms": med,
+            "pairs": len(qualifying),
+            "median_per_pair_us": round(med * 1000 / max(1, len(qualifying)), 1),
+            "checksum": runs[0]["checksum"],
+            "checksums_stable": all(r["checksum"] == runs[0]["checksum"] for r in runs),
+        }
+        out = json.dumps(result, indent=2)
+        print(out)
+        if args.json_out:
+            with open(args.json_out, "w") as f:
+                f.write(out)
+        return
 
     if args.check:
         # 480 barras = 04:00→12:00: incluye RTH para que haya señales/trades reales
