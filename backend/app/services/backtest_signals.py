@@ -44,8 +44,11 @@ def get_parallel_workers() -> int:
 
     Default: 1 (OPT-IN). El paralelismo NO se activa automáticamente: materializar
     todos los day_df en el padre antes del fork re-introduce el riesgo de OOM en
-    BROAD sobre CCX33 (30GB, Swap=0). Se activa EXPLÍCITAMENTE poniendo
-    BACKTEST_PARALLEL_WORKERS=N en Coolify cuando el hardware lo permita (W-2295).
+    BROAD (swap 0 en prod). Se activa EXPLÍCITAMENTE poniendo
+    BACKTEST_PARALLEL_WORKERS=N en Coolify. HW real 2026-07: Xeon W-2145
+    (8C/16T) con 128GB. OJO: con el slab store + kernel JIT las señales son tan
+    baratas que el pool solo compensa en estrategias multi-timeframe pesadas o
+    universos enormes — medido: a 1.200 pares el spawn cuesta más que el trabajo.
     """
     try:
         return max(1, int(os.getenv("BACKTEST_PARALLEL_WORKERS", "1")))
