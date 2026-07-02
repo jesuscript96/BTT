@@ -81,27 +81,43 @@ def _compute_signals_for_pair(
     custom_start_time,
     custom_end_time,
     swing_active,
+    pair_arrays=None,
 ):
     """Devuelve el contrato de senales (dict de arrays numpy) o None si el par no
     produce entradas. Optimizado N1e+N2a: timestamps parseados una vez, fast path
-    con numpy arrays nativos cuando _indicator_plan esta disponible."""
+    con numpy arrays nativos cuando _indicator_plan esta disponible.
 
-    # N1e: Parsear timestamps UNA vez — fast minutes-from-midnight via int64
-    ts_col = day_df["timestamp"]
-    if not pd.api.types.is_datetime64_any_dtype(ts_col):
-        ts_col = pd.to_datetime(ts_col)
-    if hasattr(ts_col, "values"):
-        ts_int64 = ts_col.values.astype("datetime64[ns]").astype(np.int64)
+    Slab path (PRD rendimiento-backtester §03.7): si `pair_arrays` viene informado
+    (slab_store.PairArrays), los arrays llegan ya limpios (orden+dedup del builder)
+    y `day_df` se ignora — cero pandas en la entrada."""
+
+    if pair_arrays is not None:
+        # ═══ SLAB PATH: arrays ya ordenados/dedup, float64, ts int64 ═══
+        ts_int64 = pair_arrays.ts_ns
+        ts_col = pair_arrays.timestamps_dt64()  # vista datetime64[ns], zero-copy
+        C = pair_arrays.close
+        O = pair_arrays.open
+        H = pair_arrays.high
+        L = pair_arrays.low
+        V = pair_arrays.volume
     else:
-        ts_int64 = np.asarray(ts_col, dtype="datetime64[ns]").astype(np.int64)
-    minutes_np = (ts_int64 // 60_000_000_000) % 1440  # nanoseconds -> minutes since midnight
+        # N1e: Parsear timestamps UNA vez — fast minutes-from-midnight via int64
+        ts_col = day_df["timestamp"]
+        if not pd.api.types.is_datetime64_any_dtype(ts_col):
+            ts_col = pd.to_datetime(ts_col)
+        if hasattr(ts_col, "values"):
+            ts_int64 = ts_col.values.astype("datetime64[ns]").astype(np.int64)
+        else:
+            ts_int64 = np.asarray(ts_col, dtype="datetime64[ns]").astype(np.int64)
 
-    # Numpy arrays directos (evitar .astype si ya son float64)
-    C = np.asarray(day_df["close"], dtype=np.float64)
-    O = np.asarray(day_df["open"], dtype=np.float64)
-    H = np.asarray(day_df["high"], dtype=np.float64)
-    L = np.asarray(day_df["low"], dtype=np.float64)
-    V = np.asarray(day_df["volume"], dtype=np.float64)
+        # Numpy arrays directos (evitar .astype si ya son float64)
+        C = np.asarray(day_df["close"], dtype=np.float64)
+        O = np.asarray(day_df["open"], dtype=np.float64)
+        H = np.asarray(day_df["high"], dtype=np.float64)
+        L = np.asarray(day_df["low"], dtype=np.float64)
+        V = np.asarray(day_df["volume"], dtype=np.float64)
+
+    minutes_np = (ts_int64 // 60_000_000_000) % 1440  # nanoseconds -> minutes since midnight
     n_bars = len(C)
 
     # --- Market structure (numpy puro, sin pandas .shift/.loc) ---
@@ -236,7 +252,9 @@ def _compute_signals_for_pair(
             else:
                 # Fallback to legacy function for unknown session types
                 from app.services.backtest_service import _get_market_sessions_mask
-                mask |= _get_market_sessions_mask(ts_col, [s], custom_start_time, custom_end_time)
+                # pd.Series: en el slab path ts_col es un ndarray datetime64 y la
+                # función legacy necesita .dt — envolver es inocuo en ambos paths.
+                mask |= _get_market_sessions_mask(pd.Series(ts_col), [s], custom_start_time, custom_end_time)
         session_mask_np = mask
     else:
         session_mask_np = np.ones(n_bars, dtype=bool)

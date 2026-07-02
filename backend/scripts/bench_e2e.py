@@ -197,10 +197,14 @@ def run_pipeline(qualifying, n_months, stream_mode="legacy", sim_mode="py"):
         phases["group_preproc_ms"] = (time.perf_counter() - t0) * 1000
         del month_frames
     elif stream_mode == "slab":
-        # EPIC B: el slab absorbe assemble+group+preproc en una sola fase
-        from app.db.slab_store import iter_slab_groups_bench
+        # EPIC B: el slab absorbe assemble+group+preproc en una sola fase.
+        # El build one-time (equivale al sync nightly de prod) queda FUERA del timing.
+        from app.db.slab_store import ensure_slabs_from_ticker_cache, iter_slab_groups_bench
+        built = ensure_slabs_from_ticker_cache(_month_list(n_months))
+        if built:
+            print(f"[bench] slabs construidos (one-time): {built}", file=sys.stderr)
         t0 = time.perf_counter()
-        pairs = list(iter_slab_groups_bench(qualifying, qual_lookup, STRATEGY, _month_list(n_months)))
+        pairs = iter_slab_groups_bench(qualifying, qual_lookup, STRATEGY, _month_list(n_months))
         phases["assemble_ms"] = (time.perf_counter() - t0) * 1000
         phases["group_preproc_ms"] = 0.0
     else:
@@ -212,11 +216,11 @@ def run_pipeline(qualifying, n_months, stream_mode="legacy", sim_mode="py"):
     t0 = time.perf_counter()
     signals = []
     for item in pairs:
-        if stream_mode == "slab" and len(item) == 5:
-            date, ticker, day_df, daily_stats, pair_arrays = item
+        if stream_mode == "slab":
+            date, ticker, daily_stats, arrs = item
             r = _compute_signals_for_pair(
-                date, ticker, day_df, daily_stats, STRATEGY, compiled,
-                MARKET_SESSIONS, None, None, False,
+                date, ticker, None, daily_stats, STRATEGY, compiled,
+                MARKET_SESSIONS, None, None, False, pair_arrays=arrs,
             )
         else:
             date, ticker, day_df, daily_stats = item
