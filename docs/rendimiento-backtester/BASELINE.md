@@ -59,6 +59,23 @@ ya cacheados) y guardar las líneas `[TIMING]` (con EPIC A ya emiten
 `phase=qualifying|signals|simulate|stream_build|aggregate|serialize|total`). Repetir tras
 activar cada flag (RUNBOOK) para el antes/después real de prod.
 
-## 5. Resultado de la pasada inicial de la suite
+## 5. Mapa de la suite (por fichero, con watchdog de 150s — 2026-07-02, tras Motor V2)
 
-(se rellena al completar `pytest tests/ -q` — hay tests que dependen de red/DB y tardan)
+**Verdes: 21 ficheros (~135 tests)** — incluidos TODOS los del motor (candle_delay,
+compounding_r_metrics, full_tp_hour, max_reentries, partial_tp_hour, swing_option,
+temporal_exclusions, timezone_ingestion) con flags OFF, y los 43 nuevos de Motor V2.
+
+**Con fallos — TODOS PRE-EXISTENTES** (verificado ejecutándolos sobre el commit `5bdaf8c`,
+anterior a Motor V2, con fallos idénticos):
+
+| Fichero | Estado | Clase |
+|---|---|---|
+| test_backtest_engine.py / test_backtest_integration.py | error de import | legacy roto (imports inexistentes) → candidatos a `_archive/` |
+| test_backtest_golden.py | failed | **diseñado para el servidor** (necesita datasets/caches de prod; su docstring lo dice) |
+| test_backtest_queries.py, test_market_calculations.py, test_market_filters_{basic,advanced}.py | COLGADOS >150s (matados) | requieren red/GCS; uno de ellos quema CPU sin fin — la causa de que `pytest tests/` se cuelgue horas en local |
+| test_new_metrics_tier{1,2,3}.py | 6+9+8 failed | dependen de datos reales (verificado idéntico en `5bdaf8c`) |
+| test_prefetch_parity.py | 1 failed (65s) | red/GCS |
+| test_strategy_api.py | 1 failed (422) | pre-existente (idéntico en `5bdaf8c`) |
+
+Recomendación CI: `--timeout=90` global (pytest-timeout ya instalado en `.venv_313`),
+mover los 2 legacy a `_archive/` y marcar los de red con `@pytest.mark.server`.

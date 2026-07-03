@@ -17,13 +17,20 @@ Bench E2E sintético reproducible (`scripts/bench_e2e.py`): 1.200 pares, 3 meses
 |---|---|---|---|---|---|---|
 | **Baseline** (path actual, caché disco caliente) | 1.831 ms | 331 ms | 144 ms | 224 ms | **2.532 ms** | 1x |
 | + Slab store (EPIC B) | **12 ms** | 0 | 66 ms | 219 ms | **299 ms** | **8,5x** |
-| + Kernel JIT + Mitad B slim (EPIC D) | 13 ms | 0 | 66 ms | **72 ms** | **152 ms** | **16,6x** |
+| + Kernel JIT + Mitad B slim (EPIC D) | 13 ms | 0 | 66 ms | **72 ms** | **152-154 ms** | **16,8x** |
 | Por `run_backtest` REAL (slab+JIT, incl. agregados) | — | — | — | — | **169,5 ms** | **~15x** |
 
-Por par: **2.110 µs → 128 µs**. Extrapolado al backtest típico de prod (gap ≥20%,
-2022-2026 ≈ 35.000 pares, W-2145 ≈ ×1,8-2 vs M4): **~2,5-3 min → ~9-18 s** en steady-state.
-Y con la réplica local (EPIC C), la **primera ejecución cuesta lo mismo que las siguientes**
-(hoy: +minutos de GCS US↔EU o timeout).
+**Matriz final con directorios aislados (tras el fix de staleness `cad5ef7`):**
+
+| Escala | Legacy | Slab+JIT | Speedup | Checksum (idéntico en ambos) |
+|---|---|---|---|---|
+| 1.200 pares (200 tk/mes) | 2.589 ms (2.158 µs/par) | **154,3 ms** (129 µs/par) | **16,8x** | 639 trades · PnL −17,49 |
+| 3.000 pares (500 tk/mes) | 6.623 ms (2.208 µs/par) | **581,6 ms** (194 µs/par) | **11,4x** | 1.557 trades · PnL −20,28 |
+
+El coste por par del path legacy es constante con la escala (~2.200 µs) → extrapolación
+lineal válida. Backtest típico de prod (gap ≥20%, 2022-2026 ≈ 35.000 pares, W-2145 ≈
+×1,8-2 vs M4): **~2,5-3 min → ~12-25 s** en steady-state. Y con la réplica local (EPIC C),
+la **primera ejecución cuesta lo mismo que las siguientes** (hoy: +minutos de GCS US↔EU).
 
 ## 2. Qué se construyó (y qué NO se tocó)
 
@@ -63,6 +70,7 @@ el import de `simulate` en `backtest_service.py:21` ahora apunta al dispatcher
 | D6 · microbench kernel | ≥10x | kernel sí (simulate 224→~30 ms dentro de accum); la FASE completa quedó en 3,1x | ✅ kernel / ⚠️ fase |
 | D6 · Mitad B <15% del E2E | <15% | 47% (72 de 152 ms) | ⚠️ no alcanzado |
 | C4 · primera ejecución ≤1,3x steady | ≤1,3x | pendiente de prod (réplica) | ⏳ |
+| §2.8-6 · RSS pico | ≤ hoy +10% | **1.260 MB → 640 MB (−49%)** (mmap: los meses no viven en el heap) | ✅✅ |
 
 **Sobre los ⚠️ de D6 (honestidad):** tras el JIT, lo que queda de la Mitad B NO es el
 simulador: es la construcción **contractual** del payload (dicts de equity 200 puntos/día,
@@ -85,10 +93,19 @@ con margen, que es exactamente la salida prevista en T-D6.
    red/datos de prod** — la pasada inicial estuvo horas colgada hasta añadir
    `pytest-timeout`. Recomendación: mover esos 2 módulos a `_archive/` y adoptar
    `--timeout=90` en CI.
+4. **Staleness de slabs (encontrado por el bench a escala, arreglado en `cad5ef7`):** un
+   slab construido sobre una fuente que muta después se servía obsoleto. Ahora el manifest
+   lleva `source_fingerprint` y `ensure_slabs_from_ticker_cache` reconstruye al detectar
+   cambio (test de regresión incluido). Relevante para la migración de datos (mirror
+   local mutable).
 
 ## 6. Estado de la suite completa
 
-(se rellena al terminar la pasada con timeout — sección §7 de BASELINE.md tiene el detalle)
+**21 ficheros verdes (~135 tests)** — todos los del motor con flags OFF + los 43 nuevos de
+Motor V2. Los ficheros con fallos (legacy rotos, red/GCS, golden servidor-only) son
+**pre-existentes**: verificado ejecutándolos sobre el commit `5bdaf8c` (anterior a este
+trabajo) con fallos idénticos. **Cero regresiones atribuibles a Motor V2.**
+Detalle por fichero: BASELINE.md §5.
 
 ## 7. Pendiente (no bloquea el merge, sí la activación)
 
