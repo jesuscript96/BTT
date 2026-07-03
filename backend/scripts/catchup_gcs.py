@@ -43,6 +43,17 @@ SLEEP_BETWEEN_DAYS = 0.5 if MASSIVE_THROTTLE_ENABLED else 0.0
 # <=16 (~80 req/s) para conservar margen de seguridad.
 MAX_WORKERS = max(1, int(os.getenv("MASSIVE_MAX_WORKERS", "10")))
 
+# Ajuste por splits en las llamadas a Massive/Polygon. Por defecto **false**
+# (precios as-traded, tal como se negociaron ese día). Con adjusted=true, un
+# backfill histórico devuelve precios RE-AJUSTADOS por reverse-splits ocurridos
+# ENTRE la fecha pedida y hoy (p.ej. HUBC feb-2026 $2.92 -> $2920 = factor 1000x),
+# lo que corrompe el lake (que es as-traded). Poner MASSIVE_ADJUSTED=true SOLO para
+# casos puntuales y conscientes. El param HTTP debe ir en minúsculas ("true"/
+# "false"): un bool de Python se serializaría como "True"/"False" y Polygon lo
+# interpretaría mal (cualquier valor != "true" = sin ajuste).
+MASSIVE_ADJUSTED = os.getenv("MASSIVE_ADJUSTED", "false").strip().lower() == "true"
+_ADJUSTED_PARAM = "true" if MASSIVE_ADJUSTED else "false"
+
 # ─── Massive client ───────────────────────────────────
 
 def _get_with_retry(url: str, params: dict, max_retries: int = 5,
@@ -132,7 +143,7 @@ def get_grouped_daily(date_str: str) -> list[dict]:
     """OHLCV diario para todo el mercado en una fecha."""
     url = f"{BASE_URL}/v2/aggs/grouped/locale/us/market/stocks/{date_str}"
     try:
-        r = _get_with_retry(url, {"apiKey": API_KEY, "adjusted": "true"})
+        r = _get_with_retry(url, {"apiKey": API_KEY, "adjusted": _ADJUSTED_PARAM})
     except Exception as e:
         logger.error(f"grouped_daily {date_str} failed after retries: {e}")
         return []
@@ -146,7 +157,7 @@ def get_1m_bars(ticker: str, date_str: str) -> pd.DataFrame:
     """Barras de 1 minuto para un ticker en una fecha."""
     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/1/minute/{date_str}/{date_str}"
     try:
-        r = _get_with_retry(url, {"apiKey": API_KEY, "adjusted": "true",
+        r = _get_with_retry(url, {"apiKey": API_KEY, "adjusted": _ADJUSTED_PARAM,
                                   "sort": "asc", "limit": 50000})
     except Exception as e:
         logger.error(f"[ERROR] {ticker} {date_str} 1m fetch failed after retries: {e} — datos NO ingeridos")
