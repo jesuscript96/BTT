@@ -35,14 +35,17 @@ Contexto completo: [`RESUMEN_EJECUTIVO.md`](RESUMEN_EJECUTIVO.md) ·
 
 ---
 
-## 1. ⚠️ LO PRIMERO — la pregunta del revert (bloquea el merge, nada más)
+## 1. El revert de PR #4 — ACLARADO (no hay bloqueante)
 
 `main` contiene `8c9fa96` = revert del merge de **PR #4** (N1+N2a, las señales). Este PR
 **re-introduce ese código deliberadamente**: Motor V2 lo requiere (`backtest_signals` importa
 `translate_strategy_native`).
 
-- **¿Por qué se revirtió PR #4?** Si fue por un bug/incidente real en prod → hay que saberlo
-  y arreglarlo ANTES de mergear. Si fue por proceso/precaución → adelante.
+- **Por qué se revirtió (confirmado por Jesús, 2-jul):** no fue un bug — lo revirtió él mismo
+  porque **no vio mejora** tras desplegarlo. Cuadra exactamente con el diagnóstico: PR #4
+  optimizaba las señales, que eran el **~3% del tiempo total** (el cuello real era el
+  ensamblado de datos, ~85%) — una mejora de 18x sobre el 3% es invisible en el cronómetro.
+  Este PR ataca el 85%; por eso ahora sí se ve (16,8x medido end-to-end).
 - Nota de git: como el revert fue de un merge, re-mergear la rama no re-aplicaba lo revertido.
   El commit de merge `25b3c2b` lo resuelve explícitamente: ficheros del revert → versión de
   `performance` (verificado byte a byte), y tus fixes de develop conservados (el guard

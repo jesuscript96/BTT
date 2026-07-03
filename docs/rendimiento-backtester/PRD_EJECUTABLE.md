@@ -749,7 +749,7 @@ INFORME_FINAL.md completos · Golden B documentado como paso previo a activar fl
 | A3 | ¿NVMe / caja nueva (AX102) tras medir P1-P4? | decidir con el INFORME_FINAL en la mano |
 | A4 | ¿Publicar benchmark competitivo (marketing)? | diferido |
 | A5 | Ventana para la primera construcción de réplica (~30-60 GB desde US, horas) | lanzarla de noche con `BTT_REPLICA_SYNC_ENABLED=true` |
-| A6 | **¿Por qué se revirtió PR #4 (señales N1+N2a) en main (`8c9fa96`)?** Si fue un problema real, hay que conocerlo antes de re-mergear `performance`; si fue proceso, re-mergear | preguntar a quien hace los merges antes del PR-1 |
+| A6 | ~~¿Por qué se revirtió PR #4?~~ **RESUELTO (2-jul):** lo revirtió Jesús por no ver mejora (el PR atacaba el ~3% del tiempo total); no hubo bug → re-merge desbloqueado | cerrado |
 
 ### B. Defaults técnicos reversibles (los asume la IA; cambiarlos = tocar 1 línea/env)
 

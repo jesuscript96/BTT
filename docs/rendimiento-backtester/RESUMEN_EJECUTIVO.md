@@ -111,8 +111,9 @@ El gate E2E (≥8x), que es el que ve el usuario, se superó con margen doble.
 5. **Migración de datos del CTO**: cuando el histórico viva en el hardware propio con layout
    hive, `BTT_REPLICA_SOURCE=/data/mirror` y los builds pasan de horas (US↔EU) a minutos.
    El diseño ya lo asume; cero código.
-6. Decisiones abiertas de negocio/ops (PRD §07.A): bucket a EU, NVMe opcional, y el porqué
-   del revert de PR #4 en main.
+6. Decisiones abiertas de negocio/ops (PRD §07.A): bucket a EU y NVMe opcional. El porqué
+   del revert de PR #4 quedó ACLARADO (2-jul): lo revirtió Jesús por no ver mejora — coherente
+   con que atacaba el 3% del tiempo; no hubo bug.
 
 ## 7. Documentos de este trabajo
 

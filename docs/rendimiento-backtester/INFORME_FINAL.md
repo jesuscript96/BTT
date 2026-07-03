@@ -113,7 +113,7 @@ Detalle por fichero: BASELINE.md §5.
 - Primera construcción de la réplica en prod (~30-60 GB desde US, de noche) y medición
   primera-vs-segunda ejecución (gate C4).
 - Consenso C1 (import dispatcher) + revisión del PR de Adrián sobre el kernel rescatado.
-- Decisiones abiertas del PRD §07.A (bucket EU, hardware opcional, por qué se revirtió
-  PR #4 en main).
+- Decisiones abiertas del PRD §07.A (bucket EU, hardware opcional). El revert de PR #4
+  quedó aclarado: fue de Jesús por no ver mejora (atacaba el 3% del tiempo); sin bug.
 - Migración de datos del CTO: cuando el mirror local exista, `BTT_REPLICA_SOURCE=/data/mirror`
   (cero código).
