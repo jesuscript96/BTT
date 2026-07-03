@@ -46,8 +46,10 @@ Y alrededor del CPU, los hallazgos de infraestructura:
   patológico en frío; el diseño correcto es ficheros grandes secuenciales + page cache
   (128 GB dan para el histórico entero).
 - 2017 sigue en formato raw (250 ficheros/mes); 2018-2020 en backfill.
-- **PR #4 (las señales) fue revertido en `main`** (`8c9fa96`) — sigue sin explicación;
-  preguntarlo antes de mergear esta rama (decisión abierta A6 del PRD).
+- **PR #4 (las señales) fue revertido en `main`** (`8c9fa96`) — ACLARADO (2-jul): lo revirtió
+  Jesús por no ver mejora tras el deploy. Sin bug; coherente con que atacaba el ~3% del tiempo.
+  Es la validación empírica perfecta de este diagnóstico: una optimización real puede ser
+  invisible si no ataca el cuello.
 
 ## 3. Qué se ha hecho (PRD ejecutado completo — 6 EPICs, todo tras flags default OFF)
 
