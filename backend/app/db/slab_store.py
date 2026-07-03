@@ -355,12 +355,30 @@ def months_spanned_by_qualifying(qualifying_df) -> list:
 
 
 def ensure_slabs_from_ticker_cache(months, kind: str = "opt") -> int:
-    """Construye (si faltan) los slabs de los meses dados desde el caché por-ticker.
-    Devuelve cuántos construyó. Es el mismo build one-time que hará el sync nightly."""
-    from app.db.slab_builder import build_month_from_ticker_cache
+    """Construye (si faltan O si la fuente cambió) los slabs de los meses dados desde
+    el caché por-ticker. Compara la huella de la fuente con la del manifest: un slab
+    obsoleto frente a ficheros mutados se reconstruye (nunca se sirve stale).
+    Devuelve cuántos construyó."""
+    import json as _json
+    from app.db.slab_builder import (
+        build_month_from_ticker_cache, slab_paths, ticker_cache_fingerprint,
+    )
     built = 0
     for (y, m) in months:
-        if not slab_exists(kind, y, m):
+        needs_build = not slab_exists(kind, y, m)
+        if not needs_build:
+            try:
+                with open(slab_paths(kind, y, m)["manifest"]) as f:
+                    man = _json.load(f)
+                current = ticker_cache_fingerprint(kind, y, m)
+                if current is not None and man.get("source_fingerprint") != current:
+                    logger.info(f"[SLAB] {kind} {y}-{m:02d}: fuente cambió — rebuild")
+                    needs_build = True
+            except Exception:
+                needs_build = True
+        if needs_build:
+            with _OPEN_LOCK:
+                _OPEN_SLABS.pop((kind, y, m), None)  # invalida el mmap cacheado
             if build_month_from_ticker_cache(y, m, kind) is not None:
                 built += 1
     return built

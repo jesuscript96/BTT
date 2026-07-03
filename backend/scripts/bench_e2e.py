@@ -29,9 +29,16 @@ import sys
 import time
 
 # ── Configurar entorno ANTES de importar app.* ──────────────────────────────
+# CACHE_DIR/BTT_SLAB_DIR se fijan POR CONFIG en main() (aislados por dataset:
+# dos configs con distinto nº de tickers generan datos DISTINTOS para los mismos
+# nombres de ticker — compartir dirs produciría slabs/caches obsoletos).
 BENCH_ROOT = os.environ.get("BTT_BENCH_DIR", "/tmp/btt_bench_e2e")
-os.environ.setdefault("CACHE_DIR", os.path.join(BENCH_ROOT, "cache"))
 os.environ.setdefault("ALLOW_MOCK_DATA", "false")
+
+
+def _isolate_dirs(sig: str) -> None:
+    os.environ["CACHE_DIR"] = os.path.join(BENCH_ROOT, f"cache_{sig}")
+    os.environ["BTT_SLAB_DIR"] = os.path.join(BENCH_ROOT, f"slabs_{sig}")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -75,8 +82,12 @@ def build_synthetic_source(n_tickers, n_months, bars, force=False):
     from app.db.gcs_cache import _atomic_write_parquet, _downcast_intraday, _ticker_cache_path
 
     sig = f"t{n_tickers}_m{n_months}_b{bars}_s{SEED}_v1"
-    marker = os.path.join(BENCH_ROOT, f"dataset_{sig}.json")
-    qual_path = os.path.join(BENCH_ROOT, f"qualifying_{sig}.parquet")
+    # marker/qualifying viven DENTRO del CACHE_DIR aislado por config: si el dir
+    # cambia (otra config), el dataset se regenera ahí — nunca datos cruzados.
+    cache_root = os.environ["CACHE_DIR"]
+    os.makedirs(cache_root, exist_ok=True)
+    marker = os.path.join(cache_root, f"dataset_{sig}.json")
+    qual_path = os.path.join(cache_root, f"qualifying_{sig}.parquet")
     if os.path.exists(marker) and os.path.exists(qual_path) and not force:
         return pd.read_parquet(qual_path)
 
@@ -320,6 +331,12 @@ def main():
     ap.add_argument("--json", dest="json_out", default=None)
     args = ap.parse_args()
 
+    if args.check:
+        # 480 barras = 04:00→12:00: incluye RTH para que haya señales/trades reales
+        args.tickers, args.months, args.bars, args.runs = 4, 1, 480, 1
+
+    _isolate_dirs(f"t{args.tickers}_m{args.months}_b{args.bars}_s{SEED}_v1")
+
     if args.via_rb is not None:
         qualifying = build_synthetic_source(args.tickers, args.months, args.bars)
         runs = []
@@ -346,10 +363,6 @@ def main():
             with open(args.json_out, "w") as f:
                 f.write(out)
         return
-
-    if args.check:
-        # 480 barras = 04:00→12:00: incluye RTH para que haya señales/trades reales
-        args.tickers, args.months, args.bars, args.runs = 4, 1, 480, 1
 
     qualifying = build_synthetic_source(args.tickers, args.months, args.bars)
 

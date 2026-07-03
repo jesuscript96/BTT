@@ -223,18 +223,41 @@ def build_month_from_parquet_glob(
     return build_month_from_df(df, kind, year, month, source_desc=source_glob, out_root=out_root)
 
 
+def ticker_cache_fingerprint(kind: str, year: int, month: int) -> str | None:
+    """Huella barata del caché por-ticker de un mes: hash de (nombre, tamaño, mtime)
+    de todos sus parquet. Si la fuente cambia, la huella cambia → rebuild del slab.
+    None si el directorio no existe."""
+    import hashlib
+    from app.db.gcs_cache import LOCAL_CACHE_DIR
+    base = os.path.join(LOCAL_CACHE_DIR, kind, str(year), f"{month:02d}")
+    if not os.path.isdir(base):
+        return None
+    h = hashlib.md5()
+    for name in sorted(os.listdir(base)):
+        if not name.endswith(".parquet"):
+            continue
+        try:
+            st = os.stat(os.path.join(base, name))
+            h.update(f"{name}|{st.st_size}|{st.st_mtime_ns}".encode())
+        except OSError:
+            continue
+    return h.hexdigest()
+
+
 def build_month_from_ticker_cache(
     year: int, month: int, kind: str, out_root: str | None = None,
 ) -> dict | None:
     """Construye el slab desde el caché por-ticker existente ({CACHE_DIR}/{kind}/{y}/{mm}/*.parquet).
 
     Lee los ficheros en orden alfabético (determinista); el orden dentro de cada fichero
-    se preserva → misma semántica keep-first que el path actual.
+    se preserva → misma semántica keep-first que el path actual. El manifest guarda la
+    huella de la fuente (ticker_cache_fingerprint) para detectar staleness.
     """
     from app.db.gcs_cache import LOCAL_CACHE_DIR
     base = os.path.join(LOCAL_CACHE_DIR, kind, str(year), f"{month:02d}")
     if not os.path.isdir(base):
         return None
+    fingerprint = ticker_cache_fingerprint(kind, year, month)
     parts = []
     for name in sorted(os.listdir(base)):
         if name.endswith(".parquet"):
@@ -247,5 +270,21 @@ def build_month_from_ticker_cache(
     if not parts:
         return None
     df = pd.concat(parts, ignore_index=True)
-    return build_month_from_df(df, kind, year, month,
-                               source_desc=f"ticker_cache:{base}", out_root=out_root)
+    manifest = build_month_from_df(df, kind, year, month,
+                                   source_desc=f"ticker_cache:{base}", out_root=out_root)
+    if manifest is not None and fingerprint is not None:
+        # anexar la huella al manifest publicado (re-escritura atómica pequeña)
+        paths = slab_paths(kind, year, month) if out_root is None else None
+        if paths is not None:
+            try:
+                with open(paths["manifest"]) as f:
+                    man = json.load(f)
+                man["source_fingerprint"] = fingerprint
+                tmp = paths["manifest"] + f".tmp.{os.getpid()}"
+                with open(tmp, "w") as f:
+                    json.dump(man, f)
+                os.replace(tmp, paths["manifest"])
+                manifest = man
+            except Exception as e:
+                logger.warning(f"[SLAB] no se pudo anexar fingerprint: {e}")
+    return manifest
