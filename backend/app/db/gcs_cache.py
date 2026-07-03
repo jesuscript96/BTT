@@ -235,10 +235,99 @@ def _ensure_glob_metadata_cached(conn):
         # Get raw
         df_raw = conn.execute(f"SELECT file FROM glob('gs://{GCS_BUCKET}/cold_storage/intraday_1m/*/*/*.parquet')").fetchdf()
         _available_raw_paths = set(df_raw["file"].tolist())
+        # Preventive staleness guard: if a month's raw was reprocessed AFTER its
+        # optimized snapshot, drop that optimized path so we serve the (correct)
+        # raw. Runs ONCE here (never per-query, no engine impact); non-fatal.
+        _prune_stale_optimized_paths()
         _glob_metadata_cached = True
         logger.info(f"Cached GCS paths: {len(_available_optimized_paths)} optimized, {len(_available_raw_paths)} raw.")
     except Exception as e:
         logger.error(f"Failed to cache glob metadata from GCS: {e}")
+
+
+def _prune_stale_optimized_paths() -> None:
+    """Preventive guard against the 'stale optimized shadow' failure mode.
+
+    The app prefers cold_storage/intraday_1m_optimized/ over the raw
+    cold_storage/intraday_1m/. The optimized copy is a frozen snapshot
+    (scripts/optimize_intraday_months.py = ``SELECT * ORDER BY ticker``, no
+    transform). If a month's raw is reprocessed (timezone fix, backfill, surgical
+    edit) but the optimized is NOT regenerated, the app silently serves the stale
+    copy — this is what caused the 2026-02..06 UTC session shift.
+
+    We compare LastModified(raw month) vs LastModified(optimized month); if raw is
+    newer we drop that optimized path from the cached set so
+    _select_intraday_glob_for_month() naturally falls back to raw, and we log a
+    loud WARNING. Correctness over speed: a false drop only costs a slower (still
+    correct) raw read.
+
+    RUNBOOK — after ANY reprocess of cold_storage/intraday_1m/<month>:
+      1. Regenerate the optimized copy for that month
+         (scripts/optimize_intraday_months.py -> MONTHS_TO_OPTIMIZE), OR delete
+         cold_storage/intraday_1m_optimized/<month> to fall back to raw.
+      2. Purge the local per-ticker disk cache on EVERY app container:
+         rm -rf $CACHE_DIR/{opt,raw}/<year>/<month>
+      3. Restart the app container(s) so this metadata + the disk cache rebuild.
+    Until step 1 runs, this guard auto-serves raw and emits the WARNING below, so a
+    missed regeneration is visible instead of silent.
+    """
+    global _available_optimized_paths
+    if not _available_optimized_paths:
+        return
+    try:
+        import re
+        import boto3
+        ak = os.getenv("GCS_HMAC_KEY")
+        sk = os.getenv("GCS_HMAC_SECRET")
+        if not ak or not sk:
+            return
+        s3 = boto3.client(
+            "s3", endpoint_url="https://storage.googleapis.com",
+            aws_access_key_id=ak, aws_secret_access_key=sk,
+        )
+        paginator = s3.get_paginator("list_objects_v2")
+        ym_re = re.compile(r"/year=(\d+)/month=(\d+)/")
+
+        def _month_mtimes(prefix: str) -> dict:
+            newest: dict = {}
+            for page in paginator.paginate(Bucket=GCS_BUCKET, Prefix=prefix):
+                for obj in page.get("Contents", []):
+                    m = ym_re.search("/" + obj["Key"])
+                    if not m:
+                        continue
+                    key = (int(m.group(1)), int(m.group(2)))
+                    lm = obj["LastModified"]
+                    if key not in newest or lm > newest[key]:
+                        newest[key] = lm
+            return newest
+
+        opt_mtimes = _month_mtimes("cold_storage/intraday_1m_optimized/")
+        raw_mtimes = _month_mtimes("cold_storage/intraday_1m/")
+
+        to_drop = set()
+        for path in _available_optimized_paths:
+            m = ym_re.search(path)
+            if not m:
+                continue
+            key = (int(m.group(1)), int(m.group(2)))
+            o_mt = opt_mtimes.get(key)
+            r_mt = raw_mtimes.get(key)
+            if o_mt and r_mt and r_mt > o_mt:
+                logger.warning(
+                    f"[STALE OPTIMIZED] {key[0]}-{key[1]:02d}: raw intraday "
+                    f"({r_mt:%Y-%m-%d %H:%M}) is newer than optimized "
+                    f"({o_mt:%Y-%m-%d %H:%M}) -> ignoring optimized, serving raw. "
+                    f"Regenerate intraday_1m_optimized for this month to restore fast reads."
+                )
+                to_drop.add(path)
+        if to_drop:
+            _available_optimized_paths = _available_optimized_paths - to_drop
+            logger.warning(
+                f"[STALE OPTIMIZED] dropped {len(to_drop)} optimized month(s); "
+                f"serving raw for those until regenerated."
+            )
+    except Exception as e:
+        logger.warning(f"[STALE OPTIMIZED] staleness check skipped (non-fatal): {e}")
 
 
 def _select_intraday_glob_for_month(conn, year: int, month: int) -> str | None:
