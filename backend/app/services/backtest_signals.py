@@ -316,9 +316,6 @@ def _compute_signals_for_pair(
             except (ValueError, TypeError):
                 pass
 
-    # --- Misprint patch (08:00-08:45 = minutes 480-525) ---
-    patch_mask = ((minutes_np >= 480) & (minutes_np < 525))[session_mask_np]
-
     if not np.any(entries_arr):
         return None
 
@@ -335,7 +332,6 @@ def _compute_signals_for_pair(
         "entries_arr": entries_arr,
         "exits_arr": exits_arr,
         "arrays": arrays_out,
-        "patch_mask": patch_mask,
         "timestamps_arr": timestamps_arr,
         "sig_direction": sig_direction,
         "sig_accept_reentries": sig_accept_reentries,
@@ -912,7 +908,6 @@ def simulate_and_accumulate(signals_sorted, params):
         arrays = sig["arrays"]
         entries_arr = sig["entries_arr"]
         exits_arr = sig["exits_arr"]
-        patch_mask = sig["patch_mask"]
         timestamps_arr = sig["timestamps_arr"]
         sig_direction = sig["sig_direction"]
         sig_accept_reentries = sig["sig_accept_reentries"]
@@ -972,7 +967,6 @@ def simulate_and_accumulate(signals_sorted, params):
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
-                patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,
                 hs_value=hs_value,

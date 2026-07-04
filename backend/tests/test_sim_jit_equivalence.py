@@ -37,9 +37,6 @@ def _mk_pair(rng, n_bars):
     prev_l = np.empty_like(lod); prev_l[0] = low[0]; prev_l[1:] = lod[:-1]
     pm_mask = np.zeros(n_bars, dtype=bool)
     pm_mask[: min(90, n_bars)] = True
-    patch = rng.random() < 0.5
-    minutes = (ts // 60_000_000_000) % 1440
-    patch_mask = ((minutes >= 480) & (minutes < 525)) if patch else None
     return {
         "close": close, "open_": open_, "high": high, "low": low,
         "entries": entries, "exits": exits, "timestamps": ts,
@@ -47,7 +44,6 @@ def _mk_pair(rng, n_bars):
         "pm_highs": np.full(n_bars, float(high[pm_mask].max()) if pm_mask.any() else 0.0),
         "pm_lows": np.full(n_bars, float(low[pm_mask].min()) if pm_mask.any() else 0.0),
         "prev_highs": prev_h, "prev_lows": prev_l,
-        "patch_mask": patch_mask,
     }
 
 

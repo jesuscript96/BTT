@@ -141,7 +141,6 @@ def _signals_equal(a, b):
         assert a[k] == b[k], f"clave {k}: {a[k]!r} != {b[k]!r}"
     np.testing.assert_array_equal(a["entries_arr"], b["entries_arr"])
     np.testing.assert_array_equal(a["exits_arr"], b["exits_arr"])
-    np.testing.assert_array_equal(a["patch_mask"], b["patch_mask"])
     np.testing.assert_array_equal(a["timestamps_arr"], b["timestamps_arr"])
     for k in ["open", "high", "low", "close", "volume", "hod", "lod",
               "pm_high", "pm_low", "prev_high", "prev_low"]:
