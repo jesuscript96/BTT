@@ -56,6 +56,22 @@ def get_parallel_workers() -> int:
         return 1
 
 
+def n2a_native_enabled() -> bool:
+    """Gate del fast-path N2a (translate_strategy_native) — default OFF.
+
+    2026-07-04: N2a producía CERO trades EN SILENCIO en el path paralelo para
+    cualquier hueco de soporte: (1) timeframes != 1m (sin mapeo closed-bar
+    tf->1m, señales anuladas por el guard de forma), (2) indicadores fuera de
+    _RAW_INDICATOR_DISPATCH (fallback np.nan -> comparaciones all-False, sin
+    log). El motor clásico (translate_strategy) soporta TODO y es LA
+    especificación — con el flag OFF los workers usan el clásico (idéntico al
+    secuencial, correcto por construcción). Re-activar con
+    BTT_N2A_NATIVE_ENABLED=1 SOLO tras cerrar los huecos con tests de
+    equivalencia sobre estrategias reales (multi-tf + indicadores no nativos).
+    """
+    return os.getenv("BTT_N2A_NATIVE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
 def fork_available() -> bool:
     return "fork" in multiprocessing.get_all_start_methods()
 
@@ -143,7 +159,7 @@ def _compute_signals_for_pair(
 
     indicator_plan = compiled_strategy.get("_indicator_plan") if compiled_strategy else None
 
-    if indicator_plan is not None and not indicator_plan.get("has_special"):
+    if n2a_native_enabled() and indicator_plan is not None and not indicator_plan.get("has_special"):
         # ═══ N2a FAST PATH: numpy arrays nativos, sin DataFrames ═══
         arrays_native = {
             "open": O, "high": H, "low": L, "close": C, "volume": V,
