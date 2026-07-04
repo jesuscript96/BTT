@@ -304,14 +304,31 @@ def _extract_indicator_plan(compiled: dict) -> dict:
             by_tf[tf] = []
         by_tf[tf].append(spec)
 
-    # Check for patterns that need DataFrames
+    # Check for patterns that need DataFrames (RECURSIVO: los grupos anidados
+    # también cuentan — un candle_pattern anidado en el path nativo se evaluaría
+    # como all-False silencioso).
     has_special = False
-    for group in [compiled.get("entry_root", {}), compiled.get("exit_root", {})]:
+
+    def _walk_special(group):
+        nonlocal has_special
+        if not isinstance(group, dict):
+            return
         for cond in group.get("conditions", []):
-            if cond.get("type") == "candle_pattern":
+            if cond.get("type") == "group" or ("conditions" in cond and "operator" in cond):
+                _walk_special(cond)
+            elif cond.get("type") in ("candle_pattern", "price_level_distance"):
                 has_special = True
-            elif cond.get("type") == "price_level_distance":
-                has_special = True
+
+    _walk_special(compiled.get("entry_root", {}))
+    _walk_special(compiled.get("exit_root", {}))
+
+    # N2a NO implementa el mapeo closed-bar tf->1m: los indicadores resampleados
+    # (5m/15m/...) devuelven arrays de longitud tf y translate_strategy_native los
+    # anularía a all-False (guard de longitud) → CERO trades silencioso en el path
+    # paralelo/slab (bug 2026-07-04, estrategia 5m de Jaume). Hasta implementar el
+    # mapeo, cualquier plan con timeframe != 1m va por el path legacy (correcto).
+    if any(tf != "1m" for tf in by_tf):
+        has_special = True
 
     return {
         "specs": list(specs.values()),
@@ -442,10 +459,20 @@ def translate_strategy_native(
         exits = _evaluate_group_native(
             compiled.get("exit_root", {}), indicator_results, n_bars, plan
         )
-        # Ensure correct shape after alignment
+        # Guard de forma: si esto dispara hay un bug de alineación tf->1m (las
+        # señales se PIERDEN). Nunca debe pasar tras el gate has_special de
+        # _extract_indicator_plan — loguear FUERTE, no tragar en silencio.
         if entries is not None and len(entries) != n_bars:
+            logger.error(
+                f"[N2A] entries length {len(entries)} != n_bars {n_bars} — señales "
+                f"DESCARTADAS (bug de alineación timeframe->1m). Revisar _indicator_plan."
+            )
             entries = np.zeros(n_bars, dtype=bool)
         if exits is not None and len(exits) != n_bars:
+            logger.error(
+                f"[N2A] exits length {len(exits)} != n_bars {n_bars} — señales "
+                f"DESCARTADAS (bug de alineación timeframe->1m). Revisar _indicator_plan."
+            )
             exits = np.zeros(n_bars, dtype=bool)
     else:
         # Fallback to legacy for complex patterns

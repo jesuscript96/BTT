@@ -158,7 +158,8 @@ def _compute_signals_for_pair(
                 arrays_native, compiled_strategy,
                 daily_stats=daily_stats,
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[N2A] translate_strategy_native failed {ticker} {date}: {e}")
             return None
 
         entries_arr = signals["entries"]
@@ -196,7 +197,8 @@ def _compute_signals_for_pair(
                 compiled=compiled_strategy,
                 precomputed_minutes=minutes_np,
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[PARALLEL] translate_strategy failed {ticker} {date}: {e}")
             return None
         if not signals["entries"].any():
             return None
