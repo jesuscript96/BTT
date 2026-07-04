@@ -54,6 +54,24 @@ MAX_WORKERS = max(1, int(os.getenv("MASSIVE_MAX_WORKERS", "10")))
 MASSIVE_ADJUSTED = os.getenv("MASSIVE_ADJUSTED", "false").strip().lower() == "true"
 _ADJUSTED_PARAM = "true" if MASSIVE_ADJUSTED else "false"
 
+# ─── Missprint (bad-tick) clip — NBBO-based, gated OFF por defecto ───────────
+# Los aggregates 1m de Polygon incluyen prints fuera del NBBO (bad-ticks) en el
+# high/low, sobre todo en horario extendido (premarket). Un backtest bar-a-bar
+# que pise esa barra dispara un stop/entrada falso — y premarket es la sesión
+# MÁS usada (Jaume 2026-07-03), así que NO es cosmético para ese caso. Este clip
+# detecta barras sospechosas (mecha/salto anómalo vs mediana móvil de close) y
+# recorta SOLO su high/low al extremo consistente con el NBBO vigente del minuto
+# (/v3/quotes + /v3/trades). Conservador: nunca recorta dentro del cuerpo
+# (open/close), solo pide NBBO para las barras flagged (raras) y solo clipa si el
+# cambio supera MIN_CLIP. Coste 0 si desactivado. Activar con MISSPRINT_CLIP_ENABLED=true
+# tras validar. Ver memoria btt-missprint-analysis (override Jaume) + btt-motor-v2-merged.
+MISSPRINT_CLIP_ENABLED = os.getenv("MISSPRINT_CLIP_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+MISSPRINT_WICK_PCT = float(os.getenv("MISSPRINT_WICK_PCT", "0.20"))    # mecha/salto > 20% del cuerpo/mediana
+MISSPRINT_NBBO_TOL = float(os.getenv("MISSPRINT_NBBO_TOL", "0.10"))    # trade válido dentro de [bid*0.9, ask*1.1]
+MISSPRINT_MIN_PRICE = float(os.getenv("MISSPRINT_MIN_PRICE", "1.0"))   # ignora sub-$1 (ruido de baja liquidez)
+MISSPRINT_CTX_WIN = int(os.getenv("MISSPRINT_CTX_WIN", "15"))          # ventana de la mediana móvil (barras)
+MISSPRINT_MIN_CLIP = float(os.getenv("MISSPRINT_MIN_CLIP", "0.02"))    # solo clipar si el extremo cambia > 2%
+
 # ─── Massive client ───────────────────────────────────
 
 def _get_with_retry(url: str, params: dict, max_retries: int = 5,
@@ -180,6 +198,117 @@ def get_1m_bars(ticker: str, date_str: str) -> pd.DataFrame:
     df["ticker"] = ticker
     return df[["timestamp", "ticker", "open", "high", "low", "close",
                "volume", "transactions"]]
+
+
+def _ny_naive_to_utc_ns(ts) -> int:
+    """NY wall-clock naive -> epoch ns UTC (para los timestamp.* de los /v3)."""
+    return int(pd.Timestamp(ts).tz_localize("America/New_York").tz_convert("UTC").value)
+
+
+def _polygon_results(url: str, params: dict, max_retries: int = 4,
+                     sleep_s: float = 1.0) -> Optional[list]:
+    """GET a un endpoint /v3 (trades/quotes) que devuelve 200 con 'results' vacío
+    bajo ráfaga. Reintenta serial (con sleep) ante 200-vacío y errores de red;
+    None si se agota sin datos. El sleep NO se paga en el caso común (hay datos al
+    primer intento). Respeta el soft-limit al ir serial dentro de cada barra."""
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, params={**params, "apiKey": API_KEY},
+                             verify=False, timeout=30)
+        except Exception:
+            time.sleep(sleep_s)
+            continue
+        if r.status_code == 200:
+            res = r.json().get("results", [])
+            if res:
+                return res
+        time.sleep(sleep_s)
+    return None
+
+
+def _detect_and_clip_missprints(ticker: str, df_1m: pd.DataFrame):
+    """Detecta bad-ticks (mecha/salto anómalo del high/low vs mediana móvil de
+    close) y recorta SOLO su high/low al extremo consistente con el NBBO vigente
+    del minuto. Conservador: nunca recorta por debajo del cuerpo (open/close),
+    solo pide NBBO para las barras flagged, y solo clipa si el cambio supera
+    MISSPRINT_MIN_CLIP. Devuelve (df posiblemente modificado, nº de clips).
+    No-op (coste 0) si MISSPRINT_CLIP_ENABLED=false. Best-effort: cualquier fallo
+    de red/NBBO deja la barra intacta (nunca corrompe por no poder validar)."""
+    if not MISSPRINT_CLIP_ENABLED or df_1m.empty or len(df_1m) < 3:
+        return df_1m, 0
+
+    o = df_1m["open"].to_numpy(dtype="float64")
+    h = df_1m["high"].to_numpy(dtype="float64")
+    l = df_1m["low"].to_numpy(dtype="float64")
+    c = df_1m["close"].to_numpy(dtype="float64")
+    body_top = np.maximum(o, c)
+    body_bot = np.minimum(o, c)
+
+    med = (df_1m["close"].rolling(MISSPRINT_CTX_WIN, center=True, min_periods=1)
+           .median().to_numpy(dtype="float64"))
+    med = np.where(med > 0, med, np.nan)
+
+    # mecha sobre el cuerpo (fracción) + salto del extremo vs mediana móvil.
+    # La mediana centrada de 15 barras es robusta a un único outlier (no se auto-tapa).
+    with np.errstate(divide="ignore", invalid="ignore"):
+        upper_wick = np.where(body_top > 0, (h - body_top) / body_top, 0.0)
+        lower_wick = np.where(body_bot > 0, (body_bot - l) / body_bot, 0.0)
+        high_spike = np.where(np.isfinite(med), (h - med) / med, 0.0)
+        low_spike = np.where(np.isfinite(med), (med - l) / med, 0.0)
+
+    flag_high = (body_top >= MISSPRINT_MIN_PRICE) & (
+        (upper_wick > MISSPRINT_WICK_PCT) | (high_spike > MISSPRINT_WICK_PCT))
+    flag_low = (body_bot >= MISSPRINT_MIN_PRICE) & (
+        (lower_wick > MISSPRINT_WICK_PCT) | (low_spike > MISSPRINT_WICK_PCT))
+
+    idx = np.where(flag_high | flag_low)[0]
+    if idx.size == 0:
+        return df_1m, 0
+
+    df = df_1m.reset_index(drop=True).copy()
+    ts_col = df["timestamp"]
+    n_clips = 0
+    for i in idx:
+        ns0 = _ny_naive_to_utc_ns(ts_col.iloc[i])
+        base = {"timestamp.gte": ns0, "timestamp.lt": ns0 + 60_000_000_000,
+                "limit": 50000, "order": "asc", "sort": "timestamp"}
+        trades = _polygon_results(f"{BASE_URL}/v3/trades/{ticker}", base)
+        quotes = _polygon_results(f"{BASE_URL}/v3/quotes/{ticker}", base)
+        if not trades or not quotes:
+            continue  # sin NBBO no se valida -> barra intacta
+        try:
+            dt = pd.DataFrame(trades)[["price", "sip_timestamp"]].sort_values("sip_timestamp")
+            dq = (pd.DataFrame(quotes)[["bid_price", "ask_price", "sip_timestamp"]]
+                  .sort_values("sip_timestamp"))
+            m = pd.merge_asof(dt, dq, on="sip_timestamp", direction="backward").dropna(
+                subset=["bid_price", "ask_price"])
+            m = m[(m["bid_price"] > 0) & (m["ask_price"] > 0)]
+            ok = m[(m["price"] <= m["ask_price"] * (1 + MISSPRINT_NBBO_TOL)) &
+                   (m["price"] >= m["bid_price"] * (1 - MISSPRINT_NBBO_TOL))]
+        except Exception:
+            continue
+        if ok.empty:
+            continue
+        valid_hi = float(ok["price"].max())
+        valid_lo = float(ok["price"].min())
+        changed = False
+        # high phantom por encima del máximo NBBO-válido -> recortar (nunca bajo el cuerpo)
+        if flag_high[i] and h[i] > valid_hi:
+            new_hi = max(float(body_top[i]), min(float(h[i]), valid_hi))
+            if h[i] > 0 and (h[i] - new_hi) / h[i] > MISSPRINT_MIN_CLIP:
+                df.at[i, "high"] = new_hi
+                changed = True
+        # low phantom por debajo del mínimo NBBO-válido -> recortar (nunca sobre el cuerpo)
+        if flag_low[i] and l[i] < valid_lo:
+            new_lo = min(float(body_bot[i]), max(float(l[i]), valid_lo))
+            if l[i] > 0 and (new_lo - l[i]) / l[i] > MISSPRINT_MIN_CLIP:
+                df.at[i, "low"] = new_lo
+                changed = True
+        if changed:
+            n_clips += 1
+    if n_clips:
+        logger.info(f"  [MISSPRINT] {ticker}: clipped {n_clips} bad-tick bar(s)")
+    return df, n_clips
 
 # ─── Processor ────────────────────────────────────────
 
@@ -505,6 +634,10 @@ def process_single_ticker(args):
         df_1m = get_1m_bars(ticker, date_str)
         if df_1m.empty:
             return (None, None)
+        # Clip de bad-ticks NBBO-based ANTES de métricas y persistencia, para que
+        # tanto las daily_metrics como el intradía que se guarda nazcan limpios.
+        # No-op si MISSPRINT_CLIP_ENABLED=false.
+        df_1m, _ = _detect_and_clip_missprints(ticker, df_1m)
         metrics = process_day_metrics(ticker, df_1m, prev_close, date_str)
         return (metrics, df_1m)
     except Exception as e:
