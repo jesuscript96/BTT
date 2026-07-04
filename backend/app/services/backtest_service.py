@@ -645,17 +645,7 @@ def run_backtest(
                 except (ValueError, TypeError):
                     pass
 
-        # --- TEMPORARY PATCH FOR MISPRINTS ---
-        # 8:00 to 8:45 restriction to ignore misprints
-        ts_series = mini_df["timestamp"]
-        if not pd.api.types.is_datetime64_any_dtype(ts_series):
-            ts_series = pd.to_datetime(ts_series)
-            
-        # Avoid .dt.time which creates expensive python datetime.time objects
-        patch_mask = (ts_series.dt.hour == 8) & (ts_series.dt.minute >= 0) & (ts_series.dt.minute < 45)
-        patch_mask = patch_mask.values
-
-        # If after masking we have no entries, skip simulation
+        # If we have no entries, skip simulation
         if not np.any(entries_arr):
             del mini_df
             continue
@@ -703,7 +693,6 @@ def run_backtest(
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
-                patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,
                 hs_value=hs_value,

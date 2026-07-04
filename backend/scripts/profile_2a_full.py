@@ -220,7 +220,6 @@ for i in range(N_PAIRS):
         "sig_partial_tps": None,
         "date": all_dates[i],
         "ticker": all_tickers[i],
-        "patch_mask": np.zeros(entries_arr.shape, dtype=bool),
         "timestamps_arr": ts_arr[session_mask].values.astype("datetime64[ns]").astype(np.int64) if hasattr(ts_arr[session_mask], 'values') else np.array([t.value for t in ts_arr[session_mask]], dtype=np.int64),
     }
 

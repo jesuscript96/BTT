@@ -101,7 +101,6 @@ def simulate_jit(
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
-    patch_mask: np.ndarray | None = None,
     partial_take_profits: list | None = None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
@@ -223,13 +222,6 @@ def simulate_jit(
         has_timestamps = True
         timestamps_a = np.ascontiguousarray(timestamps, dtype=np.int64)
 
-    if patch_mask is None:
-        has_patch_mask = False
-        patch_mask_a = np.zeros(n, dtype=np.bool_)
-    else:
-        has_patch_mask = True
-        patch_mask_a = np.ascontiguousarray(patch_mask, dtype=np.bool_)
-
     # --- partial take-profits -> parallel numeric arrays ---
     pt_list = partial_take_profits or []
     n_pt = len(pt_list)
@@ -307,7 +299,6 @@ def simulate_jit(
         has_prev_high, prev_high_a,
         has_prev_low, prev_low_a,
         has_timestamps, timestamps_a,
-        has_patch_mask, patch_mask_a,
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,

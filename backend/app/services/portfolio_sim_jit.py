@@ -96,7 +96,6 @@ def _core_simulate_jit(
     has_prev_high, prev_highs,
     has_prev_low, prev_lows,
     has_timestamps, timestamps,
-    has_patch_mask, patch_mask,
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
     n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
@@ -142,8 +141,10 @@ def _core_simulate_jit(
     prev_signal = False
 
     for i in range(n):
-        is_restricted = patch_mask[i] if has_patch_mask else False
-        skip_exits = is_restricted and i != n - 1
+        # Misprint patch removed (data NBBO-clipped at source): no bar restriction.
+        # Constants keep the inert restriction branches below (const-folded by numba).
+        is_restricted = False
+        skip_exits = False
 
         if in_position:
             exit_triggered = False
