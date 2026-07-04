@@ -866,10 +866,13 @@ def _enforce_cache_quota() -> None:
         logger.warning(f"  [CACHE EVICT] failed: {e}")
 
 
-# ─── Optional in-RAM intraday cache (PASO 3 — gated, off until CCX33) ────────
+# ─── Optional in-RAM intraday cache (PASO 3 — gated) ─────────────────────────
 # When INTRADAY_RAM_CACHE_ENABLED=true, the gap universe is held in a process
-# dict keyed (kind, y, m, ticker) and reads hit RAM before disk. OFF by default:
-# the 15GB CCX23 can't hold it alongside DuckDB; flip it on once on a bigger box.
+# dict keyed (kind, y, m, ticker) and reads hit RAM before disk. OFF by default.
+# HW 2026-07: prod es un Xeon W-2145 dedicado con 128GB RAM y discos HDD — la RAM
+# ya no es el límite, pero con el SLAB STORE (app/db/slab_store.py, PRD
+# rendimiento-backtester) este caché por-ticker pasa a ser el path legacy/fallback;
+# preferir slabs + page cache antes que activar esto.
 RAM_CACHE_ENABLED = os.getenv("INTRADAY_RAM_CACHE_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 _RAM_CACHE: dict = {}                 # (kind, y, m, ticker) -> pd.DataFrame
 _RAM_CACHE_LOCK = threading.Lock()
@@ -1214,8 +1217,8 @@ def iter_intraday_groups_streamed(
 # backtests over the gap universe read local parquet instead of GCS. It is
 # idempotent (skips files already on disk), bounded, runs in a background thread,
 # and never raises. PASO 3 optionally mirrors those months into a process RAM
-# dict — gated OFF until the box has spare RAM (CCX33), since the 15GB CCX23
-# can't hold ~24GB of intraday alongside DuckDB's 8GB.
+# dict — gated OFF. (HW 2026-07: la caja real tiene 128GB — cabría; pero el slab
+# store + page cache cubre lo mismo con menos RSS. Mantener OFF salvo necesidad.)
 
 PREWARM_ENABLED = os.getenv("INTRADAY_PREWARM_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 PREWARM_GAP_PCT = float(os.getenv("INTRADAY_PREWARM_GAP_PCT", "10.0"))
@@ -1322,7 +1325,7 @@ def prewarm_gap_universe() -> None:
 
 def load_ram_cache() -> None:
     """Mirror the on-disk gap-universe months into the process RAM dict. Gated by
-    INTRADAY_RAM_CACHE_ENABLED — keep OFF until the box has the RAM (CCX33)."""
+    INTRADAY_RAM_CACHE_ENABLED — OFF por defecto (el slab store lo suple)."""
     if not RAM_CACHE_ENABLED:
         logger.info("[RAM CACHE] disabled (INTRADAY_RAM_CACHE_ENABLED=false)")
         return

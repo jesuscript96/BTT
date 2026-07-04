@@ -30,7 +30,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_CO
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, get_lowest_timeframe_mins
+from app.services.strategy_engine import translate_strategy, translate_strategy_native, get_lowest_timeframe_mins
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +44,32 @@ def get_parallel_workers() -> int:
 
     Default: 1 (OPT-IN). El paralelismo NO se activa automáticamente: materializar
     todos los day_df en el padre antes del fork re-introduce el riesgo de OOM en
-    BROAD sobre CCX33 (30GB, Swap=0). Se activa EXPLÍCITAMENTE poniendo
-    BACKTEST_PARALLEL_WORKERS=N en Coolify cuando el hardware lo permita (W-2295).
+    BROAD (swap 0 en prod). Se activa EXPLÍCITAMENTE poniendo
+    BACKTEST_PARALLEL_WORKERS=N en Coolify. HW real 2026-07: Xeon W-2145
+    (8C/16T) con 128GB. OJO: con el slab store + kernel JIT las señales son tan
+    baratas que el pool solo compensa en estrategias multi-timeframe pesadas o
+    universos enormes — medido: a 1.200 pares el spawn cuesta más que el trabajo.
     """
     try:
         return max(1, int(os.getenv("BACKTEST_PARALLEL_WORKERS", "1")))
     except (ValueError, TypeError):
         return 1
+
+
+def n2a_native_enabled() -> bool:
+    """Gate del fast-path N2a (translate_strategy_native) — default OFF.
+
+    2026-07-04: N2a producía CERO trades EN SILENCIO en el path paralelo para
+    cualquier hueco de soporte: (1) timeframes != 1m (sin mapeo closed-bar
+    tf->1m, señales anuladas por el guard de forma), (2) indicadores fuera de
+    _RAW_INDICATOR_DISPATCH (fallback np.nan -> comparaciones all-False, sin
+    log). El motor clásico (translate_strategy) soporta TODO y es LA
+    especificación — con el flag OFF los workers usan el clásico (idéntico al
+    secuencial, correcto por construcción). Re-activar con
+    BTT_N2A_NATIVE_ENABLED=1 SOLO tras cerrar los huecos con tests de
+    equivalencia sobre estrategias reales (multi-tf + indicadores no nativos).
+    """
+    return os.getenv("BTT_N2A_NATIVE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def fork_available() -> bool:
@@ -81,114 +100,209 @@ def _compute_signals_for_pair(
     custom_start_time,
     custom_end_time,
     swing_active,
+    pair_arrays=None,
 ):
-    """Devuelve el contrato de señales (dict de arrays numpy) o None si el par no
-    produce entradas. Réplica exacta de la "mitad A" del loop original."""
+    """Devuelve el contrato de senales (dict de arrays numpy) o None si el par no
+    produce entradas. Optimizado N1e+N2a: timestamps parseados una vez, fast path
+    con numpy arrays nativos cuando _indicator_plan esta disponible.
 
-    # --- Compute market structure levels on the full day_df (360-410) ---
-    high_series = day_df["high"]
-    low_series = day_df["low"]
-    hod_vals = high_series.cummax().values.astype(np.float64)
-    lod_vals = low_series.cummin().values.astype(np.float64)
+    Slab path (PRD rendimiento-backtester §03.7): si `pair_arrays` viene informado
+    (slab_store.PairArrays), los arrays llegan ya limpios (orden+dedup del builder)
+    y `day_df` se ignora — cero pandas en la entrada."""
 
-    ts_series = pd.to_datetime(day_df["timestamp"])
-    pm_mask = (ts_series.dt.hour * 60 + ts_series.dt.minute >= 4 * 60) & (ts_series.dt.hour * 60 + ts_series.dt.minute < 9 * 60 + 30)
-    pm_high_val = day_df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
-    pm_low_val = day_df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
+    if pair_arrays is not None:
+        # ═══ SLAB PATH: arrays ya ordenados/dedup, float64, ts int64 ═══
+        ts_int64 = pair_arrays.ts_ns
+        ts_col = pair_arrays.timestamps_dt64()  # vista datetime64[ns], zero-copy
+        C = pair_arrays.close
+        O = pair_arrays.open
+        H = pair_arrays.high
+        L = pair_arrays.low
+        V = pair_arrays.volume
+    else:
+        # N1e: Parsear timestamps UNA vez — fast minutes-from-midnight via int64
+        ts_col = day_df["timestamp"]
+        if not pd.api.types.is_datetime64_any_dtype(ts_col):
+            ts_col = pd.to_datetime(ts_col)
+        if hasattr(ts_col, "values"):
+            ts_int64 = ts_col.values.astype("datetime64[ns]").astype(np.int64)
+        else:
+            ts_int64 = np.asarray(ts_col, dtype="datetime64[ns]").astype(np.int64)
 
-    pm_highs_vals = np.full(len(day_df), pm_high_val, dtype=np.float64)
-    pm_lows_vals = np.full(len(day_df), pm_low_val, dtype=np.float64)
+        # Numpy arrays directos (evitar .astype si ya son float64)
+        C = np.asarray(day_df["close"], dtype=np.float64)
+        O = np.asarray(day_df["open"], dtype=np.float64)
+        H = np.asarray(day_df["high"], dtype=np.float64)
+        L = np.asarray(day_df["low"], dtype=np.float64)
+        V = np.asarray(day_df["volume"], dtype=np.float64)
 
-    prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)
-    prev_lows_vals = pd.Series(lod_vals).shift(1).fillna(low_series.iloc[0] if len(low_series) > 0 else 0.0).values.astype(np.float64)
+    minutes_np = (ts_int64 // 60_000_000_000) % 1440  # nanoseconds -> minutes since midnight
+    n_bars = len(C)
 
-    prev_close_val = daily_stats.get("prev_close")
-    if prev_close_val is None or pd.isna(prev_close_val):
-        prev_close_val = day_df["close"].iloc[0] if len(day_df) > 0 else np.nan
-    prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
+    # --- Market structure (numpy puro, sin pandas .shift/.loc) ---
+    hod = np.maximum.accumulate(H)
+    lod = np.minimum.accumulate(L)
 
+    pm_mask = (minutes_np >= 240) & (minutes_np < 570)
+    pm_h = float(H[pm_mask].max()) if pm_mask.any() else np.nan
+    pm_l = float(L[pm_mask].min()) if pm_mask.any() else np.nan
+
+    prev_h = np.empty_like(hod); prev_h[0] = H[0]; prev_h[1:] = hod[:-1]
+    prev_l = np.empty_like(lod); prev_l[0] = L[0]; prev_l[1:] = lod[:-1]
+
+    prev_close = daily_stats.get("prev_close")
+    if prev_close is None or pd.isna(prev_close):
+        prev_close = float(C[0]) if n_bars > 0 else np.nan
     yest_open_val = daily_stats.get("yesterday_open", daily_stats.get("lag_rth_open_1"))
     if yest_open_val is None or pd.isna(yest_open_val):
-        yest_open_val = day_df["open"].iloc[0] if len(day_df) > 0 else np.nan
-    yest_opens_vals = np.full(len(day_df), yest_open_val, dtype=np.float64)
+        yest_open_val = float(O[0]) if n_bars > 0 else np.nan
 
-    arrays = {
-        "ticker": np.full(len(day_df), ticker, dtype=object),
-        "open": day_df["open"].values.astype(np.float64),
-        "high": day_df["high"].values.astype(np.float64),
-        "low": day_df["low"].values.astype(np.float64),
-        "close": day_df["close"].values.astype(np.float64),
-        "volume": day_df["volume"].values,
-        "timestamp": day_df["timestamp"].values,
-        "hod": hod_vals,
-        "lod": lod_vals,
-        "pm_high": pm_highs_vals,
-        "pm_low": pm_lows_vals,
-        "prev_high": prev_highs_vals,
-        "prev_low": prev_lows_vals,
-        "prev_close": prev_closes_vals,
-        "yesterday_open": yest_opens_vals,
-    }
+    indicator_plan = compiled_strategy.get("_indicator_plan") if compiled_strategy else None
 
-    mini_df = pd.DataFrame(arrays)
+    if n2a_native_enabled() and indicator_plan is not None and not indicator_plan.get("has_special"):
+        # ═══ N2a FAST PATH: numpy arrays nativos, sin DataFrames ═══
+        arrays_native = {
+            "open": O, "high": H, "low": L, "close": C, "volume": V,
+            "minutes_arr": minutes_np,
+            "hod": hod, "lod": lod,
+            "pm_high": np.full(n_bars, pm_h if not np.isnan(pm_h) else 0.0, dtype=np.float64),
+            "pm_low": np.full(n_bars, pm_l if not np.isnan(pm_l) else 0.0, dtype=np.float64),
+            "prev_high": prev_h, "prev_low": prev_l,
+        }
+        try:
+            signals = translate_strategy_native(
+                arrays_native, compiled_strategy,
+                daily_stats=daily_stats,
+            )
+        except Exception as e:
+            logger.warning(f"[N2A] translate_strategy_native failed {ticker} {date}: {e}")
+            return None
 
-    # --- Signal computation (432-452; el path con _signal_cache NO aplica aquí) ---
-    try:
-        signals = translate_strategy(mini_df, strategy_def, daily_stats, compiled=compiled_strategy)
-    except Exception:
+        entries_arr = signals["entries"]
+        exits_arr = signals["exits"]
+        sig_direction = signals["direction"]
+        sig_accept_reentries = signals.get("accept_reentries", False)
+        sig_max_reentries = signals.get("max_reentries", -1)
+        sig_sl_stop = signals["sl_stop"]
+        sig_sl_trail = signals["sl_trail"]
+        sig_tp_stop = signals["tp_stop"]
+        sig_tp_time_limit = signals.get("tp_time_limit")
+        sig_trail_pct = signals.get("trail_pct")
+        sig_partial_tps = signals.get("partial_take_profits")
+    else:
+        # ═══ LEGACY PATH (backward compatible) ═══
+        pm_highs_vals = np.full(n_bars, pm_h, dtype=np.float64)
+        pm_lows_vals = np.full(n_bars, pm_l, dtype=np.float64)
+        prev_closes_vals = np.full(n_bars, prev_close, dtype=np.float64)
+        yest_opens_vals = np.full(n_bars, yest_open_val, dtype=np.float64)
+
+        arrays_dict = {
+            "ticker": np.full(n_bars, ticker, dtype=object),
+            "open": O, "high": H, "low": L, "close": C, "volume": V,
+            "timestamp": ts_col.values if hasattr(ts_col, "values") else np.asarray(ts_col),
+            "hod": hod, "lod": lod,
+            "pm_high": pm_highs_vals, "pm_low": pm_lows_vals,
+            "prev_high": prev_h, "prev_low": prev_l,
+            "prev_close": prev_closes_vals, "yesterday_open": yest_opens_vals,
+        }
+        mini_df = pd.DataFrame(arrays_dict)
+
+        try:
+            signals = translate_strategy(
+                mini_df, strategy_def, daily_stats,
+                compiled=compiled_strategy,
+                precomputed_minutes=minutes_np,
+            )
+        except Exception as e:
+            logger.warning(f"[PARALLEL] translate_strategy failed {ticker} {date}: {e}")
+            return None
+        if not signals["entries"].any():
+            return None
+
+        entries_arr = signals["entries"].values if hasattr(signals["entries"], "values") else np.asarray(signals["entries"])
+        exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
+        sig_direction = signals["direction"]
+        sig_accept_reentries = signals.get("accept_reentries", False)
+        sig_max_reentries = signals.get("max_reentries", -1)
+        sig_sl_stop = signals["sl_stop"]
+        sig_sl_trail = signals["sl_trail"]
+        sig_tp_stop = signals["tp_stop"]
+        sig_tp_time_limit = signals.get("tp_time_limit")
+        sig_trail_pct = signals.get("trail_pct")
+        sig_partial_tps = signals.get("partial_take_profits")
+
+    # Fast return if no entries (only for legacy; fast path already returns arrays)
+    if indicator_plan is None and not np.any(entries_arr):
         return None
-    if not signals["entries"].any():
-        return None
 
-    entries_arr = signals["entries"].values if hasattr(signals["entries"], "values") else np.asarray(signals["entries"])
-    exits_arr = signals["exits"].values if hasattr(signals["exits"], "values") else np.asarray(signals["exits"])
-    sig_direction = signals["direction"]
-    sig_accept_reentries = signals.get("accept_reentries", False)
-    sig_max_reentries = signals.get("max_reentries", -1)
-    sig_sl_stop = signals["sl_stop"]
-    sig_sl_trail = signals["sl_trail"]
-    sig_tp_stop = signals["tp_stop"]
-    sig_tp_time_limit = signals.get("tp_time_limit")
-    sig_trail_pct = signals.get("trail_pct")
-    sig_partial_tps = signals.get("partial_take_profits")
-
-    # --- swing entry suppression (464-471) ---
+    # --- swing entry suppression ---
     if swing_active:
-        is_subsequent = pd.to_datetime(mini_df["timestamp"]).dt.strftime("%Y-%m-%d") != date
-        is_subsequent_np = is_subsequent.values if hasattr(is_subsequent, "values") else np.asarray(is_subsequent)
+        # Fast date extraction from int64 nanoseconds: days since epoch
+        days_since_epoch = ts_int64 // 86_400_000_000_000
+        date_int = int(pd.Timestamp(date).value // 86_400_000_000_000)
+        is_subsequent_np = days_since_epoch != date_int
         if len(entries_arr) == len(is_subsequent_np):
             entries_arr = entries_arr.copy()
             entries_arr[is_subsequent_np] = False
 
-    # --- Trim DataFrame and signals to the selected market session window (473-505) ---
+    # --- Session mask (numpy directo, sin _get_market_sessions_mask) ---
+    session_mask_np = np.ones(n_bars, dtype=bool)
     if market_sessions and "all" not in market_sessions:
-        from app.services.backtest_service import _get_market_sessions_mask
-        session_mask = _get_market_sessions_mask(
-            mini_df["timestamp"], market_sessions, custom_start_time, custom_end_time
-        )
-        mini_df = mini_df[session_mask].reset_index(drop=True)
-        if len(mini_df) < 2:
-            return None
-        arrays = {
-            "open": mini_df["open"].values.astype(np.float64),
-            "high": mini_df["high"].values.astype(np.float64),
-            "low": mini_df["low"].values.astype(np.float64),
-            "close": mini_df["close"].values.astype(np.float64),
-            "volume": mini_df["volume"].values,
-            "timestamp": mini_df["timestamp"].values,
-            "hod": mini_df["hod"].values.astype(np.float64),
-            "lod": mini_df["lod"].values.astype(np.float64),
-            "pm_high": mini_df["pm_high"].values.astype(np.float64),
-            "pm_low": mini_df["pm_low"].values.astype(np.float64),
-            "prev_high": mini_df["prev_high"].values.astype(np.float64),
-            "prev_low": mini_df["prev_low"].values.astype(np.float64),
-        }
+        # Fast path: use precomputed minutes directly for common sessions
+        mask = np.zeros(n_bars, dtype=bool)
+        for s in market_sessions:
+            s = s.lower().strip()
+            if s in ("regular", "market", "rth"):
+                mask |= (minutes_np >= 570) & (minutes_np < 960)
+            elif s == "pre":
+                mask |= (minutes_np >= 240) & (minutes_np < 570)
+            elif s == "post":
+                mask |= (minutes_np >= 960) & (minutes_np < 1200)
+            elif s == "custom":
+                c_start = custom_start_time or "09:30"
+                c_end = custom_end_time or "16:00"
+                try:
+                    import datetime as _dt
+                    cs = _dt.datetime.strptime(c_start, "%H:%M")
+                    ce = _dt.datetime.strptime(c_end, "%H:%M")
+                    s_mins = cs.hour * 60 + cs.minute
+                    e_mins = ce.hour * 60 + ce.minute
+                    mask |= (minutes_np >= s_mins) & (minutes_np < e_mins)
+                except Exception:
+                    mask |= (minutes_np >= 570) & (minutes_np < 960)
+            else:
+                # Fallback to legacy function for unknown session types
+                from app.services.backtest_service import _get_market_sessions_mask
+                # pd.Series: en el slab path ts_col es un ndarray datetime64 y la
+                # función legacy necesita .dt — envolver es inocuo en ambos paths.
+                mask |= _get_market_sessions_mask(pd.Series(ts_col), [s], custom_start_time, custom_end_time)
+        session_mask_np = mask
+    else:
+        session_mask_np = np.ones(n_bars, dtype=bool)
 
-        session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
-        entries_arr = entries_arr[session_mask_np]
-        exits_arr = exits_arr[session_mask_np]
+    trimmed_n = int(np.sum(session_mask_np))
+    if trimmed_n < 2:
+        return None
 
-    # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays (507-537) ---
+    entries_arr = entries_arr[session_mask_np]
+    exits_arr = exits_arr[session_mask_np]
+
+    arrays_out = {
+        "open": O[session_mask_np],
+        "high": H[session_mask_np],
+        "low": L[session_mask_np],
+        "close": C[session_mask_np],
+        "volume": V[session_mask_np],
+        "timestamp": ts_col.values[session_mask_np] if hasattr(ts_col, "values") else np.asarray(ts_col)[session_mask_np],
+        "hod": hod[session_mask_np],
+        "lod": lod[session_mask_np],
+        "pm_high": np.full(trimmed_n, pm_h if not np.isnan(pm_h) else 0.0, dtype=np.float64),
+        "pm_low": np.full(trimmed_n, pm_l if not np.isnan(pm_l) else 0.0, dtype=np.float64),
+        "prev_high": prev_h[session_mask_np],
+        "prev_low": prev_l[session_mask_np],
+    }
+
+    # --- candle_delay shift ---
     if compiled_strategy:
         entry_candle_delay = compiled_strategy.get("entry_candle_delay")
         if entry_candle_delay is not None:
@@ -220,19 +334,11 @@ def _compute_signals_for_pair(
             except (ValueError, TypeError):
                 pass
 
-    # --- TEMPORARY PATCH FOR MISPRINTS (539-547): 8:00-8:45 restriction ---
-    ts_series = mini_df["timestamp"]
-    if not pd.api.types.is_datetime64_any_dtype(ts_series):
-        ts_series = pd.to_datetime(ts_series)
-    patch_mask = (ts_series.dt.hour == 8) & (ts_series.dt.minute >= 0) & (ts_series.dt.minute < 45)
-    patch_mask = patch_mask.values
-
-    # If after masking we have no entries, skip simulation (549-552)
     if not np.any(entries_arr):
         return None
 
-    # --- Prepare timestamps array for elapsed time logic (563-568) ---
-    ts_arr = arrays["timestamp"]
+    # --- Timestamps para elapsed time ---
+    ts_arr = arrays_out["timestamp"]
     if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
         timestamps_arr = ts_arr.astype("datetime64[ns]").astype(np.int64)
     else:
@@ -243,8 +349,7 @@ def _compute_signals_for_pair(
         "ticker": ticker,
         "entries_arr": entries_arr,
         "exits_arr": exits_arr,
-        "arrays": arrays,
-        "patch_mask": patch_mask,
+        "arrays": arrays_out,
         "timestamps_arr": timestamps_arr,
         "sig_direction": sig_direction,
         "sig_accept_reentries": sig_accept_reentries,
@@ -585,8 +690,200 @@ def run_pipelined_signals(
 
 
 # ---------------------------------------------------------------------------
+# Fase 1-slab — señales sobre el slab store (PRD rendimiento-backtester §03.7)
+# ---------------------------------------------------------------------------
+
+def slab_stream_enabled() -> bool:
+    """Flag maestro del stream slab (default OFF — path legacy intacto)."""
+    return os.getenv("BTT_SLAB_STREAM_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _signal_chunk_slab(chunk):
+    """Worker slab: item = (date, ticker, daily_stats, payload). Los payload "ref"
+    viajan como índices y se resuelven aquí contra el mmap del worker (forkserver
+    no hereda memmaps; slab_store cachea el MonthSlab por proceso)."""
+    from app.db.slab_store import resolve_slab_item
+    ctx = _PIPE_CTX
+    out = []
+    for (date, ticker, daily_stats, payload) in chunk:
+        try:
+            arrs = resolve_slab_item(payload)
+            res = _compute_signals_for_pair(
+                date, ticker, None, daily_stats,
+                ctx["strategy_def"], ctx["compiled_strategy"],
+                ctx["market_sessions"], ctx["custom_start_time"],
+                ctx["custom_end_time"], ctx["swing_active"],
+                pair_arrays=arrs,
+            )
+        except Exception as e:
+            logger.warning(f"[SLAB] signal gen failed {ticker} {date}: {e}")
+            res = None
+        out.append(res)
+    return out
+
+
+def run_slab_signals(items_iter, ctx, n_workers, progress_callback=None,
+                     chunk_size=64, total_hint=None):
+    """Conduce el stream slab hacia señales. workers<=1 (o sin forkserver) → inline;
+    workers>1 → pool forkserver persistente con backpressure (mismo patrón que
+    run_pipelined_signals). Devuelve señales ordenadas por (date, ticker)."""
+    global _PIPE_CTX
+    from app.db.slab_store import resolve_slab_item
+
+    total = total_hint if (total_hint and total_hint > 0) else None
+    signals = []
+    processed = 0
+
+    def _report():
+        if progress_callback is not None:
+            progress_callback(processed, total if total is not None else processed)
+
+    if n_workers <= 1 or "forkserver" not in multiprocessing.get_all_start_methods():
+        for (date, ticker, daily_stats, payload) in items_iter:
+            processed += 1
+            try:
+                arrs = resolve_slab_item(payload)
+                res = _compute_signals_for_pair(
+                    date, ticker, None, daily_stats,
+                    ctx["strategy_def"], ctx["compiled_strategy"],
+                    ctx["market_sessions"], ctx["custom_start_time"],
+                    ctx["custom_end_time"], ctx["swing_active"],
+                    pair_arrays=arrs,
+                )
+            except Exception as e:
+                logger.warning(f"[SLAB] signal gen failed {ticker} {date}: {e}")
+                res = None
+            if res is not None:
+                signals.append(res)
+            if processed % 256 == 0:
+                _report()
+        _report()
+        signals.sort(key=lambda s: (s["date"], s["ticker"]))
+        return signals
+
+    # ── pool forkserver con backpressure ──
+    _PIPE_CTX = ctx
+    max_outstanding = max(2, n_workers * 3)
+    mp_ctx = multiprocessing.get_context("forkserver")
+    pending = set()
+    chunk = []
+
+    def _drain(done_set):
+        nonlocal processed
+        for f in done_set:
+            res = f.result()
+            processed += len(res)
+            for r in res:
+                if r is not None:
+                    signals.append(r)
+        pending.difference_update(done_set)
+
+    try:
+        with ProcessPoolExecutor(
+            max_workers=n_workers, mp_context=mp_ctx,
+            initializer=_init_pipe_ctx, initargs=(ctx,),
+        ) as pool:
+            warm = [pool.submit(_pool_warmup) for _ in range(n_workers)]
+            wait(warm)
+            for item in items_iter:
+                chunk.append(item)
+                if len(chunk) >= chunk_size:
+                    pending.add(pool.submit(_signal_chunk_slab, chunk))
+                    chunk = []
+                    if len(pending) >= max_outstanding:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        _drain(done)
+                        _report()
+                else:
+                    done = {f for f in pending if f.done()}
+                    if done:
+                        _drain(done)
+                        _report()
+            if chunk:
+                pending.add(pool.submit(_signal_chunk_slab, chunk))
+                chunk = []
+            for f in as_completed(list(pending)):
+                res = f.result()
+                processed += len(res)
+                for r in res:
+                    if r is not None:
+                        signals.append(r)
+                _report()
+            pending.clear()
+    finally:
+        _PIPE_CTX = {}
+
+    signals.sort(key=lambda s: (s["date"], s["ticker"]))
+    return signals
+
+
+# ---------------------------------------------------------------------------
 # Mitad B — simulate + acumulación SERIAL. Copia verbatim de 358 + 554-672.
 # ---------------------------------------------------------------------------
+
+def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct):
+    """Réplica exacta de backtest_service._enrich_trades sobre ndarrays (sin
+    pd.Series/.iloc por trade). Produce dicts IDÉNTICOS (test de equivalencia)."""
+    if not raw_trades:
+        return []
+    max_idx = len(ts_dt64) - 1
+    result = []
+    for t in raw_trades:
+        ei = min(t["entry_idx"], max_idx)
+        xi = min(t["exit_idx"], max_idx)
+        entry_ts = pd.Timestamp(ts_dt64[ei])
+        exit_ts = pd.Timestamp(ts_dt64[xi])
+        pnl = t["pnl"]
+        r_multiple = None if risk_unit_dollar <= 0 else round(pnl / risk_unit_dollar, 2)
+        result.append({
+            "ticker": ticker,
+            "date": date,
+            "entry_time": str(entry_ts),
+            "exit_time": str(exit_ts),
+            "entry_idx": t["entry_idx"],
+            "exit_idx": t["exit_idx"],
+            "entry_time_epoch": int(ts_epoch[ei]),
+            "exit_time_epoch": int(ts_epoch[xi]),
+            "entry_price": t["entry_price"],
+            "exit_price": t["exit_price"],
+            "pnl": pnl,
+            "fees": t.get("fees", 0.0),
+            "return_pct": t["return_pct"],
+            "direction": t["direction"],
+            "status": t["status"],
+            "size": t["size"],
+            "exit_reason": t["exit_reason"],
+            "mae": t["mae"],
+            "mfe": t.get("mfe", 0.0),
+            "r_multiple": r_multiple,
+            "entry_hour": entry_ts.hour,
+            "entry_weekday": entry_ts.weekday(),
+            "gap_pct": float(gap_pct) if gap_pct is not None else None,
+            "stop_loss": t.get("stop_loss", 0.0),
+        })
+    return result
+
+
+_MAX_EQ_POINTS = 200
+
+
+def _extract_equity_arr(eq_vals, ts_epoch):
+    """Réplica exacta de backtest_service._extract_equity_from_values sobre el
+    ts_epoch ya calculado (evita re-derivarlo de una pd.Series por par)."""
+    try:
+        n = min(len(eq_vals), len(ts_epoch))
+        if n == 0:
+            return []
+        te = ts_epoch[:n]
+        vals = eq_vals[:n].astype(np.float64)
+        if n > _MAX_EQ_POINTS:
+            idx = np.linspace(0, n - 1, _MAX_EQ_POINTS, dtype=int)
+            te = te[idx]
+            vals = vals[idx]
+        return [{"time": int(t), "value": float(v)} for t, v in zip(te, vals)]
+    except Exception:
+        return []
+
 
 def simulate_and_accumulate(signals_sorted, params):
     """Procesa las señales en orden de (date, ticker) ejecutando simulate +
@@ -597,7 +894,7 @@ def simulate_and_accumulate(signals_sorted, params):
     look_ahead_prevention, strategy_def, elapsed_limit, elapsed_operator.
     """
     from app.services.backtest_service import (
-        simulate, _enrich_trades, _extract_equity_from_values, _extract_day_stats_from_values,
+        simulate, _extract_day_stats_from_values,
     )
 
     init_cash = params["init_cash"]
@@ -629,7 +926,6 @@ def simulate_and_accumulate(signals_sorted, params):
         arrays = sig["arrays"]
         entries_arr = sig["entries_arr"]
         exits_arr = sig["exits_arr"]
-        patch_mask = sig["patch_mask"]
         timestamps_arr = sig["timestamps_arr"]
         sig_direction = sig["sig_direction"]
         sig_accept_reentries = sig["sig_accept_reentries"]
@@ -689,7 +985,6 @@ def simulate_and_accumulate(signals_sorted, params):
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
-                patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,
                 hs_value=hs_value,
@@ -720,13 +1015,13 @@ def simulate_and_accumulate(signals_sorted, params):
             daily_pnl += t["pnl"]
 
         # Avoid pd.to_datetime parsing if array is already datetime kind natively (631-638)
+        # (sin pd.Series por par: ndarrays directos — mismos valores, mismos dicts)
         ts_arr = arrays["timestamp"]
         if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
-            timestamps = pd.Series(ts_arr)
-            ts_epoch = ts_arr.astype("datetime64[s]").astype("int64")
+            ts_dt64 = ts_arr
         else:
-            timestamps = pd.Series(pd.to_datetime(ts_arr))
-            ts_epoch = timestamps.values.astype("datetime64[s]").astype("int64")
+            ts_dt64 = pd.to_datetime(ts_arr).values
+        ts_epoch = ts_dt64.astype("datetime64[s]").astype("int64")
 
         # --- Calculate Risk Unit for "R" reporting (640-646) ---
         if risk_type == "FIXED":
@@ -736,12 +1031,11 @@ def simulate_and_accumulate(signals_sorted, params):
         else:
             risk_unit_dollar = risk_r
 
-        trades_records = _enrich_trades(
-            raw_trades, timestamps, ticker, date, strategy_def, risk_unit_dollar,
-            gap_pct=gap_pct,
+        trades_records = _enrich_trades_arr(
+            raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct,
         )
 
-        equity = _extract_equity_from_values(eq_vals, timestamps)
+        equity = _extract_equity_arr(eq_vals, ts_epoch)
 
         stats = _extract_day_stats_from_values(eq_vals, ticker, date, trades_records, gap_pct)
 
