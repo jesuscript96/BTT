@@ -56,7 +56,7 @@ def _init_connection_views(con, provider):
 def _apply_duckdb_limits(con):
     """Cap DuckDB memory and route intermediate spills to disk.
 
-    Prod is CCX33 with Swap=0, so an unbounded scan (e.g. a BROAD backtest)
+    Prod (2026-07: Xeon W-2145 dedicado, 128GB RAM, swap 0) — an unbounded scan (e.g. a BROAD backtest)
     OOM-kills the whole process instantly. A memory_limit forces DuckDB to spill
     to temp_directory instead of dying. Env-tunable; reuses DUCKDB_MEMORY_LIMIT
     (already set in Coolify but previously unwired — nothing read it before).
