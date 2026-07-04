@@ -183,6 +183,7 @@ def cleanup_old_results(max_age_s: int = JOB_TTL_S):
 
 def save_job_result(job_id: str, result: dict):
     """Persist the result split into a light part + a per-day equity map."""
+    t0 = time.time()
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     equity_curves = result.get("equity_curves") or []
@@ -200,6 +201,13 @@ def save_job_result(job_id: str, result: dict):
         f.write(_dumps(light))
     with open(_equity_path(job_id), "wb") as f:
         f.write(_dumps(equity_map))
+
+    try:
+        from app.services.perf_timing import log_phase
+        log_phase("serialize", (time.time() - t0) * 1000, dataset=job_id,
+                  pairs=len(equity_curves), trades=len(result.get("trades") or []))
+    except Exception:
+        pass
 
 
 def load_job_result_light(job_id: str):

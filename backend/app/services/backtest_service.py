@@ -18,7 +18,9 @@ import numpy as np
 import pandas as pd
 
 from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
-from app.services.portfolio_sim import simulate
+# Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
+# especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
+from app.services.sim_dispatch import simulate
 from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_condition
 
 logger = logging.getLogger("backtester.engine")
@@ -93,6 +95,18 @@ def run_backtest(
 
     t_total = time.time()
 
+    # ── Modo slab (PRD rendimiento-backtester): stream desde slabs locales ──
+    # Solo para run_backtest directo (el optimizer pasa _signal_cache). Con flag
+    # OFF todo lo de abajo se comporta EXACTAMENTE igual que siempre.
+    from app.services import backtest_signals as _bsig
+    _slab_mode = (
+        _bsig.slab_stream_enabled()
+        and _signal_cache is None
+        and qualifying_df is not None and not qualifying_df.empty
+    )
+    if _slab_mode:
+        logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
+
     # Proactively prefetch daily historical metrics for the tickers involved in this backtest
     # to speed up 'High/Low of last X days' indicators and avoid individual database queries inside the loop.
     # F1 CAMBIO 1: only when the strategy actually uses that indicator — otherwise
@@ -125,7 +139,9 @@ def run_backtest(
         swing_opt = rm.get("swing_option", {}) if isinstance(rm, dict) else {}
         swing_active_global = swing_opt.get("active", False) if isinstance(swing_opt, dict) else False
         
-        if swing_active_global and qualifying_df is not None and not qualifying_df.empty:
+        if swing_active_global and (not _slab_mode) and qualifying_df is not None and not qualifying_df.empty:
+            # (en modo slab los días swing salen del propio slab store — este
+            # prefetch GCS/disk solo aplica al path legacy)
             swing_target = swing_opt.get("target_day", "gap_1_day")
             apply_day = strategy_def.get("apply_day", "gap_day") if strategy_def else "gap_day"
             
@@ -234,6 +250,7 @@ def run_backtest(
                             print(f"[SWING] Error prefetching batch for {y}-{m:02d}: {e}")
 
     qual_lookup = _build_qualifying_lookup(qualifying_df)
+    _qualifying_for_slab = qualifying_df if _slab_mode else None
     del qualifying_df
 
     # Pre-compile strategy definition once — saves dict lookups per day inside the loop.
@@ -277,6 +294,52 @@ def run_backtest(
     current_date = None
     daily_pnl = 0.0
 
+    # ── Fase 1-slab: stream desde slabs locales (refs mmap) + señales ───────
+    # Sustituye fetch+ensamblado pandas por slices numpy del slab store. Los meses
+    # sin slab caen al path legacy DENTRO del iterador (fallback por mes). La
+    # Mitad B (simulate + compounding) es la misma que en los demás paths.
+    if _slab_mode:
+        from app.db.slab_store import iter_slab_items_with_fallback
+        from app.services.perf_timing import PhaseTimer
+        _ctx = {
+            "strategy_def": strategy_def,
+            "compiled_strategy": compiled_strategy,
+            "market_sessions": market_sessions,
+            "custom_start_time": custom_start_time,
+            "custom_end_time": custom_end_time,
+            "swing_active": swing_active_global,
+        }
+        _n_workers = _bsig.get_parallel_workers()
+        logger.info(f"[SLAB] señales con {_n_workers} worker(s)")
+        items = iter_slab_items_with_fallback(
+            _qualifying_for_slab, strategy_def, qual_lookup, swing_intraday_cache,
+        )
+        with PhaseTimer("signals", workers=_n_workers, mode="slab") as _pt_sig:
+            signals_sorted = _bsig.run_slab_signals(
+                items, _ctx, _n_workers,
+                progress_callback=progress_callback, total_hint=n_groups,
+            )
+            _pt_sig.pairs = len(signals_sorted)
+        _params = {
+            "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
+            "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
+            "fees": fees, "fee_type": fee_type, "slippage": slippage,
+            "locates_cost": locates_cost, "locate_type": locate_type,
+            "look_ahead_prevention": look_ahead_prevention,
+            "strategy_def": strategy_def,
+            "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
+        }
+        with PhaseTimer("simulate", mode="slab") as _pt_sim:
+            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            _pt_sim.pairs = len(signals_sorted)
+        days_with_entries = len(day_results)
+        scanned = len(signals_sorted)
+        logger.info(
+            f"[SLAB] pipeline done: {len(signals_sorted)} con señales, "
+            f"{days_with_entries} con trades"
+        )
+        group_source = iter(())  # el loop secuencial de abajo queda no-op
+
     # ── Fase 1: generación de señales en PARALELO (gated) ───────────────────
     # Solo para run_backtest directo (no el optimizer: _signal_cache=None) y si
     # hay fork disponible. Materializa los pares en el padre (pre-warm swing +
@@ -284,9 +347,8 @@ def run_backtest(
     # compounding) en serie por (date, ticker). El path secuencial de abajo queda
     # intacto y, cuando se usa esta rama, opera sobre un group_source ya agotado
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
-    from app.services import backtest_signals as _bsig
     _n_workers = _bsig.get_parallel_workers()
-    if _bsig.should_parallelize(_signal_cache, _n_workers):
+    if (not _slab_mode) and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
             "strategy_def": strategy_def,
@@ -298,11 +360,14 @@ def run_backtest(
         }
         # Pipeline: el fetch del stream (I/O, prefetch STREAM_WORKERS) solapa con la
         # generación de señales (workers fork). Menor pico de RAM que materializar-todo.
-        signals_sorted = _bsig.run_pipelined_signals(
-            group_source, qual_lookup, strategy_def, swing_intraday_cache,
-            _ctx, _n_workers, progress_callback=progress_callback,
-            total_hint=n_groups,
-        )
+        from app.services.perf_timing import PhaseTimer
+        with PhaseTimer("signals", workers=_n_workers, overlapped_fetch=1) as _pt_sig:
+            signals_sorted = _bsig.run_pipelined_signals(
+                group_source, qual_lookup, strategy_def, swing_intraday_cache,
+                _ctx, _n_workers, progress_callback=progress_callback,
+                total_hint=n_groups,
+            )
+            _pt_sig.pairs = len(signals_sorted)
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
@@ -312,7 +377,9 @@ def run_backtest(
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
         }
-        all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+        with PhaseTimer("simulate") as _pt_sim:
+            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            _pt_sim.pairs = len(signals_sorted)
         days_with_entries = len(day_results)
         logger.info(
             f"[PARALLEL] pipeline done: {len(signals_sorted)} con señales, "
@@ -578,17 +645,7 @@ def run_backtest(
                 except (ValueError, TypeError):
                     pass
 
-        # --- TEMPORARY PATCH FOR MISPRINTS ---
-        # 8:00 to 8:45 restriction to ignore misprints
-        ts_series = mini_df["timestamp"]
-        if not pd.api.types.is_datetime64_any_dtype(ts_series):
-            ts_series = pd.to_datetime(ts_series)
-            
-        # Avoid .dt.time which creates expensive python datetime.time objects
-        patch_mask = (ts_series.dt.hour == 8) & (ts_series.dt.minute >= 0) & (ts_series.dt.minute < 45)
-        patch_mask = patch_mask.values
-
-        # If after masking we have no entries, skip simulation
+        # If we have no entries, skip simulation
         if not np.any(entries_arr):
             del mini_df
             continue
@@ -636,7 +693,6 @@ def run_backtest(
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
-                patch_mask=patch_mask,
                 partial_take_profits=sig_partial_tps,
                 hs_type=hs_type,
                 hs_value=hs_value,
@@ -721,6 +777,9 @@ def run_backtest(
     t_loop = time.time()
     total_days = days_with_entries
     print(f"[TIMING] loop completo ({total_days} días): {round(t_loop - t_total, 2)}s")
+    from app.services.perf_timing import log_phase as _log_phase
+    _log_phase("stream_build", (t_loop - t_total) * 1000, pairs=scanned,
+               days=total_days, mode="sequential" if scanned else "pipelined")
     logger.info(
         f"[STREAM] done: {days_with_entries} days with entries "
         f"({round(time.time()-t1, 2)}s)"
@@ -735,6 +794,8 @@ def run_backtest(
         day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses
     )
     logger.info(f"[AGG] aggregate+equity done ({round(time.time()-t4, 2)}s)")
+    _log_phase("aggregate", (time.time() - t4) * 1000, pairs=len(day_results),
+               trades=len(all_trades))
 
     logger.info(
         f"[DONE] {len(day_results)} days, {len(all_trades)} trades, "

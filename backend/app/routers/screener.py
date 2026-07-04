@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 
 from app.services.live_screener_service import (
     live_screener_service,
-    current_session,
     VALID_TABS,
     TAB_GAINERS,
 )
@@ -241,7 +240,7 @@ async def screener_live(websocket: WebSocket):
             await websocket.send_json({
                 "tab": tab,
                 "timestamp": int(time.time()),
-                "session": current_session(),
+                "session": live_screener_service.session,
                 "ws_connected": live_screener_service.ws_connected,
                 "records": live_screener_service.get_top(tab),
             })
