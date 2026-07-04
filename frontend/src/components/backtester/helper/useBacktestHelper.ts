@@ -20,6 +20,10 @@ import { HELPER_STEPS, type HelperMode, type HelperStep } from "./steps";
 const SEEN_KEY = "edgecute:bt-helper:v1:seen";
 /** ms de margen para que termine la transición del drawer (CSS 300ms). */
 const TRANSITION_MS = 380;
+/** ms para montar el Wizard y que cargue la estrategia de ejemplo. */
+const WIZARD_MOUNT_MS = 520;
+/** ms para que el contenido de un sub-paso del Wizard se pinte. */
+const STEP_SWAP_MS = 260;
 
 /** Avatar de Edgie — mismo robot que el botón flotante del ChatBot
  *  (RobotAvatar en ChatBot.tsx), en su variante "encendida" (cobre). */
@@ -55,10 +59,15 @@ export interface HelperController {
   loadExampleStrategy: () => void;
   fillDataset: () => void;
   fillConfig: () => void;
+  /** Posiciona el Wizard en uno de sus sub-pasos (universo, bias, entry…). */
+  setWizardStep: (step: string) => void;
+  /** Telemetría (PostHog): quién consume el tour y hasta dónde llega. */
+  track?: (event: string, props?: Record<string, unknown>) => void;
   setHelperActive: (active: boolean) => void;
-  /** Deshace lo que el tour rellenó (restaura el borrador previo y resetea
-   *  dataset/config) para no dejar el ejemplo metido en los formularios. */
-  cleanup: () => void;
+  /** Cierra el tour. Si `completed` es true (el usuario llegó al final), DEJA el
+   *  ejemplo reflejado en los formularios. Si es false (Saltar), restaura el
+   *  borrador previo y resetea lo que el tour tocó. */
+  cleanup: (completed: boolean) => void;
 }
 
 export function useBacktestHelper(ctrl: HelperController): { startHelper: () => void } {
@@ -67,26 +76,44 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
   ctrlRef.current = ctrl;
 
   const modeRef = useRef<HelperMode>("config");
+  const wizardStepRef = useRef<string | null>(null);
+  const completedRef = useRef(false);
+  /** Índice del paso más lejano alcanzado (para "hasta dónde llega"). */
+  const lastStepRef = useRef(0);
   const driverRef = useRef<Driver | null>(null);
 
   /** Aplica el estado que un paso necesita ANTES de resaltarse.
-   *  Devuelve true si hubo cambio de modo (drawer en transición → conviene esperar). */
-  const applyEnter = useCallback((enter: HelperStep["enter"]): boolean => {
+   *  Devuelve los ms que conviene esperar a que el DOM se estabilice (montaje
+   *  del drawer / cambio de sub-paso del Wizard) antes de resaltar. */
+  const applyEnter = useCallback((enter: HelperStep["enter"]): number => {
     const c = ctrlRef.current;
-    // La estrategia debe precargarse antes de montar el builder.
+    // La estrategia debe precargarse antes de montar el wizard/builder.
     if (enter.fill === "strategy") c.loadExampleStrategy();
 
-    let transition = false;
+    let wait = 0;
     if (enter.mode !== modeRef.current) {
       c.setMode(enter.mode);
-      transition = true;
+      // Montar el Wizard (componente pesado + carga de initialStrategy) tarda
+      // algo más que abrir un drawer ya montado.
+      wait = enter.mode === "wizard" ? WIZARD_MOUNT_MS : TRANSITION_MS;
     }
     modeRef.current = enter.mode;
 
     // Estos componentes están siempre montados: el evento se aplica al vuelo.
     if (enter.fill === "dataset") c.fillDataset();
     if (enter.fill === "config") c.fillConfig();
-    return transition;
+
+    // Posicionar el Wizard en el sub-paso del guion.
+    if (enter.mode === "wizard" && enter.wizardStep) {
+      if (enter.wizardStep !== wizardStepRef.current) {
+        c.setWizardStep(enter.wizardStep);
+        wait = Math.max(wait, STEP_SWAP_MS);
+      }
+      wizardStepRef.current = enter.wizardStep;
+    } else {
+      wizardStepRef.current = null;
+    }
+    return wait;
   }, []);
 
   const buildDriver = useCallback((): Driver => {
@@ -119,12 +146,14 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
         const i = d.getActiveIndex() ?? 0;
         const next = HELPER_STEPS[i + 1];
         if (!next) {
+          // Último paso → el tour se completó: dejamos el ejemplo reflejado.
+          completedRef.current = true;
           d.destroy();
           return;
         }
-        const transition = applyEnter(next.enter);
-        if (transition) {
-          window.setTimeout(() => d.moveNext(), TRANSITION_MS);
+        const wait = applyEnter(next.enter);
+        if (wait > 0) {
+          window.setTimeout(() => d.moveNext(), wait);
         } else {
           d.moveNext();
         }
@@ -151,10 +180,30 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
           popover.footerButtons.insertBefore(skip, popover.footerButtons.firstChild);
         }
       },
+      // Cada vez que se resalta un paso: registramos hasta dónde ha llegado.
+      onHighlightStarted: (_el, _step, { driver: d }) => {
+        const i = d.getActiveIndex() ?? 0;
+        lastStepRef.current = i;
+        const s = HELPER_STEPS[i];
+        ctrlRef.current.track?.("bt_helper_step_viewed", {
+          step_index: i + 1,
+          step_id: s?.id,
+          step_total: HELPER_STEPS.length,
+        });
+      },
       onDestroyed: () => {
         const c = ctrlRef.current;
-        c.setMode("config");
-        c.cleanup();
+        const completed = completedRef.current;
+        const i = lastStepRef.current;
+        c.track?.(completed ? "bt_helper_completed" : "bt_helper_skipped", {
+          last_step_index: i + 1,
+          last_step_id: HELPER_STEPS[i]?.id,
+          step_total: HELPER_STEPS.length,
+        });
+        // Si se completó, el último paso ya nos dejó en 'config' con el ejemplo
+        // reflejado: NO tocamos el modo. Si se saltó, volvemos al panel.
+        if (!completed) c.setMode("config");
+        c.cleanup(completed);
         c.setHelperActive(false);
         markSeen();
       },
@@ -169,6 +218,10 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
     c.setHelperActive(true);
     c.setMode("config");
     modeRef.current = "config";
+    wizardStepRef.current = null;
+    completedRef.current = false;
+    lastStepRef.current = 0;
+    c.track?.("bt_helper_started", { step_total: HELPER_STEPS.length });
     const d = buildDriver();
     driverRef.current = d;
     d.drive(0);

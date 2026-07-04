@@ -261,7 +261,7 @@ def _fetch_yfinance_history(ticker: str, period: str = "5y") -> pd.DataFrame:
     Uses 5y period by default to load historical gaps and news."""
     try:
         session = get_yfinance_session()
-        stock = yf.Ticker(ticker, session=session)
+        stock = yf.Ticker(ticker) if session is None else yf.Ticker(ticker, session=session)
         hist = stock.history(period=period)
         if not hist.empty:
             df = hist.reset_index()
@@ -680,30 +680,17 @@ def get_gap_stats_all_days(ticker: str) -> dict:
     return results
 
 def get_yfinance_session():
-    import requests
-    import urllib3
-    from requests.adapters import HTTPAdapter
-    
-    class TimeoutHTTPAdapter(HTTPAdapter):
-        def __init__(self, *args, **kwargs):
-            self.timeout = kwargs.pop('timeout', 5)
-            super().__init__(*args, **kwargs)
-        def send(self, request, **kwargs):
-            kwargs['timeout'] = kwargs.get('timeout', self.timeout)
-            return super().send(request, **kwargs)
-            
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    
-    session = requests.Session()
-    session.verify = False
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    })
-    
-    adapter = TimeoutHTTPAdapter(timeout=5)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
+    """Devuelve None: dejamos que yfinance 1.x gestione su propia sesión.
+
+    Histórico: pasábamos una requests.Session, que yfinance 1.x rechaza
+    ("requires curl_cffi session"), dejando shares/float/financials/officers VACÍOS.
+    Probamos a inyectar una curl_cffi propia, pero una sesión "desnuda" se salta el
+    manejo de cookie+crumb de yfinance → "HTTP 401 Invalid Crumb" intermitente y
+    timeouts bajo carga. Lo recomendado (y lo que pide el propio aviso de yfinance,
+    "let YF handle") es NO pasar sesión: yfinance crea su sesión curl_cffi con crumb
+    y la cachea a nivel de proceso, reduciendo 401s en llamadas sucesivas.
+    """
+    return None
 
 def scrape_finviz_snapshot(ticker: str) -> dict:
     import requests
@@ -807,7 +794,7 @@ def get_ticker_analysis(ticker: str):
 
         def _fetch_info():
             session = get_yfinance_session()
-            stock = yf.Ticker(ticker, session=session)
+            stock = yf.Ticker(ticker) if session is None else yf.Ticker(ticker, session=session)
             return stock.info
 
         def _fetch_db_profile():
@@ -842,10 +829,12 @@ def get_ticker_analysis(ticker: str):
             return {}
 
         # yfinance .info, Finviz scrape and DB lookup run in PARALLEL.
-        # yfinance is capped at 4s: Finviz + DB already cover the primary
-        # fields, so a rate-limited Yahoo no longer gates the response.
-        # shutdown(wait=False) so a hung thread doesn't block the return —
-        # the per-request HTTP timeouts (5s adapter) bound it anyway.
+        # NOTE: Finviz scraping degraded to returning ONLY market_cap (no
+        # shares/float/insiders), so yfinance is now the primary source for those
+        # fields and CANNOT be capped too tightly or the dashboard shows blanks.
+        # 10s gives Yahoo room to answer (cold crumb handshake) on a first load;
+        # SWR then caches it so subsequent loads are instant.
+        # shutdown(wait=False) so a hung thread doesn't block the return.
         info = {}
         finviz_data = {}
         db_info = {}
@@ -855,7 +844,7 @@ def get_ticker_analysis(ticker: str):
             fut_finviz = executor.submit(scrape_finviz_snapshot, ticker)
             fut_db = executor.submit(_fetch_db_profile)
             try:
-                result = fut_info.result(timeout=4)
+                result = fut_info.result(timeout=10)
                 if isinstance(result, dict):
                     info = result
             except FuturesTimeoutError:
@@ -903,7 +892,10 @@ def get_ticker_analysis(ticker: str):
             "country": info.get("country"),
             "exchange": info.get("exchange"),
             "name": info.get("longName"),
-            "logo_url": logo_url
+            "logo_url": logo_url,
+            # Roster de directivos (yfinance). Gratis: ya viene en el mismo `info`.
+            # Edgie lo usa para nombrar la cúpula sin inventar (ver ownership_list).
+            "officers": info.get("companyOfficers") or [],
         }
 
         # --- Market --- (Finviz primary, yfinance fallback)
@@ -1165,7 +1157,7 @@ def get_ticker_balance_sheet(ticker: str):
             from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
             def _fetch_bs():
                 session = get_yfinance_session()
-                stock = yf.Ticker(ticker, session=session)
+                stock = yf.Ticker(ticker) if session is None else yf.Ticker(ticker, session=session)
                 return stock.quarterly_balance_sheet
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(_fetch_bs)
@@ -1177,22 +1169,42 @@ def get_ticker_balance_sheet(ticker: str):
         charts = {
             "cash_history": [],
             "debt_history": [],
-            "working_capital_history": []
+            "working_capital_history": [],
+            "equity_history": [],
+            "shares_outstanding_history": []
         }
         working_capital = None
 
         if not bs.empty:
             bs_T = bs.T.sort_index()
-            
+
             def get_series(key_pattern):
                 col = next((c for c in bs_T.columns if key_pattern in str(c).lower()), None)
                 if col:
                     return [{"date": str(d.date()), "value": safe_float(v)} for d, v in bs_T[col].items()]
                 return []
 
+            def get_series_first(*key_patterns):
+                """Devuelve la serie de la primera fila cuyo nombre contenga alguno
+                de los patrones. yfinance varía los nombres entre tickers
+                (ej: 'Ordinary Shares Number' vs 'Share Issued')."""
+                for kp in key_patterns:
+                    series = get_series(kp)
+                    if series:
+                        return series
+                return []
+
             charts["cash_history"] = get_series("cash")
             charts["debt_history"] = get_series("debt")
-            
+            # Patrimonio neto: priorizar 'Stockholders Equity' sobre métricas más amplias.
+            charts["equity_history"] = get_series_first(
+                "stockholders equity", "total equity", "common stock equity"
+            )
+            # Acciones en circulación: clave para detectar dilución histórica.
+            charts["shares_outstanding_history"] = get_series_first(
+                "ordinary shares number", "share issued", "common stock shares outstanding"
+            )
+
             if "Total Current Assets" in bs_T.columns and "Total Current Liabilities" in bs_T.columns:
                 wc = bs_T["Total Current Assets"] - bs_T["Total Current Liabilities"]
                 charts["working_capital_history"] = [{"date": str(d.date()), "value": safe_float(v)} for d, v in wc.items()]
@@ -1350,6 +1362,201 @@ def get_sec_filings(ticker: str):
         print(f"Error fetching SEC filings for {ticker}: {e}")
         # Return empty structure rather than 500 to not break entire dashboard
         return {k: [] for k in ["financials", "prospectuses", "news", "ownership", "proxies", "others"]}
+
+
+# ── Insider activity (SEC Forms 3/4/5) ───────────────────────────────────────
+# Edgie no tenía cómo nombrar a los directivos: el perfil solo traía % agregados
+# y los filings eran títulos RSS sin parsear. Aquí descargamos y parseamos el XML
+# de ownership (Forms 3/4/5) para extraer QUIÉN es insider, su cargo y sus
+# compras/ventas recientes. Cache SWR como el resto; tolerante a fallos.
+
+_INSIDERS_CACHE_TTL = timedelta(minutes=30)
+
+# Códigos de transacción SEC (Tabla I/II del Form 4) más habituales.
+_TX_CODE_LABELS = {
+    "P": "Compra en mercado abierto",
+    "S": "Venta en mercado abierto",
+    "A": "Concesión/Adjudicación (grant)",
+    "D": "Disposición a la empresa",
+    "F": "Retención para impuestos",
+    "M": "Ejercicio de opción/derivado",
+    "X": "Ejercicio de derivado",
+    "C": "Conversión de derivado",
+    "G": "Donación",
+    "J": "Otra (ver notas)",
+    "W": "Adquisición/disposición por herencia",
+}
+
+
+def _insider_role(rel) -> str:
+    """Construye el rol legible desde <reportingOwnerRelationship>."""
+    if rel is None:
+        return "—"
+    def _is(tag):
+        el = rel.find(tag)
+        return el is not None and (el.text or "").strip().lower() in ("1", "true")
+    parts = []
+    if _is("isDirector"):
+        parts.append("Director")
+    if _is("isOfficer"):
+        title_el = rel.find("officerTitle")
+        title = (title_el.text or "").strip() if title_el is not None else ""
+        parts.append(f"Officer ({title})" if title else "Officer")
+    if _is("isTenPercentOwner"):
+        parts.append("10% Owner")
+    if _is("isOther"):
+        other_el = rel.find("otherText")
+        other = (other_el.text or "").strip() if other_el is not None else ""
+        parts.append(f"Otro ({other})" if other else "Otro")
+    return ", ".join(parts) if parts else "—"
+
+
+def _txt(parent, *path):
+    """Texto de parent/<a>/<b>/...; None si falta algún nivel."""
+    el = parent
+    for tag in path:
+        if el is None:
+            return None
+        el = el.find(tag)
+    if el is None:
+        return None
+    return (el.text or "").strip() or None
+
+
+def parse_form345_xml(xml_text: str) -> list:
+    """Parsea un XML de ownership (Form 3/4/5) → filas de insiders.
+
+    Cada fila: {name, role, form_type, date, code, code_label, shares, price,
+    acquired_disposed}. Las Form 3 (sin transacciones) emiten una fila resumen.
+    Tolerante: ante XML inesperado devuelve [].
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:
+        return []
+
+    form_type = _txt(root, "documentType") or "?"
+
+    names, roles = [], []
+    for ow in root.findall("reportingOwner"):
+        names.append(_txt(ow, "reportingOwnerId", "rptOwnerName") or "—")
+        roles.append(_insider_role(ow.find("reportingOwnerRelationship")))
+    owner_name = " / ".join([n for n in names if n and n != "—"]) or "—"
+    owner_role = " / ".join([r for r in roles if r and r != "—"]) or "—"
+
+    def _num(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+
+    rows = []
+
+    def _collect(table_tag, tx_tag):
+        table = root.find(table_tag)
+        if table is None:
+            return
+        for tx in table.findall(tx_tag):
+            code = _txt(tx, "transactionCoding", "transactionCode")
+            rows.append({
+                "name": owner_name,
+                "role": owner_role,
+                "form_type": form_type,
+                "date": _txt(tx, "transactionDate", "value"),
+                "code": code,
+                "code_label": _TX_CODE_LABELS.get((code or "").upper(), code),
+                "shares": _num(_txt(tx, "transactionAmounts", "transactionShares", "value")),
+                "price": _num(_txt(tx, "transactionAmounts", "transactionPricePerShare", "value")),
+                "acquired_disposed": _txt(tx, "transactionAmounts", "transactionAcquiredDisposedCode", "value"),
+            })
+
+    _collect("nonDerivativeTable", "nonDerivativeTransaction")
+    _collect("derivativeTable", "derivativeTransaction")
+
+    if not rows:
+        rows.append({
+            "name": owner_name,
+            "role": owner_role,
+            "form_type": form_type,
+            "date": _txt(root, "periodOfReport"),
+            "code": None,
+            "code_label": "Sin transacción (alta/holding)",
+            "shares": None,
+            "price": None,
+            "acquired_disposed": None,
+        })
+    return rows
+
+
+def _fetch_ownership_xml(index_link: str, headers: dict):
+    """Dado el link al índice de un filing de ownership, localiza y descarga su XML."""
+    import requests
+    try:
+        base = index_link.rsplit("/", 1)[0]
+        idx = requests.get(f"{base}/index.json", headers=headers, verify=False, timeout=5)
+        items = idx.json().get("directory", {}).get("item", [])
+        xml_name = None
+        for it in items:
+            low = it.get("name", "").lower()
+            if low.endswith(".xml") and "index" not in low and not low.startswith("r"):
+                xml_name = it.get("name")
+                if any(k in low for k in ("form3", "form4", "form5", "ownership", "wf-form", "wk-form", "primary_doc")):
+                    break
+        if not xml_name:
+            return None
+        return requests.get(f"{base}/{xml_name}", headers=headers, verify=False, timeout=5).text
+    except Exception as e:
+        print(f"[INSIDERS] no se pudo descargar XML de {index_link}: {e}")
+        return None
+
+
+def get_insider_activity(ticker: str, max_filings: int = 12) -> list:
+    """Transacciones de insiders (Forms 3/4/5) recientes. Cache SWR, tolerante."""
+    ticker = ticker.upper()
+
+    def _compute():
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        headers = {'User-Agent': 'MyStrategyBuilder/1.0 (contact@mystrategybuilder.fun)'}
+        # owner=only → SOLO formularios Section 16 (Forms 3/4/5) de los insiders.
+        # OJO: get_sec_filings usa owner=exclude, que precisamente EXCLUYE estos
+        # forms (allí "ownership" recoge 13G/13D, no las transacciones de directivos).
+        rss_url = (
+            f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}"
+            f"&type=&dateb=&owner=only&start=0&count={max_filings}&output=atom"
+        )
+        rows = []
+        try:
+            resp = requests.get(rss_url, headers=headers, verify=False, timeout=6)
+            feed = feedparser.parse(resp.content)
+            for entry in feed.entries[:max_filings]:
+                link = entry.get("link")
+                if not link:
+                    continue
+                xml_text = _fetch_ownership_xml(link, headers)
+                if xml_text:
+                    rows.extend(parse_form345_xml(xml_text))
+        except Exception as e:
+            print(f"[INSIDERS] feed/parse error for {ticker}: {e}")
+        # Descarta filas sin nombre real (p.ej. XML inesperado) y ordena por fecha desc.
+        rows = [r for r in rows if r.get("name") and r["name"] != "—"]
+        rows.sort(key=lambda r: r.get("date") or "", reverse=True)
+        return {"insiders": rows[:40]}
+
+    try:
+        res = _swr_cache(ticker, "insiders", _INSIDERS_CACHE_TTL, _compute)
+        return (res or {}).get("insiders", [])
+    except Exception as e:
+        print(f"Error fetching insider activity for {ticker}: {e}")
+        return []
+
+
+@router.get("/{ticker}/insiders")
+def insiders_endpoint(ticker: str):
+    """Lista de transacciones de insiders (SEC Forms 3/4/5) para el ticker."""
+    return {"ticker": ticker.upper(), "insiders": get_insider_activity(ticker)}
 
 
 _finviz_news_cache = {}

@@ -37,7 +37,6 @@ def simulate(
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
-    patch_mask: np.ndarray | None = None,
     partial_take_profits: list | None = None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
@@ -84,11 +83,11 @@ def simulate(
     prev_signal = False
 
     for i in range(n):
-        # --- TEMPORARY PATCH FOR MISPRINTS ---
-        # The user requested to ignore all entry and exit logic between 08:00 and 08:45
-        # as a temporary workaround for misprints in the data. This will be removed in the future.
-        is_restricted = patch_mask[i] if patch_mask is not None else False
-        skip_exits = is_restricted and i != n - 1
+        # Misprint patch removed: intraday source data is now NBBO-clipped at the
+        # lake, so the motor processes every bar normally (no 08:00-08:45 skip).
+        # Kept as constants so the (now inert) restriction branches below fold away.
+        is_restricted = False
+        skip_exits = False
 
         # ... existing logic ...
         # --- check exits before entries ---

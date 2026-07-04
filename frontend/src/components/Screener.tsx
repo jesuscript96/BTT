@@ -26,7 +26,7 @@ import { track, EVENTS } from "@/lib/analytics";
 
 // ─── Types ──────────────────────────────────────────────────
 type TabKey = "premarket" | "gainers" | "losers" | "aftermarket";
-type SortField = "ticker" | "price" | "change_pct" | "return_pct" | "gap_pct" | "volume" | "prev_volume" | "prev_close" | "open" | "high" | "low" | "pmh_gap_pct" | "amh_gap_pct" | "rvol";
+type SortField = "ticker" | "price" | "change_pct" | "return_pct" | "gap_pct" | "volume" | "prev_volume" | "prev_close" | "open" | "high" | "low" | "pmh_gap_pct" | "amh_gap_pct" | "rvol" | "day_change_pct" | "day_volume" | "after_pct" | "after_volume" | "after_high" | "pre_pct" | "pre_volume" | "pre_high";
 type SortDir = "asc" | "desc";
 
 // Server-side tab identifiers expected by the live WebSocket (see screener.py).
@@ -102,19 +102,22 @@ const fmtShares = (v: number | null | undefined) => {
   return v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 };
 
-const fmtPct = (v: number) => {
+const fmtPct = (v: number | null | undefined) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
   const s = v.toFixed(2);
   return v > 0 ? `+${s}%` : `${s}%`;
 };
 
-const fmtVol = (v: number) => {
+const fmtVol = (v: number | null | undefined) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
   return v.toFixed(0);
 };
 
-const fmtPrice = (v: number) => {
+const fmtPrice = (v: number | null | undefined) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (v >= 1000) return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return v.toFixed(2);
 };
@@ -418,19 +421,30 @@ const COL = {
   return_pct: { key: "return_pct", label: "Return %", align: "right", width: "11%" } as ColumnDef,
   gap_pct: { key: "gap_pct", label: "Gap %", align: "right", width: "11%" } as ColumnDef,
   volume: { key: "volume", label: "Volume", align: "right", width: "12%" } as ColumnDef,
+  day_volume: { key: "day_volume", label: "Volume", align: "right", width: "12%" } as ColumnDef,
   prev_close: { key: "prev_close", label: "Prev Close", align: "right", width: "11%" } as ColumnDef,
   high: { key: "high", label: "High", align: "right", width: "11%" } as ColumnDef,
   low: { key: "low", label: "Low", align: "right", width: "11%" } as ColumnDef,
   rvol: { key: "rvol", label: "RVol", align: "right", width: "11%" } as ColumnDef,
   pmh_gap_pct: { key: "pmh_gap_pct", label: "PMH Gap %", align: "right", width: "11%" } as ColumnDef,
   amh_gap_pct: { key: "amh_gap_pct", label: "AMH Gap %", align: "right", width: "11%" } as ColumnDef,
+  // Day-vs-session metrics (screener-dia-sesion PRD):
+  after_pct: { key: "after_pct", label: "Aftermarket %", align: "right", width: "12%" } as ColumnDef,
+  after_volume: { key: "after_volume", label: "After Vol", align: "right", width: "11%" } as ColumnDef,
+  after_high: { key: "after_high", label: "After High", align: "right", width: "10%" } as ColumnDef,
+  pre_pct: { key: "pre_pct", label: "Premarket %", align: "right", width: "12%" } as ColumnDef,
+  pre_volume: { key: "pre_volume", label: "Pre Vol", align: "right", width: "11%" } as ColumnDef,
+  pre_high: { key: "pre_high", label: "Pre High", align: "right", width: "10%" } as ColumnDef,
 };
 
 const COLUMNS_BY_TAB: Record<TabKey, ColumnDef[]> = {
-  premarket: [COL.ticker, COL.price, COL.change_pct, COL.prev_close, COL.volume, COL.high, COL.low, COL.pmh_gap_pct],
+  // Premarket tab: ranks by the pre-market peak gap; day change kept for context.
+  premarket: [COL.ticker, COL.price, COL.pre_pct, COL.change_pct, COL.prev_close, COL.day_volume, COL.pre_volume, COL.pre_high],
   gainers: [COL.ticker, COL.price, COL.prev_close, COL.gap_pct, COL.change_pct, COL.return_pct, COL.volume, COL.rvol],
   losers: [COL.ticker, COL.price, COL.prev_close, COL.gap_pct, COL.change_pct, COL.return_pct, COL.volume, COL.rvol],
-  aftermarket: [COL.ticker, COL.price, COL.change_pct, COL.prev_close, COL.volume, COL.high, COL.low, COL.amh_gap_pct],
+  // Aftermarket tab: ranks by the real after-hours move (from the RTH close);
+  // day volume is the gate, After Vol/High arrive only via the live WS.
+  aftermarket: [COL.ticker, COL.price, COL.change_pct, COL.after_pct, COL.prev_close, COL.day_volume, COL.after_volume, COL.after_high],
 };
 
 // ─── Cell rendering (column-driven, P&L semantic colors) ────────────────────
@@ -459,11 +473,11 @@ function renderScreenerCell(col: ColumnDef, rec: ScreenerRecord): React.ReactNod
       </td>
     );
   }
-  if (k === "price" || k === "prev_close" || k === "high" || k === "low" || k === "open") {
+  if (k === "price" || k === "prev_close" || k === "high" || k === "low" || k === "open" || k === "after_high" || k === "pre_high") {
     const v = rec[k] as number | undefined;
     return <td key={k} style={{ ...CELL_BASE, color: "var(--color-ec-text-high)" }}>{v != null ? `$${fmtPrice(v)}` : "—"}</td>;
   }
-  if (k === "volume" || k === "prev_volume") {
+  if (k === "volume" || k === "prev_volume" || k === "day_volume" || k === "after_volume" || k === "pre_volume") {
     const v = rec[k] as number | undefined;
     return <td key={k} style={{ ...CELL_BASE, color: "var(--color-ec-text-secondary)" }}>{v != null ? fmtVol(v) : "—"}</td>;
   }
@@ -663,8 +677,11 @@ export default function Screener() {
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab);
     setSelectedTicker(null);
-    // Default sort per tab: most explosive first (losers ascending = biggest drop first).
+    // Default sort per tab: the metric that defines each tab, most explosive first
+    // (losers ascending = biggest drop first).
     if (tab === "losers") { setSortField("change_pct"); setSortDir("asc"); }
+    else if (tab === "aftermarket") { setSortField("after_pct"); setSortDir("desc"); }
+    else if (tab === "premarket") { setSortField("pre_pct"); setSortDir("desc"); }
     else { setSortField("change_pct"); setSortDir("desc"); }
   };
 
@@ -704,6 +721,9 @@ export default function Screener() {
             {connected ? <Wifi size={11} /> : <WifiOff size={11} />}
             {connected ? "LIVE" : "Desconectado"}
           </Pill>
+          {session === "closed" && (
+            <Pill tone="neutral">Cierre · congelado</Pill>
+          )}
           <span style={{
             fontSize: 10,
             fontWeight: 500,
@@ -1430,16 +1450,17 @@ export default function Screener() {
                 const rec = records.find((r) => r.ticker === selectedTicker) || null;
                 if (!rec) return null;
                 return (
-                  <DetailSection title="Today's Session">
+                  <DetailSection title="Live Session">
                     <DetailGrid>
-                      <DetailItem label="Open" value={`$${fmtPrice(rec.open)}`} />
+                      <DetailItem label="Last" value={`$${fmtPrice(rec.price)}`} />
+                      <DetailItem label="Change %" value={fmtPct(rec.change_pct)} color={(rec.change_pct ?? 0) >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="Prev Close" value={`$${fmtPrice(rec.prev_close)}`} />
                       <DetailItem label="High" value={`$${fmtPrice(rec.high)}`} />
                       <DetailItem label="Low" value={`$${fmtPrice(rec.low)}`} />
-                      <DetailItem label="Close" value={`$${fmtPrice(rec.price)}`} />
-                      <DetailItem label="Prev Close" value={`$${fmtPrice(rec.prev_close)}`} />
                       <DetailItem label="Volume" value={fmtVol(rec.volume)} />
-                      <DetailItem label="Gap %" value={fmtPct(rec.gap_pct)} color={rec.gap_pct >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
-                      <DetailItem label="Return %" value={fmtPct(rec.return_pct)} color={rec.return_pct >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="Gap %" value={fmtPct(rec.gap_pct)} color={(rec.gap_pct ?? 0) >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="Return %" value={fmtPct(rec.return_pct)} color={(rec.return_pct ?? 0) >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)"} />
+                      <DetailItem label="RVol" value={rec.rvol != null ? `${rec.rvol.toFixed(2)}×` : "—"} />
                     </DetailGrid>
                   </DetailSection>
                 );

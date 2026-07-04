@@ -380,6 +380,28 @@ export function getTickerFinvizNews(
   );
 }
 
+// Transacciones de insiders (SEC Forms 3/4/5). Alimenta el informe de dilución
+// de Edgie para que nombre a los directivos sin inventar.
+export interface InsiderTransaction {
+  name: string;
+  role: string;
+  form_type: string;
+  date: string | null;
+  code: string | null;
+  code_label: string | null;
+  shares: number | null;
+  price: number | null;
+  acquired_disposed: string | null;
+}
+
+export function getTickerInsiders(
+  ticker: string,
+): Promise<{ ticker: string; insiders: InsiderTransaction[] }> {
+  return apiRequest<{ ticker: string; insiders: InsiderTransaction[] }>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/insiders`,
+  );
+}
+
 
 // ─── Social (Stocktwits) ────────────────────────────────────
 // Todas estas llamadas pegan al backend (/api/market/social/*), que cachea con
@@ -476,6 +498,82 @@ export function getAggregateIntraday(
   return apiRequest<unknown>(`/market/aggregate/intraday?${qs}`, { signal });
 }
 
+// ── Market Analysis (docs/market-analysis/PRD.md §4.1) ──────────────────────
+export interface MaKpiValue {
+  value: number | null;
+  prev?: number | null;
+  ticker?: string | null;
+  date?: string | null;
+}
+
+export interface MaRecentGap {
+  ticker: string;
+  date: string;
+  gap_at_open_pct: number;
+  open: number;
+  vol_rth: number;
+  vol_pm: number;
+  hod: number;
+  pmh: number;
+  close_red: boolean;
+}
+
+export interface MaHistogram {
+  buckets: Record<string, number>;
+  p25: number;
+  p50: number;
+  p75: number;
+  mean: number;
+}
+
+export interface MarketAnalysisResponse {
+  records: MaRecentGap[];
+  kpis: {
+    gappers_count: MaKpiValue;
+    avg_gap_pct: MaKpiValue;
+    pm_high_average: MaKpiValue;
+    close_red_pct: MaKpiValue;
+    close_lt_vwap_pct: MaKpiValue; // value null en MVP (Fase 2)
+    avg_fade_from_pmh: MaKpiValue;
+    max_fade_from_pmh: MaKpiValue;
+  };
+  distributions: {
+    hod_time: Record<string, number>;
+    lod_time: Record<string, number>;
+    pmh_time: Record<string, number>;
+  };
+  mae_mfe: {
+    rth: { mae: MaHistogram; mfe: MaHistogram };
+    pm: { mae: MaHistogram; mfe: MaHistogram };
+  };
+  source: string;
+  period: { start: string; end: string };
+}
+
+export function getMarketAnalysis(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MarketAnalysisResponse> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MarketAnalysisResponse>(`/market/screener?${qs}`, { signal });
+}
+
+// MA-04 Avg Change from Open — 12 meses naturales (PRD §4.2)
+export interface MaMonthCurve {
+  month: string;
+  label: string;
+  avg_gap_pct: number;
+  points: { time: string; avg_change: number }[];
+}
+
+export function getAvgChangeFromOpen(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MaMonthCurve[]> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MaMonthCurve[]>(`/market/aggregate/intraday?${qs}`, { signal });
+}
+
 export function getMarketNews(): Promise<unknown> {
   return apiRequest<unknown>("/market/news");
 }
@@ -532,6 +630,16 @@ export interface ScreenerRecord {
   pmh_gap_pct?: number;
   amh_gap_pct?: number;
   rvol?: number;
+  // Day-vs-session model (screener-dia-sesion PRD). Optional: tabs that don't
+  // carry them still satisfy the type.
+  day_change_pct?: number;
+  day_volume?: number;
+  after_pct?: number;       // move since the RTH close (Aftermarket tab)
+  after_volume?: number;
+  after_high?: number;
+  pre_pct?: number;         // pre-market peak gap (Premarket tab)
+  pre_volume?: number;
+  pre_high?: number;
 }
 
 export interface ScreenerDailyResponse {

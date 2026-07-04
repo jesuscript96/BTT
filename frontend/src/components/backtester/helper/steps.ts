@@ -1,19 +1,37 @@
-// Guion (storyboard) del tour guiado del backtester — 9 pasos agrupados,
-// narrados en primera persona por Edgie (el asistente de Edgecute).
-// Ver docs/helper-backtester/PRD_HELPER_BACKTESTER.md §4. La `description` admite
+// Guion (storyboard) del tour guiado del backtester — 9 pasos narrados en
+// primera persona por Edgie (el asistente de Edgecute). El tour recorre el
+// WIZARD con un ejemplo ya pre-rellenado (no hace falta que el usuario
+// construya nada) y termina en el panel de config, dejando el backtest de
+// ejemplo REFLEJADO y listo para que el usuario lo guarde y lo corra.
+// Ver docs/helper-backtester/PLAN_HELPER_WIZARD_v2.md. La `description` admite
 // HTML simple (driver.js la inyecta como innerHTML).
 
 import type { Side, Alignment } from "driver.js";
 
-export type HelperMode = "config" | "dataset" | "builder";
+export type HelperMode =
+  | "config"
+  | "dataset"
+  | "builder"
+  | "builder_choice"
+  | "wizard";
 export type HelperFill = "dataset" | "strategy" | "config";
+/** Claves de los sub-pasos internos del Wizard (deben coincidir con STEPS en
+ *  WizardStrategyBuilder.tsx). */
+export type WizardStepKey =
+  | "universo"
+  | "bias"
+  | "apply_day"
+  | "market_sessions"
+  | "entry"
+  | "exit"
+  | "risk"
+  | "summary";
 
 export interface HelperStep {
   id: string;
   /** Estado que la página debe tener ANTES de resaltar este paso. */
-  enter: { mode: HelperMode; fill?: HelperFill };
-  /** Elemento a resaltar: selector CSS o función que lo devuelve (para anclas
-   *  cuyo wrapper es `display:contents` y hay que apuntar al hijo real). */
+  enter: { mode: HelperMode; fill?: HelperFill; wizardStep?: WizardStepKey };
+  /** Elemento a resaltar: selector CSS (o función que lo devuelve). */
   element?: string | (() => Element);
   popover: {
     title: string;
@@ -22,13 +40,6 @@ export interface HelperStep {
     align?: Alignment;
   };
 }
-
-/** Devuelve el primer hijo real de un wrapper `display:contents` (que no tiene
- *  caja propia y por tanto no se puede resaltar directamente). */
-const childOf = (selector: string) => (): Element => {
-  const wrapper = document.querySelector(selector);
-  return (wrapper?.firstElementChild ?? wrapper ?? document.body) as Element;
-};
 
 export const HELPER_STEPS: HelperStep[] = [
   // 1 — Intro (popover centrado)
@@ -40,132 +51,138 @@ export const HELPER_STEPS: HelperStep[] = [
       description:
         "Te voy a montar tu primer backtest conmigo, paso a paso. " +
         "<strong>Lo que vale, cuesta</strong>: un buen backtest tiene su miga, así que te dejo " +
-        "un ejemplo ya armado —un <em>fade de gap parabólico</em>— y te lo voy contando. " +
-        "Dale a <strong>Entendido</strong> cuando lo pilles (o <em>Saltar</em> si ya vas sobrado).",
+        "un ejemplo ya armado —<em>qué pasa si el precio cae por debajo del VWAP en horario de " +
+        "mercado</em>— y te lo voy contando. Dale a <strong>Entendido</strong> cuando lo pilles " +
+        "(o <em>Saltar</em> si ya vas sobrado).",
     },
   },
 
-  // 2 — El mapa: las 3 piezas
+  // 2 — Panel principal
   {
-    id: "map",
+    id: "panel",
     enter: { mode: "config" },
     element: '[data-helper="panel-root"]',
     popover: {
-      title: "Lo monto en 3 piezas",
+      title: "Tu panel de mando",
       description:
-        "Yo siempre pienso un backtest en tres bloques: el <strong>Universo</strong> (qué días miro), " +
-        "la <strong>Estrategia</strong> (cuándo entro y salgo) y los <strong>Ajustes</strong> " +
-        "(capital, riesgo y comisiones). Te los enseño uno a uno desde este panel.",
+        "Desde aquí cargas estrategias que ya tengas guardadas, las configuras o creas una " +
+        "nueva. Antes de simular, acuérdate de fijar <strong>capital, comisiones y riesgo</strong>. " +
+        "Vamos a crear una <strong>nueva estrategia</strong>.",
       side: "right",
       align: "start",
     },
   },
 
-  // 3 — Universo (Dataset)
+  // 3 — Selector de modo (Wizard vs libre)
   {
-    id: "universe",
-    enter: { mode: "dataset", fill: "dataset" },
-    element: '[data-helper="ds-gapday"]',
+    id: "mode",
+    enter: { mode: "builder_choice" },
+    element: '[data-helper="mode-selector"]',
+    popover: {
+      title: "¿Wizard o modo libre?",
+      description:
+        "Puedes montarla pieza a pieza con el <strong>Wizard</strong>, con componentes básicos, " +
+        "o a pelo en <strong>modo libre</strong> con todas las opciones avanzadas. Como esta es " +
+        "simple, vamos por la línea fácil: el <strong>Wizard</strong>. Tranquilo, " +
+        "<em>no vas a necesitar programar</em>.",
+      side: "right",
+      align: "start",
+    },
+  },
+
+  // 4 — Wizard · Universo (carga el ejemplo y entra al wizard)
+  {
+    id: "universo",
+    enter: { mode: "wizard", fill: "strategy", wizardStep: "universo" },
+    element: '[data-helper="wiz-universo"]',
     popover: {
       title: "1 · El Universo",
       description:
-        "Aquí te filtro los días que me interesan. Para este ejemplo solo quiero gaps bestiales: " +
-        "<strong>PM High Gap ≥ 70%</strong>. Cuantos más filtros le metas, más fino te queda el " +
-        "universo (y más pequeño).",
+        "Toda estrategia son tres bloques: <strong>universo · parámetros · riesgo</strong>. " +
+        "Empezamos por el universo: qué días miro. Para el ejemplo pido solo gaps bestiales " +
+        "(<strong>PM High Gap ≥ 70 %</strong>). Cuantos más filtros, más fino (y más pequeño) " +
+        "el universo.",
       side: "right",
       align: "start",
     },
   },
 
-  // 4 — Estrategia: dirección y día
+  // 5 — Wizard · Parámetros (dirección + día + sesión, ya marcados)
   {
-    id: "strategy-bias",
-    enter: { mode: "builder", fill: "strategy" },
-    element: '[data-helper="st-bias"]',
+    id: "params",
+    enter: { mode: "wizard", wizardStep: "bias" },
+    element: '[data-helper="wiz-bias"]',
     popover: {
-      title: "2 · La Estrategia",
+      title: "2 · Parámetros del sistema",
       description:
-        "Te pongo la dirección: voy <strong>CORTO</strong> el <strong>día del gap</strong>. " +
-        "La idea es hacer un <em>fade</em>: apostar a que ese pico parabólico se desinfla.",
+        "Ahora la dirección y el cuándo. Voy <strong>CORTO</strong>, opero <strong>solo el día " +
+        "del gap</strong> y en <strong>horario de mercado (RTH)</strong> —porque vamos a probar " +
+        "qué pasa cuando el precio atraviesa el VWAP—. Te lo dejo ya marcado.",
       side: "right",
       align: "start",
     },
   },
 
-  // 5 — Estrategia: entrada
+  // 6 — Wizard · Entrada (condición + ventana horaria, en chip)
   {
-    id: "strategy-entry",
-    enter: { mode: "builder" },
-    element: childOf('[data-helper="st-entry"]'),
+    id: "entry",
+    enter: { mode: "wizard", wizardStep: "entry" },
+    element: '[data-helper="wiz-entry"]',
     popover: {
-      title: "2 · Mi entrada",
+      title: "2 · La entrada (la chicha)",
       description:
-        "Entro cuando veo una <strong>vela de 1 minuto roja por encima del VWAP</strong> " +
-        "(cierre &lt; apertura y el precio aún sobre el VWAP). Para mí es la señal de que la " +
-        "subida se está quedando sin gasolina.",
+        "Quiero entrar cuando el cierre de la vela (<strong>Close</strong>) <strong>cruza por " +
+        "debajo del VWAP</strong>. El Wizard también permite medir <em>distancia</em> a otra " +
+        "variable para sistemas más finos, pero aquí basta con comparar. Y solo acepto entradas " +
+        "en la ventana de <strong>09:30 a 11:00</strong>, cuando hay más volatilidad.",
       side: "right",
       align: "start",
     },
   },
 
-  // 6 — Estrategia: sesión / salida a las 11:00
+  // 7 — Wizard · Riesgo (salida simple + stop + reentradas)
   {
-    id: "strategy-sessions",
-    enter: { mode: "builder" },
-    element: '[data-helper="st-sessions"]',
+    id: "risk",
+    enter: { mode: "wizard", wizardStep: "risk" },
+    element: '[data-helper="wiz-risk"]',
     popover: {
-      title: "2 · Cuándo cierro",
+      title: "3 · El riesgo, simple",
       description:
-        "Este es tu “take profit por tiempo”: te lo dejo con <strong>Horas personalizadas " +
-        "09:30 → 11:00 ET</strong>. Solo opero en esa ventana, así que <strong>cierro a las " +
-        "11:00 de Nueva York</strong> sí o sí.",
+        "La salida la dejo <strong>sin condición por indicador</strong>: salgo por stop o por la " +
+        "hora. Pongo un <strong>stop del 20 %</strong> y permito un <strong>máximo de 2 " +
+        "reentradas</strong> si la cosa va en contra. Mi premisa: cuanto más simple, <em>mejor</em>.",
       side: "right",
       align: "start",
     },
   },
 
-  // 7 — Estrategia: riesgo
+  // 8 — Wizard · Resumen (la estrategia montada)
   {
-    id: "strategy-risk",
-    enter: { mode: "builder" },
-    element: childOf('[data-helper="st-risk"]'),
+    id: "summary",
+    enter: { mode: "wizard", wizardStep: "summary" },
+    element: '[data-helper="wiz-summary"]',
     popover: {
-      title: "2 · Mi riesgo",
+      title: "¡Y aquí lo tienes!",
       description:
-        "Te pongo el stop al <strong>50% del precio de entrada</strong> (estos squeezes pegan fuerte) " +
-        "y <strong>sin reentradas</strong>. No uso take-profit por precio: salgo por stop o por la hora.",
+        "El resumen de toda tu estrategia, montada de una pieza. Repásala… y vamos a cerrar el " +
+        "círculo con los ajustes del backtest.",
       side: "right",
       align: "start",
     },
   },
 
-  // 8 — Ajustes (capital + riesgo)
+  // 9 — Cierre en config: capital + IS/OOS, ejemplo reflejado y listo para correr
   {
-    id: "config-capital",
+    id: "close",
     enter: { mode: "config", fill: "config" },
     element: '[data-helper="cfg-capital"]',
     popover: {
-      title: "3 · Los Ajustes",
+      title: "El último ajuste: IS / OOS",
       description:
-        "Cierro con la pasta: <strong>10.000$</strong> de capital y riesgo <strong>fijo de 100$</strong> " +
-        "por operación (tu 1R). Justo debajo tienes comisiones, slippage y el reparto IS/OOS para " +
-        "cazar el sobreajuste.",
-      side: "right",
-      align: "start",
-    },
-  },
-
-  // 9 — Ejecutar
-  {
-    id: "run",
-    enter: { mode: "config" },
-    element: '[data-helper="cfg-run"]',
-    popover: {
-      title: "¡Listo para correr!",
-      description:
-        "Y ya está. Cuando tengas tu <strong>dataset y tu estrategia guardados y seleccionados</strong> " +
-        "arriba, este botón se enciende y lo pulsas tú. ¿Quieres repetirlo? Me tienes en " +
-        "<em>¿Cómo funciona?</em> siempre que quieras. — Edgie",
+        "Aquí pones <strong>capital, comisiones</strong> y el <strong>reparto IS/OOS</strong> " +
+        "—te recomiendo un <strong>OOS del 20 %</strong> para cazar el sobreajuste—. Te dejo el " +
+        "ejemplo entero reflejado: cuando guardes y selecciones tu estrategia arriba, el botón de " +
+        "correr se enciende y lo pulsas tú. ¿Repetir el tour? Me tienes en <em>¿Cómo funciona?</em>. — Edgie",
       side: "right",
       align: "start",
     },

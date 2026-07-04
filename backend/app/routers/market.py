@@ -21,175 +21,25 @@ router = APIRouter(
 
 from app.services.query_service import build_screener_query, get_stats_sql_logic, map_stats_row
 from app.services.cache_service import get_hot_daily_df
+from app.services.market_analysis_service import get_market_analysis, get_avg_change_from_open
 import pandas as pd
 
-# === HIDDEN FOR MVP — Market Analysis /screener endpoint disabled ===
-'''
 @router.get("/screener")
-def screen_market(
-    request: Request,
-    min_gap: float = 0.0, max_gap: Optional[float] = None,
-    min_gap_at_open_pct: float = 0.0,
-    min_run: float = 0.0, min_volume: float = 0.0,
-    trade_date: Optional[date] = None, start_date: Optional[date] = None,
-    end_date: Optional[date] = None, ticker: Optional[str] = None,
-    limit: int = 5000
-):
-    con = None
+def market_analysis(request: Request):
+    """
+    Market Analysis — payload analítico del MVP sobre los gappers del periodo filtrado:
+    KPIs (MA-01), distribuciones temporales (MA-02), MAE/MFE (MA-05) y Recent Gaps (MA-06).
+
+    Contrato: docs/market-analysis/PRD.md §4.1. Toda la lógica vive en
+    services/market_analysis_service.get_market_analysis (router fino, CODING_RULES §6.1).
+    Los filtros llegan como query params (gap/vol/precio/fecha/period/fade_threshold/ticker…).
+    """
     try:
-        # ── Hot Cache Fast Path ──
-        hot_df = get_hot_daily_df()
-        effective_gap = max(min_gap, min_gap_at_open_pct)
-        if hot_df is not None and effective_gap >= 5.0:
-            result = hot_df.copy()
-            if effective_gap:
-                result = result[result['gap_pct'] >= effective_gap]
-            if max_gap is not None:
-                result = result[result['gap_pct'] <= max_gap]
-            if start_date:
-                result = result[result['timestamp'] >= pd.Timestamp(str(start_date))]
-            if end_date:
-                result = result[result['timestamp'] <= pd.Timestamp(str(end_date))]
-            if min_volume:
-                result = result[result['volume'] >= min_volume]
-            if ticker:
-                result = result[result['ticker'] == ticker.upper()]
-
-            # Compute stats from full filtered result (before head)
-            import numpy as np
-            
-            # Recalculate or add missing columns for statistics
-            if 'close' in result.columns and 'pm_high' in result.columns:
-                result['pm_high_break'] = ((result['close'] > result['pm_high']) & (result['pm_high'] > 0)).astype(np.float32) * 100
-            else:
-                result['pm_high_break'] = 0.0
-
-            if 'high_spike_pct' in result.columns:
-                result['rth_high_run_pct'] = result['high_spike_pct']
-            elif 'rth_high' in result.columns and 'open' in result.columns:
-                result['rth_high_run_pct'] = ((result['rth_high'] - result['open']) / result['open'] * 100).astype(np.float32)
-            else:
-                result['rth_high_run_pct'] = 0.0
-
-            if 'close_red' not in result.columns and 'close' in result.columns and 'open' in result.columns:
-                result['close_red'] = ((result['close'] < result['open']).astype(np.float32) * 100)
-
-            col_map = {
-                'gap_pct': 'gap_at_open_pct',
-                'rth_run_pct': 'rth_run_pct',
-                'day_return_pct': 'day_return_pct',
-                'pm_volume': 'avg_pm_volume',
-                'volume': 'avg_volume',
-                'pmh_gap_pct': 'pm_high_gap_pct',
-                'pmh_fade_pct': 'pmh_fade_to_open_pct',
-                'rth_fade_pct': 'rth_fade_to_close_pct',
-                'close_red': 'close_red',
-                'high_spike_pct': 'high_spike_pct',
-                'low_spike_pct': 'low_spike_pct',
-                'rth_range_pct': 'rth_range_pct',
-                'rth_high_run_pct': 'rth_high_run_pct',
-                'pm_high_break': 'pm_high_break',
-            }
-            stats_payload = {
-                "count": len(result),
-                "avg": {}, "p25": {}, "p50": {}, "p75": {},
-                "distributions": {"hod_time": {}, "lod_time": {}}
-            }
-            for raw_col, frontend_key in col_map.items():
-                if raw_col not in result.columns:
-                    continue
-                series = result[raw_col].dropna().astype(float)
-                if len(series) > 0:
-                    stats_payload["avg"][frontend_key] = float(series.mean())
-                    stats_payload["p25"][frontend_key] = float(series.quantile(0.25))
-                    stats_payload["p50"][frontend_key] = float(series.quantile(0.50))
-                    stats_payload["p75"][frontend_key] = float(series.quantile(0.75))
-
-            result = result.sort_values(['timestamp', 'gap_pct'], ascending=[False, False]).head(limit)
-
-            recs = []
-            for _, rd in result.iterrows():
-                recs.append({
-                    "ticker": rd['ticker'],
-                    "date": str(rd['timestamp']),
-                    "open": safe_float(rd['open']), "high": safe_float(rd['high']), "low": safe_float(rd['low']), "close": safe_float(rd['close']),
-                    "volume": safe_float(rd['volume']),
-                    "gap_at_open_pct": safe_float(rd['gap_pct']),
-                    "rth_run_pct": safe_float(rd.get('rth_run_pct', 0)),
-                    "day_return_pct": safe_float(rd.get('day_return_pct', 0)),
-                    "pmh_gap_pct": safe_float(rd.get('pmh_gap_pct', 0)),
-                    "pmh_fade_pct": safe_float(rd.get('pmh_fade_pct', 0)),
-                    "rth_fade_pct": safe_float(rd.get('rth_fade_pct', 0)),
-                })
-            return {
-                "records": recs,
-                "stats": stats_payload,
-                "source": "hot_cache"
-            }
-
-        # ── Normal GCS Path ──
-        con = get_db_connection(read_only=True)
-        # Prepare filters dictionary for service
         filters = dict(request.query_params)
-        filters.update({
-            'min_gap': min_gap, 'max_gap': max_gap,
-            'min_run': min_run, 'min_volume': min_volume,
-            'trade_date': trade_date, 'start_date': start_date,
-            'end_date': end_date, 'ticker': ticker
-        })
-
-        # Use shared query service
-        rec_query, sql_p, where_d, where_i, where_m, where_base = build_screener_query(filters, limit)
-
-        # Execute
-        cur = con.execute(rec_query, sql_p)
-        cols, rows = [d[0] for d in cur.description], cur.fetchall()
-        
-        recs = []
-        for r in rows:
-            rd = dict(zip(cols, r))
-            
-            # Helper to get valid float/date safely
-            def get_f(k): return safe_float(rd.get(k, 0))
-            
-            # MAPPING: Use actual schema names from daily_metrics
-            recs.append({
-                "ticker": rd.get('ticker', 'UNKNOWN'),
-                "date": str(rd.get('date', rd.get('timestamp', ''))),
-                "open": get_f('open'), "high": get_f('high'), "low": get_f('low'), "close": get_f('close'), 
-                "volume": get_f('volume'),
-                
-                # New Schema Names mapping to Frontend keys
-                "gap_at_open_pct": get_f('gap_pct'),
-                "rth_run_pct": get_f('rth_run_pct'),
-                "day_return_pct": get_f('day_return_pct'), 
-                "pmh_gap_pct": get_f('pmh_gap_pct'),
-                "pmh_fade_pct": get_f('pmh_fade_pct'), 
-                "rth_fade_pct": get_f('rth_fade_pct')
-            })
-        
-        st_query = get_stats_sql_logic(where_d, where_i, where_m, where_base)
-        st_rows = con.execute(st_query, sql_p).fetchall()
-        
-        stats_payload = {"count": len(recs), "avg": {}, "p25": {}, "p50": {}, "p75": {}, "distributions": {"hod_time": {}, "lod_time": {}}}
-        if st_rows:
-            for s_row in st_rows:
-                s_key = s_row[0]
-                if s_key == 'avg':
-                    stats_payload['avg'] = map_stats_row(s_row)
-                    # distribution mocks
-                    stats_payload['distributions'] = {"hod_time": {}, "lod_time": {}}
-                elif s_key in ['p25', 'p50', 'p75']:
-                    stats_payload[s_key] = map_stats_row(s_row)
-
-        return {"records": recs, "stats": stats_payload}
+        return get_market_analysis(filters)
     except Exception as e:
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if con: con.close()
-'''
-# === END HIDDEN /screener ===
 
 @router.get("/ticker/{ticker}/intraday")
 def get_intraday_data(ticker: str, trade_date: Optional[date] = None):
@@ -274,164 +124,16 @@ def get_available_date_range():
     finally:
         if con: con.close()
 
-# === HIDDEN FOR MVP — Market Analysis /aggregate/intraday endpoint disabled ===
-'''
 @router.get("/aggregate/intraday")
-def get_aggregate_intraday(
-    request: Request,
-    min_gap: float = 0.0, max_gap: Optional[float] = None,
-    min_gap_at_open_pct: float = 0.0,
-    min_run: float = 0.0, min_volume: float = 0.0,
-    trade_date: Optional[date] = None, start_date: Optional[date] = None,
-    end_date: Optional[date] = None, ticker: Optional[str] = None,
-    interval: int = 1
-):
-    con = None
+def avg_change_from_open(request: Request):
+    """
+    Market Analysis MA-04 — Avg Change from Open de los últimos 12 meses naturales.
+    Contrato: docs/market-analysis/PRD.md §4.2. Lógica en
+    services/market_analysis_service.get_avg_change_from_open (router fino).
+    """
     try:
-        interval_filter = "AND minute(i.timestamp) % 15 = 0" if interval == 15 else ""
         filters = dict(request.query_params)
-        filters.update({
-            'min_gap': min_gap, 'max_gap': max_gap,
-            'min_run': min_run, 'min_volume': min_volume,
-            'trade_date': trade_date, 'start_date': start_date,
-            'end_date': end_date, 'ticker': ticker
-        })
-
-        # ── Hot Cache Fast Path ──
-        from app.services.cache_service import get_hot_daily_df
-        hot_df = get_hot_daily_df()
-        effective_gap = max(min_gap, min_gap_at_open_pct)
-
-        if hot_df is not None and effective_gap >= 5.0:
-            result_df = hot_df.copy()
-            if effective_gap:
-                result_df = result_df[result_df['gap_pct'] >= effective_gap]
-            if max_gap:
-                result_df = result_df[result_df['gap_pct'] <= max_gap]
-            if start_date:
-                result_df = result_df[result_df['timestamp'] >= pd.Timestamp(str(start_date))]
-            if end_date:
-                result_df = result_df[result_df['timestamp'] <= pd.Timestamp(str(end_date))]
-
-            result_df = result_df.sort_values(['timestamp', 'gap_pct'], ascending=[False, False])
-
-            if result_df.empty:
-                return []
-
-            target_date = pd.Timestamp(result_df.iloc[0]['timestamp']).date()
-            top_pairs = result_df.head(50)[['ticker', 'timestamp']]
-            if top_pairs.empty:
-                return []
-
-            val_list = []
-            for _, r in top_pairs.iterrows():
-                ticker_val = str(r['ticker']).replace("'", "''")
-                date_val = str(r['timestamp'].date())
-                val_list.append(f"('{ticker_val}', '{date_val}'::DATE)")
-            
-            values_clause = ", ".join(val_list)
-
-            con = get_db_connection(read_only=True)
-            agg_query = f"""
-                WITH screen_res AS (
-                    SELECT * FROM (
-                        VALUES {values_clause}
-                    ) AS t(ticker, date)
-                ),
-                daily_opens AS (
-                    SELECT i.ticker, i.date, i.close as day_open
-                    FROM (
-                        SELECT i.ticker, i.date, i.close,
-                               ROW_NUMBER() OVER (PARTITION BY i.ticker, i.date ORDER BY i.timestamp ASC) as rn
-                        FROM intraday_1m i
-                        JOIN screen_res s ON i.ticker = s.ticker AND i.date = s.date
-                        WHERE i.timestamp >= CAST(i.date || ' 09:30:00' AS TIMESTAMP)
-                    ) i
-                    WHERE rn = 1
-                ),
-                joined_intraday AS (
-                    SELECT i.timestamp, i.ticker, i.date, i.close, d.day_open,
-                           ((i.close - d.day_open) / NULLIF(d.day_open, 0) * 100) as pct_change
-                    FROM intraday_1m i
-                    JOIN screen_res s ON i.ticker = s.ticker AND i.date = s.date
-                    JOIN daily_opens d ON i.ticker = d.ticker AND i.date = d.date
-                    WHERE d.day_open > 0
-                    {interval_filter}
-                )
-                SELECT 
-                    strftime(timestamp, '%H:%M') as minute,
-                    AVG(pct_change) as avg_change,
-                    QUANTILE_CONT(pct_change, 0.5) as median_change
-                FROM joined_intraday
-                GROUP BY 1
-                ORDER BY 1
-            """
-            agg_cur = con.execute(agg_query)
-            agg_rows = agg_cur.fetchall()
-
-            result = []
-            for r in agg_rows:
-                result.append({
-                    "time": r[0],
-                    "avg_change": safe_float(r[1]),
-                    "median_change": safe_float(r[2])
-                })
-            return result
-
-        # ── Normal GCS Path ──
-        from app.services.query_service import build_aggregate_query
-        con = get_db_connection(read_only=True)
-
-        screener_query, sql_p = build_aggregate_query(filters)
-
-        agg_query = f"""
-            WITH screen_res AS (
-                {screener_query}
-            ),
-            daily_opens AS (
-                SELECT i.ticker, i.date, i.close as day_open
-                FROM (
-                    SELECT i.ticker, i.date, i.close,
-                           ROW_NUMBER() OVER (PARTITION BY i.ticker, i.date ORDER BY i.timestamp ASC) as rn
-                    FROM intraday_1m i
-                    JOIN screen_res s ON i.ticker = s.ticker AND i.date = CAST(s.timestamp AS DATE)
-                    WHERE i.timestamp >= CAST(i.date || ' 09:30:00' AS TIMESTAMP)
-                ) i
-                WHERE rn = 1
-            ),
-            joined_intraday AS (
-                SELECT i.timestamp, i.ticker, i.date, i.close, d.day_open,
-                       ((i.close - d.day_open) / NULLIF(d.day_open, 0) * 100) as pct_change
-                FROM intraday_1m i
-                JOIN screen_res s ON i.ticker = s.ticker AND i.date = CAST(s.timestamp AS DATE)
-                JOIN daily_opens d ON i.ticker = d.ticker AND i.date = d.date
-                WHERE d.day_open > 0
-                {interval_filter}
-            )
-            SELECT 
-                strftime(timestamp, '%H:%M') as minute,
-                AVG(pct_change) as avg_change,
-                QUANTILE_CONT(pct_change, 0.5) as median_change
-            FROM joined_intraday
-            GROUP BY 1
-            ORDER BY 1
-        """
-
-        agg_cur = con.execute(agg_query, sql_p)
-        agg_rows = agg_cur.fetchall()
-
-        result = []
-        for r in agg_rows:
-            result.append({
-                "time": r[0],
-                "avg_change": safe_float(r[1]),
-                "median_change": safe_float(r[2])
-            })
-        return result
-
+        return get_avg_change_from_open(filters)
     except Exception as e:
-        return []
-    finally:
-        if con: con.close()
-'''
-# === END HIDDEN /aggregate/intraday ===
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
