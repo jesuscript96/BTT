@@ -106,8 +106,12 @@ def _ri_yesterday_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
 def _ri_day_open(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("rth_open", float(o[0]) if len(o) > 0 else np.nan)))
 def _ri_pm_high(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # OJO (reactivación N2a): esto usa el PMH FINAL del día = lookahead en entradas
+    # premarket. El motor clásico (indicators._pm_running_series) ya es causal
+    # (cummax del PM hasta la barra actual); replicar aquí antes de re-encender.
     return np.full(len(c), _safe_float(ds.get("pm_high", np.nan)))
 def _ri_pm_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # OJO (reactivación N2a): mismo lookahead que _ri_pm_high (cummin causal).
     return np.full(len(c), _safe_float(ds.get("pm_low", np.nan)))
 def _ri_rth_open(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("rth_open", np.nan)))

@@ -143,9 +143,17 @@ def _compute_signals_for_pair(
     hod = np.maximum.accumulate(H)
     lod = np.minimum.accumulate(L)
 
+    # PM High/Low ACUMULADOS hasta cada barra (causal). El valor final del día
+    # broadcast a todas las barras introducía lookahead en entradas premarket.
+    # NaN antes de la primera barra PM; tras las 09:30 vale el PM completo.
+    # MISMA fórmula numpy que en backtest_service (paridad bit a bit seq↔par).
     pm_mask = (minutes_np >= 240) & (minutes_np < 570)
-    pm_h = float(H[pm_mask].max()) if pm_mask.any() else np.nan
-    pm_l = float(L[pm_mask].min()) if pm_mask.any() else np.nan
+    if pm_mask.any():
+        pm_high_run = np.fmax.accumulate(np.where(pm_mask, H, np.nan))
+        pm_low_run = np.fmin.accumulate(np.where(pm_mask, L, np.nan))
+    else:
+        pm_high_run = np.full(n_bars, np.nan, dtype=np.float64)
+        pm_low_run = np.full(n_bars, np.nan, dtype=np.float64)
 
     prev_h = np.empty_like(hod); prev_h[0] = H[0]; prev_h[1:] = hod[:-1]
     prev_l = np.empty_like(lod); prev_l[0] = L[0]; prev_l[1:] = lod[:-1]
@@ -165,8 +173,8 @@ def _compute_signals_for_pair(
             "open": O, "high": H, "low": L, "close": C, "volume": V,
             "minutes_arr": minutes_np,
             "hod": hod, "lod": lod,
-            "pm_high": np.full(n_bars, pm_h if not np.isnan(pm_h) else 0.0, dtype=np.float64),
-            "pm_low": np.full(n_bars, pm_l if not np.isnan(pm_l) else 0.0, dtype=np.float64),
+            "pm_high": pm_high_run,
+            "pm_low": pm_low_run,
             "prev_high": prev_h, "prev_low": prev_l,
         }
         try:
@@ -191,8 +199,8 @@ def _compute_signals_for_pair(
         sig_partial_tps = signals.get("partial_take_profits")
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
-        pm_highs_vals = np.full(n_bars, pm_h, dtype=np.float64)
-        pm_lows_vals = np.full(n_bars, pm_l, dtype=np.float64)
+        pm_highs_vals = pm_high_run
+        pm_lows_vals = pm_low_run
         prev_closes_vals = np.full(n_bars, prev_close, dtype=np.float64)
         yest_opens_vals = np.full(n_bars, yest_open_val, dtype=np.float64)
 
@@ -296,8 +304,8 @@ def _compute_signals_for_pair(
         "timestamp": ts_col.values[session_mask_np] if hasattr(ts_col, "values") else np.asarray(ts_col)[session_mask_np],
         "hod": hod[session_mask_np],
         "lod": lod[session_mask_np],
-        "pm_high": np.full(trimmed_n, pm_h if not np.isnan(pm_h) else 0.0, dtype=np.float64),
-        "pm_low": np.full(trimmed_n, pm_l if not np.isnan(pm_l) else 0.0, dtype=np.float64),
+        "pm_high": pm_high_run[session_mask_np],
+        "pm_low": pm_low_run[session_mask_np],
         "prev_high": prev_h[session_mask_np],
         "prev_low": prev_l[session_mask_np],
     }

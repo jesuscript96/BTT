@@ -986,6 +986,28 @@ _FAST_INDICATOR_DISPATCH = {
 }
 
 
+def _pm_running_series(df: pd.DataFrame, index, which: str) -> pd.Series | None:
+    """PM High/Low acumulado hasta la barra actual (causal, sin lookahead).
+
+    NaN antes de la primera barra de premarket (el nivel aún no existe: cualquier
+    comparación evalúa False). Tras el cierre del premarket (09:30) la serie se
+    mantiene en el valor final, idéntico al comportamiento previo en RTH.
+    Devuelve None si el df no tiene barras de premarket (p.ej. dato solo-RTH):
+    el caller decide el fallback (constante de daily_stats, que ahí sí es causal).
+    """
+    if df is None or "timestamp" not in df or len(df) == 0:
+        return None
+    timestamps = pd.to_datetime(df["timestamp"])
+    minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+    pm_mask = (minutes >= 240) & (minutes < 570)
+    if not pm_mask.any():
+        return None
+    vals = np.asarray(df[which], dtype=np.float64)
+    masked = np.where(pm_mask, vals, np.nan)
+    acc = np.fmax.accumulate(masked) if which == "high" else np.fmin.accumulate(masked)
+    return pd.Series(acc, index=index)
+
+
 def _compute_raw(
     name: str,
     close: pd.Series,
@@ -1059,35 +1081,33 @@ def _compute_raw(
     if name == "Yesterday Low":
         return pd.Series(_safe_float(ds.get("yesterday_low", ds.get("lag_rth_low_1", np.nan))), index=close.index)
     if name == "Pre-Market High":
-        val = ds.get("pm_high") if ds else None
-        if val is None or pd.isna(val):
-            timestamps = pd.to_datetime(df["timestamp"])
-            pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
-            val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
-        return pd.Series(_safe_float(val), index=close.index)
+        # Causal: máximo del premarket ACUMULADO hasta la barra actual. Usar el PMH
+        # final del día introduce lookahead en entradas premarket (la condición se
+        # cumple horas antes de que el máximo exista). Tras las 09:30 la serie vale
+        # el PMH completo, así que el comportamiento en RTH no cambia.
+        running = _pm_running_series(df, close.index, "high")
+        if running is not None:
+            return running
+        return pd.Series(_safe_float(ds.get("pm_high", np.nan) if ds else np.nan), index=close.index)
 
     if name == "Pre-Market Low":
-        val = ds.get("pm_low") if ds else None
-        if val is None or pd.isna(val):
-            timestamps = pd.to_datetime(df["timestamp"])
-            pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
-            val = df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
-        return pd.Series(_safe_float(val), index=close.index)
+        running = _pm_running_series(df, close.index, "low")
+        if running is not None:
+            return running
+        return pd.Series(_safe_float(ds.get("pm_low", np.nan) if ds else np.nan), index=close.index)
 
     if name == "PM High Gap (%)":
-        timestamps = pd.to_datetime(df["timestamp"])
-        pm_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 4 * 60) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 9 * 60 + 30)
-        pm_high_val = ds.get("pm_high") if ds else None
-        if pm_high_val is None or pd.isna(pm_high_val):
-            pm_high_val = df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
         yest_close_val = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan))) if ds else np.nan
         if yest_close_val is None or pd.isna(yest_close_val):
             yest_close_val = df["close"].iloc[0] if len(df) > 0 else np.nan
-        if not pd.isna(pm_high_val) and not pd.isna(yest_close_val) and yest_close_val != 0:
-            gap_pct_val = (pm_high_val - yest_close_val) / yest_close_val * 100
-        else:
-            gap_pct_val = np.nan
-        return pd.Series(float(gap_pct_val), index=close.index)
+        if pd.isna(yest_close_val) or yest_close_val == 0:
+            return pd.Series(np.nan, index=close.index)
+        # Gap causal barra a barra sobre el PMH acumulado (ver Pre-Market High).
+        running = _pm_running_series(df, close.index, "high")
+        if running is None:
+            pm_high_val = ds.get("pm_high") if ds else None
+            running = pd.Series(_safe_float(pm_high_val if pm_high_val is not None else np.nan), index=close.index)
+        return (running - float(yest_close_val)) / float(yest_close_val) * 100.0
     if name in ("RTH Open", "rth_open"):
         val = ds.get("rth_open") if ds else None
         if val is None or pd.isna(val):
