@@ -1008,6 +1008,49 @@ def _pm_running_series(df: pd.DataFrame, index, which: str) -> pd.Series | None:
     return pd.Series(acc, index=index)
 
 
+def _rth_running_series(df: pd.DataFrame, index, which: str) -> pd.Series | None:
+    """RTH Open/High/Low causal (mismo defecto que tenía PM High: la constante
+    del día completo hacía 'ver' a las 10:00 el máximo de las 15:30).
+
+    - "high"/"low": cummax/cummin de la sesión regular (09:30-16:00) hasta la
+      barra actual; NaN antes de la primera barra RTH; tras las 16:00 se
+      mantiene el valor final (after-hours ve el RTH completo, ya causal).
+    - "open": NaN antes de la primera barra RTH; desde ella, su open constante.
+    Devuelve None si el df no tiene barras RTH: el caller distingue si la sesión
+    regular ya pasó (constante de daily_stats, causal) o aún no llegó (NaN).
+    """
+    if df is None or "timestamp" not in df or len(df) == 0:
+        return None
+    timestamps = pd.to_datetime(df["timestamp"])
+    minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+    rth_mask = (minutes >= 570) & (minutes < 960)
+    if not rth_mask.any():
+        return None
+    if which == "open":
+        first_idx = int(np.argmax(rth_mask))
+        vals = np.full(len(df), np.nan)
+        vals[first_idx:] = float(np.asarray(df["open"], dtype=np.float64)[first_idx])
+        return pd.Series(vals, index=index)
+    vals = np.asarray(df[which], dtype=np.float64)
+    masked = np.where(rth_mask, vals, np.nan)
+    acc = np.fmax.accumulate(masked) if which == "high" else np.fmin.accumulate(masked)
+    return pd.Series(acc, index=index)
+
+
+def _rth_constant_fallback(df: pd.DataFrame, index, ds: dict | None, key: str) -> pd.Series:
+    """Fallback cuando el frame no tiene barras RTH: si la sesión regular aún no
+    empezó (todo el frame es pre-09:30), el valor NO existe todavía → NaN (usar
+    la constante de daily_stats sería lookahead). Si ya pasó (after-hours),
+    la constante del día es causal."""
+    val = ds.get(key) if ds else None
+    if df is not None and "timestamp" in df and len(df) > 0:
+        timestamps = pd.to_datetime(df["timestamp"])
+        minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+        if minutes.max() < 570:
+            return pd.Series(np.nan, index=index)
+    return pd.Series(_safe_float(val if val is not None else np.nan), index=index)
+
+
 def _compute_raw(
     name: str,
     close: pd.Series,
@@ -1109,27 +1152,25 @@ def _compute_raw(
             running = pd.Series(_safe_float(pm_high_val if pm_high_val is not None else np.nan), index=close.index)
         return (running - float(yest_close_val)) / float(yest_close_val) * 100.0
     if name in ("RTH Open", "rth_open"):
-        val = ds.get("rth_open") if ds else None
-        if val is None or pd.isna(val):
-            timestamps = pd.to_datetime(df["timestamp"])
-            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
-            rth_open_rows = df.loc[rth_mask]
-            val = rth_open_rows["open"].iloc[0] if not rth_open_rows.empty else np.nan
-        return pd.Series(_safe_float(val), index=close.index)
+        # Causal: NaN antes de la primera barra RTH (antes devolvía la constante
+        # del día → una condición premarket "veía" el open de las 09:30).
+        running = _rth_running_series(df, close.index, "open")
+        if running is not None:
+            return running
+        return _rth_constant_fallback(df, close.index, ds, "rth_open")
     if name in ("RTH High", "rth_high"):
-        val = ds.get("rth_high") if ds else None
-        if val is None or pd.isna(val):
-            timestamps = pd.to_datetime(df["timestamp"])
-            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
-            val = df.loc[rth_mask, "high"].max() if rth_mask.any() else np.nan
-        return pd.Series(_safe_float(val), index=close.index)
+        # Causal: cummax de la sesión regular hasta la barra actual (antes la
+        # constante del día completo = lookahead intradía, mismo defecto que
+        # tenía Pre-Market High).
+        running = _rth_running_series(df, close.index, "high")
+        if running is not None:
+            return running
+        return _rth_constant_fallback(df, close.index, ds, "rth_high")
     if name in ("RTH Low", "rth_low"):
-        val = ds.get("rth_low") if ds else None
-        if val is None or pd.isna(val):
-            timestamps = pd.to_datetime(df["timestamp"])
-            rth_mask = (timestamps.dt.hour * 60 + timestamps.dt.minute >= 9 * 60 + 30) & (timestamps.dt.hour * 60 + timestamps.dt.minute < 16 * 60)
-            val = df.loc[rth_mask, "low"].min() if rth_mask.any() else np.nan
-        return pd.Series(_safe_float(val), index=close.index)
+        running = _rth_running_series(df, close.index, "low")
+        if running is not None:
+            return running
+        return _rth_constant_fallback(df, close.index, ds, "rth_low")
     if name == "High of Day":
         return high.cummax()
     if name == "Low of Day":

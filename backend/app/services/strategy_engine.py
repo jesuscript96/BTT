@@ -164,33 +164,44 @@ def _ri_pm_high_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
         pm_high_val = ds.get("pm_high")
         running = np.full(len(c), _safe_float(pm_high_val if pm_high_val is not None else np.nan))
     return (running - float(yest_close)) / float(yest_close) * 100.0
-def _rth_fallback_native(vals, mins, o, kind):
-    """RTH Open/High/Low cuando daily_stats no trae el valor: constante del día
-    calculada sobre las barras RTH (idéntico al fallback del legacy)."""
-    if mins is None:
-        return np.nan
+def _rth_running_native(vals, mins, o, which):
+    """Réplica numpy de indicators._rth_running_series (RTH causal).
+    None si no hay minutos o no hay barras RTH (el caller aplica el mismo
+    fallback futuro-vs-pasado que el legacy)."""
+    if mins is None or len(vals) == 0:
+        return None
     rth_mask = (mins >= 570) & (mins < 960)
     if not rth_mask.any():
-        return np.nan
-    if kind == "open":
-        return float(o[np.argmax(rth_mask)])
-    vals_rth = np.asarray(vals, dtype=np.float64)[rth_mask]
-    return float(np.max(vals_rth)) if kind == "high" else float(np.min(vals_rth))
+        return None
+    if which == "open":
+        first_idx = int(np.argmax(rth_mask))
+        out = np.full(len(o), np.nan)
+        out[first_idx:] = float(o[first_idx])
+        return out
+    masked = np.where(rth_mask, np.asarray(vals, dtype=np.float64), np.nan)
+    return np.fmax.accumulate(masked) if which == "high" else np.fmin.accumulate(masked)
+def _rth_constant_fallback_native(n, mins, ds, key):
+    """Sin barras RTH: NaN si la sesión regular aún no llegó (constante sería
+    lookahead), constante de ds si ya pasó — idéntico a indicators."""
+    val = ds.get(key)
+    if mins is not None and len(mins) > 0 and mins.max() < 570:
+        return np.full(n, np.nan)
+    return np.full(n, _safe_float(val if val is not None else np.nan))
 def _ri_rth_open(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    val = ds.get("rth_open")
-    if val is None or pd.isna(val):
-        val = _rth_fallback_native(o, ds.get("_mins"), o, "open")
-    return np.full(len(c), _safe_float(val))
+    running = _rth_running_native(o, ds.get("_mins"), o, "open")
+    if running is not None:
+        return running
+    return _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_open")
 def _ri_rth_high(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    val = ds.get("rth_high")
-    if val is None or pd.isna(val):
-        val = _rth_fallback_native(h, ds.get("_mins"), o, "high")
-    return np.full(len(c), _safe_float(val))
+    running = _rth_running_native(h, ds.get("_mins"), o, "high")
+    if running is not None:
+        return running
+    return _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_high")
 def _ri_rth_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    val = ds.get("rth_low")
-    if val is None or pd.isna(val):
-        val = _rth_fallback_native(l, ds.get("_mins"), o, "low")
-    return np.full(len(c), _safe_float(val))
+    running = _rth_running_native(l, ds.get("_mins"), o, "low")
+    if running is not None:
+        return running
+    return _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_low")
 def _ri_linear_reg(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return _linear_regression(c, p or 14)
 def _ri_pivot_pp(c, h, l, o, v, p, p2, p3, sd, m, ds):
