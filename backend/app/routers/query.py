@@ -33,6 +33,8 @@ def _write_precache_state(dataset_id: str, status: str, progress_pct: float) -> 
                 )
             finally:
                 con.close()
+        from app.gcs_sync import mark_user_db_dirty
+        mark_user_db_dirty()
     except Exception as e:
         print(f"[PRECACHE] Could not persist state for {dataset_id}: {e}")
 

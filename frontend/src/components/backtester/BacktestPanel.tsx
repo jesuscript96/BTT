@@ -788,7 +788,9 @@ export default function BacktestPanel({
       custom_start_time: marketSessions.includes("custom") ? customStartTime : undefined,
       custom_end_time: marketSessions.includes("custom") ? customEndTime : undefined,
       locates_cost: useLocates ? locatesCost : 0,
-      locate_type: useLocates ? "PERCENT" : "FLAT",
+      // FLAT = coste en $ por cada 100 acciones (lo que cuesta un locate),
+      // no % del riesgo (decisión de producto, Jaume 2026-07-07).
+      locate_type: "FLAT",
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -1482,11 +1484,11 @@ export default function BacktestPanel({
                   fontSize: 11,
                   fontWeight: 500,
                   color: 'var(--color-ec-text-secondary)',
-                }}>% Locates/riesgo</span>
+                }}>$ Locate / 100 acc.</span>
                 <InfoTooltip
                   position="left"
                   width={280}
-                  text="El % de la cantidad de riesgo (dinero a apostar) que asumimos en cada trade en concepto de comisiones por cada 100 acciones (locates asumibles). Ejemplo: si arriesgas 1000€ y configuras un 3% de locates asumibles, pagas 30€ de comisión por cada 100 acciones. Si controlas 1000 acciones (10 locates), la comisión será de 300€."
+                  text="Coste en dólares de cada locate: lo que cuestan 100 acciones reutilizables en corto. Se cobra por cada bloque de 100 acciones del tamaño máximo en corto del día. Ejemplo: si el locate cuesta 3$ y controlas 1000 acciones (10 locates), pagas 30$ ese día."
                   style={{ display: 'inline-flex' }}
                 />
               </span>

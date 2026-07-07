@@ -38,7 +38,10 @@ class BacktestRequest(BaseModel):
     custom_start_time: str | None = None
     custom_end_time: str | None = None
     locates_cost: float = 0.0
-    locate_type: str = "PERCENT"
+    # FLAT = coste en $ por cada 100 acciones reutilizables en corto (lo que
+    # cuesta un locate). Antes "PERCENT" (% del riesgo) — semántica corregida
+    # por decisión de producto (Jaume 2026-07-07). backtest_service ya default FLAT.
+    locate_type: str = "FLAT"
     look_ahead_prevention: bool = False
 
 

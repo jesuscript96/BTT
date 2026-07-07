@@ -12,6 +12,18 @@ _client_cache = None
 # freshly-created empty DB is how the GCS copy gets wiped on deploys.
 _startup_download_ok = False
 
+# True while there are local user-DB writes not yet uploaded to GCS. Write
+# paths either call upload_user_db() right away (which sets/clears this) or
+# mark_user_db_dirty(); the shutdown hook uploads only when this is set, so an
+# instance that took no writes can never clobber GCS with its startup copy.
+_dirty_since_upload = False
+
+
+def mark_user_db_dirty() -> None:
+    """Record a local users.duckdb write whose upload is deferred to shutdown."""
+    global _dirty_since_upload
+    _dirty_since_upload = True
+
 
 def _get_cached_client():
     global _client_cache
@@ -143,9 +155,18 @@ def download_user_db() -> bool:
         return False
 
 
-def upload_user_db() -> bool:
-    """Upload users.duckdb to GCS with retry on lock."""
+def upload_user_db(only_if_dirty: bool = False) -> bool:
+    """Upload users.duckdb to GCS with retry on lock.
+
+    only_if_dirty=True (graceful-shutdown path): skip when no local writes are
+    pending, so a stale replica shutting down never overwrites newer GCS data.
+    """
     import time
+
+    global _dirty_since_upload
+    if only_if_dirty and not _dirty_since_upload:
+        print("[INFO] No pending users.duckdb writes; skipping shutdown upload")
+        return False
 
     if os.getenv("DISABLE_GCS_SYNC", "false").lower() == "true":
         print("[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).")
@@ -158,6 +179,10 @@ def upload_user_db() -> bool:
     if not os.path.exists(local_file):
         print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False
+
+    # Pending until an upload succeeds; a failed write-path upload leaves the
+    # flag set so the shutdown hook retries it.
+    _dirty_since_upload = True
 
     from app.database import get_user_db_lock
     lock = get_user_db_lock()
@@ -188,6 +213,7 @@ def upload_user_db() -> bool:
                 blob = bucket.blob(object_name)
                 blob.upload_from_filename(local_file, timeout=5)
                 print(f"[INFO] Successfully uploaded users.duckdb to GCS")
+                _dirty_since_upload = False
                 return True
             except PermissionError:
                 if attempt < 2:
