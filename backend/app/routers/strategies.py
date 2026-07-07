@@ -70,11 +70,16 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
 @router.put("/{strategy_id}", response_model=Strategy)
 def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
     lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
     with lock:
         con = get_user_db_connection()
         try:
-            # Check if strategy exists
-            row = con.execute("SELECT created_at FROM strategies WHERE id = ?", [strategy_id]).fetchone()
+            # Ownership check: without the scope filter any authenticated user
+            # could overwrite another user's strategy by guessing its id (IDOR).
+            row = con.execute(
+                f"SELECT created_at FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Strategy not found")
             created_at = row[0]
@@ -96,10 +101,10 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
             })
 
             con.execute(
-                """
+                f"""
                 UPDATE strategies
                 SET name = ?, description = ?, updated_at = ?, definition = ?
-                WHERE id = ?
+                WHERE id = ?{scope_sql}
                 """,
                 (
                     strategy.name,
@@ -107,6 +112,7 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                     now,
                     definition_json,
                     strategy_id,
+                    *scope_params,
                 )
             )
         finally:
