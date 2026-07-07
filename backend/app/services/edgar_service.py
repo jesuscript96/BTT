@@ -21,10 +21,8 @@ import time
 import warnings
 
 import requests
-import urllib3
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 logger = logging.getLogger("edgar")
@@ -38,6 +36,12 @@ _CIK_MAP_LOCK = threading.Lock()
 _DOC_CACHE: dict = {}            # accession+doc -> (text, expiry)
 _DOC_CACHE_LOCK = threading.Lock()
 _DOC_TTL = 6 * 3600             # 6h: un filing publicado no cambia
+_SUBMISSIONS_CACHE: dict = {}    # cik -> (json, expiry)
+_SUBMISSIONS_LOCK = threading.Lock()
+_SUBMISSIONS_TTL = 30 * 60      # 30 min: /sec-filings, /insiders y tools de Edgie la comparten
+_XBRL_CACHE: dict = {}           # cik+concept -> (history, expiry)
+_XBRL_LOCK = threading.Lock()
+_XBRL_TTL = 6 * 3600
 
 
 def resolve_cik(ticker: str):
@@ -51,7 +55,7 @@ def resolve_cik(ticker: str):
             try:
                 r = requests.get(
                     "https://www.sec.gov/files/company_tickers.json",
-                    headers=SEC_HEADERS, verify=False, timeout=10,
+                    headers=SEC_HEADERS, timeout=10,
                 )
                 data = r.json()
                 _CIK_MAP = {
@@ -64,35 +68,45 @@ def resolve_cik(ticker: str):
     return _CIK_MAP.get(ticker)
 
 
-def list_filings(cik: str, forms=None, limit: int = 40) -> list:
-    """Filings recientes desde data.sec.gov/submissions.
+def _get_submissions_recent(cik: str) -> dict:
+    """JSON `filings.recent` de data.sec.gov/submissions, cacheado 30 min.
 
-    forms: lista de prefijos a filtrar (p.ej. ["20-F","10-K"]). None = todos.
-    Devuelve [{form, accession, primary_document, date, description}].
+    Lo comparten /sec-filings, /insiders y las tools de Edgie: una sola request
+    por CIK y ventana en vez de una por endpoint.
     """
     if not cik:
-        return []
+        return {}
+    now = time.time()
+    with _SUBMISSIONS_LOCK:
+        hit = _SUBMISSIONS_CACHE.get(cik)
+        if hit and hit[1] > now:
+            return hit[0]
     try:
         r = requests.get(
             f"https://data.sec.gov/submissions/CIK{cik}.json",
-            headers=SEC_HEADERS, verify=False, timeout=12,
+            headers=SEC_HEADERS, timeout=12,
         )
         recent = r.json().get("filings", {}).get("recent", {})
     except Exception as e:
         logger.warning("[EDGAR] submissions falló para CIK %s: %s", cik, e)
-        return []
+        return {}
+    with _SUBMISSIONS_LOCK:
+        _SUBMISSIONS_CACHE[cik] = (recent, now + _SUBMISSIONS_TTL)
+    return recent
 
+
+def _rows_from_recent(recent: dict, limit: int, keep) -> list:
+    """Convierte el formato columnar de submissions en filas filtradas por keep(form)."""
     forms_list = recent.get("form", [])
     accns = recent.get("accessionNumber", [])
     docs = recent.get("primaryDocument", [])
     dates = recent.get("filingDate", [])
     descs = recent.get("primaryDocDescription", [])
-    forms_up = [f.upper() for f in (forms or [])]
 
     out = []
     for i in range(len(forms_list)):
         f = forms_list[i]
-        if forms_up and not any(f.upper().startswith(x) for x in forms_up):
+        if not keep(f):
             continue
         out.append({
             "form": f,
@@ -106,10 +120,133 @@ def list_filings(cik: str, forms=None, limit: int = 40) -> list:
     return out
 
 
+def list_filings(cik: str, forms=None, limit: int = 40) -> list:
+    """Filings recientes desde data.sec.gov/submissions.
+
+    forms: lista de prefijos a filtrar (p.ej. ["20-F","10-K"]). None = todos.
+    Devuelve [{form, accession, primary_document, date, description}].
+    """
+    recent = _get_submissions_recent(cik)
+    forms_up = [f.upper() for f in (forms or [])]
+    keep = (lambda f: True) if not forms_up else (
+        lambda f: any(f.upper().startswith(x) for x in forms_up)
+    )
+    return _rows_from_recent(recent, limit, keep)
+
+
+# Formularios de ownership Section 16. Match EXACTO (no por prefijo: "4"
+# como prefijo también casaría "424B5").
+_OWNERSHIP_FORMS = {"3", "4", "5", "3/A", "4/A", "5/A"}
+
+
+def list_ownership_filings(cik: str, limit: int = 12) -> list:
+    """Forms 3/4/5 (transacciones de insiders) del emisor, más recientes primero."""
+    recent = _get_submissions_recent(cik)
+    return _rows_from_recent(recent, limit, lambda f: f.upper() in _OWNERSHIP_FORMS)
+
+
+# Conceptos XBRL de posición de caja, en orden de preferencia. Massive no expone
+# `cash` en balance_sheet (solo flujos), así que el cash para runway sale de la
+# fuente primaria: la API XBRL oficial de SEC.
+CASH_CONCEPTS = (
+    "CashAndCashEquivalentsAtCarryingValue",
+    "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    "CashCashEquivalentsAndShortTermInvestments",
+    "Cash",
+)
+
+
+def get_xbrl_concept_history(cik: str, concepts=CASH_CONCEPTS, limit: int = 24) -> list:
+    """Serie histórica [{date, value, form}] de un concepto us-gaap vía
+    data.sec.gov/api/xbrl/companyconcept. Prueba `concepts` en orden y devuelve
+    la primera con datos. Dedupe por fecha fin (gana el filing más reciente).
+    Cache 6h en proceso. [] si el emisor no reporta ninguno (p. ej. sin XBRL).
+    """
+    if not cik:
+        return []
+    now = time.time()
+    key = f"{cik}:{concepts[0] if concepts else ''}"
+    with _XBRL_LOCK:
+        hit = _XBRL_CACHE.get(key)
+        if hit and hit[1] > now:
+            return hit[0]
+
+    history: list = []
+    for concept in concepts:
+        try:
+            r = requests.get(
+                f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik}/us-gaap/{concept}.json",
+                headers=SEC_HEADERS, timeout=10,
+            )
+            if r.status_code != 200:
+                continue
+            facts = (r.json().get("units") or {}).get("USD") or []
+        except Exception as e:
+            logger.warning("[EDGAR] companyconcept %s falló para CIK %s: %s", concept, cik, e)
+            continue
+        by_end: dict = {}
+        for f in facts:
+            end = f.get("end")
+            if not end or f.get("val") is None:
+                continue
+            prev = by_end.get(end)
+            if prev is None or (f.get("filed") or "") >= (prev.get("filed") or ""):
+                by_end[end] = f
+        if by_end:
+            rows = sorted(by_end.values(), key=lambda f: f["end"])[-limit:]
+            history = [
+                {"date": f["end"], "value": float(f["val"]), "form": f.get("form")}
+                for f in rows
+            ]
+            break
+
+    with _XBRL_LOCK:
+        _XBRL_CACHE[key] = (history, now + _XBRL_TTL)
+    return history
+
+
 def _doc_url(cik: str, accession: str, primary_document: str) -> str:
     accn_nodash = (accession or "").replace("-", "")
     cik_int = str(int(cik))  # la ruta Archives usa el CIK sin ceros a la izquierda
     return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accn_nodash}/{primary_document}"
+
+
+def fetch_ownership_xml(cik: str, accession: str, primary_document: str):
+    """XML crudo de un filing de ownership (Form 3/4/5).
+
+    Camino rápido: el primaryDocument de submissions suele ser
+    "xslF345X05/wk-form4_x.xml" (versión renderizada); el XML crudo es el
+    basename sin el prefijo xsl. Si no, fallback a descubrirlo por index.json.
+    Una sola request en el caso común vs las dos del camino legacy.
+    """
+    if not (cik and accession):
+        return None
+    base_doc = (primary_document or "").split("/")[-1]
+    if base_doc.lower().endswith(".xml"):
+        try:
+            r = requests.get(_doc_url(cik, accession, base_doc), headers=SEC_HEADERS, timeout=8)
+            if r.status_code == 200 and "<" in r.text[:100]:
+                return r.text
+        except Exception as e:
+            logger.warning("[EDGAR] xml directo falló %s/%s: %s", accession, base_doc, e)
+    # Fallback: localizar el .xml en el índice del filing
+    try:
+        folder = _doc_url(cik, accession, "").rstrip("/")
+        idx = requests.get(f"{folder}/index.json", headers=SEC_HEADERS, timeout=8)
+        items = idx.json().get("directory", {}).get("item", [])
+        xml_name = None
+        for it in items:
+            low = it.get("name", "").lower()
+            if low.endswith(".xml") and "index" not in low and not low.startswith("r"):
+                xml_name = it.get("name")
+                if any(k in low for k in ("form3", "form4", "form5", "ownership", "wf-form", "wk-form", "primary_doc")):
+                    break
+        if not xml_name:
+            return None
+        return requests.get(f"{folder}/{xml_name}", headers=SEC_HEADERS, timeout=8).text
+    except Exception as e:
+        logger.warning("[EDGAR] no se pudo descargar XML de %s: %s", accession, e)
+        return None
 
 
 def html_to_text(html: str) -> str:
@@ -139,7 +276,7 @@ def fetch_document_text(cik: str, accession: str, primary_document: str,
             return hit[0]
     try:
         url = _doc_url(cik, accession, primary_document)
-        r = requests.get(url, headers=SEC_HEADERS, verify=False, timeout=20)
+        r = requests.get(url, headers=SEC_HEADERS, timeout=20)
         text = html_to_text(r.text)[:max_chars]
     except Exception as e:
         logger.warning("[EDGAR] fetch doc falló %s: %s", key, e)

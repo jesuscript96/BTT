@@ -331,52 +331,66 @@ export function getBacktestResults(
 }
 
 // ─── Ticker Analysis ────────────────────────────────────────
+// Todos aceptan un AbortSignal opcional: al cambiar de ticker, el componente
+// aborta las requests en vuelo en vez de dejarlas ocupando conexiones.
 export function getTickerAnalysis(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   track(EVENTS.TICKER_ANALYSIS_OPENED, { ticker });
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}`,
+    options,
   );
 }
 
 export function getTickerSecFilings(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}/sec-filings`,
+    options,
   );
 }
 
 export function getTickerChart(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}/chart`,
+    options,
   );
 }
 
 export function getTickerBalanceSheet(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}/balance-sheet`,
+    options,
   );
 }
 
 export function getTickerGapStats(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}/gap-stats`,
+    options,
   );
 }
 
 export function getTickerFinvizNews(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<unknown> {
   return apiRequest<unknown>(
     `/ticker-analysis/${encodeURIComponent(ticker)}/finviz-news`,
+    options,
   );
 }
 
@@ -396,9 +410,11 @@ export interface InsiderTransaction {
 
 export function getTickerInsiders(
   ticker: string,
+  options?: { signal?: AbortSignal },
 ): Promise<{ ticker: string; insiders: InsiderTransaction[] }> {
   return apiRequest<{ ticker: string; insiders: InsiderTransaction[] }>(
     `/ticker-analysis/${encodeURIComponent(ticker)}/insiders`,
+    options,
   );
 }
 
