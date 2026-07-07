@@ -1101,11 +1101,13 @@ def _compute_raw(
         return low
     if name == "Volume":
         return volume.astype(float)
-    if name in ("Day Open", "Current Open"):
+    if name == "Day Open":
         if "rth_open" in ds and not pd.isna(ds["rth_open"]):
             return pd.Series(_safe_float(ds["rth_open"]), index=close.index)
         return pd.Series(float(open_.iloc[0]) if len(open_) > 0 else np.nan, index=close.index)
-    if name == "Bar Open":
+    # "Current Open" = open de la barra actual (definición de producto, Jaume
+    # 2026-07-07); antes era un alias erróneo de Day Open (RTH open constante).
+    if name in ("Bar Open", "Current Open"):
         return open_
     if name == "Prev. Close Bar" or name == "Prev. Bar Close":
         return close.shift(1)

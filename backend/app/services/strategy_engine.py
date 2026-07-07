@@ -239,7 +239,9 @@ _RAW_INDICATOR_DISPATCH = {
     "Yesterday Open": _ri_yesterday_open,
     "Yesterday Close": _ri_yesterday_close, "Previous Close": _ri_yesterday_close,
     "Yesterday High": _ri_yesterday_high, "Yesterday Low": _ri_yesterday_low,
-    "Day Open": _ri_day_open, "Current Open": _ri_day_open,
+    # "Current Open" = open de la barra actual (definición de producto, Jaume
+    # 2026-07-07); antes era un alias erróneo de Day Open (RTH open constante).
+    "Day Open": _ri_day_open, "Current Open": _ri_open,
     "Pre-Market High": _ri_pm_high, "Pre-Market Low": _ri_pm_low,
     "PM High Gap (%)": _ri_pm_high_gap,
     "High of Day": _ri_hod, "Low of Day": _ri_lod,
