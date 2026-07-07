@@ -65,10 +65,19 @@ interface TickerAnalysisData {
     };
     daily_history?: DailyDataPoint[];
     know_the_float?: FloatData;
+    short_interest?: ShortInterestData | null;
     gap_stats?: GapStats;
     gap_stats_plus_1?: GapStats;
     gap_stats_plus_2?: GapStats;
     gap_dates?: string[];
+}
+
+// Short interest oficial FINRA (vía Massive API), quincenal.
+interface ShortInterestData {
+    short_interest?: number | null;
+    days_to_cover?: number | null;
+    avg_daily_volume?: number | null;
+    settlement_date?: string | null;
 }
 
 interface FilingsData {
@@ -862,16 +871,43 @@ const DailyStockChart = ({
     );
 };
 
-// KnowTheFloat comparison table
-const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
+// KnowTheFloat comparison table (+ short interest oficial FINRA vía Massive)
+const KnowTheFloatTable = ({ floatData, shortInterest }: { floatData?: FloatData; shortInterest?: ShortInterestData | null }) => {
+    const fmtShares = (n?: number | null) => {
+        if (n === null || n === undefined) return '-';
+        if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+        if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+        if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+        return `${n}`;
+    };
+
+    // Línea de short interest oficial: se muestra aunque el scrape de float
+    // falle (es el único dato determinista de esta tarjeta).
+    const finraLine = shortInterest && shortInterest.short_interest != null ? (
+        <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            fontSize: 10, padding: '4px 6px', borderRadius: 4,
+            border: '0.5px solid var(--color-ec-copper)',
+            color: 'var(--color-ec-text-primary)',
+        }}>
+            <span style={{ fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: 8 }}>
+                Short Int. FINRA
+            </span>
+            <span style={{ fontWeight: 700, color: 'var(--color-ec-loss)' }}>{fmtShares(shortInterest.short_interest)} sh</span>
+            <span>DTC {shortInterest.days_to_cover != null ? Number(shortInterest.days_to_cover).toFixed(1) : '-'}</span>
+            <span style={{ color: 'var(--color-ec-text-muted)' }}>{shortInterest.settlement_date ?? ''}</span>
+        </div>
+    ) : null;
+
     if (!floatData || Object.keys(floatData).length === 0) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
                 <span style={{ fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '1.5px', borderBottom: '1px solid var(--color-ec-border)', paddingBottom: 4 }}>
                     Float Comparison
                 </span>
+                {finraLine}
                 <div style={{
-                    height: '130px',
+                    height: finraLine ? '104px' : '130px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -918,6 +954,7 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
                     </tbody>
                 </table>
             </div>
+            {finraLine}
         </div>
     );
 };
@@ -2028,6 +2065,9 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const [aiLoading, setAiLoading] = useState<boolean>(false);
     const [aiError, setAiError] = useState<string | null>(null);
     const [aiMetrics, setAiMetrics] = useState<any | null>(null);
+    // true si el informe mostrado salió de la caché del día (backend) → se
+    // ofrece "Regenerar" para forzar una pasada nueva del LLM.
+    const [aiFromCache, setAiFromCache] = useState<boolean>(false);
     const [activeSecTab, setActiveSecTab] = useState<'filings' | 'balance'>('filings');
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
     // ── Edgie assistant integration (AssistantBus) ───────────────
@@ -2135,11 +2175,14 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
     const currentLogoUrl = logoCandidates[logoUrlIndex];
 
     // Fetch Data — progressive: each endpoint resolves independently and merges
-    // its slice into state, so fast sources (hot cache, DB) render immediately
-    // instead of waiting for the slowest external (yfinance/Finviz/SEC).
+    // its slice into state, so fast sources (Massive/SEC/hot cache) render as
+    // they arrive. On ticker change the in-flight requests are ABORTED (not
+    // just ignored) so they stop occupying connections.
     useEffect(() => {
         if (!selectedTicker) return;
         let cancelled = false;
+        const ac = new AbortController();
+        const signal = ac.signal;
 
         setData(null);
         setFilings(null);
@@ -2153,7 +2196,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             setData(prev => ({ ...(prev ?? {}), ...patch }));
         };
 
-        getTickerAnalysis(selectedTicker)
+        getTickerAnalysis(selectedTicker, { signal })
             .then(v => {
                 if (cancelled) return;
                 const val = v as TickerAnalysisData;
@@ -2169,15 +2212,15 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     },
                 }));
             })
-            .catch(e => console.error("Error fetching ticker analysis:", e))
+            .catch(e => { if (!cancelled) console.error("Error fetching ticker analysis:", e); })
             .finally(() => { if (!cancelled) setLoadingAnalysis(false); });
 
-        getTickerChart(selectedTicker)
+        getTickerChart(selectedTicker, { signal })
             .then(v => merge(v as object))
-            .catch(e => console.error("Error fetching ticker chart:", e))
+            .catch(e => { if (!cancelled) console.error("Error fetching ticker chart:", e); })
             .finally(() => { if (!cancelled) setLoadingChart(false); });
 
-        getTickerBalanceSheet(selectedTicker)
+        getTickerBalanceSheet(selectedTicker, { signal })
             .then(v => {
                 if (cancelled) return;
                 const bsVal = v as { charts?: any; working_capital?: number | null };
@@ -2190,44 +2233,56 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     },
                 }));
             })
-            .catch(e => console.error("Error fetching balance sheet:", e));
+            .catch(e => { if (!cancelled) console.error("Error fetching balance sheet:", e); });
 
+        // Gap stats: primera vez el backend responde "calculating" y computa en
+        // background → poll con backoff (4s → 8s → 16s… cap 2 min) en vez de
+        // martillear cada 4s durante cálculos largos.
         let pollTimer: NodeJS.Timeout;
+        let pollAttempt = 0;
         const fetchGapStats = () => {
-            getTickerGapStats(selectedTicker)
+            getTickerGapStats(selectedTicker, { signal })
                 .then(v => {
                     if (cancelled) return;
                     const res = v as any;
                     if (res && res.status === "calculating") {
                         setLoadingGap(true);
-                        pollTimer = setTimeout(fetchGapStats, 4000);
+                        const delay = Math.min(4000 * Math.pow(2, pollAttempt), 120000);
+                        pollAttempt += 1;
+                        pollTimer = setTimeout(fetchGapStats, delay);
                     } else {
                         merge(res);
                         setLoadingGap(false);
                     }
                 })
                 .catch(e => {
+                    if (cancelled) return;
                     console.error("Error fetching gap stats:", e);
-                    if (!cancelled) setLoadingGap(false);
+                    setLoadingGap(false);
                 });
         };
         fetchGapStats();
 
-        getTickerSecFilings(selectedTicker)
+        getTickerSecFilings(selectedTicker, { signal })
             .then(v => { if (!cancelled) setFilings(v as FilingsData); })
-            .catch(e => { console.error("Error fetching SEC filings:", e); if (!cancelled) setFilings(null); });
+            .catch(e => { if (!cancelled) { console.error("Error fetching SEC filings:", e); setFilings(null); } });
 
-        getTickerFinvizNews(selectedTicker)
+        getTickerFinvizNews(selectedTicker, { signal })
             .then(v => {
                 if (cancelled) return;
                 const payload = v as FinvizNewsItem[] | { news?: FinvizNewsItem[] };
                 const items = Array.isArray(payload) ? payload : (payload.news ?? []);
                 setFinvizNews(items);
             })
-            .catch(e => { console.error("Error fetching Finviz news:", e); if (!cancelled) setFinvizNews([]); });
+            .catch(e => { if (!cancelled) { console.error("Error fetching Finviz news:", e); setFinvizNews([]); } });
+
+        // Prefetch de insiders (fire-and-forget): calienta la caché SWR para que
+        // el informe de Edgie no pague las rondas a SEC al pulsar el botón.
+        getTickerInsiders(selectedTicker, { signal }).catch(() => { /* prefetch */ });
 
         return () => {
             cancelled = true;
+            ac.abort();
             if (pollTimer) clearTimeout(pollTimer);
         };
     }, [selectedTicker]);
@@ -2257,7 +2312,8 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         combinedData: TickerAnalysisData,
         resolvedFilings: FilingsData | null,
         resolvedNews: FinvizNewsItem[],
-        resolvedSecFacts: any
+        resolvedSecFacts: any,
+        force: boolean = false
     ) => {
         if (!tickerName) return;
 
@@ -2265,6 +2321,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
         setAiError(null);
         setAiAnalysis(null);
         setAiMetrics(null);
+        setAiFromCache(false);
 
         try {
             // Build the quantitative user prompt
@@ -2398,6 +2455,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     ],
                     temperature: 0.1,
                     stream: false,
+                    force,
                     page: '/ticker-analysis/ai-report',
                 }),
             });
@@ -2412,6 +2470,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 throw new Error(msg);
             }
             const respData = await response.json();
+            setAiFromCache(!!respData.cached);
             const reply = respData.choices?.[0]?.message?.content || 'No received analysis.';
 
             let parsedMetrics = null;
@@ -3002,7 +3061,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 />
                             ) : (
                             <>
-                            <KnowTheFloatTable floatData={data?.know_the_float} />
+                            <KnowTheFloatTable floatData={data?.know_the_float} shortInterest={data?.short_interest} />
                             <GapStatsSection
                                 gapStats={data?.gap_stats}
                                 gapStatsPlus1={data?.gap_stats_plus_1}
@@ -3282,26 +3341,59 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                             </div>
 
                             {/* Manual Refresh Button */}
-                            <button
-                                onClick={() => triggerAiAnalysis(selectedTicker, data!, filings, finvizNews, null)}
-                                disabled={aiLoading || !data}
-                                style={{
-                                    backgroundColor: aiLoading ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
-                                    border: '1px solid var(--color-ec-border)',
-                                    borderRadius: '4px',
-                                    color: aiLoading ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)',
-                                    fontSize: '10px',
-                                    fontWeight: 600,
-                                    padding: '6px 12px',
-                                    cursor: aiLoading || !data ? 'default' : 'pointer',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.5px',
-                                    transition: 'all 150ms ease'
-                                }}
-                                className="hover:bg-[var(--color-ec-bg-sidebar)] hover:text-white"
-                            >
-                                {aiLoading ? 'Procesando...' : 'Re-procesar datos'}
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                {aiFromCache && !aiLoading && (
+                                    <span style={{
+                                        fontSize: 8, fontWeight: 700, letterSpacing: '0.5px',
+                                        textTransform: 'uppercase', color: 'var(--color-ec-copper)',
+                                        border: '0.5px solid var(--color-ec-copper)',
+                                        borderRadius: 3, padding: '2px 6px',
+                                    }}>
+                                        Informe de hoy (caché)
+                                    </span>
+                                )}
+                                {aiFromCache && !aiLoading && (
+                                    <button
+                                        onClick={() => triggerAiAnalysis(selectedTicker, data!, filings, finvizNews, null, true)}
+                                        disabled={!data}
+                                        style={{
+                                            backgroundColor: 'transparent',
+                                            border: '1px solid var(--color-ec-copper)',
+                                            borderRadius: '4px',
+                                            color: 'var(--color-ec-copper)',
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            padding: '6px 12px',
+                                            cursor: !data ? 'default' : 'pointer',
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.5px',
+                                            transition: 'all 150ms ease'
+                                        }}
+                                    >
+                                        Regenerar
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => triggerAiAnalysis(selectedTicker, data!, filings, finvizNews, null)}
+                                    disabled={aiLoading || !data}
+                                    style={{
+                                        backgroundColor: aiLoading ? 'rgba(255, 255, 255, 0.03)' : 'transparent',
+                                        border: '1px solid var(--color-ec-border)',
+                                        borderRadius: '4px',
+                                        color: aiLoading ? 'var(--color-ec-text-muted)' : 'var(--color-ec-text-primary)',
+                                        fontSize: '10px',
+                                        fontWeight: 600,
+                                        padding: '6px 12px',
+                                        cursor: aiLoading || !data ? 'default' : 'pointer',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.5px',
+                                        transition: 'all 150ms ease'
+                                    }}
+                                    className="hover:bg-[var(--color-ec-bg-sidebar)] hover:text-white"
+                                >
+                                    {aiLoading ? 'Procesando...' : 'Re-procesar datos'}
+                                </button>
+                            </div>
                         </div>
 
                         {/* Main Report Container */}

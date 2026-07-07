@@ -475,11 +475,21 @@ def run_backtest(
         # Premarket High/Low
         ts_series = pd.to_datetime(day_df["timestamp"])
         pm_mask = (ts_series.dt.hour * 60 + ts_series.dt.minute >= 4 * 60) & (ts_series.dt.hour * 60 + ts_series.dt.minute < 9 * 60 + 30)
-        pm_high_val = day_df.loc[pm_mask, "high"].max() if pm_mask.any() else np.nan
-        pm_low_val = day_df.loc[pm_mask, "low"].min() if pm_mask.any() else np.nan
-        
-        pm_highs_vals = np.full(len(day_df), pm_high_val, dtype=np.float64)
-        pm_lows_vals = np.full(len(day_df), pm_low_val, dtype=np.float64)
+        # PM High/Low ACUMULADOS hasta cada barra (causal). El valor final del día
+        # broadcast a todas las barras introducía lookahead en entradas premarket
+        # (condiciones PMH/PML y stops de estructura anclados a un máximo futuro).
+        # NaN antes de la primera barra PM; tras las 09:30 vale el PM completo.
+        # MISMA fórmula numpy que en backtest_signals._compute_signals_for_pair
+        # (paridad bit a bit secuencial↔paralelo).
+        pm_mask_np = pm_mask.values if hasattr(pm_mask, "values") else np.asarray(pm_mask)
+        _h64 = day_df["high"].values.astype(np.float64)
+        _l64 = day_df["low"].values.astype(np.float64)
+        if pm_mask_np.any():
+            pm_highs_vals = np.fmax.accumulate(np.where(pm_mask_np, _h64, np.nan))
+            pm_lows_vals = np.fmin.accumulate(np.where(pm_mask_np, _l64, np.nan))
+        else:
+            pm_highs_vals = np.full(len(day_df), np.nan, dtype=np.float64)
+            pm_lows_vals = np.full(len(day_df), np.nan, dtype=np.float64)
         
         # Previous Max / Previous Min (running high/low shifted by 1 bar)
         prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)

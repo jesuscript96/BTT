@@ -147,6 +147,9 @@ class LiveScreenerService:
         has data immediately, then launch the WS consumer + poller. The avg-20d
         volume table (RVol only, non-critical) loads in the background so a slow
         or contended DuckDB query can never delay the live stream."""
+        if os.getenv("LIVE_SCREENER_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+            logger.info("[LIVE] screener disabled via LIVE_SCREENER_ENABLED")
+            return
         await asyncio.to_thread(self._refresh_allowlist)
         try:
             await asyncio.to_thread(self._refresh_from_snapshot)
@@ -458,13 +461,14 @@ class LiveScreenerService:
                 ssl_ctx = ssl.create_default_context()
         backoff = 1.0
         while not self._stop:
+            connected_at: Optional[float] = None
             try:
                 async with websockets.connect(WS_URL, ssl=ssl_ctx, ping_interval=20, max_size=2**21) as ws:
                     await ws.send(json.dumps({"action": "auth", "params": API_KEY}))
                     # Second aggregates for the whole US market; filtered server-side.
                     await ws.send(json.dumps({"action": "subscribe", "params": "A.*"}))
                     self._ws_connected = True
-                    backoff = 1.0
+                    connected_at = time.monotonic()
                     logger.info("[LIVE] Massive WS connected, subscribed A.*")
                     async for raw in ws:
                         self._handle_ws_message(raw)
@@ -472,9 +476,14 @@ class LiveScreenerService:
                 break
             except Exception as e:  # noqa: BLE001
                 self._ws_connected = False
+                # Reset only after a connection that stayed up; resetting on
+                # every connect turns a 1008 kick-loop (another consumer on the
+                # same API key) into a 1s hammer on the socket and the logs.
+                if connected_at is not None and time.monotonic() - connected_at >= 60.0:
+                    backoff = 1.0
                 logger.warning("[LIVE] WS disconnected (%s); reconnecting in %.0fs", e, backoff)
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
+                backoff = min(backoff * 2, 60.0)
         self._ws_connected = False
 
     def _handle_ws_message(self, raw: Any) -> None:

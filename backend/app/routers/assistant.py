@@ -260,26 +260,28 @@ def register_dilution_banks(ticker: str, banks: list[str]) -> int:
                     [ticker, name, None, _date.today()],
                 )
                 inserted += 1
+        if inserted:
+            from app.gcs_sync import mark_user_db_dirty
+            mark_user_db_dirty()
     except Exception as exc:
         logger.warning("[ASSISTANT] no se pudo registrar bancos dilusores: %s", exc)
     return inserted
 
 
-def _pre_extract_for_report(ticker: str) -> Optional[str]:
-    """Pre-extracción determinista para el informe: baja documentos SEC reales y
-    devuelve las secciones de directivos y de oferta/dilución, para que Edgie
-    rellene ownership_list / dilución con DATOS, no con invención. Tolerante."""
-    parts = []
-    # Directivos: 20-F Item 6 (emisor extranjero) o 10-K Item 10 (doméstico).
+def _extract_directors(ticker: str) -> Optional[str]:
+    """Directivos: 20-F Item 6 (emisor extranjero) o 10-K Item 10 (doméstico)."""
     try:
         for forms, item in ((["20-F"], 6), (["10-K"], 10)):
             r = edgar_service.get_filing_item(ticker, forms=forms, item_no=item, max_chars=3500)
             if r and r.get("section"):
-                parts.append(f"DIRECTIVOS / JUNTA (de {r['form']} {r['date']}, Item {item}):\n{r['section']}")
-                break
+                return f"DIRECTIVOS / JUNTA (de {r['form']} {r['date']}, Item {item}):\n{r['section']}"
     except Exception as e:
         logger.warning("[REPORT] pre-extract directivos falló %s: %s", ticker, e)
-    # Oferta / dilución: 424B o S-1/S-3 — sección Plan of Distribution / Underwriting.
+    return None
+
+
+def _extract_offering(ticker: str) -> Optional[str]:
+    """Oferta / dilución: 424B o S-1/S-3 — Plan of Distribution / Underwriting."""
     try:
         cik = edgar_service.resolve_cik(ticker)
         if cik:
@@ -294,14 +296,115 @@ def _pre_extract_for_report(ticker: str) -> Optional[str]:
                         max_chars=3500,
                     )
                     if seg:
-                        parts.append(f"OFERTA / DILUCIÓN (de {f['form']} {f['date']}):\n{seg}")
+                        return f"OFERTA / DILUCIÓN (de {f['form']} {f['date']}):\n{seg}"
     except Exception as e:
         logger.warning("[REPORT] pre-extract oferta falló %s: %s", ticker, e)
+    return None
+
+
+def _extract_market_facts(ticker: str) -> Optional[str]:
+    """Datos DETERMINISTAS de APIs (Massive + SEC XBRL) para el informe: short
+    interest oficial FINRA, últimos trimestres XBRL y posición de caja. Evita
+    que el modelo "estime" runway/short cuando el dato existe."""
+    from app.services import massive_service
+    lines = []
+    try:
+        si = massive_service.get_short_interest(ticker)
+        if si:
+            s = si[0]
+            lines.append(
+                "SHORT INTEREST OFICIAL (FINRA, quincenal): "
+                f"{s.get('short_interest')} acciones cortas · days_to_cover={s.get('days_to_cover')} · "
+                f"volumen medio diario={s.get('avg_daily_volume')} · liquidación={s.get('settlement_date')}"
+            )
+    except Exception as e:
+        logger.warning("[REPORT] short interest falló %s: %s", ticker, e)
+    try:
+        fins = massive_service.get_financials(ticker)
+        for r in fins[-4:]:
+            fv = massive_service.financial_value
+            lines.append(
+                f"XBRL {r.get('fiscal_period')} {r.get('fiscal_year')} (fin {r.get('end_date')}): "
+                f"net_income={fv(r, 'income_statement', 'net_income_loss')} · "
+                f"operating_cash_flow={fv(r, 'cash_flow_statement', 'net_cash_flow_from_operating_activities')} · "
+                f"current_assets={fv(r, 'balance_sheet', 'current_assets')} · "
+                f"current_liabilities={fv(r, 'balance_sheet', 'current_liabilities')} · "
+                f"equity={fv(r, 'balance_sheet', 'equity')} · "
+                f"basic_shares={fv(r, 'income_statement', 'basic_average_shares')}"
+            )
+    except Exception as e:
+        logger.warning("[REPORT] financials falló %s: %s", ticker, e)
+    try:
+        cik = massive_service.get_cik(ticker) or edgar_service.resolve_cik(ticker)
+        if cik:
+            cash = edgar_service.get_xbrl_concept_history(cik)
+            if cash:
+                serie = " | ".join(f"{h['date']}: ${h['value']:,.0f}" for h in cash[-4:])
+                lines.append(f"CAJA (SEC XBRL, últimos trimestres): {serie}")
+    except Exception as e:
+        logger.warning("[REPORT] cash XBRL falló %s: %s", ticker, e)
+    return "\n".join(lines) if lines else None
+
+
+def _pre_extract_for_report(ticker: str) -> Optional[str]:
+    """Pre-extracción determinista para el informe: documentos SEC reales
+    (directivos + oferta/dilución) y datos de mercado de APIs (short interest,
+    XBRL, caja) para que Edgie rellene con DATOS, no con invención.
+
+    Las tres extracciones son independientes → EN PARALELO (antes en serie:
+    la latencia era la suma de todas las cadenas de requests)."""
+    from concurrent.futures import ThreadPoolExecutor
+    parts = []
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        futs = [
+            ex.submit(_extract_directors, ticker),
+            ex.submit(_extract_offering, ticker),
+            ex.submit(_extract_market_facts, ticker),
+        ]
+        for fut in futs:
+            try:
+                seg = fut.result(timeout=25)
+                if seg:
+                    parts.append(seg)
+            except Exception as e:
+                logger.warning("[REPORT] pre-extract parcial falló %s: %s", ticker, e)
     return "\n\n".join(parts) if parts else None
 
 
 class DilutionReportRequest(ChatRequest):
     ticker: str = Field(..., description="Símbolo del ticker analizado (ej: MULN)")
+    force: bool = Field(False, description="True = regenerar aunque exista informe cacheado de hoy")
+
+
+# ── Caché del informe por ticker+día ─────────────────────────────────────────
+# El informe cuesta 30-90 s de LLM y sus fuentes (filings, XBRL) cambian como
+# mucho una vez al día. Se cachea en users.duckdb y el frontend ofrece
+# "Regenerar" (force=true). Decisión Jesús 2026-07-07.
+
+def _read_cached_report(ticker: str) -> Optional[dict]:
+    try:
+        from app.routers.ticker_analysis import _swr_db_read_payload
+        cached = _swr_db_read_payload(ticker, "dilution_report")
+        if (
+            isinstance(cached, dict)
+            and cached.get("date") == _date.today().isoformat()
+            and isinstance(cached.get("data"), dict)
+        ):
+            return cached["data"]
+    except Exception as exc:
+        logger.warning("[ASSISTANT] lectura de informe cacheado falló: %s", exc)
+    return None
+
+
+def _store_cached_report(ticker: str, data: dict) -> None:
+    try:
+        from app.routers.ticker_analysis import _swr_db_store_payload
+        _swr_db_store_payload(ticker, "dilution_report", {
+            "date": _date.today().isoformat(),
+            "data": data,
+        })
+    except Exception as exc:
+        logger.warning("[ASSISTANT] guardado de informe cacheado falló: %s", exc)
 
 
 @router.post("/dilution-report")
@@ -311,9 +414,17 @@ async def dilution_report(req: DilutionReportRequest, request: Request):
     Antes de llamar al LLM inyecta el histórico de bancos dilusores conocidos.
     Tras recibir la respuesta, extrae `hired_banks` de <edgie_metrics> y los
     registra en DuckDB. Devuelve el mismo formato que /chat para que el frontend
-    parsee igual.
+    parsee igual. Cacheado por ticker+día (salvo force=true).
     """
     ticker = (req.ticker or "").upper().strip()
+
+    if not req.force:
+        cached = await asyncio.to_thread(_read_cached_report, ticker)
+        if cached:
+            logger.info("[ASSISTANT] %s: informe de dilución servido de caché (hoy)", ticker)
+            cached["cached"] = True
+            return JSONResponse(cached)
+
     api_key = _resolve_api_key(request)
 
     # 1. Inyectar contexto histórico de bancos dilusores en el prompt.
@@ -384,6 +495,14 @@ async def dilution_report(req: DilutionReportRequest, request: Request):
     except Exception as exc:
         logger.warning("[ASSISTANT] interceptor de bancos falló: %s", exc)
 
+    # 4. Persistir el informe del día (solo si trae contenido usable).
+    try:
+        if data.get("choices", [{}])[0].get("message", {}).get("content"):
+            await asyncio.to_thread(_store_cached_report, ticker, data)
+    except Exception as exc:
+        logger.warning("[ASSISTANT] persistencia de informe falló: %s", exc)
+
+    data["cached"] = False
     return JSONResponse(data)
 
 
