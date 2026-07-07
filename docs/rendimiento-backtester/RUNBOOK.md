@@ -49,6 +49,20 @@ BACKTEST_NUMBA_SIM=1
 - El warmup compila en el arranque (~4 s la primera vez; después usa caché en disco).
 - Verificar: log `[JIT] simulate kernel warm en X.Xs` + Golden B.
 
+### Fase 3b — Fast-path nativo de señales (N2a)
+```
+BTT_N2A_NATIVE_ENABLED=1
+```
+- Requiere el fix de paridad `fix/n2a-parity` (2026-07-06): gate por-estrategia
+  (lo no soportado cae SOLO al motor clásico — nunca 0-trades silencioso),
+  resample tf→1m por reloj + closed-bar, herencia de timeframe, ventanas
+  horarias, CROSSES, PM causal, ATR-stop y partial TPs nativos.
+- Solo acelera los paths paralelo/slab (`_compute_signals_for_pair`); el loop
+  secuencial sigue usando el motor clásico siempre.
+- Verificar: Golden B MATCHED con el flag ON (workers 1 y N) + suites
+  `tests/test_n2a_native_equivalence.py` y `tests/test_n2a_e2e_equivalence.py`.
+- Rollback: `BTT_N2A_NATIVE_ENABLED=0`.
+
 ### Fase 4 — Tuning de la caja real (W-2145, 128 GB)
 ```
 DUCKDB_MEMORY_LIMIT=16GB            # hoy 4-8GB; la caja tiene 128GB

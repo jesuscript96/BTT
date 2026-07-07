@@ -120,6 +120,8 @@ def vote(payload: VoteIn):
             )
         finally:
             con.close()
+    from app.gcs_sync import mark_user_db_dirty
+    mark_user_db_dirty()
     return _read_board(uid)
 
 
@@ -143,6 +145,8 @@ def suggestion(payload: SuggestionIn):
             )
         finally:
             con.close()
+    from app.gcs_sync import mark_user_db_dirty
+    mark_user_db_dirty()
     return {"ok": True}
 
 

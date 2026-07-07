@@ -200,8 +200,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    # Upload user DB back to GCS explicitly on graceful shutdown
-    upload_user_db()
+    # Upload user DB back to GCS on graceful shutdown, but only if this
+    # instance actually took writes: a duplicate/stale instance shutting down
+    # must never overwrite newer data in GCS with its startup copy.
+    upload_user_db(only_if_dirty=True)
 
 
 app = FastAPI(title="Short Selling Backtester API", lifespan=lifespan)
@@ -222,7 +224,10 @@ ALLOWED_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    # localhost con cualquier puerto: el dev server de Next salta a un puerto
+    # libre (autoPort) cuando el 3000 está ocupado. Sin riesgo en prod: la auth
+    # va por Bearer token, no por cookies de sesión.
+    allow_origin_regex=r"https://.*\.vercel\.app|http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

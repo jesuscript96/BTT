@@ -279,6 +279,10 @@ export function ChatBot() {
                 if (market.held_percent_institutions !== undefined && market.held_percent_institutions !== null) {
                     systemPrompt += `\n- Institutional Ownership: ${(market.held_percent_institutions * 100).toFixed(2)}%`;
                 }
+                const shortInt = tickerData.data?.short_interest;
+                if (shortInt && shortInt.short_interest != null) {
+                    systemPrompt += `\n- Short Interest (FINRA official, settlement ${shortInt.settlement_date || 'N/A'}): ${shortInt.short_interest} shares, Days to Cover: ${shortInt.days_to_cover ?? 'N/A'}, Avg Daily Volume: ${shortInt.avg_daily_volume ?? 'N/A'}`;
+                }
 
                 systemPrompt += `\n\n### Financial Snapshot`;
                 systemPrompt += `\n- Enterprise Value: ${formatValue(financials.enterprise_value)}`;

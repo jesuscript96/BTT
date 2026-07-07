@@ -672,6 +672,8 @@ def _cache_store(cache_key: str, endpoint: str, payload):
                 )
             finally:
                 con.close()
+        from app.gcs_sync import mark_user_db_dirty
+        mark_user_db_dirty()
     except Exception as e:
         print(f"[STOCKTWITS][SWR] store failed for {cache_key}/{endpoint}: {e}")
 

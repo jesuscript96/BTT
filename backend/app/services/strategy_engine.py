@@ -64,6 +64,10 @@ def _ri_macd_hist(c, h, l, o, v, p, p2, p3, sd, m, ds):
     _, _, hist = _macd(c, p or 12, p2 or 26, p3 or 9); return hist
 def _ri_stoch(c, h, l, o, v, p, p2, p3, sd, m, ds):
     k, _ = _stochastic(h, l, c, p or 14, p2 or 3); return k
+def _ri_stoch_d(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # %D = SMA del %K (indicators.py "Stochastic %D"). Antes mapeaba a %K: señales
+    # incorrectas con apariencia de funcionar.
+    _, d = _stochastic(h, l, c, p or 14, p2 or 3); return d
 def _ri_dmi(c, h, l, o, v, p, p2, p3, sd, m, ds):
     pd_i, _ = _dmi(h, l, c, p or 14); return pd_i
 def _ri_dmi_minus(c, h, l, o, v, p, p2, p3, sd, m, ds):
@@ -95,26 +99,109 @@ def _ri_lower_lows(c, h, l, o, v, p, p2, p3, sd, m, ds):
     ll = np.zeros(len(l), dtype=bool); ll[1:] = l[1:] < l[:-1]; return _consecutive_count(ll)
 def _ri_higher_lows(c, h, l, o, v, p, p2, p3, sd, m, ds):
     hl = np.zeros(len(l), dtype=bool); hl[1:] = l[1:] > l[:-1]; return _consecutive_count(hl)
+def _ri_prev_close_bar(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    out = np.empty(len(c)); out[0] = np.nan; out[1:] = c[:-1]; return out
+def _ri_prev_open_bar(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    out = np.empty(len(o)); out[0] = np.nan; out[1:] = o[:-1]; return out
+def _ri_prev_high_bar(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    out = np.empty(len(h)); out[0] = np.nan; out[1:] = h[:-1]; return out
+def _ri_prev_low_bar(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    out = np.empty(len(l)); out[0] = np.nan; out[1:] = l[:-1]; return out
+def _ri_hod(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    return np.maximum.accumulate(h)
+def _ri_lod(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    return np.minimum.accumulate(l)
 def _ri_yesterday_open(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("yesterday_open", ds.get("lag_rth_open_1", np.nan))))
 def _ri_yesterday_close(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    return np.full(len(c), _safe_float(ds.get("previous_close", ds.get("prev_close", np.nan))))
+    # Misma cadena de fallbacks que indicators.py (incluye lag_rth_close_1).
+    return np.full(len(c), _safe_float(ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))))
 def _ri_yesterday_high(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("yesterday_high", ds.get("lag_rth_high_1", np.nan))))
 def _ri_yesterday_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("yesterday_low", ds.get("lag_rth_low_1", np.nan))))
+def _pm_running_native(vals, mins, which):
+    """Réplica numpy de indicators._pm_running_series: acumulado causal del
+    premarket (04:00-09:29). None si no hay minutos o no hay barras PM (el
+    caller cae al valor constante de daily_stats, igual que el legacy)."""
+    if mins is None or len(vals) == 0:
+        return None
+    pm_mask = (mins >= 240) & (mins < 570)
+    if not pm_mask.any():
+        return None
+    masked = np.where(pm_mask, np.asarray(vals, dtype=np.float64), np.nan)
+    return np.fmax.accumulate(masked) if which == "high" else np.fmin.accumulate(masked)
+
+
 def _ri_day_open(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    return np.full(len(c), _safe_float(ds.get("rth_open", float(o[0]) if len(o) > 0 else np.nan)))
+    # Legacy: usa ds["rth_open"] SOLO si la clave existe y no es NaN; si no, o[0].
+    val = ds.get("rth_open")
+    if val is None or pd.isna(val):
+        val = float(o[0]) if len(o) > 0 else np.nan
+    return np.full(len(c), _safe_float(val))
 def _ri_pm_high(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # Causal: cummax del premarket hasta la barra actual (paridad con
+    # indicators._pm_running_series). Constante de ds solo si no hay barras PM.
+    running = _pm_running_native(h, ds.get("_mins"), "high")
+    if running is not None:
+        return running
     return np.full(len(c), _safe_float(ds.get("pm_high", np.nan)))
 def _ri_pm_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    running = _pm_running_native(l, ds.get("_mins"), "low")
+    if running is not None:
+        return running
     return np.full(len(c), _safe_float(ds.get("pm_low", np.nan)))
+def _ri_pm_high_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # Réplica de indicators."PM High Gap (%)": gap causal barra a barra del PMH
+    # acumulado vs cierre de ayer.
+    yest_close = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))
+    if yest_close is None or pd.isna(yest_close):
+        yest_close = float(c[0]) if len(c) > 0 else np.nan
+    if pd.isna(yest_close) or yest_close == 0:
+        return np.full(len(c), np.nan)
+    running = _pm_running_native(h, ds.get("_mins"), "high")
+    if running is None:
+        pm_high_val = ds.get("pm_high")
+        running = np.full(len(c), _safe_float(pm_high_val if pm_high_val is not None else np.nan))
+    return (running - float(yest_close)) / float(yest_close) * 100.0
+def _rth_running_native(vals, mins, o, which):
+    """Réplica numpy de indicators._rth_running_series (RTH causal).
+    None si no hay minutos o no hay barras RTH (el caller aplica el mismo
+    fallback futuro-vs-pasado que el legacy)."""
+    if mins is None or len(vals) == 0:
+        return None
+    rth_mask = (mins >= 570) & (mins < 960)
+    if not rth_mask.any():
+        return None
+    if which == "open":
+        first_idx = int(np.argmax(rth_mask))
+        out = np.full(len(o), np.nan)
+        out[first_idx:] = float(o[first_idx])
+        return out
+    masked = np.where(rth_mask, np.asarray(vals, dtype=np.float64), np.nan)
+    return np.fmax.accumulate(masked) if which == "high" else np.fmin.accumulate(masked)
+def _rth_constant_fallback_native(n, mins, ds, key):
+    """Sin barras RTH: NaN si la sesión regular aún no llegó (constante sería
+    lookahead), constante de ds si ya pasó — idéntico a indicators."""
+    val = ds.get(key)
+    if mins is not None and len(mins) > 0 and mins.max() < 570:
+        return np.full(n, np.nan)
+    return np.full(n, _safe_float(val if val is not None else np.nan))
 def _ri_rth_open(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    return np.full(len(c), _safe_float(ds.get("rth_open", np.nan)))
+    running = _rth_running_native(o, ds.get("_mins"), o, "open")
+    if running is not None:
+        return running
+    return _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_open")
 def _ri_rth_high(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    return np.full(len(c), _safe_float(ds.get("rth_high", np.nan)))
+    running = _rth_running_native(h, ds.get("_mins"), o, "high")
+    if running is not None:
+        return running
+    return _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_high")
 def _ri_rth_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    return np.full(len(c), _safe_float(ds.get("rth_low", np.nan)))
+    running = _rth_running_native(l, ds.get("_mins"), o, "low")
+    if running is not None:
+        return running
+    return _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_low")
 def _ri_linear_reg(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return _linear_regression(c, p or 14)
 def _ri_pivot_pp(c, h, l, o, v, p, p2, p3, sd, m, ds):
@@ -136,7 +223,7 @@ _RAW_INDICATOR_DISPATCH = {
     "RSI": _ri_rsi, "ATR": _ri_atr, "CCI": _ri_cci, "ROC": _ri_roc,
     "Momentum": _ri_momentum, "MACD": _ri_macd, "MACD Signal": _ri_macd_signal,
     "MACD Histogram": _ri_macd_hist, "Stochastic": _ri_stoch,
-    "Stochastic %D": _ri_stoch, "DMI": _ri_dmi, "DMI-": _ri_dmi_minus,
+    "Stochastic %D": _ri_stoch_d, "DMI": _ri_dmi, "DMI-": _ri_dmi_minus,
     "Bollinger Bands": _ri_bb_upper, "Bollinger Upper": _ri_bb_upper,
     "Bollinger Middle": _ri_bb_mid, "Bollinger Lower": _ri_bb_lower,
     "OBV": _ri_obv,
@@ -152,8 +239,16 @@ _RAW_INDICATOR_DISPATCH = {
     "Yesterday Open": _ri_yesterday_open,
     "Yesterday Close": _ri_yesterday_close, "Previous Close": _ri_yesterday_close,
     "Yesterday High": _ri_yesterday_high, "Yesterday Low": _ri_yesterday_low,
-    "Day Open": _ri_day_open, "Current Open": _ri_day_open,
+    # "Current Open" = open de la barra actual (definición de producto, Jaume
+    # 2026-07-07); antes era un alias erróneo de Day Open (RTH open constante).
+    "Day Open": _ri_day_open, "Current Open": _ri_open,
     "Pre-Market High": _ri_pm_high, "Pre-Market Low": _ri_pm_low,
+    "PM High Gap (%)": _ri_pm_high_gap,
+    "High of Day": _ri_hod, "Low of Day": _ri_lod,
+    "Prev. Close Bar": _ri_prev_close_bar, "Prev. Bar Close": _ri_prev_close_bar,
+    "Prev. Open Bar": _ri_prev_open_bar, "Prev. Bar Open": _ri_prev_open_bar,
+    "Prev. High Bar": _ri_prev_high_bar, "Prev. Bar High": _ri_prev_high_bar,
+    "Prev. Low Bar": _ri_prev_low_bar, "Prev. Bar Low": _ri_prev_low_bar,
     "RTH Open": _ri_rth_open, "rth_open": _ri_rth_open,
     "RTH High": _ri_rth_high, "rth_high": _ri_rth_high,
     "RTH Low": _ri_rth_low, "rth_low": _ri_rth_low,
@@ -164,12 +259,37 @@ _RAW_INDICATOR_DISPATCH = {
 
 
 # ── N2a: Comparators for native numpy arrays ─────────────────────────────
+
+def _crosses_above_native(s, t):
+    """Réplica exacta de (s.shift(1) <= t.shift(1)) & (s > t): barra 0 = False
+    (el shift mete NaN y NaN<=x es False), NaN en s/t propaga a False."""
+    n = len(s)
+    out = np.zeros(n, dtype=bool)
+    if n < 2:
+        return out
+    t_arr = t if np.ndim(t) else np.full(n, float(t))
+    out[1:] = (s[:-1] <= t_arr[:-1]) & (s[1:] > t_arr[1:])
+    return out
+
+
+def _crosses_below_native(s, t):
+    n = len(s)
+    out = np.zeros(n, dtype=bool)
+    if n < 2:
+        return out
+    t_arr = t if np.ndim(t) else np.full(n, float(t))
+    out[1:] = (s[:-1] >= t_arr[:-1]) & (s[1:] < t_arr[1:])
+    return out
+
+
 _COMP_NATIVE = {
     "GREATER_THAN": lambda s, t: s > t,
     "LESS_THAN": lambda s, t: s < t,
     "GREATER_THAN_OR_EQUAL": lambda s, t: s >= t,
     "LESS_THAN_OR_EQUAL": lambda s, t: s <= t,
     "EQUAL": lambda s, t: s == t,
+    "CROSSES_ABOVE": _crosses_above_native,
+    "CROSSES_BELOW": _crosses_below_native,
 }
 
 
@@ -304,10 +424,39 @@ def _extract_indicator_plan(compiled: dict) -> dict:
             by_tf[tf] = []
         by_tf[tf].append(spec)
 
-    # Check for patterns that need DataFrames (RECURSIVO: los grupos anidados
-    # también cuentan — un candle_pattern anidado en el path nativo se evaluaría
-    # como all-False silencioso).
+    # Gate de soporte nativo (RECURSIVO). Cualquier cosa que el path nativo no
+    # reproduzca EXACTAMENTE igual que el legacy manda la estrategia ENTERA al
+    # legacy (has_special=True). Esto convierte la clase de bugs "0 trades
+    # silencioso" (indicador→NaN, comparador→None, cfg con band_line/offset/
+    # calc_on_heikin ignorados) en "correcto pero por el path clásico".
     has_special = False
+
+    def _cfg_native_ok(cfg, allow_scalar):
+        if isinstance(cfg, dict):
+            if cfg.get("name") not in _RAW_INDICATOR_DISPATCH:
+                return False
+            # Campos que el dispatch nativo ignora pero el legacy honra:
+            # divergen en silencio si se dejan pasar.
+            if cfg.get("offset") or cfg.get("calc_on_heikin"):
+                return False
+            if cfg.get("band_line") not in (None, "", "Upper"):
+                return False
+            return True
+        if not allow_scalar:
+            # El legacy hace source_cfg.get(...) → un source no-dict revienta o
+            # devuelve close; que lo resuelva el legacy.
+            return False
+        if isinstance(cfg, bool):
+            return False
+        if isinstance(cfg, (int, float)):
+            return True
+        if isinstance(cfg, str):
+            try:
+                float(cfg)
+                return True
+            except (TypeError, ValueError):
+                return False
+        return False
 
     def _walk_special(group):
         nonlocal has_special
@@ -316,19 +465,24 @@ def _extract_indicator_plan(compiled: dict) -> dict:
         for cond in group.get("conditions", []):
             if cond.get("type") == "group" or ("conditions" in cond and "operator" in cond):
                 _walk_special(cond)
-            elif cond.get("type") in ("candle_pattern", "price_level_distance"):
+            elif cond.get("type") == "indicator_comparison":
+                if cond.get("comparator", "GREATER_THAN") not in _COMP_NATIVE:
+                    has_special = True
+                if not _cfg_native_ok(cond.get("source", {}), allow_scalar=False):
+                    has_special = True
+                if not _cfg_native_ok(cond.get("target", {}), allow_scalar=True):
+                    has_special = True
+            else:
+                # candle_pattern, price_level_distance y tipos desconocidos:
+                # sin paridad nativa garantizada → legacy.
                 has_special = True
 
     _walk_special(compiled.get("entry_root", {}))
     _walk_special(compiled.get("exit_root", {}))
 
-    # N2a NO implementa el mapeo closed-bar tf->1m: los indicadores resampleados
-    # (5m/15m/...) devuelven arrays de longitud tf y translate_strategy_native los
-    # anularía a all-False (guard de longitud) → CERO trades silencioso en el path
-    # paralelo/slab (bug 2026-07-04, estrategia 5m de Jaume). Hasta implementar el
-    # mapeo, cualquier plan con timeframe != 1m va por el path legacy (correcto).
-    if any(tf != "1m" for tf in by_tf):
-        has_special = True
+    # tf != 1m ya NO gatea: el resample nativo es por reloj y las señales tf se
+    # alinean closed-bar a la malla 1m (_resample_arrays_time_based +
+    # _build_closed_bar_alignment), paridad cubierta por tests de equivalencia.
 
     return {
         "specs": list(specs.values()),
@@ -429,15 +583,36 @@ def translate_strategy_native(
     O = arrays["open"]
     V = arrays["volume"]
     n_bars = len(C)
+    minutes_arr = arrays.get("minutes_arr")
+    # Minutos ABSOLUTOS (epoch//60) para el bucketing por reloj: en frames
+    # multi-día (swing) los minutos-del-día colisionan entre días. Fallback a
+    # minutes_arr (frame de un solo día) para callers antiguos.
+    abs_min_arr = arrays.get("abs_min_arr")
+    if abs_min_arr is None:
+        abs_min_arr = minutes_arr
 
     # Fase 1: Precompute all indicators
     indicator_results = {}
+    align_ctx = {}  # tf -> (gather_idx, valid) para llevar señales tf a la malla 1m
+    base_ds = dict(daily_stats or {})
 
     for tf, specs in by_tf.items():
-        if tf == "1m":
+        period_mins = _TF_MINUTES.get(tf, 1)
+        if period_mins <= 1 or minutes_arr is None:
             c, h, l, o, v = C, H, L, O, V
+            mins_tf = minutes_arr
         else:
-            c, h, l, o, v = _resample_arrays_ohlcv(C, H, L, O, V, arrays.get("minutes_arr"), tf)
+            c, h, l, o, v, mins_tf, labels = _resample_arrays_time_based(
+                C, H, L, O, V, minutes_arr, abs_min_arr, period_mins
+            )
+            if tf not in align_ctx:
+                align_ctx[tf] = _build_closed_bar_alignment(abs_min_arr, labels, period_mins)
+
+        # "_mins" = minutos-del-día de la PRIMERA barra de cada bucket (paridad
+        # con el timestamp:"first" del resample legacy); lo usan los indicadores
+        # de sesión (PM High/Low, PM High Gap, RTH fallback).
+        ds_tf = dict(base_ds)
+        ds_tf["_mins"] = mins_tf
 
         for spec in specs:
             indicator_results[spec["key"]] = _compute_indicator_raw(
@@ -448,17 +623,40 @@ def translate_strategy_native(
                 std_dev=spec.get("std_dev"),
                 multiplier=spec.get("multiplier"),
                 offset=spec.get("offset", 0),
-                daily_stats=daily_stats,
+                daily_stats=ds_tf,
             )
 
     # Fase 2: Evaluate conditions
     if not has_special:
         entries = _evaluate_group_native(
-            compiled.get("entry_root", {}), indicator_results, n_bars, plan
+            compiled.get("entry_root", {}), indicator_results, n_bars,
+            compiled.get("entry_tf", "1m"), align_ctx
         )
         exits = _evaluate_group_native(
-            compiled.get("exit_root", {}), indicator_results, n_bars, plan
+            compiled.get("exit_root", {}), indicator_results, n_bars,
+            compiled.get("exit_tf", "1m"), align_ctx
         )
+        # Ventanas horarias de entrada (paridad con translate_strategy: el
+        # legacy las aplica sobre las entries 1m; sin esto el nativo entraba
+        # a cualquier hora).
+        time_windows = compiled.get("entry_time_windows", [])
+        if time_windows and entries is not None and minutes_arr is not None:
+            time_mask = np.zeros(n_bars, dtype=bool)
+            for window in time_windows:
+                from_time = window.get("from_time", "")
+                to_time = window.get("to_time", "")
+                if not from_time or not to_time:
+                    continue
+                try:
+                    from_h, from_m = map(int, from_time.split(":"))
+                    to_h, to_m = map(int, to_time.split(":"))
+                    start_mins = from_h * 60 + from_m
+                    end_mins = to_h * 60 + to_m
+                    time_mask |= (minutes_arr >= start_mins) & (minutes_arr <= end_mins)
+                except Exception as e:
+                    logger.error(f"Error parsing entry time window {window}: {e}")
+                    continue
+            entries = entries & time_mask
         # Guard de forma: si esto dispara hay un bug de alineación tf->1m (las
         # señales se PIERDEN). Nunca debe pasar tras el gate has_special de
         # _extract_indicator_plan — loguear FUERTE, no tragar en silencio.
@@ -503,6 +701,15 @@ def translate_strategy_native(
         elif hs_type == "Fixed Amount":
             first_close = float(C[0]) if n_bars > 0 else 1.0
             sl_stop = hs_value / first_close if first_close > 0 else None
+        elif hs_type == "ATR Multiplier":
+            # Paridad con _parse_risk_management: ATR(14) 1m, media de los no-NaN
+            # vía pandas (mismo orden de acumulación → mismo float que el legacy).
+            atr_arr = indicator_results.get("ATR|1m|14|None|None|None")
+            if atr_arr is None:
+                atr_arr = _atr(H, L, C, 14)
+            avg_atr = pd.Series(atr_arr).dropna().mean()
+            first_close = float(C[0]) if n_bars > 0 else 1.0
+            sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
 
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
@@ -511,7 +718,10 @@ def translate_strategy_native(
             trail_pct = trailing["buffer_pct"] / 100.0
 
     if risk.get("use_take_profit") is not False:
-        if risk.get("take_profit"):
+        tp_mode = risk.get("take_profit_mode", "Full")
+        if tp_mode == "Partial" and risk.get("partial_take_profits"):
+            partial_tps = _parse_partial_tps(risk)
+        elif risk.get("take_profit"):
             tp = risk["take_profit"]
             tp_type = tp.get("type")
             if tp_type == "Percentage":
@@ -536,43 +746,59 @@ def translate_strategy_native(
     }
 
 
-def _resample_arrays_ohlcv(C, H, L, O, V, minutes_arr, tf):
-    """Downsample 1m numpy arrays to a higher timeframe using pandas resample logic.
-    Returns (C_tf, H_tf, L_tf, O_tf, V_tf) as numpy arrays."""
-    if tf == "1m":
-        return C, H, L, O, V
+# Mismo mapa que _resample_if_needed/_align_signals_to_1m (tf desconocido → 1m,
+# replicando el tf_map.get(timeframe, "1min") del legacy).
+_TF_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 1440}
 
-    tf_map = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 1440}
-    period = tf_map.get(tf, 1)
-    if period == 1:
-        return C, H, L, O, V
 
-    n = len(C)
-    num_buckets = (n + period - 1) // period
+def _resample_arrays_time_based(C, H, L, O, V, minutes_arr, abs_min_arr, period_mins):
+    """Downsample por RELOJ (buckets = floor(minuto_absoluto / P)), no por posición.
+    El resample posicional anterior divergía del pandas.resample del legacy en
+    cuanto faltaba un minuto (habitual en premarket ilíquido). Devuelve también
+    los minutos-del-día de la primera barra de cada bucket (= timestamp:"first"
+    del legacy) y las etiquetas de bucket para la alineación closed-bar.
+    Asume timestamps ascendentes (invariante del motor)."""
+    labels_all = (abs_min_arr // period_mins) * period_mins
+    starts = np.flatnonzero(np.r_[True, labels_all[1:] != labels_all[:-1]])
+    ends = np.r_[starts[1:], len(labels_all)]
+    labels = labels_all[starts]
+    o_res = np.asarray(O, dtype=np.float64)[starts]
+    c_res = np.asarray(C, dtype=np.float64)[ends - 1]
+    h_res = np.maximum.reduceat(np.asarray(H, dtype=np.float64), starts)
+    l_res = np.minimum.reduceat(np.asarray(L, dtype=np.float64), starts)
+    v_res = np.add.reduceat(np.asarray(V, dtype=np.float64), starts)
+    mins_res = minutes_arr[starts]
+    return c_res, h_res, l_res, o_res, v_res, mins_res, labels
 
-    c_res = np.full(num_buckets, np.nan)
-    h_res = np.full(num_buckets, np.nan)
-    l_res = np.full(num_buckets, np.nan)
-    o_res = np.full(num_buckets, np.nan)
-    v_res = np.full(num_buckets, np.nan)
 
-    for i in range(num_buckets):
-        start = i * period
-        end = min(start + period, n)
-        if end > start:
-            o_res[i] = O[start]
-            c_res[i] = C[end - 1]
-            h_res[i] = np.max(H[start:end])
-            l_res[i] = np.min(L[start:end])
-            v_res[i] = np.sum(V[start:end])
+def _build_closed_bar_alignment(abs_min_arr, labels, period_mins):
+    """Para cada barra 1m: índice del último bucket tf CERRADO al final de esa
+    barra (réplica de _align_signals_to_1m: floor(ts+1min, freq) - freq). Barras
+    cuyo bucket cerrado no existe (label sin datos / antes del primer bucket)
+    quedan valid=False → False, igual que el .map(...).fillna(False) del legacy."""
+    t_closed = ((abs_min_arr + 1) // period_mins) * period_mins - period_mins
+    idx = np.searchsorted(labels, t_closed)
+    idx_c = np.clip(idx, 0, len(labels) - 1)
+    valid = (idx < len(labels)) & (labels[idx_c] == t_closed)
+    return np.where(valid, idx_c, 0), valid
 
-    mask = ~np.isnan(o_res)
-    return c_res[mask], h_res[mask], l_res[mask], o_res[mask], v_res[mask]
+
+def _align_native_to_1m(res_tf, ctx, n_bars):
+    """Lleva un array booleano a nivel tf a la malla 1m con semántica closed-bar."""
+    if ctx is None:
+        return np.zeros(n_bars, dtype=bool)
+    gather_idx, valid = ctx
+    out = np.zeros(n_bars, dtype=bool)
+    out[valid] = np.asarray(res_tf, dtype=bool)[gather_idx[valid]]
+    return out
 
 
 def _evaluate_group_native(group: dict, results: dict, n_bars: int,
-                           plan: dict) -> np.ndarray | None:
-    """Evaluate a condition group against precomputed indicator arrays."""
+                           parent_tf: str, align_ctx: dict) -> np.ndarray | None:
+    """Evaluate a condition group against precomputed indicator arrays.
+    parent_tf se hereda igual que en el legacy (cond.get("timeframe") or
+    parent_tf); cada condición tf>1m se evalúa a nivel tf y se alinea a la
+    malla 1m con semántica closed-bar ANTES de combinar."""
     if not group:
         return np.zeros(n_bars, dtype=bool)
 
@@ -585,11 +811,17 @@ def _evaluate_group_native(group: dict, results: dict, n_bars: int,
     for cond in conditions:
         cond_type = cond.get("type", "")
         if cond_type == "group" or ("conditions" in cond and "operator" in cond):
-            res = _evaluate_group_native(cond, results, n_bars, plan)
+            res = _evaluate_group_native(cond, results, n_bars, parent_tf, align_ctx)
         elif cond_type == "indicator_comparison":
-            res = _eval_comparison_native(cond, results)
+            tf = cond.get("timeframe") or parent_tf or "1m"
+            res = _eval_comparison_native(cond, results, tf)
+            if res is not None and _TF_MINUTES.get(tf, 1) > 1:
+                res = _align_native_to_1m(res, align_ctx.get(tf), n_bars)
         elif cond_type == "price_level_distance":
-            res = _eval_distance_native(cond, results)
+            tf = cond.get("timeframe") or parent_tf or "1m"
+            res = _eval_distance_native(cond, results, tf)
+            if res is not None and _TF_MINUTES.get(tf, 1) > 1:
+                res = _align_native_to_1m(res, align_ctx.get(tf), n_bars)
         elif cond_type == "candle_pattern":
             res = np.zeros(n_bars, dtype=bool)
         else:
@@ -608,42 +840,47 @@ def _evaluate_group_native(group: dict, results: dict, n_bars: int,
     return combined if combined is not None else np.zeros(n_bars, dtype=bool)
 
 
-def _eval_comparison_native(cond: dict, results: dict) -> np.ndarray | None:
-    """Evaluate an indicator_comparison condition against precomputed arrays."""
+def _eval_comparison_native(cond: dict, results: dict, tf: str) -> np.ndarray | None:
+    """Evaluate an indicator_comparison condition against precomputed arrays.
+    tf llega YA resuelto (con herencia del padre) — usar cond.get("timeframe")
+    aquí rompía la herencia y el lookup del plan fallaba en silencio."""
     source_cfg = cond.get("source", {})
     target_cfg = cond.get("target", {})
     comparator = cond.get("comparator", "GREATER_THAN")
-    tf = cond.get("timeframe", "1m")
 
-    source_key = _cfg_key_static(source_cfg, tf)
+    source_key = _cfg_key_static(source_cfg, tf) if isinstance(source_cfg, dict) else None
     source_arr = results.get(source_key) if source_key else None
     if source_arr is None:
         return None
 
-    if isinstance(target_cfg, (int, float)):
-        target_val = float(target_cfg)
-        op = _COMP_NATIVE.get(comparator)
-        if op is not None:
-            return op(source_arr, target_val)
-    elif isinstance(target_cfg, dict):
+    op = _COMP_NATIVE.get(comparator)
+    if op is None:
+        return None
+
+    if isinstance(target_cfg, dict):
         target_key = _cfg_key_static(target_cfg, tf)
         target_arr = results.get(target_key) if target_key else None
         if target_arr is not None:
-            op = _COMP_NATIVE.get(comparator)
-            if op is not None:
-                return op(source_arr, target_arr)
+            return op(source_arr, target_arr)
+        return None
 
-    return None
+    # Escalar (int/float o string numérico — el legacy hace float(target_cfg)).
+    try:
+        target_val = float(target_cfg)
+    except (TypeError, ValueError):
+        return None
+    return op(source_arr, target_val)
 
 
-def _eval_distance_native(cond: dict, results: dict) -> np.ndarray | None:
-    """Evaluate price_level_distance against precomputed arrays."""
+def _eval_distance_native(cond: dict, results: dict, tf: str) -> np.ndarray | None:
+    """Evaluate price_level_distance against precomputed arrays.
+    NOTA: hoy es código muerto — price_level_distance sigue gated a legacy vía
+    has_special hasta tener tests de equivalencia propios."""
     source_cfg = cond.get("source", {})
     level_cfg = cond.get("level", {})
     comparator = cond.get("comparator", "DISTANCE_LESS_THAN")
     value_pct = float(cond.get("value_pct", 1.0))
     position = cond.get("position") or "any"
-    tf = cond.get("timeframe", "1m")
 
     source_key = _cfg_key_static(source_cfg, tf) if isinstance(source_cfg, dict) else None
     level_key = _cfg_key_static(level_cfg, tf) if isinstance(level_cfg, dict) else None
@@ -906,6 +1143,44 @@ def _apply_comparator(
 
 # ── Risk management (unchanged) ──────────────────────────────────────────
 
+def _parse_partial_tps(risk: dict) -> list | None:
+    """Parsea partial_take_profits (extraído VERBATIM de _parse_risk_management
+    para compartirlo con el path nativo — no toca df, es puro parsing de config)."""
+    raw_pts = risk["partial_take_profits"]
+    partial_tps = []
+    for pt in raw_pts:
+        dist = pt.get("distance_pct", 0)
+        cap = pt.get("capital_pct", 0)
+        is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
+        is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
+        is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
+        if (is_eod_val or is_time_val or is_hour_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
+            partial_tps.append({"distance_pct": dist, "capital_pct": cap / 100.0})
+
+    def _pt_sort_key(x):
+        d = x["distance_pct"]
+        if isinstance(d, str):
+            if d.upper() == "EOD": return (3, 0.0)
+            if d.startswith("HOUR:"):
+                try:
+                    parts = d.split(":")
+                    return (2, int(parts[1]) * 60 + int(parts[2]))
+                except: return (2, 0.0)
+            if d.startswith("TIME:"):
+                try: return (1, float(d.split(":")[1]))
+                except: return (1, 0.0)
+        return (0, float(d) / 100.0)
+
+    if partial_tps:
+        for pt in partial_tps:
+            d = pt["distance_pct"]
+            if not isinstance(d, str):
+                pt["distance_pct"] = float(d) / 100.0
+        partial_tps.sort(key=_pt_sort_key)
+        return partial_tps
+    return None
+
+
 def _parse_risk_management(
     risk: dict, df: pd.DataFrame, daily_stats: dict | None,
     cache: dict | None = None,
@@ -943,39 +1218,7 @@ def _parse_risk_management(
     if risk.get("use_take_profit") is not False:
         tp_mode = risk.get("take_profit_mode", "Full")
         if tp_mode == "Partial" and risk.get("partial_take_profits"):
-            raw_pts = risk["partial_take_profits"]
-            partial_tps = []
-            for pt in raw_pts:
-                dist = pt.get("distance_pct", 0)
-                cap = pt.get("capital_pct", 0)
-                is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
-                is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
-                is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
-                if (is_eod_val or is_time_val or is_hour_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
-                    partial_tps.append({"distance_pct": dist, "capital_pct": cap / 100.0})
-
-            def _pt_sort_key(x):
-                d = x["distance_pct"]
-                if isinstance(d, str):
-                    if d.upper() == "EOD": return (3, 0.0)
-                    if d.startswith("HOUR:"):
-                        try:
-                            parts = d.split(":")
-                            return (2, int(parts[1]) * 60 + int(parts[2]))
-                        except: return (2, 0.0)
-                    if d.startswith("TIME:"):
-                        try: return (1, float(d.split(":")[1]))
-                        except: return (1, 0.0)
-                return (0, float(d) / 100.0)
-
-            if partial_tps:
-                for pt in partial_tps:
-                    d = pt["distance_pct"]
-                    if not isinstance(d, str):
-                        pt["distance_pct"] = float(d) / 100.0
-                partial_tps.sort(key=_pt_sort_key)
-            else:
-                partial_tps = None
+            partial_tps = _parse_partial_tps(risk)
         elif risk.get("take_profit"):
             tp = risk["take_profit"]
             tp_type = tp.get("type")

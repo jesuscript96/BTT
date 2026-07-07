@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+from functools import lru_cache
 
 try:
     import psutil
@@ -231,6 +232,50 @@ def get_candles(dataset_id: str, ticker: str, date: str):
     return {"ticker": ticker, "date": date, "candles": candles}
 
 
+def _ym_window(date_str: str, back: int, fwd: int) -> list[tuple[int, int]]:
+    """Pares (year, month) desde `back` meses atrás hasta `fwd` adelante."""
+    from datetime import datetime
+    base = datetime.strptime(date_str, "%Y-%m-%d")
+    out = []
+    for delta in range(-back, fwd + 1):
+        mm = base.month + delta
+        yy = base.year + (mm - 1) // 12
+        out.append((yy, (mm - 1) % 12 + 1))
+    return out
+
+
+@lru_cache(maxsize=4096)
+def _adjacent_trading_dates(ticker: str, date: str, direction: str, limit: int) -> tuple[str, ...]:
+    """Días de trading adyacentes de un ticker vía daily_metrics.
+
+    daily_metrics es una vista sobre parquets remotos en GCS: sin poda de
+    particiones cada consulta escanea TODO el histórico (~7-15s medidos en
+    prod). Podamos a mes actual ± 1 (year/month son columnas hive), lo que
+    baja a ~2s, y cacheamos en proceso para que repetir un trade sea
+    instantáneo. Un ticker con un halt > 1 mes devuelve menos días y el chart
+    simplemente muestra menos contexto.
+    """
+    from app.database import get_db_connection
+    con = get_db_connection()
+    if direction == "succ":
+        pairs = _ym_window(date, 0, 1)
+        cmp_op, order = ">", "ASC"
+    else:
+        pairs = _ym_window(date, 1, 0)
+        cmp_op, order = "<", "DESC"
+    ym_pred = " OR ".join(f"(year = {y} AND month = {m})" for y, m in pairs)
+    query = f"""
+        SELECT DISTINCT CAST("timestamp" AS DATE) AS d
+        FROM daily_metrics
+        WHERE ({ym_pred}) AND ticker = ?
+          AND CAST("timestamp" AS DATE) {cmp_op} CAST(? AS DATE)
+        ORDER BY d {order}
+        LIMIT {int(limit)}
+    """
+    rows = con.execute(query, [ticker, date]).fetchall()
+    return tuple(str(r[0]) for r in rows)
+
+
 @router.get("/candles/multi")
 def get_multi_candles(
     dataset_id: str,
@@ -278,64 +323,35 @@ def get_multi_candles(
                 date
             ]
         dates = dates[:count]
+    elif count == 1:
+        # Solo se muestra el propio día: no hace falta consultar días adyacentes.
+        # (Antes se lanzaba igualmente la query a daily_metrics —vista remota
+        # sobre GCS, 7-15s— y se descartaba el resultado.)
+        dates = [date]
     else:
-        from app.database import get_db_connection
-        con = get_db_connection()
         try:
             if apply_day == "gap_day":
-                query = """
-                    SELECT DISTINCT CAST("timestamp" AS DATE) AS date_str
-                    FROM daily_metrics
-                    WHERE ticker = ? AND CAST("timestamp" AS DATE) > CAST(? AS DATE)
-                    ORDER BY "timestamp" ASC
-                    LIMIT 2
-                """
-                rows = con.execute(query, [ticker, date]).fetchall()
-                succeeding = [str(r[0]) for r in rows]
+                succeeding = list(_adjacent_trading_dates(ticker, date, "succ", 2))
                 dates = [date] + succeeding
             elif apply_day == "gap_1_day":
-                query_pre = """
-                    SELECT DISTINCT CAST("timestamp" AS DATE) AS date_str
-                    FROM daily_metrics
-                    WHERE ticker = ? AND CAST("timestamp" AS DATE) < CAST(? AS DATE)
-                    ORDER BY "timestamp" DESC
-                    LIMIT 1
-                """
-                row_pre = con.execute(query_pre, [ticker, date]).fetchone()
-                gap_day = str(row_pre[0]) if row_pre else date
-                
-                query_suc = """
-                    SELECT DISTINCT CAST("timestamp" AS DATE) AS date_str
-                    FROM daily_metrics
-                    WHERE ticker = ? AND CAST("timestamp" AS DATE) > CAST(? AS DATE)
-                    ORDER BY "timestamp" ASC
-                    LIMIT 1
-                """
-                row_suc = con.execute(query_suc, [ticker, date]).fetchone()
-                gap_2_day = str(row_suc[0]) if row_suc else None
-                
+                preceding = _adjacent_trading_dates(ticker, date, "prec", 1)
+                gap_day = preceding[0] if preceding else date
+                succeeding = _adjacent_trading_dates(ticker, date, "succ", 1)
                 dates = [gap_day, date]
-                if gap_2_day:
-                    dates.append(gap_2_day)
+                if succeeding:
+                    dates.append(succeeding[0])
             else: # gap_2_day
-                query_pre = """
-                    SELECT DISTINCT CAST("timestamp" AS DATE) AS date_str
-                    FROM daily_metrics
-                    WHERE ticker = ? AND CAST("timestamp" AS DATE) < CAST(? AS DATE)
-                    ORDER BY "timestamp" DESC
-                    LIMIT 2
-                """
-                rows_pre = con.execute(query_pre, [ticker, date]).fetchall()
-                preceding = [str(r[0]) for r in rows_pre]
+                preceding = list(_adjacent_trading_dates(ticker, date, "prec", 2))
                 if len(preceding) == 2:
                     dates = [preceding[1], preceding[0], date]
                 elif len(preceding) == 1:
                     dates = [preceding[0], date]
                 else:
                     dates = [date]
-            
+
             dates = dates[:count]
         except Exception as e:
+            logger.warning(f"/candles/multi: fallo obteniendo días adyacentes {ticker} {date}: {e}")
             # Fallback
             from app.services.data_service import fetch_preceding_trading_dates
             dates = fetch_preceding_trading_dates(ticker, date, count)
