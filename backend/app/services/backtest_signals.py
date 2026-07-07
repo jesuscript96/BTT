@@ -59,15 +59,17 @@ def get_parallel_workers() -> int:
 def n2a_native_enabled() -> bool:
     """Gate del fast-path N2a (translate_strategy_native) — default OFF.
 
-    2026-07-04: N2a producía CERO trades EN SILENCIO en el path paralelo para
-    cualquier hueco de soporte: (1) timeframes != 1m (sin mapeo closed-bar
-    tf->1m, señales anuladas por el guard de forma), (2) indicadores fuera de
-    _RAW_INDICATOR_DISPATCH (fallback np.nan -> comparaciones all-False, sin
-    log). El motor clásico (translate_strategy) soporta TODO y es LA
-    especificación — con el flag OFF los workers usan el clásico (idéntico al
-    secuencial, correcto por construcción). Re-activar con
-    BTT_N2A_NATIVE_ENABLED=1 SOLO tras cerrar los huecos con tests de
-    equivalencia sobre estrategias reales (multi-tf + indicadores no nativos).
+    HISTORIA: 2026-07-04 N2a producía CERO trades EN SILENCIO para cualquier
+    hueco de soporte (tf != 1m, indicadores fuera del dispatch → NaN all-False).
+    2026-07-06 (fix/n2a-parity): los huecos se cerraron — _extract_indicator_plan
+    ahora gatea POR ESTRATEGIA todo lo que el nativo no reproduce exactamente
+    (indicador/comparador/band_line/offset/calc_on_heikin no soportados,
+    candle_pattern, price_level_distance) → esas estrategias van por el clásico,
+    correctas pero sin el speedup; el resto corre nativo con paridad validada
+    por tests/test_n2a_native_equivalence.py (incl. multi-tf closed-bar, PM
+    causal, time windows, crosses, ATR-stop, partial TPs). El motor clásico
+    (translate_strategy) sigue siendo LA especificación. Activar con
+    BTT_N2A_NATIVE_ENABLED=1 tras validar Golden B en el entorno destino.
     """
     return os.getenv("BTT_N2A_NATIVE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
 
@@ -136,7 +138,8 @@ def _compute_signals_for_pair(
         L = np.asarray(day_df["low"], dtype=np.float64)
         V = np.asarray(day_df["volume"], dtype=np.float64)
 
-    minutes_np = (ts_int64 // 60_000_000_000) % 1440  # nanoseconds -> minutes since midnight
+    abs_min_np = ts_int64 // 60_000_000_000  # nanoseconds -> minutes since epoch
+    minutes_np = abs_min_np % 1440  # -> minutes since midnight
     n_bars = len(C)
 
     # --- Market structure (numpy puro, sin pandas .shift/.loc) ---
@@ -172,6 +175,7 @@ def _compute_signals_for_pair(
         arrays_native = {
             "open": O, "high": H, "low": L, "close": C, "volume": V,
             "minutes_arr": minutes_np,
+            "abs_min_arr": abs_min_np,  # bucketing por reloj del resample tf nativo
             "hod": hod, "lod": lod,
             "pm_high": pm_high_run,
             "pm_low": pm_low_run,
