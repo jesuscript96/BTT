@@ -83,6 +83,8 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
                     )
                 finally:
                     con.close()
+            from app.gcs_sync import mark_user_db_dirty
+            mark_user_db_dirty()
         except Exception as e:
             print(f"[SWR] store failed for {ticker}/{endpoint}: {e}")
 
@@ -160,6 +162,8 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn):
                                 con.execute("DELETE FROM ticker_analysis_cache WHERE ticker = ? AND endpoint = ?", [ticker, endpoint])
                             finally:
                                 con.close()
+                        from app.gcs_sync import mark_user_db_dirty
+                        mark_user_db_dirty()
                     except Exception as db_err:
                         print(f"[SWR] failed cleaning placeholder for {ticker}/{endpoint}: {db_err}")
                 finally:

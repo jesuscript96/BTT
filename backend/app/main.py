@@ -200,8 +200,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    # Upload user DB back to GCS explicitly on graceful shutdown
-    upload_user_db()
+    # Upload user DB back to GCS on graceful shutdown, but only if this
+    # instance actually took writes: a duplicate/stale instance shutting down
+    # must never overwrite newer data in GCS with its startup copy.
+    upload_user_db(only_if_dirty=True)
 
 
 app = FastAPI(title="Short Selling Backtester API", lifespan=lifespan)

@@ -260,6 +260,9 @@ def register_dilution_banks(ticker: str, banks: list[str]) -> int:
                     [ticker, name, None, _date.today()],
                 )
                 inserted += 1
+        if inserted:
+            from app.gcs_sync import mark_user_db_dirty
+            mark_user_db_dirty()
     except Exception as exc:
         logger.warning("[ASSISTANT] no se pudo registrar bancos dilusores: %s", exc)
     return inserted
