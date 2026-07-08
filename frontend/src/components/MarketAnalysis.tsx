@@ -323,6 +323,7 @@ function TimingLegend() {
 
 function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; fallback: MarketAnalysisResponse["distributions"] }) {
   const [dist, setDist] = useState(fallback);
+  const [statMode, setStatMode] = useState<"dominant" | "median">("dominant");
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -336,15 +337,34 @@ function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; f
 
   const dominant = (rec: Record<string, number>) =>
     Object.entries(rec).reduce<[string, number]>((acc, e) => (e[1] > acc[1] ? e : acc), ["—", 0]);
-  const [domF, domP] = dominant(dist.hod_time);
+
+  const computeMedian = (rec: Record<string, number>): [string, number] => {
+    const total = Object.values(rec).reduce((s, v) => s + v, 0);
+    if (total === 0) return ["—", 0];
+    let cum = 0;
+    for (const [franja, count] of Object.entries(rec)) {
+      cum += count;
+      if (cum >= total / 2) return [franja, (cum / total) * 100];
+    }
+    return ["—", 0];
+  };
+
+  const [domF, domP] = statMode === "dominant" ? dominant(dist.hod_time) : computeMedian(dist.hod_time);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <span style={{ fontSize: 11, color: color.textSecondary }}>
-          Pico HOD más probable: <strong style={{ color: color.copper }}>{domF}</strong>{domP ? ` · ${domP.toFixed(1)}%` : ""}
+          {statMode === "dominant" ? "Pico" : "Mediana"} HOD: <strong style={{ color: color.copper }}>{domF}</strong>{domP ? ` · ${domP.toFixed(1)}%` : ""}
         </span>
-        <span style={{ fontSize: 10, fontWeight: 600, color: color.textMuted, background: color.bgSurface, padding: "2px 8px", borderRadius: 4, border: `1px solid ${color.border}` }}>30D</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <SegmentedControl<"dominant" | "median">
+            size="sm"
+            options={[{ id: "dominant", label: "Moda" }, { id: "median", label: "Mediana" }]}
+            value={statMode}
+            onChange={setStatMode}
+          />
+        </div>
       </div>
       <TimingChart hod={dist.hod_time} lod={dist.lod_time} pmh={dist.pmh_time} height={240} />
     </div>
