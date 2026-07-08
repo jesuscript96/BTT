@@ -549,13 +549,28 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
         return idx, np.nan, {}
 
 
-def _run_grid_chunk(idx_list: list[int]):
-    """Worker for a contiguous chunk of grid points — runs in a forked child.
+def _init_grid_ctx(ctx: dict):
+    """Inicializador de cada worker del grid (forkserver): fija _GRID_CTX.
 
-    Reads the dataset from _GRID_CTX inherited at fork time; only the index
-    list and the per-point results cross the process boundary. The signal
-    cache persists in the child across chunks, so each worker translates the
-    strategy signals at most once per (ticker, date) on risk-only sweeps.
+    Con `forkserver` los workers se forkean desde un proceso servidor LIMPIO
+    (un solo hilo) → NO heredan el global del padre por COW, así que el ctx
+    (dataset pre-agrupado incluido) se pasa pickled una vez por worker vía
+    `initargs`. Esto esquiva el segfault de fork-en-proceso-multihilo que
+    rompía el pool cuando el hilo SSL del live_screener estaba vivo. Con
+    `fork` el ctx ya se hereda por COW y esto es redundante pero inofensivo.
+    """
+    global _GRID_CTX
+    _GRID_CTX = ctx
+
+
+def _run_grid_chunk(idx_list: list[int]):
+    """Worker for a contiguous chunk of grid points — runs in a child process.
+
+    Reads the dataset from _GRID_CTX (heredado por COW con `fork`, o fijado
+    por `_init_grid_ctx` con `forkserver`); only the index list and the
+    per-point results cross the process boundary. The signal cache persists
+    in the child across chunks, so each worker translates the strategy signals
+    at most once per (ticker, date) on risk-only sweeps.
     """
     ctx = _GRID_CTX
     signal_cache = _WORKER_SIGNAL_CACHE if ctx.get("is_risk_only") else None
@@ -785,10 +800,24 @@ def run_optimization_grid(
     results_flat = np.full(n_points, np.nan)
     details_flat = [None] * n_points
 
-    # Parallel sweep requires fork (COW data sharing); on spawn platforms
-    # (Windows) the dataset would be pickled per worker, so fall back.
-    n_workers = max(1, min((os.cpu_count() or 1) - 1, n_points, 8))
-    use_parallel = n_workers > 1 and "fork" in multiprocessing.get_all_start_methods()
+    # Parallel sweep uses a `forkserver` pool (workers forked from a clean
+    # single-thread server → inmune al segfault de fork-en-proceso-multihilo
+    # que rompía el pool con el hilo SSL del live_screener vivo). Env
+    # OPT_PARALLEL_WORKERS fuerza el nº de workers (1 = secuencial, escape
+    # hatch instantáneo sin deploy). On spawn-only platforms (Windows) the
+    # dataset can't share via fork family, so fall back to sequential.
+    _env_w = os.getenv("OPT_PARALLEL_WORKERS")
+    if _env_w is not None and _env_w.strip():
+        try:
+            n_workers = max(1, int(_env_w))
+        except ValueError:
+            n_workers = max(1, min((os.cpu_count() or 1) - 1, n_points, 8))
+    else:
+        n_workers = max(1, min((os.cpu_count() or 1) - 1, n_points, 8))
+    n_workers = min(n_workers, n_points)
+    _methods = multiprocessing.get_all_start_methods()
+    _grid_ctx_method = "forkserver" if "forkserver" in _methods else "fork"
+    use_parallel = n_workers > 1 and ("forkserver" in _methods or "fork" in _methods)
 
     ctx = {
         "grid_points": grid_points,
@@ -808,24 +837,31 @@ def run_optimization_grid(
     )
 
     if use_parallel:
-        # Pre-warm the daily OHLC cache in the parent so forked children
-        # inherit it and never open DuckDB (connections don't survive fork).
+        # Pre-warm the daily OHLC cache in the parent so children never open
+        # DuckDB (connections don't survive fork/forkserver).
         try:
             from app.services.indicators import prefetch_daily_ohlc
             prefetch_daily_ohlc(list(qualifying_df["ticker"].unique()))
         except Exception as e:
             logger.warning(f"[OPT] prefetch_daily_ohlc pre-warm failed: {e}")
 
+        # Con `fork` el ctx se hereda por COW; con `forkserver` NO (proceso
+        # limpio) → se pasa pickled por initializer. Se setea el global igual
+        # (usado con fork; con forkserver queda como fallback inofensivo).
         _GRID_CTX.update(ctx)
+        failed_idx: list[int] = []
+        completed = 0
         try:
             chunk_size = max(1, math.ceil(n_points / (n_workers * 4)))
             chunks = [
                 list(range(i, min(i + chunk_size, n_points)))
                 for i in range(0, n_points, chunk_size)
             ]
-            completed = 0
-            mp_ctx = multiprocessing.get_context("fork")
-            with ProcessPoolExecutor(max_workers=n_workers, mp_context=mp_ctx) as pool:
+            mp_ctx = multiprocessing.get_context(_grid_ctx_method)
+            with ProcessPoolExecutor(
+                max_workers=n_workers, mp_context=mp_ctx,
+                initializer=_init_grid_ctx, initargs=(ctx,),
+            ) as pool:
                 futures = {pool.submit(_run_grid_chunk, chunk): chunk for chunk in chunks}
                 for future in as_completed(futures):
                     if is_optimization_cancelled(task_id):
@@ -840,10 +876,12 @@ def run_optimization_grid(
                             results_flat[idx] = metric_val
                             details_flat[idx] = detail
                     except Exception as e:
-                        logger.error(f"[OPT] Chunk {chunk[0]}-{chunk[-1]} failed: {e}")
-                        for idx in chunk:
-                            results_flat[idx] = np.nan
-                            details_flat[idx] = {}
+                        # Un worker murió (típicamente BrokenProcessPool por
+                        # segfault de fork). NO rellenar con NaN en silencio
+                        # (eso producía la superficie plana en 0.0000): anotar
+                        # los puntos para recomputarlos en serie abajo.
+                        logger.error(f"[OPT] Chunk {chunk[0]}-{chunk[-1]} failed ({e}); will retry sequentially")
+                        failed_idx.extend(chunk)
                     completed += len(chunk)
                     if task_id:
                         prog = round(5.0 + (completed / n_points) * 95.0, 2)
@@ -852,6 +890,27 @@ def run_optimization_grid(
                     logger.info(f"[OPT] Progress: {completed}/{n_points} ({elapsed}s)")
         finally:
             _GRID_CTX.clear()
+
+        # SAFETY NET: si el pool se degradó (p.ej. BrokenProcessPool), recomputa
+        # los puntos caídos EN SERIE en el proceso padre (sin fork) en vez de
+        # devolver una superficie plana de NaN→0.0000. Garantiza resultado
+        # correcto aunque el pool reviente; solo cuesta tiempo extra.
+        if failed_idx:
+            logger.warning(
+                f"[OPT] Pool degraded — recomputing {len(failed_idx)}/{n_points} "
+                f"point(s) sequentially (worker pool broke)"
+            )
+            seq_cache = {} if is_risk_only else None
+            done_par = n_points - len(failed_idx)
+            for j, idx in enumerate(failed_idx):
+                if is_optimization_cancelled(task_id):
+                    raise RuntimeError("OPTIMIZATION_CANCELLED")
+                _, metric_val, detail = _run_grid_point(idx, ctx, seq_cache)
+                results_flat[idx] = metric_val
+                details_flat[idx] = detail
+                if task_id:
+                    prog = round(5.0 + ((done_par + j + 1) / n_points) * 95.0, 2)
+                    set_progress(task_id, prog)
     else:
         signal_cache = {} if is_risk_only else None
         for idx in range(n_points):

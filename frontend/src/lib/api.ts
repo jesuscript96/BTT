@@ -97,11 +97,11 @@ export async function apiRequest<T>(
 
   const hasBody = !!options?.body;
   const token = await getClerkToken();
+  const existingSignal = options?.signal;
   let response: Response;
   try {
     // Wire up AbortController for timeout (skip if caller already provided a signal)
     const controller = new AbortController();
-    const existingSignal = options?.signal;
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     // If caller already provided a signal, abort our controller when theirs fires
@@ -124,6 +124,13 @@ export async function apiRequest<T>(
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
+      // Abort del LLAMADOR (cleanup de React, navegación): propagar tal cual para
+      // que los componentes lo distingan por name==='AbortError'. Convertirlo en
+      // ApiError lo disfrazaba de "timed out" y disparaba estados de error falsos
+      // (visible con el doble-mount de StrictMode en dev).
+      if (existingSignal?.aborted) {
+        throw error;
+      }
       throw new ApiError(0, `Request timed out after ${timeoutMs / 1000}s: ${path}`);
     }
     throw new ApiError(0, "No se pudo conectar con el backend", error);
@@ -514,14 +521,13 @@ export function getAggregateIntraday(
   return apiRequest<unknown>(`/market/aggregate/intraday?${qs}`, { signal });
 }
 
-// ── Market Analysis (docs/market-analysis/PRD.md §4.1) ──────────────────────
+// ── Market Analysis (docs/market-analysis/PRD_PATCH_v2.1.md §4.1) ────────────
 export interface MaKpiValue {
   value: number | null;
   prev?: number | null;
-  ticker?: string | null;
-  date?: string | null;
 }
 
+// records se mantiene en el payload para el contexto de Edgie (§05: la UI ya no pinta tabla)
 export interface MaRecentGap {
   ticker: string;
   date: string;
@@ -534,34 +540,51 @@ export interface MaRecentGap {
   close_red: boolean;
 }
 
-export interface MaHistogram {
-  buckets: Record<string, number>;
-  p25: number;
-  p50: number;
-  p75: number;
-  mean: number;
+// Ventanas de Fade (§04): fade = (entrada − close EOD) / entrada × 100
+export interface MaFadeWindow {
+  franja: string;
+  avg_fade_pct: number | null;
+  pct_favorable: number | null;
+  n: number;
+  pending_backfill?: boolean; // franja sin derivado ma_daily aún (09:30/11:00)
+}
+
+export interface MaFadePm {
+  avg_fade_pct: number | null;
+  pct_favorable: number | null;
+  n: number;
+}
+
+// Exclusiones de calidad del universo (§01) — transparencia, principio 00
+export interface MaQualityFilters {
+  excluded_ticker_type: number;
+  excluded_gap_gt_1000: number;
+  excluded_same_day_split: number;
+  excluded_reverse_split: number;
+  excluded_black_swan: number | null; // null = derivado no disponible (no evaluado)
 }
 
 export interface MarketAnalysisResponse {
   records: MaRecentGap[];
   kpis: {
     gappers_count: MaKpiValue;
+    gappers_count_pm: MaKpiValue; // pmh_gap_pct > 0 (subió en pre)
     avg_gap_pct: MaKpiValue;
-    pm_high_average: MaKpiValue;
+    pm_high_gap_pct: MaKpiValue; // % (antes pm_high_average en $)
     close_red_pct: MaKpiValue;
-    close_lt_vwap_pct: MaKpiValue; // value null en MVP (Fase 2)
+    close_lt_vwap_pct: MaKpiValue; // value null (pospuesto a v1.2)
     avg_fade_from_pmh: MaKpiValue;
-    max_fade_from_pmh: MaKpiValue;
   };
   distributions: {
     hod_time: Record<string, number>;
     lod_time: Record<string, number>;
     pmh_time: Record<string, number>;
   };
-  mae_mfe: {
-    rth: { mae: MaHistogram; mfe: MaHistogram };
-    pm: { mae: MaHistogram; mfe: MaHistogram };
+  fade_windows: {
+    rth: MaFadeWindow[];
+    pm: MaFadePm;
   };
+  quality_filters: MaQualityFilters;
   source: string;
   period: { start: string; end: string };
 }

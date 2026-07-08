@@ -33,13 +33,15 @@ def load_splits_cache() -> None:
     global _splits_cache, _splits_cache_ts
     con = get_db_connection()
     try:
+        # split_from/split_to permiten distinguir reverse (to < from) de forward
+        # (filtro de calidad Market Analysis, Patch v2.1 §01.1).
         _splits_cache = con.execute(
-            "SELECT ticker, execution_date FROM massive.splits"
+            "SELECT ticker, execution_date, split_from, split_to FROM massive.splits"
         ).fetchdf()
         print(f"[CACHE] splits loaded: {len(_splits_cache)} rows")
     except Exception as e:
         print(f"[WARN] Failed to load splits cache: {e}. Falling back to empty splits list.")
-        _splits_cache = pd.DataFrame(columns=['ticker', 'execution_date'])
+        _splits_cache = pd.DataFrame(columns=['ticker', 'execution_date', 'split_from', 'split_to'])
     _splits_cache_ts = datetime.now()
 
 def get_tickers_df() -> pd.DataFrame:
@@ -55,6 +57,92 @@ def get_splits_df() -> pd.DataFrame:
     ):
         load_splits_cache()
     return _splits_cache
+
+
+_effective_splits_cache: pd.DataFrame | None = None
+_effective_splits_ts: datetime | None = None
+
+
+def get_effective_splits_df() -> pd.DataFrame:
+    """Splits de la tabla del lake + tail reciente vía API Massive.
+
+    La tabla massive.splits puede ir por detrás del presente (auditado
+    07-jul-2026: max execution_date=2026-03-30 con 3+ meses de retraso), así que
+    se complementa con /v3/reference/splits desde (max_tabla − 7d). Dedup por
+    (ticker, execution_date). Si la API falla → tabla sola (fail-open, con log).
+    TTL 24h, igual que el resto de referencia.
+    """
+    global _effective_splits_cache, _effective_splits_ts
+    if _effective_splits_cache is not None and _effective_splits_ts and \
+            datetime.now() - _effective_splits_ts < timedelta(hours=SPLITS_TTL_HOURS):
+        return _effective_splits_cache
+
+    base = get_splits_df()
+    merged = base
+    try:
+        from app.services.massive_service import get_splits_since
+        if not base.empty and "execution_date" in base.columns:
+            max_d = pd.to_datetime(base["execution_date"]).max()
+            since = (max_d - pd.Timedelta(days=7)).date().isoformat()
+        else:
+            since = (datetime.now() - timedelta(days=365)).date().isoformat()
+        tail = get_splits_since(since)
+        if tail:
+            tail_df = pd.DataFrame(tail)
+            tail_df["execution_date"] = pd.to_datetime(tail_df["execution_date"]).dt.date
+            merged = pd.concat([base, tail_df], ignore_index=True)
+            merged = merged.drop_duplicates(subset=["ticker", "execution_date"], keep="first")
+            print(f"[CACHE] splits efectivos: {len(base)} tabla + {len(tail)} API → {len(merged)}")
+    except Exception as e:
+        print(f"[WARN] Tail de splits vía API no disponible ({e}); usando solo la tabla.")
+
+    _effective_splits_cache = merged
+    _effective_splits_ts = datetime.now()
+    return merged
+
+
+# ─── Derivado Market Analysis (Patch v2.1) ───────────────────
+# ticker+date → m0_return_pct / m90_return_pct / max_spike_5m_pct, generado por
+# scripts/backfill_ma_derived.py en cold_storage/derived/ma_daily/*.parquet.
+# Aditivo: NO toca daily_metrics (diseño §7-B del PRD del patch).
+_ma_derived_cache: pd.DataFrame | None = None
+_ma_derived_ts: datetime | None = None
+MA_DERIVED_TTL_HOURS = 6
+
+
+def load_ma_derived_cache() -> None:
+    global _ma_derived_cache, _ma_derived_ts
+    con = get_db_connection()
+    provider = os.getenv("DB_PROVIDER", "motherduck").lower()
+    bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+    sources = (
+        [f"gs://{bucket}/cold_storage/derived/ma_daily/*.parquet"]
+        if provider == "gcs"
+        else ["ma_daily", f"gs://{bucket}/cold_storage/derived/ma_daily/*.parquet"]
+    )
+    for src in sources:
+        try:
+            q = (f"SELECT ticker, date, m0_return_pct, m90_return_pct, max_spike_5m_pct "
+                 f"FROM read_parquet('{src}')") if src.startswith("gs://") else \
+                (f"SELECT ticker, date, m0_return_pct, m90_return_pct, max_spike_5m_pct FROM {src}")
+            df = con.execute(q).fetchdf()
+            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+            _ma_derived_cache = df
+            _ma_derived_ts = datetime.now()
+            print(f"[CACHE] ma_derived loaded: {len(df)} rows desde {src}")
+            return
+        except Exception as e:
+            last_err = e
+    print(f"[WARN] ma_derived no disponible ({last_err}); fade 09:30/11:00 y black swan quedan pending.")
+    _ma_derived_cache = None
+    _ma_derived_ts = datetime.now()
+
+
+def get_ma_derived_df() -> pd.DataFrame | None:
+    global _ma_derived_cache, _ma_derived_ts
+    if _ma_derived_ts is None or datetime.now() - _ma_derived_ts > timedelta(hours=MA_DERIVED_TTL_HOURS):
+        load_ma_derived_cache()
+    return _ma_derived_cache
 
 # ─── Hot Storage — Gap Days ──────────────────────────────────
 _hot_daily_cache: pd.DataFrame | None = None
