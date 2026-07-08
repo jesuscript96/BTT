@@ -5,26 +5,27 @@
  * Contrato/diseño: docs/market-analysis/PRD.md (MVP v1.0) + PRD_PATCH_v2.1.md.
  *
  * Gráficos construidos con visx (./market-analysis/charts) — reemplazan a recharts
- * SOLO en esta página. Layout pensado como panel (bento), no como pila de secciones:
- *   · KPI strip   — 5 tarjetas uniformes (§07)
- *   · Timing      — HOD/LOD/PM High superpuestos en un único eje intradía (MA-02)
- *   · Ventanas de Fade — caída media por franja de entrada, RTH (§04)
- *   · Seasonality — 12 curvas mensuales de Avg Change from Open, universo estándar (§06)
+ * SOLO en esta página. Rejilla FIJA de 2 columnas al 50% (2×2):
+ *   · arriba-izq   — Pulso del periodo: las 5 métricas en un panel coherente (sin pills)
+ *   · arriba-der   — Ventanas de Fade (§04)
+ *   · abajo-izq    — Avg Change from Open, universo estándar (§06)
+ *   · abajo-der    — Gaps Up by Sector (treemap, PRD_GAPS_BY_SECTOR)
  * La página es informativa de condiciones de mercado: sin listado de tickers (§05).
  * Edgie recibe el contexto de filtros/periodo/datos vía evento window (§08).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Filter, RotateCcw, TrendingDown, Clock, ArrowLeftRight, CalendarDays } from "lucide-react";
+import { Filter, RotateCcw, TrendingDown, ArrowLeftRight, CalendarDays, Activity, LayoutGrid } from "lucide-react";
 import { color, font, Card, Button, Table, Th, Td, Tr, SegmentedControl, Input } from "@/components/ui";
-import { TimingChart, SeasonalityChart, SERIES_COLOR } from "@/components/market-analysis/charts";
+import { SeasonalityChart, SectorTreemap } from "@/components/market-analysis/charts";
 import { ChatBot } from "@/components/ChatBot";
 import {
   getMarketAnalysis,
   getAvgChangeFromOpen,
+  getGapsBySector,
   type MarketAnalysisResponse,
   type MaKpiValue,
-  type MaFadeWindow,
   type MaMonthCurve,
+  type MaGapsBySector,
 } from "@/lib/api";
 
 // ── helpers de formato ───────────────────────────────────────────────────────
@@ -130,8 +131,6 @@ export default function MarketAnalysis() {
       kpis: data.kpis,
       fade_windows: data.fade_windows,
       quality_filters: data.quality_filters,
-      distributions_hod_top: Object.entries(data.distributions.hod_time)
-        .sort((a, b) => b[1] - a[1]).slice(0, 3),
       records_sample: data.records.slice(0, 20),
     };
     (window as unknown as Record<string, unknown>).__lastMarketAnalysisContext = detail;
@@ -207,29 +206,21 @@ export default function MarketAnalysis() {
           <EmptyState onClear={() => setFilters((f) => ({ ...DEFAULTS, period: f.period }))} />
         ) : data ? (
           <>
-            <KpiStrip data={data} />
             <QualityLine qf={data.quality_filters} />
 
-            <div className="ma-mid">
-              <Panel
-                icon={<Clock size={14} />}
-                title="Distribución temporal"
-                subtitle="Cuándo ocurre el HOD, el LOD y el PM High"
-                right={<TimingLegend />}
-              >
-                <TimingModule baseParams={params} fallback={data.distributions} />
-              </Panel>
-
+            {/* Rejilla fija 2×2 — cada columna 50% */}
+            <div className="ma-grid">
+              <StatPanel data={data} />
               <FadeWindowsPanel data={data} />
+              <Panel
+                icon={<CalendarDays size={14} />}
+                title="Avg Change from Open"
+                subtitle="Perfil intradía medio · 12 meses · universo estándar (gap ≥30% · vol día ≥1M)"
+              >
+                <SeasonalityModule />
+              </Panel>
+              <SectorPanel />
             </div>
-
-            <Panel
-              icon={<CalendarDays size={14} />}
-              title="Avg Change from Open"
-              subtitle="Perfil intradía medio · 12 meses · universo estándar: gap ≥30% · vol día ≥1M · filtros de calidad"
-            >
-              <SeasonalityModule />
-            </Panel>
           </>
         ) : null}
       </div>
@@ -240,33 +231,47 @@ export default function MarketAnalysis() {
   );
 }
 
-// ── KPI strip (MA-01 · patch §03/§07: 5 tarjetas uniformes) ──────────────────
-// Gappers Count y Avg Gap % llevan toggle PM/RTH VISIBLE (§07 — la distinción de
-// sesión nunca es una decisión silenciosa del backend). "Pulso del Periodo" y las
-// tarjetas Max Fade / Close<VWAP desaparecen (§03).
-function KpiStrip({ data }: { data: MarketAnalysisResponse }) {
-  const k = data.kpis;
+// ── Pulso del periodo — las 5 métricas en un solo panel coherente (sin pills) ──
+// Cada métrica = una fila (label + descriptor a la izquierda; valor grande + delta
+// a la derecha). Las filas se reparten el alto del panel → llena la celda superior
+// izquierda y casa con Ventanas de Fade a su derecha. Toda la info visible, sin toggles.
+const KPI_ROWS: { key: keyof MarketAnalysisResponse["kpis"]; label: string; sub: string; fmt?: (v: number | null | undefined) => string }[] = [
+  { key: "gappers_count", label: "Gappers Count", sub: "gappers del universo del periodo", fmt: fmtInt },
+  { key: "avg_gap_pct", label: "Avg Gap %", sub: "open 09:30 vs cierre anterior" },
+  { key: "pm_high_gap_pct", label: "PM High Gap %", sub: "PM High vs cierre anterior" },
+  { key: "close_red_pct", label: "Close Red %", sub: "cierran por debajo del open" },
+  { key: "avg_fade_from_pmh", label: "Avg Fade desde PMH", sub: "PMH → cierre EOD · gap ≥ umbral" },
+];
+
+function StatPanel({ data }: { data: MarketAnalysisResponse }) {
   return (
-    <div className="ma-kpi-rail">
-      <SimpleKpiCard label="Gappers Count" kpi={k.gappers_count} fmt={fmtInt} sub="total de gappers del universo del periodo" />
-      <SimpleKpiCard label="Avg Gap %" kpi={k.avg_gap_pct} fmt={(v) => fmtPct(v)} sub="open 09:30 vs cierre anterior" />
-      <SimpleKpiCard label="PM High Gap %" kpi={k.pm_high_gap_pct} sub="media de (PMH − prev close) / prev close" />
-      <SimpleKpiCard label="Close Red %" kpi={k.close_red_pct} sub="cierran por debajo del open" />
-      <SimpleKpiCard label="Avg Fade desde PMH" kpi={k.avg_fade_from_pmh} sub="a cierre EOD · universo gap ≥ umbral" />
-    </div>
+    <Panel icon={<Activity size={14} />} title="Pulso del periodo" subtitle="Las métricas del periodo de un vistazo">
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "space-between" }}>
+        {KPI_ROWS.map((r, i) => (
+          <StatRow key={r.key} kpi={data.kpis[r.key]} label={r.label} sub={r.sub} fmt={r.fmt || fmtPct} divider={i > 0} />
+        ))}
+      </div>
+    </Panel>
   );
 }
 
-function SimpleKpiCard({ label, kpi, sub, fmt }: { label: string; kpi: MaKpiValue; sub?: string; fmt?: (v: number | null | undefined) => string }) {
+function StatRow({ label, sub, kpi, fmt, divider }: { label: string; sub: string; kpi: MaKpiValue; fmt: (v: number | null | undefined) => string; divider: boolean }) {
   const delta = kpi.value != null && kpi.prev != null ? kpi.value - kpi.prev : null;
-  const fmtFn = fmt || fmtPct;
   return (
-    <Card padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{label}</span>
-      <span style={{ fontSize: 20, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }}>{fmtFn(kpi.value)}</span>
-      <DeltaLine delta={delta} />
-      <span style={{ fontSize: 9, color: color.textMuted, lineHeight: 1.3 }}>{sub || " "}</span>
-    </Card>
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14,
+      padding: "12px 0",
+      borderTop: divider ? `0.5px solid ${color.border}` : "none",
+    }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textSecondary }}>{label}</span>
+        <span style={{ fontSize: 10, color: color.textMuted, lineHeight: 1.2 }}>{sub}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+        <span style={{ fontFamily: font.serif, fontSize: 26, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", lineHeight: 1 }}>{fmt(kpi.value)}</span>
+        <DeltaLine delta={delta} />
+      </div>
+    </div>
   );
 }
 
@@ -306,68 +311,67 @@ function DeltaLine({ delta, hint }: { delta: number | null; hint?: string }) {
   );
 }
 
-// ── Timing (MA-02) — ventana fija 30D ───────────────────
-function TimingLegend() {
-  const items: [keyof typeof SERIES_COLOR, string][] = [["hod", "HOD"], ["lod", "LOD"], ["pmh", "PM High"]];
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      {items.map(([k, lbl]) => (
-        <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: color.textSecondary }}>
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: SERIES_COLOR[k] }} />
-          {lbl}
-        </span>
-      ))}
-    </div>
-  );
-}
+// ── Gaps Up by Sector (treemap · PRD_GAPS_BY_SECTOR) ─────────────────────────
+// Gappers con gap≥20% de la ventana, agrupados por sector de la empresa. Área =
+// nº de gaps; color = mapa de calor del % Close Red (más rojo = más bajista).
+// Ventana propia 5D/30D/90D (independiente del selector global). Sector = tabla
+// de referencia (Massive SIC + fallback SEC EDGAR).
+const SECTOR_WINDOWS = [
+  { id: "5d", label: "5D" }, { id: "30d", label: "30D" }, { id: "90d", label: "90D" },
+] as const;
+type SectorWindow = (typeof SECTOR_WINDOWS)[number]["id"];
 
-function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; fallback: MarketAnalysisResponse["distributions"] }) {
-  const [dist, setDist] = useState(fallback);
-  const [statMode, setStatMode] = useState<"dominant" | "median">("dominant");
+function SectorPanel() {
+  const [win, setWin] = useState<SectorWindow>("30d");
+  const [colorMetric, setColorMetric] = useState<"close_red" | "avg_gap">("close_red");
+  const [data, setData] = useState<MaGapsBySector | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     const ctrl = new AbortController();
-    const p = new URLSearchParams(baseParams);
-    p.set("period", "30d");
-    getMarketAnalysis(p, ctrl.signal)
-      .then((res) => setDist(res.distributions))
-      .catch(() => {});
+    // el skeleton inicial lo da loading=true; al cambiar de ventana el treemap
+    // se actualiza en sitio (sin parpadeo) — no reseteamos loading síncronamente.
+    const p = new URLSearchParams({ window: win, min_gap: "20", metric: "count" });
+    getGapsBySector(p, ctrl.signal)
+      .then((res) => { setData(res); setFailed(false); })
+      .catch((e) => { if ((e as Error)?.name !== "AbortError") setFailed(true); })
+      .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [baseParams]);
-
-  const dominant = (rec: Record<string, number>) =>
-    Object.entries(rec).reduce<[string, number]>((acc, e) => (e[1] > acc[1] ? e : acc), ["—", 0]);
-
-  const computeMedian = (rec: Record<string, number>): [string, number] => {
-    const total = Object.values(rec).reduce((s, v) => s + v, 0);
-    if (total === 0) return ["—", 0];
-    let cum = 0;
-    for (const [franja, count] of Object.entries(rec)) {
-      cum += count;
-      if (cum >= total / 2) return [franja, (cum / total) * 100];
-    }
-    return ["—", 0];
-  };
-
-  const [domF, domP] = statMode === "dominant" ? dominant(dist.hod_time) : computeMedian(dist.hod_time);
+  }, [win]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <span style={{ fontSize: 11, color: color.textSecondary }}>
-          {statMode === "dominant" ? "Pico" : "Mediana"} HOD: <strong style={{ color: color.copper }}>{domF}</strong>{domP ? ` · ${domP.toFixed(1)}%` : ""}
-        </span>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <SegmentedControl<"dominant" | "median">
-            size="sm"
-            options={[{ id: "dominant", label: "Moda" }, { id: "median", label: "Mediana" }]}
-            value={statMode}
-            onChange={setStatMode}
-          />
+    <Panel
+      icon={<LayoutGrid size={14} />}
+      title="Gaps Up by Sector"
+      subtitle="Gappers ≥20% por sector · área = nº · color = % Close Red"
+      right={
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <SegmentedControl<"close_red" | "avg_gap"> size="sm"
+            options={[{ id: "close_red", label: "Red%" }, { id: "avg_gap", label: "Gap%" }]}
+            value={colorMetric} onChange={setColorMetric} />
+          <SegmentedControl<SectorWindow> size="sm"
+            options={SECTOR_WINDOWS.map((w) => ({ id: w.id, label: w.label }))}
+            value={win} onChange={setWin} />
         </div>
-      </div>
-      <TimingChart hod={dist.hod_time} lod={dist.lod_time} pmh={dist.pmh_time} height={240} />
-    </div>
+      }
+    >
+      {loading && !data ? (
+        <ChartSkeleton label="Cargando sectores…" />
+      ) : failed || !data || data.total_gaps === 0 ? (
+        <div style={{ minHeight: 120, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: color.textMuted }}>
+          {failed ? "No se pudo cargar el sector." : "Sin gaps ≥20% en esta ventana."}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <SectorTreemap sectors={data.sectors} colorMetric={colorMetric} height={300} />
+          <span style={{ fontSize: 10, color: color.textMuted }}>
+            {data.total_gaps} gaps ≥20% · {data.sectors.length} sectores
+            {data.unknown_pct > 0 ? ` · ${data.unknown_pct.toFixed(0)}% sin sector` : ""}
+          </span>
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -489,7 +493,7 @@ function SeasonalityModule() {
 // ── piezas comunes ───────────────────────────────────────────────────────────
 function Panel({ icon, title, subtitle, right, children }: { icon?: React.ReactNode; title: string; subtitle?: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <Card padded style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+    <Card padded style={{ display: "flex", flexDirection: "column", gap: 14, height: "100%" }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           {icon && <span style={{ color: color.copper, display: "flex", marginTop: 1 }}>{icon}</span>}
@@ -500,7 +504,7 @@ function Panel({ icon, title, subtitle, right, children }: { icon?: React.ReactN
         </div>
         {right}
       </div>
-      {children}
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>{children}</div>
     </Card>
   );
 }
@@ -554,19 +558,18 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 const labelStyle: React.CSSProperties = { fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted };
 
-// Layout responsivo del dashboard (media queries → no se pueden hacer inline).
-// §07: las 5 tarjetas KPI comparten formato — un único grid uniforme, sin hero.
+// Rejilla FIJA 2×2 — dos columnas al 50% todo el tiempo (petición de Jesús).
+// align-items: stretch (default) → las dos celdas de cada fila igualan su alto.
+// Colapsa a 1 columna solo en pantallas muy estrechas (usabilidad).
 const DASH_CSS = `
 @keyframes ma-spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
-.ma-dash .ma-kpi-rail { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
-.ma-dash .ma-mid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 1180px) {
-  .ma-dash .ma-kpi-rail { grid-template-columns: repeat(3, 1fr); }
+.ma-dash .ma-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
 }
-@media (max-width: 1000px) {
-  .ma-dash .ma-mid { grid-template-columns: 1fr; }
-}
-@media (max-width: 760px) {
-  .ma-dash .ma-kpi-rail { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 900px) {
+  .ma-dash .ma-grid { grid-template-columns: 1fr; }
 }
 `;

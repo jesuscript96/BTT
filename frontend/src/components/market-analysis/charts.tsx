@@ -428,3 +428,143 @@ function SeasonInner({ width, height, months, highlight }: { width: number; heig
     </>
   );
 }
+
+// ── SectorTreemap (Gaps by Sector) ───────────────────────────────────────────
+// Área = nº de gaps del sector; color = "mapa de calor" del % Close Red (más rojo
+// = más bajista = a favor del short). Réplica del mockup con encoding de calor.
+import { Treemap, hierarchy, treemapSquarify } from "@visx/hierarchy";
+
+export interface SectorDatum {
+  sector: string;
+  count: number;
+  close_red_pct: number | null;
+  avg_gap_pct: number | null;
+}
+
+// lerp entre dos hex (d3 no interpola var(--…)); ramp slate→rojo para el calor.
+function _hex(c: string) {
+  const n = parseInt(c.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function heatColor(pct: number): string {
+  const t = Math.max(0, Math.min(1, pct / 100));
+  const lo = _hex("#2f3a52"); // slate (poco close-red → menos interés)
+  const hi = _hex("#cc3b40"); // rojo (mucho close-red → bajista)
+  const m = lo.map((l, i) => Math.round(l + (hi[i] - l) * t));
+  return `rgb(${m[0]}, ${m[1]}, ${m[2]})`;
+}
+
+type TreeLeaf = { name: string; d?: SectorDatum; children?: TreeLeaf[] };
+
+export function SectorTreemap({
+  sectors,
+  colorMetric = "close_red",
+  height = 300,
+}: {
+  sectors: SectorDatum[];
+  colorMetric?: "close_red" | "avg_gap";
+  height?: number;
+}) {
+  const { showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen } =
+    useTooltip<SectorDatum>();
+
+  const root = useMemo(() => {
+    const data: TreeLeaf = { name: "root", children: sectors.map((s) => ({ name: s.sector, d: s })) };
+    return hierarchy<TreeLeaf>(data)
+      .sum((n) => (n.d ? Math.max(n.d.count, 0) : 0))
+      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  }, [sectors]);
+
+  const colorFor = useCallback(
+    (d?: SectorDatum) => {
+      if (!d) return color.border;
+      const v = colorMetric === "avg_gap" ? d.avg_gap_pct : d.close_red_pct;
+      return v == null ? "#2f3a52" : heatColor(colorMetric === "avg_gap" ? Math.min(v, 100) : v);
+    },
+    [colorMetric],
+  );
+
+  if (!sectors.length) return null;
+
+  return (
+    <div style={{ position: "relative", width: "100%", height }}>
+      <ParentSize>
+        {({ width }) => {
+          if (width < 10) return null;
+          return (
+            <svg width={width} height={height}>
+              <Treemap<TreeLeaf>
+                root={root}
+                size={[width, height]}
+                tile={treemapSquarify}
+                paddingInner={3}
+                round
+              >
+                {(tree) => (
+                  <Group>
+                    {tree.leaves().map((node, i) => {
+                      const w = node.x1 - node.x0;
+                      const h = node.y1 - node.y0;
+                      const d = node.data.d;
+                      const showText = w > 62 && h > 34;
+                      const metricTxt =
+                        colorMetric === "avg_gap"
+                          ? `${(d?.avg_gap_pct ?? 0).toFixed(0)}% gap`
+                          : `${(d?.close_red_pct ?? 0).toFixed(0)}% red`;
+                      return (
+                        <Group key={`n-${i}`} top={node.y0} left={node.x0}>
+                          <rect
+                            width={w}
+                            height={h}
+                            rx={4}
+                            fill={colorFor(d)}
+                            stroke={color.bgBase}
+                            strokeWidth={1}
+                            style={{ cursor: "default" }}
+                            onMouseMove={(e) => {
+                              const p = localPoint(e) ?? { x: node.x0, y: node.y0 };
+                              if (d) showTooltip({ tooltipData: d, tooltipLeft: p.x, tooltipTop: p.y });
+                            }}
+                            onMouseLeave={hideTooltip}
+                          />
+                          {showText && (
+                            <>
+                              <text x={8} y={18} fontFamily={font.sans} fontSize={12} fontWeight={700} fill="#F0EEEA">
+                                {node.data.name}
+                              </text>
+                              <text x={8} y={34} fontFamily={font.sans} fontSize={11} fill="rgba(240,238,234,0.85)" fontWeight={600}>
+                                {d?.count} {d?.count === 1 ? "gap" : "gaps"}
+                              </text>
+                              {h > 50 && (
+                                <text x={8} y={h - 8} fontFamily={font.sans} fontSize={10} fill="rgba(240,238,234,0.7)">
+                                  {metricTxt}
+                                </text>
+                              )}
+                            </>
+                          )}
+                        </Group>
+                      );
+                    })}
+                  </Group>
+                )}
+              </Treemap>
+            </svg>
+          );
+        }}
+      </ParentSize>
+      {tooltipOpen && tooltipData && (
+        <TooltipWithBounds top={tooltipTop} left={tooltipLeft} style={tooltipStyle}>
+          <div style={{ fontWeight: 700, color: color.textHigh, marginBottom: 4 }}>{tooltipData.sector}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "2px 10px", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: color.textMuted }}>Gaps</span>
+            <span style={{ color: color.textHigh, textAlign: "right" }}>{tooltipData.count}</span>
+            <span style={{ color: color.textMuted }}>Close Red</span>
+            <span style={{ color: color.textHigh, textAlign: "right" }}>{(tooltipData.close_red_pct ?? 0).toFixed(1)}%</span>
+            <span style={{ color: color.textMuted }}>Avg Gap</span>
+            <span style={{ color: color.textHigh, textAlign: "right" }}>{(tooltipData.avg_gap_pct ?? 0).toFixed(1)}%</span>
+          </div>
+        </TooltipWithBounds>
+      )}
+    </div>
+  );
+}

@@ -575,11 +575,6 @@ export interface MarketAnalysisResponse {
     close_lt_vwap_pct: MaKpiValue; // value null (pospuesto a v1.2)
     avg_fade_from_pmh: MaKpiValue;
   };
-  distributions: {
-    hod_time: Record<string, number>;
-    lod_time: Record<string, number>;
-    pmh_time: Record<string, number>;
-  };
   fade_windows: {
     rth: MaFadeWindow[];
     pm: MaFadePm;
@@ -587,6 +582,32 @@ export interface MarketAnalysisResponse {
   quality_filters: MaQualityFilters;
   source: string;
   period: { start: string; end: string };
+}
+
+// Gaps Up by Sector (docs/market-analysis/PRD_GAPS_BY_SECTOR.md §4.1)
+export interface MaSectorBucket {
+  sector: string;
+  count: number;
+  close_red_pct: number | null;
+  avg_gap_pct: number | null;
+}
+
+export interface MaGapsBySector {
+  sectors: MaSectorBucket[];
+  total_gaps: number;
+  unknown_pct: number;
+  window: string;
+  min_gap: number;
+  metric: string;
+  source: string;
+}
+
+export function getGapsBySector(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MaGapsBySector> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MaGapsBySector>(`/market/gaps-by-sector?${qs}`, { signal });
 }
 
 export function getMarketAnalysis(
