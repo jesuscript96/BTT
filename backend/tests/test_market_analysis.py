@@ -235,10 +235,10 @@ def test_quality_gap_gt_1000_excluye():
     r["gap_pct"] = 1200.0
     kept, q = apply_quality_filters([r, _example_record()])
     assert len(kept) == 1
-    assert q["excluded_gap_gt_1000"] == 1
-    # exactamente 1000 se queda (la regla es estrictamente >1000)
+    assert q["excluded_gap_gt_400"] == 1
+    # exactamente 400 se queda (la regla es estrictamente >400)
     r2 = _example_record()
-    r2["gap_pct"] = 1000.0
+    r2["gap_pct"] = 400.0
     kept, _ = apply_quality_filters([r2])
     assert len(kept) == 1
 
