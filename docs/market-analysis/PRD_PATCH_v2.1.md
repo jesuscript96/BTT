@@ -311,33 +311,35 @@ prepararse en paralelo). Los 3 primeros salen esta semana sin dependencias exter
 
 ---
 
-## 7 · Decisiones abiertas
+## 7 · Decisiones por tomar
 
-**(A) Producto/prioridad — Jesús con Álvaro/Jaume (no se decide aquí).**
-- **Hot Sectors (patch §06):** NO es regresión — quedó en Fase 2 en el PRD v1.0 porque no existe
-  ticker→sector (verificado hoy: `massive.tickers` no lo tiene). Opciones dimensionadas:
-  **(A1)** on-demand vía `massive_service.get_overview` (trae `sic_description`) para los tickers del
-  periodo, memo 24h + mapeo SIC→sector — ~1 día dev, primer load de un periodo 1y ≈ ráfaga de cientos de
-  llamadas (a ~50 req/s, <1 min) y luego caché; **(A2)** tabla de referencia en el lake (zona Adrián,
-  robusto, sirve también a filtros País/Sector/Float de F2). Decidir prioridad y vía antes de especificarlo.
-- Ventana "5 días" del reverse split: naturales (recomendado aquí, simple y conservador) vs hábiles — OK de Álvaro.
-- Con Recent Gaps fuera, ¿se mantiene el filtro Close Red en la UI (ahora afecta a KPIs/módulos al ser
-  server-side)? Recomendación: sí, es coherente; confirmar con Álvaro.
+> Todo lo del patch está IMPLEMENTADO con una opción por defecto razonable y reversible. Estas
+> decisiones **no bloquean el uso**: o confirman lo ya hecho (barato revertir si se quiere otra cosa)
+> o abren trabajo futuro. Ninguna la decide la IA (regla del repo: negocio/dominio los fijan las personas).
 
-**(B) Técnicas — paquete único a consensuar con Adrián (regla NO TOCAR del repo).**
-- 3 columnas aditivas en `daily_metrics` (T5.1) + backfill + regeneración de hot cache. Precedente: `day_vwap` v1.0.
-- Refresco de `massive.splits` (T5.3) — hoy stale desde 2026-03-30: confirmar si existe job roto o nunca existió.
-- Nuevo prefijo `derived/` en el bucket para curvas MA-04 (T5.4) — aditivo, no toca lo existente.
+### (A) Nueva funcionalidad — prioridad de producto · **dueño: Álvaro/Jaume** (Jesús prioriza)
 
-**(C) Dominio — respondidas por esta auditoría (validar con Álvaro en review).**
-- Q1 · Entrada de franja = close de vela con semántica **asof** (última vela ≤ franja), consistente con
-  los `mXX_return_pct` existentes. Fijado en §3/§5.
-- Q2 · `fade_windows.pm` sobre universo completo (sin `fade_threshold`), distinto del KPI header. Fijado.
-- Q3 · **Curvas MA-04 con universo estándar fijo** (gap≥30, vol día≥1M, filtros de calidad) etiquetado en
-  la UI, en vez de obedecer los filtros globales — es lo que hace viable precomputarlas. El módulo ya era
-  "independiente del selector de periodo"; esto extiende esa independencia a los filtros. Validar con Álvaro.
-- Q4 · Los filtros de calidad no son configurables por el usuario (se aplican siempre); su efecto es
-  visible vía `quality_filters` (transparencia, principio 00).
+| Decisión | Opciones | Recomendación | Qué desbloquea / cuesta |
+|---|---|---|---|
+| **Hot Sectors** (el patch §06 lo pedía "revisar"; sigue en F2 porque `massive.tickers` no tiene sector — verificado) | **A1** on-demand: `massive_service.get_overview` trae `sic_description`, mapeo SIC→sector, memo 24h. **A2** tabla de referencia en el lake (zona Adrián), sirve también País/Sector/Float de F2 | A1 si se quiere ya y solo sectores; A2 si entra el paquete Universo completo de F2 | A1 ≈ 1 día dev; A2 ≈ paquete de datos con Adrián. Hasta decidir, no se construye |
+
+### (B) Dominio — confirmar lo ya implementado · **dueño: Álvaro** (validación, no construcción)
+
+| Decisión | Implementado por defecto | Alternativa | Coste de cambiar |
+|---|---|---|---|
+| Ventana del reverse split | **5 días naturales** (conservador, simple) | días hábiles | 1 constante (`REVERSE_SPLIT_LOOKBACK_DAYS`) |
+| ¿Mantener filtro Close Red en UI? (ahora es server-side, afecta a KPIs/módulos) | **sí, se mantiene** | quitarlo | quitar 1 control en `MarketAnalysis.tsx` |
+| Universo estándar de las curvas MA-04 (no obedece filtros globales, va etiquetado) | **gap≥30 · vol día≥1M · filtros de calidad** | otros umbrales | 2 constantes en `backfill_ma_derived.py` + re-run del backfill |
+| Entrada de franja (Ventanas de Fade) | **asof**: close de la última vela ≤ franja (igual que `mXX_return_pct`) | interpolar / vela exacta | lógica en `compute_fade_windows` |
+| Filtros de calidad NO configurables por el usuario (siempre on, efecto visible en "Calidad de datos") | **fijo** | exponerlos como toggles | UI nueva |
+
+### (C) Negocio — **dueño: Jesús** (la IA no opina, per repo)
+- Tier que abre Market Analysis tras el arranque **admin-only** (`market.analysis.access`, ya en
+  `policy.py`). Precio/gating: sin decidir, no urge para el uso interno.
+
+### (D) Datos — **dueño: Adrián** (ver "Avisos a Adrián" en §8; no bloquean)
+- Semántica de `day_return_pct` en origen (bug); adopción del prefijo `derived/` y del refresh de
+  splits en el pipeline nocturno; 403 de GCS en full-scans con la HMAC local.
 
 ---
 
@@ -375,18 +377,25 @@ hot/cold y `records`. Con el fix: 70,5% (prev 63,2%) — coherente con el histó
 **⚠️ Avisar a Adrián:** la columna del lake tiene semántica distinta a su nombre; otros consumidores
 podrían estar asumiendo lo mismo que asumía este módulo.
 
-### Pendiente (no bloquea el uso de la página)
-1. **Backfill histórico completo del derivado** (2022 → 2025-05): corre por meses con
-   `python scripts/backfill_ma_derived.py --start 2022-01 --end 2025-05` — mejor en prod junto al
-   bucket (~34M velas/mes; medido ~10-15 min/mes desde red doméstica). Hasta entonces: periodos que
-   pisan meses sin derivado → black swan fail-open y franjas 09:30/11:00 calculadas solo sobre los
-   ticker-días cubiertos (n lo refleja).
-2. **Adopción en prod del paso 6 del catchup** (deploy + cron nocturno existente lo ejecuta solo;
-   `MA_DERIVED_ENABLED=false` lo apaga). FYI a Adrián: nuevo prefijo `cold_storage/derived/` +
-   parquet aditivo en `cold_storage/splits/` (mismo schema, verificado).
-3. **Decisiones abiertas §7-A** (Álvaro/Jaume): prioridad y vía de Hot Sectors; ventana 5d naturales
-   (implementado) vs hábiles; mantener el filtro Close Red (implementado server-side); universo
-   estándar fijo de las curvas MA-04 (implementado + etiquetado).
-4. **PR**: el trabajo está commiteado en la rama local `market-analysis-v2.1` (4 commits sobre el
-   merge de PR #6), SIN push — Jesús decide cuándo publicar y quién mergea (regla del repo).
-5. Retirar el prototipo `MarketIntelligenceCharts` del home (pendiente heredado del v1.0, no del patch).
+### Pendiente — trabajo de ejecución (no son decisiones; nada bloquea usar la página)
+
+| # | Qué | Dueño | Esfuerzo | Qué pasa si no se hace |
+|---|---|---|---|---|
+| E1 | **Backfill histórico del derivado 2022 → 2025-05** (los meses recientes ya están; ver estado abajo). `python scripts/backfill_ma_derived.py --start 2022-01 --end 2025-05`, idempotente por mes, **mejor en prod junto al bucket** (~34M velas/mes; ~4 min/mes local, menos en prod). | Adrián / infra (correr en prod) | ~1 job de ~2-3h desatendido | Presets 1S/1M/3M/6M ya salen completos; **1A y rangos largos** quedan parciales: black swan fail-open y franjas 09:30/11:00 promedian solo meses cubiertos (`n` lo refleja, no miente) |
+| E2 | **Deploy de `market-analysis-v2.1` + verificar cron.** El paso 6 del catchup (`MA_DERIVED_ENABLED`, default on) mantiene splits/derivado/curvas al día solo. Confirmar que la env no está a `false` en Coolify. | Infra (deploy) | trivial | El derivado no se actualiza tras el deploy inicial; las curvas y el black swan se congelan en la última fecha del backfill |
+| E3 | **Smoke test real de Edgie** (ronda LLM completa). Verificado el wiring (contexto en `window`, prompt inyectado); NO se disparó una pregunta al LLM (consume DeepSeek). Abrir MA → "¿cuántos gappers y fade medio desde las 10:00?" → debe responder con los números en pantalla. | Jesús/QA | 2 min manual | Riesgo bajo: el contexto se publica correctamente; falta confirmar que el modelo lo usa bien |
+| E4 | **Push/PR de `market-analysis-v2.1`** (4 commits sobre el merge de PR #6, sin push). | Jesús decide cuándo; otro mergea | trivial | — |
+| ~~E5~~ | ~~Retirar prototipo `MarketIntelligenceCharts` del home~~ → **NO aplica:** verificado que ya es una tarjeta estática que solo enlaza a `/market-analysis`, no consume el contrato. El cambio de claves NO rompe el home. | — | — | — |
+
+**Estado del backfill (08-jul-2026, en curso):** hecho 2025-06 y **2025-11 → 2026-07** (9 meses,
+sirviendo ya en la página); corriendo hacia atrás 2025-10 → 2025-07. Falta el tramo largo E1.
+
+### Avisos a Adrián (datos) — no son decisiones, es información que debe conocer
+1. **Bug de `day_return_pct`** (ver arriba): la columna del lake NO es `(rth_close−rth_open)/rth_open`.
+   Market Analysis ya no la usa para Close Red, pero **otros consumidores podrían asumir esa semántica**
+   y estar mal. Decidir si se corrige en origen o se documenta.
+2. **Prefijo nuevo `cold_storage/derived/`** (ma_daily + ma_monthly_curves) y **parquet aditivo en
+   `cold_storage/splits/`** (schema idéntico verificado). Todo aditivo: no toca `daily_metrics`/`intraday_1m`.
+3. **GCS 403 intermitente** en full-scans desde la HMAC local (afecta a `/latest-date` y otros endpoints
+   que escanean el lake entero; NO a Market Analysis, que va por hot cache). ¿Permiso de la key o del
+   bucket? Verificar antes de que muerda a otra feature.
