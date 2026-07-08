@@ -208,6 +208,51 @@ def get_short_interest(ticker: str, limit: int = 12) -> list[dict]:
     return _memoized(f"short_interest:{ticker}", 6 * 3600, _fetch)
 
 
+def get_splits_since(since_date: str, max_pages: int = 30) -> list[dict]:
+    """Splits corporativos de TODO el universo con execution_date >= since_date,
+    paginando next_url. [{ticker, execution_date, split_from, split_to}].
+
+    Lo consume el filtro de calidad de Market Analysis (Patch v2.1 §01.1) para
+    cubrir el tail que la tabla massive.splits del lake pueda llevar de retraso
+    (auditado 07-jul-2026: la tabla llegaba a 2026-03-30). Memo 24h. La API
+    devuelve también splits con fecha FUTURA (anunciados): se devuelven tal cual
+    y es el llamador quien filtra por execution_date <= fecha del gap.
+    """
+    since = (since_date or "").strip()
+    if not since:
+        return []
+
+    def _fetch():
+        out: list[dict] = []
+        data = _get(
+            "/v3/reference/splits",
+            {"execution_date.gte": since, "limit": 1000, "order": "asc",
+             "sort": "execution_date"},
+        )
+        for _ in range(max_pages):
+            results = (data or {}).get("results") or []
+            for r in results:
+                out.append({
+                    "ticker": r.get("ticker"),
+                    "execution_date": r.get("execution_date"),
+                    "split_from": r.get("split_from"),
+                    "split_to": r.get("split_to"),
+                })
+            next_url = (data or {}).get("next_url")
+            if not next_url:
+                break
+            try:
+                resp = _get_session().get(next_url, params={"apiKey": API_KEY}, timeout=DEFAULT_TIMEOUT)
+            except requests.RequestException as e:
+                raise MassiveError(f"transporte next_url splits: {e}") from e
+            if resp.status_code != 200:
+                break  # devolver lo acumulado: mejor tail parcial que nada
+            data = resp.json()
+        return out
+
+    return _memoized(f"splits_since:{since}", 24 * 3600, _fetch)
+
+
 def get_news(ticker: str, limit: int = 20) -> list[dict]:
     """Noticias con insights de sentiment de /v2/reference/news (desc)."""
     ticker = (ticker or "").upper().strip()
