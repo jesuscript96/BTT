@@ -133,8 +133,10 @@ def _bucket(v: float) -> str:
 
 
 def _distribution(records: List[Dict[str, Any]], key: str) -> Dict[str, float]:
-    """% de records por franja de 30 min sobre el campo de tiempo `key`."""
-    labels = [_franja_label(r.get(key)) for r in records]
+    """% de records por franja de 30 min sobre el campo de tiempo `key`.
+    Excluye gaps extremos (>MAX_GAP_FOR_DISTRIBUTION) que siempre hacen HOD en apertura."""
+    filtered = [r for r in records if safe_float(r.get("gap_pct")) <= MAX_GAP_FOR_DISTRIBUTION]
+    labels = [_franja_label(r.get(key)) for r in filtered]
     labels = [lab for lab in labels if lab is not None]
     total = len(labels)
     if total == 0:
@@ -142,7 +144,6 @@ def _distribution(records: List[Dict[str, Any]], key: str) -> Dict[str, float]:
     counts: Dict[str, int] = {}
     for lab in labels:
         counts[lab] = counts.get(lab, 0) + 1
-    # ordenado por hora de inicio de la franja
     out = {lab: round(cnt / total * 100, 4) for lab, cnt in counts.items()}
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
@@ -173,6 +174,7 @@ def _histogram(values: List[float]) -> Dict[str, Any]:
 
 QUALITY_GAP_MAX_PCT = 400.0           # §01.2
 QUALITY_PMH_GAP_MAX_PCT = 400.0      # §01.2 — outliers de PM High Gap distorsionan medias
+MAX_GAP_FOR_DISTRIBUTION = 100.0     # §01.2 — gaps >100% sesgan distribucion temporal a apertura
 BLACK_SWAN_SPIKE_MAX_PCT = 300.0      # §01.3 (evalúa max_spike_5m_pct del derivado)
 REVERSE_SPLIT_LOOKBACK_DAYS = 5       # §01.1, días naturales
 
