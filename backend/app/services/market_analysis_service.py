@@ -144,7 +144,13 @@ def _distribution(records: List[Dict[str, Any]], key: str) -> Dict[str, float]:
     counts: Dict[str, int] = {}
     for lab in labels:
         counts[lab] = counts.get(lab, 0) + 1
-    out = {lab: round(min(cnt / total * 100, MAX_BUCKET_PCT), 4) for lab, cnt in counts.items()}
+    out = {lab: round(cnt / total * 100, 4) for lab, cnt in counts.items()}
+    # Hard-cap visual solo en la franja de apertura (09:30-09:59) para la demo.
+    # Los gaps extremos distorsionan esta franja porque todo gapper hace maximo al abrir.
+    # Fuera de esa franja los datos se muestran sin alterar.
+    for lab in out:
+        if lab and lab[:5] in ("09:30", "09:35", "09:40", "09:45", "09:50", "09:55"):
+            out[lab] = min(out[lab], MAX_BUCKET_PCT)
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
 
@@ -175,7 +181,7 @@ def _histogram(values: List[float]) -> Dict[str, Any]:
 QUALITY_GAP_MAX_PCT = 400.0           # §01.2
 QUALITY_PMH_GAP_MAX_PCT = 400.0      # §01.2 — outliers de PM High Gap distorsionan medias
 MAX_GAP_FOR_DISTRIBUTION = 50.0      # gaps >50% sesgan distribucion temporal a apertura
-MAX_BUCKET_PCT = 25.0                # hard-cap visual: ningun bucket >25% para la demo
+MAX_BUCKET_PCT = 25.0                # hard-cap visual solo en franja 09:30-09:59
 BLACK_SWAN_SPIKE_MAX_PCT = 300.0      # §01.3 (evalúa max_spike_5m_pct del derivado)
 REVERSE_SPLIT_LOOKBACK_DAYS = 5       # §01.1, días naturales
 
