@@ -476,14 +476,11 @@ def compute_market_analysis(
     `records` se mantiene en el payload aunque la UI ya no pinte tabla (§05):
     lo consume el contexto de página de Edgie (muestra acotada en frontend).
     """
+    # "Distribución temporal" (distributions) retirada por decisión de Jesús (08-jul-2026):
+    # no aportaba y sesgaba a apertura. Sustituida por el módulo Gaps by Sector (endpoint aparte).
     return {
         "records": map_recent_gaps(records),
         "kpis": compute_kpis(records, fade_threshold=fade_threshold),
-        "distributions": {
-            "hod_time": _distribution(records, "hod_time"),
-            "lod_time": _distribution(records, "lod_time"),
-            "pmh_time": _distribution(records, "pm_high_time"),
-        },
         "fade_windows": compute_fade_windows(records),
     }
 
@@ -814,3 +811,122 @@ def get_avg_change_from_open(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         item["label"] = _month_label(month, current_year)
         out.append(item)
     return out[-12:]
+
+
+# ── Gaps Up by Sector (PRD docs/market-analysis/PRD_GAPS_BY_SECTOR.md) ────────
+
+_SECTOR_WINDOW_DAYS = {"5d": 5, "30d": 30, "90d": 90}
+
+
+def compute_gaps_by_sector(
+    records: List[Dict[str, Any]],
+    sector_map: Optional[Dict[str, str]],
+) -> Dict[str, Any]:
+    """
+    Agrega los gapper-días por sector. `records` ya viene filtrado (calidad + min_gap
+    + ventana). `sector_map`: ticker(upper) → sector (tabla de referencia). Ticker sin
+    entrada → 'Sin sector' (principio 00: se muestra, no se oculta).
+    """
+    from app.services.sector_service import NO_SECTOR
+
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for r in records:
+        tk = str(r.get("ticker") or "").upper()
+        sector = (sector_map or {}).get(tk) or NO_SECTOR
+        b = buckets.setdefault(sector, {"count": 0, "red": 0, "gaps": []})
+        b["count"] += 1
+        if is_close_red(r):
+            b["red"] += 1
+        b["gaps"].append(safe_float(r.get("gap_pct")))
+
+    out = []
+    for sector, b in buckets.items():
+        n = b["count"]
+        out.append({
+            "sector": sector,
+            "count": n,
+            "close_red_pct": round(b["red"] / n * 100, 4) if n else None,
+            "avg_gap_pct": round(_mean(b["gaps"]), 4) if b["gaps"] else None,
+        })
+    # ordenado por count desc (el treemap dibuja el mayor primero)
+    out.sort(key=lambda s: s["count"], reverse=True)
+    total = sum(s["count"] for s in out)
+    unknown = next((s["count"] for s in out if s["sector"] == NO_SECTOR), 0)
+    return {
+        "sectors": out,
+        "total_gaps": total,
+        "unknown_pct": round(unknown / total * 100, 4) if total else 0.0,
+    }
+
+
+def get_gaps_by_sector(filters: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Orquestación con BD (router fino → aquí). Ventana 5d/30d/90d (independiente del
+    selector global de la página, como lo era Time Distribution), gappers con
+    gap_pct >= min_gap (default 20), agregados por sector.
+
+    Reusa el hot cache + apply_quality_filters. El sector viene de la tabla de
+    referencia (cache_service.get_ticker_sector_df) — NUNCA se llama a la API aquí.
+    """
+    import os
+    from datetime import date, timedelta
+    from app.database import get_db_connection
+
+    window = str(filters.get("window", "5d")).lower()
+    days = _SECTOR_WINDOW_DAYS.get(window, 5)
+    min_gap = safe_float(filters.get("min_gap")) or 20.0
+    metric = str(filters.get("metric", "count")).lower()
+
+    # sector map (tabla de referencia)
+    sector_map = None
+    try:
+        from app.services.cache_service import get_ticker_sector_df
+        sdf = get_ticker_sector_df()
+        if sdf is not None and not sdf.empty:
+            sector_map = dict(zip(sdf["ticker"].astype(str).str.upper(), sdf["sector"].astype(str)))
+    except Exception as e:
+        print(f"[WARN] gaps-by-sector sin tabla de sector: {e}")
+
+    # universo de la ventana desde el hot cache (gap>=10 en RAM); cold fallback
+    hot_df = None
+    try:
+        from app.services.cache_service import get_hot_daily_df
+        hot_df = get_hot_daily_df()
+    except Exception:
+        hot_df = None
+
+    con = None
+    try:
+        if hot_df is not None and getattr(hot_df, "empty", True) is False:
+            import pandas as pd
+            latest = pd.Timestamp(hot_df["timestamp"].max())
+            start = (latest - pd.Timedelta(days=days))
+            f = {"start_date": str(start.date()), "end_date": str((latest + pd.Timedelta(days=1)).date()),
+                 "min_gap": min_gap, "limit": 100000}
+            records = _hot_records(hot_df, f, 100000)
+            source = "hot_cache"
+        else:
+            con = get_db_connection(read_only=True)
+            row = con.execute("SELECT CAST(MAX(timestamp) AS DATE) FROM daily_metrics").fetchone()
+            latest = row[0] if row and row[0] else date.today()
+            if isinstance(latest, str):
+                latest = _as_date(latest)
+            start = latest - timedelta(days=days)
+            f = {"start_date": str(start), "end_date": str(latest + timedelta(days=1)),
+                 "min_gap": min_gap, "limit": 100000}
+            records = _fetch_records(con, f, 100000)
+            source = os.getenv("DB_PROVIDER", "motherduck").lower()
+
+        # filtros de calidad (mismo universo que el resto de la página)
+        splits, valid_tickers, derived_map = _load_quality_inputs()
+        merge_derived(records, derived_map)
+        records, _ = apply_quality_filters(
+            records, splits=splits, valid_tickers=valid_tickers,
+            black_swan_available=derived_map is not None)
+
+        payload = compute_gaps_by_sector(records, sector_map)
+        payload.update(window=window, min_gap=min_gap, metric=metric, source=source)
+        return payload
+    finally:
+        if con:
+            con.close()
