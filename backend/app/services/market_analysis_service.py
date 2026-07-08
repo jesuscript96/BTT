@@ -171,7 +171,8 @@ def _histogram(values: List[float]) -> Dict[str, Any]:
 
 # ── Filtros de calidad de universo (Patch v2.1 §01) ─────────────────────────
 
-QUALITY_GAP_MAX_PCT = 1000.0          # §01.2
+QUALITY_GAP_MAX_PCT = 400.0           # §01.2
+QUALITY_PMH_GAP_MAX_PCT = 400.0      # §01.2 — outliers de PM High Gap distorsionan medias
 BLACK_SWAN_SPIKE_MAX_PCT = 300.0      # §01.3 (evalúa max_spike_5m_pct del derivado)
 REVERSE_SPLIT_LOOKBACK_DAYS = 5       # §01.1, días naturales
 
@@ -254,7 +255,11 @@ def apply_quality_filters(
             continue
 
         if safe_float(r.get("gap_pct")) > QUALITY_GAP_MAX_PCT:
-            counters["excluded_gap_gt_1000"] += 1
+            counters["excluded_gap_gt_400"] += 1
+            continue
+
+        if safe_float(r.get("pmh_gap_pct")) > QUALITY_PMH_GAP_MAX_PCT:
+            counters["excluded_pmh_gap_gt_400"] += 1
             continue
 
         if tk in anyday_idx or tk in reverse_idx:
