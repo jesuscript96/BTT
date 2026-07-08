@@ -6,9 +6,9 @@
  *
  * Gráficos construidos con visx (./market-analysis/charts) — reemplazan a recharts
  * SOLO en esta página. Layout pensado como panel (bento), no como pila de secciones:
- *   · KPI strip   — 5 tarjetas uniformes; Gappers y Avg Gap con toggle PM/RTH (§07)
+ *   · KPI strip   — 5 tarjetas uniformes (§07)
  *   · Timing      — HOD/LOD/PM High superpuestos en un único eje intradía (MA-02)
- *   · Ventanas de Fade — caída media por franja de entrada, toggle PM/RTH (§04)
+ *   · Ventanas de Fade — caída media por franja de entrada, RTH (§04)
  *   · Seasonality — 12 curvas mensuales de Avg Change from Open, universo estándar (§06)
  * La página es informativa de condiciones de mercado: sin listado de tickers (§05).
  * Edgie recibe el contexto de filtros/periodo/datos vía evento window (§08).
@@ -22,6 +22,7 @@ import {
   getMarketAnalysis,
   getAvgChangeFromOpen,
   type MarketAnalysisResponse,
+  type MaKpiValue,
   type MaFadeWindow,
   type MaMonthCurve,
 } from "@/lib/api";
@@ -160,17 +161,7 @@ export default function MarketAnalysis() {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <SegmentedControl<Period>
-            options={[
-              { id: "1w", label: "1S" },
-              { id: "1m", label: "1M" },
-              { id: "3m", label: "3M" },
-              { id: "6m", label: "6M" },
-              { id: "1y", label: "1A" },
-            ]}
-            value={filters.period}
-            onChange={(period) => setFilters((f) => ({ ...f, period }))}
-          />
+          <span style={{ fontSize: 11, fontWeight: 600, color: color.textMuted, background: color.bgSurface, padding: "4px 10px", borderRadius: 6, border: `1px solid ${color.border}` }}>1M</span>
           <Button variant="secondary" size="sm" onClick={() => setShowFilters((s) => !s)}>
             <Filter size={13} style={{ marginRight: 6 }} />
             Filtros{nActive ? ` · ${nActive}` : ""}
@@ -257,18 +248,8 @@ function KpiStrip({ data }: { data: MarketAnalysisResponse }) {
   const k = data.kpis;
   return (
     <div className="ma-kpi-rail">
-      <ToggleKpiCard
-        label="Gappers Count"
-        fmt={fmtInt}
-        rth={{ hint: "total de gappers del universo del periodo", kpi: k.gappers_count }}
-        pm={{ hint: "con actividad significativa en pre (PMH > cierre anterior)", kpi: k.gappers_count_pm }}
-      />
-      <ToggleKpiCard
-        label="Avg Gap %"
-        fmt={(v) => fmtPct(v)}
-        rth={{ hint: "open 09:30 vs cierre anterior", kpi: k.avg_gap_pct }}
-        pm={{ hint: "PM High vs cierre anterior", kpi: k.pm_high_gap_pct }}
-      />
+      <SimpleKpiCard label="Gappers Count" kpi={k.gappers_count} fmt={fmtInt} sub="total de gappers del universo del periodo" />
+      <SimpleKpiCard label="Avg Gap %" kpi={k.avg_gap_pct} fmt={(v) => fmtPct(v)} sub="open 09:30 vs cierre anterior" />
       <SimpleKpiCard label="PM High Gap %" kpi={k.pm_high_gap_pct} sub="media de (PMH − prev close) / prev close" />
       <SimpleKpiCard label="Close Red %" kpi={k.close_red_pct} sub="cierran por debajo del open" />
       <SimpleKpiCard label="Avg Fade desde PMH" kpi={k.avg_fade_from_pmh} sub="a cierre EOD · universo gap ≥ umbral" />
@@ -276,40 +257,15 @@ function KpiStrip({ data }: { data: MarketAnalysisResponse }) {
   );
 }
 
-type KpiSide = { hint: string; kpi: MarketAnalysisResponse["kpis"]["gappers_count"] };
-
-function ToggleKpiCard({ label, fmt, rth, pm }: { label: string; fmt: (v: number | null | undefined) => string; rth: KpiSide; pm: KpiSide }) {
-  const [mode, setMode] = useState<"rth" | "pm">("rth");
-  const side = mode === "rth" ? rth : pm;
-  const delta = side.kpi.value != null && side.kpi.prev != null ? side.kpi.value - side.kpi.prev : null;
-  return (
-    <Card padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{label}</span>
-        <SegmentedControl<"pm" | "rth">
-          size="sm"
-          options={[{ id: "pm", label: "PM" }, { id: "rth", label: "RTH" }]}
-          value={mode}
-          onChange={setMode}
-        />
-      </div>
-      <span style={{ fontSize: 20, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }} title={side.hint}>
-        {fmt(side.kpi.value)}
-      </span>
-      <DeltaLine delta={delta} />
-      <span style={{ fontSize: 9, color: color.textMuted, lineHeight: 1.3 }}>{side.hint}</span>
-    </Card>
-  );
-}
-
-function SimpleKpiCard({ label, kpi, sub }: { label: string; kpi: MarketAnalysisResponse["kpis"]["close_red_pct"]; sub?: string }) {
+function SimpleKpiCard({ label, kpi, sub, fmt }: { label: string; kpi: MaKpiValue; sub?: string; fmt?: (v: number | null | undefined) => string }) {
   const delta = kpi.value != null && kpi.prev != null ? kpi.value - kpi.prev : null;
+  const fmtFn = fmt || fmtPct;
   return (
     <Card padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
       <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{label}</span>
-      <span style={{ fontSize: 20, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }}>{fmtPct(kpi.value)}</span>
+      <span style={{ fontSize: 20, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }}>{fmtFn(kpi.value)}</span>
       <DeltaLine delta={delta} />
-      {sub && <span style={{ fontSize: 9, color: color.textMuted, lineHeight: 1.3 }}>{sub}</span>}
+      <span style={{ fontSize: 9, color: color.textMuted, lineHeight: 1.3 }}>{sub || " "}</span>
     </Card>
   );
 }
@@ -350,14 +306,7 @@ function DeltaLine({ delta, hint }: { delta: number | null; hint?: string }) {
   );
 }
 
-// ── Timing (MA-02) — un único chart con ventana 5D/30D/90D ───────────────────
-const DIST_WINDOWS = [
-  { id: "5d", label: "5D" },
-  { id: "30d", label: "30D" },
-  { id: "90d", label: "90D" },
-] as const;
-type DistWindow = (typeof DIST_WINDOWS)[number]["id"];
-
+// ── Timing (MA-02) — ventana fija 30D ───────────────────
 function TimingLegend() {
   const items: [keyof typeof SERIES_COLOR, string][] = [["hod", "HOD"], ["lod", "LOD"], ["pmh", "PM High"]];
   return (
@@ -373,18 +322,17 @@ function TimingLegend() {
 }
 
 function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; fallback: MarketAnalysisResponse["distributions"] }) {
-  const [win, setWin] = useState<DistWindow>("30d");
   const [dist, setDist] = useState(fallback);
 
   useEffect(() => {
     const ctrl = new AbortController();
     const p = new URLSearchParams(baseParams);
-    p.set("period", win); // ventana independiente del selector global (PRD MA-02)
+    p.set("period", "30d");
     getMarketAnalysis(p, ctrl.signal)
       .then((res) => setDist(res.distributions))
       .catch(() => {});
     return () => ctrl.abort();
-  }, [win, baseParams]);
+  }, [baseParams]);
 
   const dominant = (rec: Record<string, number>) =>
     Object.entries(rec).reduce<[string, number]>((acc, e) => (e[1] > acc[1] ? e : acc), ["—", 0]);
@@ -396,7 +344,7 @@ function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; f
         <span style={{ fontSize: 11, color: color.textSecondary }}>
           Pico HOD más probable: <strong style={{ color: color.copper }}>{domF}</strong>{domP ? ` · ${domP.toFixed(1)}%` : ""}
         </span>
-        <SegmentedControl<DistWindow> size="sm" options={DIST_WINDOWS.map((w) => ({ id: w.id, label: w.label }))} value={win} onChange={setWin} />
+        <span style={{ fontSize: 10, fontWeight: 600, color: color.textMuted, background: color.bgSurface, padding: "2px 8px", borderRadius: 4, border: `1px solid ${color.border}` }}>30D</span>
       </div>
       <TimingChart hod={dist.hod_time} lod={dist.lod_time} pmh={dist.pmh_time} height={240} />
     </div>
@@ -407,29 +355,20 @@ function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; f
 // "MAE/MFE no tiene sentido sin un trade abierto." Entrada = close de la vela de
 // la franja (RTH) o el PM High (modo PM); salida = close EOD. Toggle PM/RTH visible.
 function FadeWindowsPanel({ data }: { data: MarketAnalysisResponse }) {
-  const [mode, setMode] = useState<"rth" | "pm">("rth");
   const fw = data.fade_windows;
-  const pmRow: MaFadeWindow = { franja: "PM High", ...fw.pm };
-  const rows = mode === "rth" ? fw.rth : [pmRow];
+  const rows = fw.rth;
   return (
     <Panel
       icon={<ArrowLeftRight size={14} />}
       title="Ventanas de Fade"
-      subtitle="Caída media de los gappers por franja de entrada"
+      subtitle="Caída media de los gappers por franja de entrada · RTH"
       right={
-        <SegmentedControl<"rth" | "pm">
-          size="sm"
-          options={[{ id: "pm", label: "PM" }, { id: "rth", label: "RTH" }]}
-          value={mode}
-          onChange={setMode}
-        />
+        <span style={{ fontSize: 10, fontWeight: 600, color: color.textMuted, background: color.bgSurface, padding: "2px 8px", borderRadius: 4, border: `1px solid ${color.border}` }}>RTH</span>
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <span style={{ fontSize: 11, color: color.textSecondary }}>
-          {mode === "rth"
-            ? "Entrada: close de la vela de la franja · salida: close EOD (15:59)"
-            : "Entrada: PM High · salida: close EOD · universo completo del periodo"}
+          Entrada: close de la vela de la franja · salida: close EOD (15:59)
         </span>
         <Table>
           <thead>
