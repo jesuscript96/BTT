@@ -21,7 +21,7 @@ router = APIRouter(
 
 from app.services.query_service import build_screener_query, get_stats_sql_logic, map_stats_row
 from app.services.cache_service import get_hot_daily_df
-from app.services.market_analysis_service import get_market_analysis, get_avg_change_from_open
+from app.services.market_analysis_service import get_market_analysis, get_avg_change_from_open, get_gaps_by_sector
 import pandas as pd
 
 @router.get("/screener")
@@ -134,6 +134,22 @@ def avg_change_from_open(request: Request):
     try:
         filters = dict(request.query_params)
         return get_avg_change_from_open(filters)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gaps-by-sector")
+def gaps_by_sector(request: Request):
+    """
+    Market Analysis — Gaps Up by Sector (treemap). Gappers con gap>=min_gap de la
+    ventana (5d/30d/90d) agregados por sector de la empresa.
+    Contrato: docs/market-analysis/PRD_GAPS_BY_SECTOR.md §4.1. Lógica en
+    services/market_analysis_service.get_gaps_by_sector (router fino).
+    """
+    try:
+        filters = dict(request.query_params)
+        return get_gaps_by_sector(filters)
     except Exception as e:
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
