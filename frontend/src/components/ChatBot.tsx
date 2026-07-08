@@ -54,6 +54,10 @@ export function ChatBot() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [activeTicker, setActiveTicker] = useState<string | null>(null);
     const [tickerData, setTickerData] = useState<any | null>(null);
+    // Contexto de la página Market Analysis (PRD_PATCH_v2.1 §08): filtros, periodo
+    // y datos en pantalla. Lo publica MarketAnalysis.tsx vía evento window y lo
+    // limpia (null) al desmontar para no contaminar otras páginas.
+    const [maContext, setMaContext] = useState<Record<string, unknown> | null>(null);
     const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
     
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -88,7 +92,20 @@ export function ChatBot() {
             } else {
                 initWelcomeMessage(null);
             }
+            // Contexto de Market Analysis si el widget monta después que la página
+            const w = window as unknown as Record<string, unknown>;
+            setMaContext((w.__lastMarketAnalysisContext as Record<string, unknown>) || null);
         }
+    }, []);
+
+    // Listen for Market Analysis page context (mismo patrón que ticker-loaded)
+    useEffect(() => {
+        const handleMaContext = (e: Event) => {
+            const detail = (e as CustomEvent).detail as Record<string, unknown> | null;
+            setMaContext(detail ?? null);
+        };
+        window.addEventListener('market-analysis-context', handleMaContext);
+        return () => window.removeEventListener('market-analysis-context', handleMaContext);
     }, []);
 
     // Listen for ticker-loaded custom window events
@@ -333,6 +350,23 @@ export function ChatBot() {
                         }
                     });
                 }
+            }
+
+            // Market Analysis en pantalla (PRD_PATCH_v2.1 §08): el usuario está viendo
+            // el dashboard de gappers — Edgie responde sobre ESTOS datos y aclara
+            // siempre a qué periodo/filtros corresponden. JSON compacto y acotado.
+            const MA_CONTEXT_MAX_CHARS = 6000;
+            if (maContext) {
+                let maJson = JSON.stringify(maContext);
+                if (maJson.length > MA_CONTEXT_MAX_CHARS) {
+                    // demasiado grande → fuera la muestra de records (JSON.stringify omite undefined)
+                    maJson = JSON.stringify({ ...maContext, records_sample: undefined })
+                        .substring(0, MA_CONTEXT_MAX_CHARS);
+                }
+                systemPrompt += `\n\n### Market Analysis on screen (live page context)`;
+                systemPrompt += `\nThe user is viewing the Market Analysis dashboard (small-cap gappers). Current period, active filters and on-screen data:`;
+                systemPrompt += `\n${maJson}`;
+                systemPrompt += `\nWhen the user asks about "los datos", "estos gappers", "el fade", KPIs or the current market conditions, answer FROM this context (cite the period). fade_windows: avg fade % per entry window and % of favorable-for-short cases; quality_filters: ticker-days excluded from the universe (reverse splits, gap>1000%, 5-min black swans).`;
             }
 
             // 4. Map message history into DeepSeek API format (excluding system notifications)

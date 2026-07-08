@@ -2,26 +2,27 @@
 
 /**
  * Market Analysis — dashboard de inteligencia de gappers small-cap.
- * Contrato/diseño: docs/market-analysis/PRD.md (MVP v1.0).
+ * Contrato/diseño: docs/market-analysis/PRD.md (MVP v1.0) + PRD_PATCH_v2.1.md.
  *
  * Gráficos construidos con visx (./market-analysis/charts) — reemplazan a recharts
  * SOLO en esta página. Layout pensado como panel (bento), no como pila de secciones:
- *   · KPI strip   — pulso del periodo (hero Gappers + rail de métricas)
+ *   · KPI strip   — 5 tarjetas uniformes; Gappers y Avg Gap con toggle PM/RTH (§07)
  *   · Timing      — HOD/LOD/PM High superpuestos en un único eje intradía (MA-02)
- *   · MAE / MFE   — histograma espejo riesgo↔recorrido (MA-05)
- *   · Seasonality — 12 curvas mensuales de Avg Change from Open (MA-04)
- *   · Recent Gaps — tabla ordenable (MA-06)
+ *   · Ventanas de Fade — caída media por franja de entrada, toggle PM/RTH (§04)
+ *   · Seasonality — 12 curvas mensuales de Avg Change from Open, universo estándar (§06)
+ * La página es informativa de condiciones de mercado: sin listado de tickers (§05).
+ * Edgie recibe el contexto de filtros/periodo/datos vía evento window (§08).
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Filter, RotateCcw, TrendingDown, Clock, ArrowLeftRight, CalendarDays, Table2, Activity } from "lucide-react";
+import { Filter, RotateCcw, TrendingDown, Clock, ArrowLeftRight, CalendarDays } from "lucide-react";
 import { color, font, Card, Button, Table, Th, Td, Tr, SegmentedControl, Input } from "@/components/ui";
-import { TimingChart, MaeMfeTornado, SeasonalityChart, SERIES_COLOR } from "@/components/market-analysis/charts";
+import { TimingChart, SeasonalityChart, SERIES_COLOR } from "@/components/market-analysis/charts";
+import { ChatBot } from "@/components/ChatBot";
 import {
   getMarketAnalysis,
   getAvgChangeFromOpen,
   type MarketAnalysisResponse,
-  type MaRecentGap,
+  type MaFadeWindow,
   type MaMonthCurve,
 } from "@/lib/api";
 
@@ -30,14 +31,6 @@ const fmtPct = (v: number | null | undefined, dp = 1) =>
   v === null || v === undefined ? "—" : `${v.toFixed(dp)}%`;
 const fmtInt = (v: number | null | undefined) =>
   v === null || v === undefined ? "—" : Math.round(v).toLocaleString("en-US");
-const fmtPrice = (v: number | null | undefined) =>
-  v === null || v === undefined ? "—" : `$${v.toFixed(2)}`;
-const fmtVol = (v: number) => {
-  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return `${Math.round(v)}`;
-};
 
 // ── tipos de filtros (estado de UI) ──────────────────────────────────────────
 type Period = "1w" | "1m" | "3m" | "6m" | "1y";
@@ -48,7 +41,7 @@ interface Filters {
   min_gap: string;
   min_open: string;
   max_open: string;
-  min_volume: string;
+  min_day_volume: string; // volumen del día = PM + RTH (principio 00; no incluye after-hours)
   min_pm_volume: string;
   close_red: TriState;
   fade_threshold: string;
@@ -59,7 +52,7 @@ const DEFAULTS: Filters = {
   min_gap: "30",
   min_open: "",
   max_open: "",
-  min_volume: "1000000",
+  min_day_volume: "1000000",
   min_pm_volume: "",
   close_red: "all",
   fade_threshold: "50",
@@ -71,9 +64,11 @@ function buildParams(f: Filters): URLSearchParams {
   if (f.min_gap) p.set("min_gap_at_open_pct", f.min_gap);
   if (f.min_open) p.set("min_open", f.min_open);
   if (f.max_open) p.set("max_open", f.max_open);
-  if (f.min_volume) p.set("min_volume", f.min_volume);
+  if (f.min_day_volume) p.set("min_day_volume", f.min_day_volume);
   if (f.min_pm_volume) p.set("min_pm_volume", f.min_pm_volume);
   if (f.fade_threshold) p.set("fade_threshold", f.fade_threshold);
+  // close_red server-side (§05): al no haber tabla, el filtro afecta a KPIs y módulos
+  if (f.close_red !== "all") p.set("close_red", f.close_red);
   p.set("limit", "2000");
   return p;
 }
@@ -89,7 +84,6 @@ function activeFilterCount(f: Filters): number {
 
 // ── componente principal ─────────────────────────────────────────────────────
 export default function MarketAnalysis() {
-  const router = useRouter();
   const [filters, setFilters] = useState<Filters>(DEFAULTS);
   const [data, setData] = useState<MarketAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -117,13 +111,39 @@ export default function MarketAnalysis() {
     return () => ctrl.abort();
   }, [load]);
 
-  const recordsFiltered = useMemo(() => {
-    if (!data) return [];
-    if (filters.close_red === "all") return data.records;
-    const wantRed = filters.close_red === "yes";
-    return data.records.filter((r) => r.close_red === wantRed);
-  }, [data, filters.close_red]);
+  // §08 — contexto de página para Edgie: en cada payload se publica lo que el
+  // usuario está viendo (periodo, filtros, KPIs, fades, exclusiones y una
+  // muestra acotada de records). Al desmontar se limpia para no contaminar
+  // otras páginas. ChatBot.tsx lo escucha e inyecta la sección en su prompt.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!data) return;
+    const detail = {
+      period: data.period,
+      preset: filters.period,
+      filters: {
+        min_gap_pct: filters.min_gap, min_open: filters.min_open, max_open: filters.max_open,
+        min_day_volume: filters.min_day_volume, min_pm_volume: filters.min_pm_volume,
+        close_red: filters.close_red, fade_threshold: filters.fade_threshold,
+      },
+      kpis: data.kpis,
+      fade_windows: data.fade_windows,
+      quality_filters: data.quality_filters,
+      distributions_hod_top: Object.entries(data.distributions.hod_time)
+        .sort((a, b) => b[1] - a[1]).slice(0, 3),
+      records_sample: data.records.slice(0, 20),
+    };
+    (window as unknown as Record<string, unknown>).__lastMarketAnalysisContext = detail;
+    window.dispatchEvent(new CustomEvent("market-analysis-context", { detail }));
+  }, [data, filters]);
 
+  useEffect(() => () => {
+    if (typeof window === "undefined") return;
+    (window as unknown as Record<string, unknown>).__lastMarketAnalysisContext = null;
+    window.dispatchEvent(new CustomEvent("market-analysis-context", { detail: null }));
+  }, []);
+
+  const isEmpty = data ? (data.kpis.gappers_count.value ?? 0) === 0 : false;
   const nActive = activeFilterCount(filters);
 
   return (
@@ -170,7 +190,8 @@ export default function MarketAnalysis() {
           <FilterNum label="Gap % mín" value={filters.min_gap} onChange={(v) => setFilters((f) => ({ ...f, min_gap: v }))} />
           <FilterNum label="Open mín ($)" value={filters.min_open} onChange={(v) => setFilters((f) => ({ ...f, min_open: v }))} />
           <FilterNum label="Open máx ($)" value={filters.max_open} onChange={(v) => setFilters((f) => ({ ...f, max_open: v }))} />
-          <FilterNum label="Vol RTH mín" value={filters.min_volume} onChange={(v) => setFilters((f) => ({ ...f, min_volume: v }))} />
+          {/* Principio 00: el volumen del día es PM+RTH y la sesión se dice en la etiqueta */}
+          <FilterNum label="Vol día (PM+RTH) mín" value={filters.min_day_volume} onChange={(v) => setFilters((f) => ({ ...f, min_day_volume: v }))} />
           <FilterNum label="Vol PM mín" value={filters.min_pm_volume} onChange={(v) => setFilters((f) => ({ ...f, min_pm_volume: v }))} />
           <FilterNum label="Fade umbral %" value={filters.fade_threshold} onChange={(v) => setFilters((f) => ({ ...f, fade_threshold: v }))} />
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -191,11 +212,12 @@ export default function MarketAnalysis() {
           <ErrorState message={error} onRetry={() => { setError(null); setLoading(true); void load(); }} />
         ) : loading && !data ? (
           <LoadingState />
-        ) : data && recordsFiltered.length === 0 ? (
+        ) : data && isEmpty ? (
           <EmptyState onClear={() => setFilters((f) => ({ ...DEFAULTS, period: f.period }))} />
         ) : data ? (
           <>
             <KpiStrip data={data} />
+            <QualityLine qf={data.quality_filters} />
 
             <div className="ma-mid">
               <Panel
@@ -207,86 +229,111 @@ export default function MarketAnalysis() {
                 <TimingModule baseParams={params} fallback={data.distributions} />
               </Panel>
 
-              <MaeMfePanel data={data} />
+              <FadeWindowsPanel data={data} />
             </div>
 
             <Panel
               icon={<CalendarDays size={14} />}
               title="Avg Change from Open"
-              subtitle="Perfil intradía medio · 12 meses superpuestos"
+              subtitle="Perfil intradía medio · 12 meses · universo estándar: gap ≥30% · vol día ≥1M · filtros de calidad"
             >
-              <SeasonalityModule baseParams={params} />
-            </Panel>
-
-            <Panel
-              icon={<Table2 size={14} />}
-              title="Recent Gaps Up"
-              subtitle={`${recordsFiltered.length} gappers · click en el ticker para abrir el detalle`}
-            >
-              <RecentGapsTable records={recordsFiltered} onTicker={(t) => router.push(`/analysis/${t}`)} />
+              <SeasonalityModule />
             </Panel>
           </>
         ) : null}
       </div>
+
+      {/* §08 — Edgie flotante colapsable, mismo widget que el resto de la app */}
+      <ChatBot />
     </div>
   );
 }
 
-// ── KPI strip (MA-01) ────────────────────────────────────────────────────────
+// ── KPI strip (MA-01 · patch §03/§07: 5 tarjetas uniformes) ──────────────────
+// Gappers Count y Avg Gap % llevan toggle PM/RTH VISIBLE (§07 — la distinción de
+// sesión nunca es una decisión silenciosa del backend). "Pulso del Periodo" y las
+// tarjetas Max Fade / Close<VWAP desaparecen (§03).
 function KpiStrip({ data }: { data: MarketAnalysisResponse }) {
   const k = data.kpis;
-  const rail = [
-    { label: "PM High Avg", v: fmtPrice(k.pm_high_average.value), raw: k.pm_high_average.value, prev: k.pm_high_average.prev },
-    { label: "Close Red %", v: fmtPct(k.close_red_pct.value), raw: k.close_red_pct.value, prev: k.close_red_pct.prev },
-    { label: "Avg Fade PMH", v: fmtPct(k.avg_fade_from_pmh.value), raw: k.avg_fade_from_pmh.value, prev: k.avg_fade_from_pmh.prev },
-    {
-      label: "Max Fade PMH",
-      v: fmtPct(k.max_fade_from_pmh.value),
-      raw: null as number | null, // sin "vs ant." — es un extremo puntual
-      prev: null,
-      hint: k.max_fade_from_pmh.ticker ? `${k.max_fade_from_pmh.ticker} · ${k.max_fade_from_pmh.date}` : undefined,
-    },
-    { label: "Close < VWAP %", v: "Fase 2", raw: null, prev: null, muted: true },
-  ];
-
   return (
-    <div className="ma-kpi-strip">
-      {/* Hero — pulso del periodo */}
-      <Card featured padded style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <Activity size={13} style={{ color: color.copper }} />
-          <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 2, color: color.copper }}>Pulso del periodo</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 18, flexWrap: "wrap" }}>
-          <HeroStat label="Gappers" value={fmtInt(k.gappers_count.value)} raw={k.gappers_count.value} prev={k.gappers_count.prev} />
-          <HeroStat label="Avg Gap" value={fmtPct(k.avg_gap_pct.value)} raw={k.avg_gap_pct.value} prev={k.avg_gap_pct.prev} />
-        </div>
-      </Card>
-
-      {/* Rail — métricas secundarias */}
-      <div className="ma-kpi-rail">
-        {rail.map((c) => {
-          const delta = c.raw != null && c.prev != null ? c.raw - c.prev : null;
-          return (
-            <Card key={c.label} padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{c.label}</span>
-              <span style={{ fontSize: 20, fontWeight: 600, color: c.muted ? color.textMuted : color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }} title={c.hint}>{c.v}</span>
-              <DeltaLine delta={delta} hint={c.hint} />
-            </Card>
-          );
-        })}
-      </div>
+    <div className="ma-kpi-rail">
+      <ToggleKpiCard
+        label="Gappers Count"
+        fmt={fmtInt}
+        rth={{ hint: "total de gappers del universo del periodo", kpi: k.gappers_count }}
+        pm={{ hint: "con actividad significativa en pre (PMH > cierre anterior)", kpi: k.gappers_count_pm }}
+      />
+      <ToggleKpiCard
+        label="Avg Gap %"
+        fmt={(v) => fmtPct(v)}
+        rth={{ hint: "open 09:30 vs cierre anterior", kpi: k.avg_gap_pct }}
+        pm={{ hint: "PM High vs cierre anterior", kpi: k.pm_high_gap_pct }}
+      />
+      <SimpleKpiCard label="PM High Gap %" kpi={k.pm_high_gap_pct} sub="media de (PMH − prev close) / prev close" />
+      <SimpleKpiCard label="Close Red %" kpi={k.close_red_pct} sub="cierran por debajo del open" />
+      <SimpleKpiCard label="Avg Fade desde PMH" kpi={k.avg_fade_from_pmh} sub="a cierre EOD · universo gap ≥ umbral" />
     </div>
   );
 }
 
-function HeroStat({ label, value, raw, prev }: { label: string; value: string; raw: number | null; prev?: number | null }) {
-  const delta = raw != null && prev != null ? raw - prev : null;
+type KpiSide = { hint: string; kpi: MarketAnalysisResponse["kpis"]["gappers_count"] };
+
+function ToggleKpiCard({ label, fmt, rth, pm }: { label: string; fmt: (v: number | null | undefined) => string; rth: KpiSide; pm: KpiSide }) {
+  const [mode, setMode] = useState<"rth" | "pm">("rth");
+  const side = mode === "rth" ? rth : pm;
+  const delta = side.kpi.value != null && side.kpi.prev != null ? side.kpi.value - side.kpi.prev : null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1.5, color: color.textMuted }}>{label}</span>
-      <span style={{ fontFamily: font.serif, fontSize: 38, fontWeight: 600, color: "#F0EEEA", letterSpacing: "-1px", lineHeight: 1 }}>{value}</span>
+    <Card padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{label}</span>
+        <SegmentedControl<"pm" | "rth">
+          size="sm"
+          options={[{ id: "pm", label: "PM" }, { id: "rth", label: "RTH" }]}
+          value={mode}
+          onChange={setMode}
+        />
+      </div>
+      <span style={{ fontSize: 20, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }} title={side.hint}>
+        {fmt(side.kpi.value)}
+      </span>
       <DeltaLine delta={delta} />
+      <span style={{ fontSize: 9, color: color.textMuted, lineHeight: 1.3 }}>{side.hint}</span>
+    </Card>
+  );
+}
+
+function SimpleKpiCard({ label, kpi, sub }: { label: string; kpi: MarketAnalysisResponse["kpis"]["close_red_pct"]; sub?: string }) {
+  const delta = kpi.value != null && kpi.prev != null ? kpi.value - kpi.prev : null;
+  return (
+    <Card padded style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>{label}</span>
+      <span style={{ fontSize: 20, fontWeight: 600, color: color.textHigh, letterSpacing: "-0.5px", fontFamily: font.serif }}>{fmtPct(kpi.value)}</span>
+      <DeltaLine delta={delta} />
+      {sub && <span style={{ fontSize: 9, color: color.textMuted, lineHeight: 1.3 }}>{sub}</span>}
+    </Card>
+  );
+}
+
+/** Exclusiones de calidad del universo (§01) — visibles, nunca silenciosas (principio 00). */
+function QualityLine({ qf }: { qf: MarketAnalysisResponse["quality_filters"] }) {
+  const total = qf.excluded_ticker_type + qf.excluded_gap_gt_1000 + qf.excluded_same_day_split
+    + qf.excluded_reverse_split + (qf.excluded_black_swan ?? 0);
+  const parts = [
+    qf.excluded_reverse_split > 0 && `${qf.excluded_reverse_split} reverse split ≤5d`,
+    qf.excluded_same_day_split > 0 && `${qf.excluded_same_day_split} split mismo día`,
+    qf.excluded_gap_gt_1000 > 0 && `${qf.excluded_gap_gt_1000} gap >1000%`,
+    (qf.excluded_black_swan ?? 0) > 0 && `${qf.excluded_black_swan} black swan 5min >300%`,
+    qf.excluded_ticker_type > 0 && `${qf.excluded_ticker_type} tipo no operable`,
+  ].filter(Boolean);
+  return (
+    <div style={{ fontSize: 10, color: color.textMuted, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>Calidad de datos</span>
+      <span>
+        {total > 0
+          ? `${total} ticker-días excluidos del universo (${parts.join(" · ")})`
+          : "sin exclusiones en este periodo"}
+        {qf.excluded_black_swan === null ? " · black swan pendiente de backfill" : ""}
+      </span>
     </div>
   );
 }
@@ -356,53 +403,72 @@ function TimingModule({ baseParams, fallback }: { baseParams: URLSearchParams; f
   );
 }
 
-// ── MAE / MFE (MA-05) ────────────────────────────────────────────────────────
-function MaeMfePanel({ data }: { data: MarketAnalysisResponse }) {
+// ── Ventanas de Fade (patch §04 — sustituye a MAE/MFE) ───────────────────────
+// "MAE/MFE no tiene sentido sin un trade abierto." Entrada = close de la vela de
+// la franja (RTH) o el PM High (modo PM); salida = close EOD. Toggle PM/RTH visible.
+function FadeWindowsPanel({ data }: { data: MarketAnalysisResponse }) {
   const [mode, setMode] = useState<"rth" | "pm">("rth");
-  const block = data.mae_mfe[mode];
+  const fw = data.fade_windows;
+  const pmRow: MaFadeWindow = { franja: "PM High", ...fw.pm };
+  const rows = mode === "rth" ? fw.rth : [pmRow];
   return (
     <Panel
       icon={<ArrowLeftRight size={14} />}
-      title="MAE / MFE"
-      subtitle={mode === "rth" ? "Referencia: open 09:30 (RTH)" : "Referencia: cierre día anterior (PM)"}
+      title="Ventanas de Fade"
+      subtitle="Caída media de los gappers por franja de entrada"
       right={
         <SegmentedControl<"rth" | "pm">
           size="sm"
-          options={[{ id: "rth", label: "RTH" }, { id: "pm", label: "PM" }]}
+          options={[{ id: "pm", label: "PM" }, { id: "rth", label: "RTH" }]}
           value={mode}
           onChange={setMode}
         />
       }
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <MaeMfeTornado mae={block.mae} mfe={block.mfe} height={256} />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <StatTriplet title="MAE" hist={block.mae} tone={color.loss} />
-          <StatTriplet title="MFE" hist={block.mfe} tone={color.copper} />
-        </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <span style={{ fontSize: 11, color: color.textSecondary }}>
+          {mode === "rth"
+            ? "Entrada: close de la vela de la franja · salida: close EOD (15:59)"
+            : "Entrada: PM High · salida: close EOD · universo completo del periodo"}
+        </span>
+        <Table>
+          <thead>
+            <Tr>
+              <Th>Franja</Th>
+              <Th style={{ textAlign: "right" }}>Avg Fade %</Th>
+              <Th style={{ textAlign: "right" }}>% favorable short</Th>
+              <Th style={{ textAlign: "right" }}>N</Th>
+            </Tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <Tr key={r.franja}>
+                <Td style={{ fontWeight: 600, color: color.textHigh }}>{r.franja}</Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: (r.avg_fade_pct ?? 0) > 0 ? color.copperBright : color.textPrimary }}
+                    title={r.pending_backfill ? "Backfill del derivado en curso — franja disponible en cuanto termine" : undefined}>
+                  {r.pending_backfill ? "—" : fmtPct(r.avg_fade_pct)}
+                </Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                    title={r.pending_backfill ? "Backfill del derivado en curso" : undefined}>
+                  {r.pending_backfill ? "—" : fmtPct(r.pct_favorable, 0)}
+                </Td>
+                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: color.textMuted }}>{r.n}</Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+        <span style={{ fontSize: 10, color: color.textMuted }}>
+          Fade = (entrada − salida) / entrada × 100 · favorable = el precio cayó desde la franja hasta el cierre
+        </span>
       </div>
     </Panel>
   );
 }
 
-function StatTriplet({ title, hist, tone }: { title: string; hist: MarketAnalysisResponse["mae_mfe"]["rth"]["mae"]; tone: string }) {
-  return (
-    <div style={{ border: `0.5px solid ${color.border}`, borderRadius: 8, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, color: tone }}>{title}</span>
-        <span style={{ fontSize: 11, color: color.textHigh, fontVariantNumeric: "tabular-nums" }}>x̄ {hist.mean.toFixed(1)}%</span>
-      </div>
-      <div style={{ display: "flex", gap: 10, fontSize: 9, color: color.textMuted, fontVariantNumeric: "tabular-nums" }}>
-        <span>P25 {hist.p25.toFixed(1)}</span>
-        <span>P50 {hist.p50.toFixed(1)}</span>
-        <span>P75 {hist.p75.toFixed(1)}</span>
-      </div>
-    </div>
-  );
-}
-
 // ── Avg Change from Open (MA-04) ─────────────────────────────────────────────
-function SeasonalityModule({ baseParams }: { baseParams: URLSearchParams }) {
+// Curvas precalculadas sobre el UNIVERSO ESTÁNDAR (patch §06 / Q3): no obedecen a
+// los filtros globales — la independencia se declara en el subtítulo del panel.
+function SeasonalityModule() {
   const [months, setMonths] = useState<MaMonthCurve[]>([]);
   const [highlight, setHighlight] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -410,7 +476,7 @@ function SeasonalityModule({ baseParams }: { baseParams: URLSearchParams }) {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    getAvgChangeFromOpen(baseParams, ctrl.signal)
+    getAvgChangeFromOpen("", ctrl.signal)
       .then((res) => {
         setMonths(res);
         setHighlight(res.length ? res[res.length - 1].month : "");
@@ -419,7 +485,7 @@ function SeasonalityModule({ baseParams }: { baseParams: URLSearchParams }) {
       .catch((e) => { if ((e as Error)?.name !== "AbortError") setFailed(true); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [baseParams]);
+  }, []);
 
   if (loading) return <ChartSkeleton label="Cargando perfiles mensuales…" />;
   if (failed || months.length === 0)
@@ -457,94 +523,6 @@ function SeasonalityModule({ baseParams }: { baseParams: URLSearchParams }) {
         </div>
       </div>
       <SeasonalityChart months={months} highlight={highlight} height={260} />
-    </div>
-  );
-}
-
-// ── Recent Gaps Up (MA-06) ───────────────────────────────────────────────────
-type SortField = keyof Pick<MaRecentGap, "ticker" | "date" | "gap_at_open_pct" | "open" | "vol_rth" | "vol_pm" | "hod" | "pmh">;
-const PAGE_SIZE = 50;
-
-function RecentGapsTable({ records, onTicker }: { records: MaRecentGap[]; onTicker: (t: string) => void }) {
-  const [sortField, setSortField] = useState<SortField>("date");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [page, setPage] = useState(0);
-
-  const sorted = useMemo(() => {
-    const arr = [...records];
-    arr.sort((a, b) => {
-      const av = a[sortField];
-      const bv = b[sortField];
-      const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return arr;
-  }, [records, sortField, sortDir]);
-
-  const pageRows = sorted.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE) || 1;
-
-  const sortBy = (f: SortField) => {
-    if (f === sortField) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortField(f); setSortDir("desc"); }
-    setPage(0);
-  };
-
-  const cols: { f: SortField; label: string; num?: boolean }[] = [
-    { f: "ticker", label: "Ticker" },
-    { f: "date", label: "Fecha" },
-    { f: "gap_at_open_pct", label: "Gap %", num: true },
-    { f: "open", label: "Open", num: true },
-    { f: "vol_rth", label: "Vol RTH", num: true },
-    { f: "vol_pm", label: "Vol PM", num: true },
-    { f: "hod", label: "HOD", num: true },
-    { f: "pmh", label: "PMH", num: true },
-  ];
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ overflowX: "auto" }}>
-        <Table>
-          <thead>
-            <Tr>
-              {cols.map((c) => (
-                <Th key={c.f} onClick={() => sortBy(c.f)} style={{ cursor: "pointer", textAlign: c.num ? "right" : "left", whiteSpace: "nowrap" }}>
-                  {c.label}{sortField === c.f ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
-                </Th>
-              ))}
-              <Th style={{ textAlign: "center" }}>Close Red</Th>
-            </Tr>
-          </thead>
-          <tbody>
-            {pageRows.map((r) => (
-              <Tr key={`${r.ticker}-${r.date}`} hoverable>
-                <Td>
-                  <button onClick={() => onTicker(r.ticker)} style={{ background: "none", border: "none", color: color.copper, fontWeight: 700, cursor: "pointer", fontFamily: font.sans, padding: 0 }}>
-                    {r.ticker}
-                  </button>
-                </Td>
-                <Td style={{ color: color.textMuted }}>{r.date}</Td>
-                <Td style={{ textAlign: "right", color: color.copperBright, fontVariantNumeric: "tabular-nums" }}>{r.gap_at_open_pct.toFixed(1)}%</Td>
-                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtPrice(r.open)}</Td>
-                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtVol(r.vol_rth)}</Td>
-                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtVol(r.vol_pm)}</Td>
-                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtPrice(r.hod)}</Td>
-                <Td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{fmtPrice(r.pmh)}</Td>
-                <Td style={{ textAlign: "center" }}>
-                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: r.close_red ? color.loss : color.profit }} />
-                </Td>
-              </Tr>
-            ))}
-          </tbody>
-        </Table>
-      </div>
-      {totalPages > 1 && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, fontSize: 11, color: color.textMuted }}>
-          <Button variant="ghost" size="sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>Anterior</Button>
-          <span>{page + 1} / {totalPages}</span>
-          <Button variant="ghost" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}>Siguiente</Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -618,9 +596,9 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 const labelStyle: React.CSSProperties = { fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted };
 
 // Layout responsivo del dashboard (media queries → no se pueden hacer inline).
+// §07: las 5 tarjetas KPI comparten formato — un único grid uniforme, sin hero.
 const DASH_CSS = `
 @keyframes ma-spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
-.ma-dash .ma-kpi-strip { display: grid; grid-template-columns: minmax(230px, 0.85fr) minmax(0, 2.3fr); gap: 14px; }
 .ma-dash .ma-kpi-rail { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
 .ma-dash .ma-mid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 1180px) {
@@ -630,7 +608,6 @@ const DASH_CSS = `
   .ma-dash .ma-mid { grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
-  .ma-dash .ma-kpi-strip { grid-template-columns: 1fr; }
   .ma-dash .ma-kpi-rail { grid-template-columns: repeat(2, 1fr); }
 }
 `;
