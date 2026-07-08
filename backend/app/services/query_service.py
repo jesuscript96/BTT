@@ -204,9 +204,21 @@ def build_screener_query(
         m_filters.append("daily_metrics.ticker = ?")
         sql_p.append(ticker.upper())
 
+    # close_red: tri-estado yes|no|all (Market Analysis v2.1) — no es numérico,
+    # se maneja explícito aquí y se salta el loop genérico. rth_close<rth_open
+    # directo: el day_return_pct del lake no equivale a esa comparación
+    # (ver is_close_red en market_analysis_service, auditoría 08-jul-2026).
+    close_red = str(filters.get('close_red') or '').lower()
+    if close_red == 'yes':
+        m_filters.append("(rth_close < rth_open AND rth_open > 0 AND rth_close > 0)")
+    elif close_red == 'no':
+        m_filters.append("NOT (rth_close < rth_open AND rth_open > 0 AND rth_close > 0)")
+
     field_map = {
         'min_gap_at_open_pct': 'gap_pct', 'max_gap_at_open_pct': 'gap_pct',
         'min_gap': 'gap_pct', 'max_gap': 'gap_pct',
+        # Volumen del día = PM + RTH (principio 00 Market Analysis v2.1; `volume` incluye AH)
+        'min_day_volume': '(pm_volume + rth_volume)', 'max_day_volume': '(pm_volume + rth_volume)',
         'min_rth_run_pct': 'rth_run_pct', 'min_run': 'rth_run_pct',
         'min_rth_volume': 'rth_volume', 'min_volume': 'volume',
         'min_m15_return_pct': 'm15_return_pct',
@@ -228,7 +240,7 @@ def build_screener_query(
     }
     
     for k, v in filters.items():
-        if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker', 'rules']: continue
+        if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker', 'rules', 'close_red']: continue
         try:
             val = float(v)
             if k in ['min_gap', 'min_run', 'min_volume'] and val <= 0: continue

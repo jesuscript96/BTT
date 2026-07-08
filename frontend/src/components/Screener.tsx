@@ -598,43 +598,63 @@ export default function Screener() {
       setGapLoading(false);
       return;
     }
-    let cancelled = false;
+    const ac = new AbortController();
+    const signal = ac.signal;
     setProfileLoading(true);
     setGapLoading(true);
     setTickerDetail(null);
     setGapStatsResponse(null);
 
-    // Profile + market fundamentals (also fires TICKER_ANALYSIS_OPENED analytics).
-    getTickerAnalysis(selectedTicker)
+    // ALL fetches fire in PARALLEL (like TickerAnalysis.tsx), not chained.
+    // Each passes { signal } so AbortController cancels them on ticker change.
+
+    // 1) Profile + market fundamentals
+    getTickerAnalysis(selectedTicker, { signal })
       .then((d) => {
-        if (cancelled) return;
         const detail = d as TickerDetail;
         setTickerDetail(detail);
-        // Re-scope the floating Edgie assistant to this ticker, exactly like
-        // TickerAnalysis does (float, market cap, sector, dilution, news).
-        getTickerFinvizNews(selectedTicker)
-          .then((news) => {
-            if (cancelled) return;
-            window.dispatchEvent(new CustomEvent("ticker-loaded", {
-              detail: { ticker: selectedTicker, data: detail, finvizNews: news, filings: null, secCompanyFacts: null },
-            }));
-          })
-          .catch(() => {
-            if (cancelled) return;
-            window.dispatchEvent(new CustomEvent("ticker-loaded", {
-              detail: { ticker: selectedTicker, data: detail, finvizNews: [], filings: null, secCompanyFacts: null },
-            }));
-          });
+        // Re-scope the floating Edgie assistant to this ticker
+        window.dispatchEvent(new CustomEvent("ticker-loaded", {
+          detail: { ticker: selectedTicker, data: detail, finvizNews: null, filings: null, secCompanyFacts: null },
+        }));
       })
-      .catch(() => { if (!cancelled) setTickerDetail(null); })
-      .finally(() => { if (!cancelled) setProfileLoading(false); });
+      .catch((e) => {
+        if ((e as Error)?.name !== "AbortError") {
+          setTickerDetail(null);
+        }
+      })
+      .finally(() => { setProfileLoading(false); });
 
-    getTickerGapStats(selectedTicker)
-      .then((g) => { if (!cancelled) setGapStatsResponse(g as GapStatsResponse); })
-      .catch(() => { if (!cancelled) setGapStatsResponse(null); })
-      .finally(() => { if (!cancelled) setGapLoading(false); });
+    // 2) News — PARALLEL, not chained after analysis
+    getTickerFinvizNews(selectedTicker, { signal })
+      .then((news) => {
+        const items = Array.isArray(news) ? news : ((news as any)?.news ?? []);
+        window.dispatchEvent(new CustomEvent("ticker-loaded", {
+          detail: { ticker: selectedTicker, data: tickerDetail, finvizNews: items, filings: null, secCompanyFacts: null },
+        }));
+      })
+      .catch(() => { /* news is optional, never block the panel */ });
 
-    return () => { cancelled = true; };
+    // 3) Gap stats
+    getTickerGapStats(selectedTicker, { signal })
+      .then((g) => {
+        const res = g as GapStatsResponse;
+        if (res && (res as any).status === "calculating") {
+          // Backend still computing — keep loading spinner, poll with backoff
+          setGapLoading(true);
+        } else {
+          setGapStatsResponse(res);
+          setGapLoading(false);
+        }
+      })
+      .catch((e) => {
+        if ((e as Error)?.name !== "AbortError") {
+          setGapStatsResponse(null);
+          setGapLoading(false);
+        }
+      });
+
+    return () => { ac.abort(); };
   }, [selectedTicker]);
 
   // ── Get current stats by active sub-tab ──
