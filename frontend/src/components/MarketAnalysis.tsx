@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Filter, RotateCcw, TrendingDown, ArrowLeftRight, CalendarDays, Activity, LayoutGrid } from "lucide-react";
 import { color, font, Card, Button, Table, Th, Td, Tr, SegmentedControl, Input } from "@/components/ui";
-import { SeasonalityChart, SectorTreemap } from "@/components/market-analysis/charts";
+import { SeasonalityChart, SectorTreemap, SEASON_PALETTE } from "@/components/market-analysis/charts";
 import { ChatBot } from "@/components/ChatBot";
 import {
   getMarketAnalysis,
@@ -431,9 +431,11 @@ function FadeWindowsPanel({ data }: { data: MarketAnalysisResponse }) {
 // ── Avg Change from Open (MA-04) ─────────────────────────────────────────────
 // Curvas precalculadas sobre el UNIVERSO ESTÁNDAR (patch §06 / Q3): no obedecen a
 // los filtros globales — la independencia se declara en el subtítulo del panel.
+// Los meses son ACUMULABLES: cada mes seleccionado se dibuja con su color y
+// persiste hasta que se deselecciona (clic en el chip lo activa/desactiva).
 function SeasonalityModule() {
   const [months, setMonths] = useState<MaMonthCurve[]>([]);
-  const [highlight, setHighlight] = useState<string>("");
+  const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
@@ -442,7 +444,7 @@ function SeasonalityModule() {
     getAvgChangeFromOpen("", ctrl.signal)
       .then((res) => {
         setMonths(res);
-        setHighlight(res.length ? res[res.length - 1].month : "");
+        setSelected(res.length ? [res[res.length - 1].month] : []); // arranca con el último mes
         setFailed(false);
       })
       .catch((e) => { if ((e as Error)?.name !== "AbortError") setFailed(true); })
@@ -450,42 +452,54 @@ function SeasonalityModule() {
     return () => ctrl.abort();
   }, []);
 
+  // color estable por mes (índice en el array) — chip y curva comparten color
+  const colorByMonth = useMemo(() => {
+    const map: Record<string, string> = {};
+    months.forEach((m, i) => { map[m.month] = SEASON_PALETTE[i % SEASON_PALETTE.length]; });
+    return map;
+  }, [months]);
+
+  const toggle = (month: string) =>
+    setSelected((prev) => (prev.includes(month) ? prev.filter((x) => x !== month) : [...prev, month]));
+
   if (loading) return <ChartSkeleton label="Cargando perfiles mensuales…" />;
   if (failed || months.length === 0)
     return <div style={{ minHeight: 120, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: color.textMuted }}>Sin datos de perfil mensual.</div>;
 
-  const sel = months.find((m) => m.month === highlight) ?? months[months.length - 1];
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11, color: color.textSecondary }}>
-          Resaltado: <strong style={{ color: color.copper }}>{sel.label}</strong>
-          <span style={{ color: color.textMuted }}> · avg gap {sel.avg_gap_pct.toFixed(0)}%</span>
+          {selected.length === 0
+            ? "Selecciona meses para comparar"
+            : `${selected.length} ${selected.length === 1 ? "mes seleccionado" : "meses seleccionados"}`}
         </span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {months.map((m) => {
-            const active = m.month === highlight;
+            const active = selected.includes(m.month);
+            const c = colorByMonth[m.month];
             return (
               <button
                 key={m.month}
-                onClick={() => setHighlight(m.month)}
+                onClick={() => toggle(m.month)}
                 style={{
                   fontFamily: font.sans, fontSize: 10, fontWeight: 600, cursor: "pointer",
                   padding: "3px 9px", borderRadius: 999,
-                  border: `0.5px solid ${active ? color.copper : color.border}`,
-                  background: active ? "rgba(216,122,61,0.12)" : "transparent",
-                  color: active ? color.copperBright : color.textMuted,
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                  border: `1px solid ${active ? c : color.border}`,
+                  background: active ? `${c}22` : "transparent",
+                  color: active ? "#F0EEEA" : color.textMuted,
                   transition: "all .15s ease",
                 }}
               >
+                <span style={{ width: 7, height: 7, borderRadius: 2, background: active ? c : "transparent", border: active ? "none" : `1px solid ${color.textMuted}` }} />
                 {m.label}
               </button>
             );
           })}
         </div>
       </div>
-      <SeasonalityChart months={months} highlight={highlight} height={260} />
+      <SeasonalityChart months={months} highlighted={selected} colorByMonth={colorByMonth} height={260} />
     </div>
   );
 }
