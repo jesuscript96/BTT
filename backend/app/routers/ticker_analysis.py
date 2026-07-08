@@ -818,8 +818,8 @@ def scrape_finviz_snapshot(ticker: str) -> dict:
 # p.ej. tickers sin OVERVIEW). NO pasarle sesión propia (yfinance 1.x exige
 # curl_cffi con cookie+crumb; inyectarla daba 401 Invalid Crumb intermitente).
 
-_ENRICH_COOLDOWN_S = 900
-_ENRICH_REFRESH_S = 20 * 3600  # refrescar el parche ~1×/día (float cambia con dilución)
+_ENRICH_COOLDOWN_S = 30  # antes 900 (15min) — demasiado agresivo, el screener no veia datos
+_ENRICH_REFRESH_S = 6 * 3600  # refrescar el parche ~1×/día (float cambia con dilución)
 _enrich_last_attempt: dict = {}
 _enrich_lock = threading.Lock()
 
@@ -1218,7 +1218,34 @@ def get_ticker_analysis(ticker: str):
         # Reaplicar el último enriquecimiento persistido para que un refresh
         # del payload primario no borre officers/held%/float ya conocidos.
         patch = _swr_db_read_payload(ticker, "analysis_enrich")
-        return _apply_enrichment(payload, patch)
+        payload = _apply_enrichment(payload, patch)
+
+        # Si es la PRIMERA carga de este ticker (no hay patch previo) y faltan
+        # campos clave, intentar Alpha Vantage SINCRONO con timeout corto.
+        # Asi el screener no muestra datos vacios en la primera visita.
+        if patch is None:
+            missing = False
+            for section, fields in _ENRICH_FIELDS.items():
+                dst = payload.get(section) or {}
+                if any(dst.get(f) in (None, [], "") for f in fields):
+                    missing = True
+                    break
+            if missing:
+                try:
+                    from app.services import alphavantage_service
+                    av = alphavantage_service.get_overview(ticker)
+                    if av:
+                        now_ts = time.time()
+                        av["_source"] = "alphavantage"
+                        av["_enriched_at"] = now_ts
+                        # Persistir el parche inmediatamente
+                        _swr_db_store_payload(ticker, "analysis_enrich", av)
+                        payload = _apply_enrichment(payload, av)
+                        print(f"[ENRICH] sync AV filled gaps for {ticker}: float={av.get('float_shares')}")
+                except Exception as e:
+                    print(f"[ENRICH] sync AV failed for {ticker}: {e}")
+
+        return payload
 
     def _validate(p: dict) -> bool:
         # Con nombre o precio hay dashboard; un payload sin ambos es un fallo
