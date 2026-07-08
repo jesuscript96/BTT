@@ -134,8 +134,24 @@ def _bucket(v: float) -> str:
 
 def _distribution(records: List[Dict[str, Any]], key: str) -> Dict[str, float]:
     """% de records por franja de 30 min sobre el campo de tiempo `key`.
-    Excluye gaps extremos (>MAX_GAP_FOR_DISTRIBUTION) que siempre hacen HOD en apertura."""
-    filtered = [r for r in records if safe_float(r.get("gap_pct")) <= MAX_GAP_FOR_DISTRIBUTION]
+    
+    Excluye:
+    - gaps >MAX_GAP_FOR_DISTRIBUTION (outliers extremos)
+    - gap-and-crash: HOD/LOD/PMH en 9:30-9:35 con gap >EXCLUDE_OPEN_SPIKE_GAP
+      (estos siempre hacen extremo en apertura y sesgan la distribucion)
+    """
+    filtered = []
+    for r in records:
+        gap = safe_float(r.get("gap_pct"))
+        # Filtro 1: gap extremo (>200%)
+        if gap > MAX_GAP_FOR_DISTRIBUTION:
+            continue
+        # Filtro 2: gap-and-crash en apertura (9:30-9:35)
+        t = _franja_label(r.get(key))
+        if t in ("09:30", "09:35") and gap > EXCLUDE_OPEN_SPIKE_GAP:
+            continue
+        filtered.append(r)
+    
     labels = [_franja_label(r.get(key)) for r in filtered]
     labels = [lab for lab in labels if lab is not None]
     total = len(labels)
@@ -145,12 +161,6 @@ def _distribution(records: List[Dict[str, Any]], key: str) -> Dict[str, float]:
     for lab in labels:
         counts[lab] = counts.get(lab, 0) + 1
     out = {lab: round(cnt / total * 100, 4) for lab, cnt in counts.items()}
-    # Hard-cap visual solo en la franja de apertura (09:30-09:59) para la demo.
-    # Los gaps extremos distorsionan esta franja porque todo gapper hace maximo al abrir.
-    # Fuera de esa franja los datos se muestran sin alterar.
-    for lab in out:
-        if lab and lab[:5] in ("09:30", "09:35", "09:40", "09:45", "09:50", "09:55"):
-            out[lab] = min(out[lab], MAX_BUCKET_PCT)
     return dict(sorted(out.items(), key=lambda kv: kv[0]))
 
 
@@ -180,8 +190,8 @@ def _histogram(values: List[float]) -> Dict[str, Any]:
 
 QUALITY_GAP_MAX_PCT = 400.0           # §01.2
 QUALITY_PMH_GAP_MAX_PCT = 400.0      # §01.2 — outliers de PM High Gap distorsionan medias
-MAX_GAP_FOR_DISTRIBUTION = 50.0      # gaps >50% sesgan distribucion temporal a apertura
-MAX_BUCKET_PCT = 25.0                # hard-cap visual solo en franja 09:30-09:59
+MAX_GAP_FOR_DISTRIBUTION = 200.0     # gaps >200% excluidos de distribucion temporal
+EXCLUDE_OPEN_SPIKE_GAP = 50.0        # si HOD en 9:30-9:35 Y gap >50%, es "gap-and-crash" → excluir
 BLACK_SWAN_SPIKE_MAX_PCT = 300.0      # §01.3 (evalúa max_spike_5m_pct del derivado)
 REVERSE_SPLIT_LOOKBACK_DAYS = 5       # §01.1, días naturales
 
