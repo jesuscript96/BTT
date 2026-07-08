@@ -778,6 +778,20 @@ def main():
     logger.info("\n=== Regenerating hot cache ===")
     os.system(f'"{sys.executable}" scripts/generate_hot_cache_parquet.py')
 
+    # 6. Derivado Market Analysis (Patch v2.1): splits frescos vía API + ma_daily
+    # (m0/m90/max_spike_5m) + curvas MA-04 de los meses tocados en este run.
+    # Best-effort: un fallo aquí NO invalida la ingesta (el servicio hace fail-open).
+    if os.getenv("MA_DERIVED_ENABLED", "true").strip().lower() == "true" and trading_days:
+        logger.info("\n=== MA derived (splits + ma_daily + curvas) ===")
+        try:
+            from backfill_ma_derived import refresh_splits_from_api, run_backfill
+            refresh_splits_from_api()
+            months = sorted({(datetime.strptime(d, '%Y-%m-%d').year,
+                              datetime.strptime(d, '%Y-%m-%d').month) for d in trading_days})
+            run_backfill(months[0], months[-1], with_curves=True)
+        except Exception as e:
+            logger.warning(f"MA derived step failed (no bloquea la ingesta): {e}")
+
     logger.info("\n=== Done ===")
 
 if __name__ == "__main__":
