@@ -241,7 +241,8 @@ def apply_quality_filters(
 
     counters = {
         "excluded_ticker_type": 0,
-        "excluded_gap_gt_1000": 0,
+        "excluded_gap_gt_400": 0,
+        "excluded_pmh_gap_gt_400": 0,
         "excluded_same_day_split": 0,
         "excluded_reverse_split": 0,
         "excluded_black_swan": 0 if black_swan_available else None,
