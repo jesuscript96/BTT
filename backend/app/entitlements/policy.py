@@ -77,10 +77,10 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,       # prod: -1
         "api.access": True,
         "api.runs_per_month": -1,         # prod: -1
-        "screener.access": False,         # activar cuando se decida
+        "screener.access": True,
         "api.portal.access": False,
         "market.sentiment.access": False,
-        "market.analysis.access": False,
+        "market.analysis.access": True,
         "admin.preview_features": False,
     },
     "Mid": {
@@ -94,10 +94,10 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,       # prod: 25
         "api.access": True,               # prod: False
         "api.runs_per_month": -1,         # prod: 0
-        "screener.access": False,
+        "screener.access": True,
         "api.portal.access": False,
         "market.sentiment.access": False,
-        "market.analysis.access": False,
+        "market.analysis.access": True,
         "admin.preview_features": False,
     },
     "Free": {
@@ -111,10 +111,10 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "vault.max_strategies": -1,       # prod: 3
         "api.access": True,               # prod: False
         "api.runs_per_month": -1,         # prod: 0
-        "screener.access": False,
+        "screener.access": True,
         "api.portal.access": False,
         "market.sentiment.access": False,
-        "market.analysis.access": False,
+        "market.analysis.access": True,
         "admin.preview_features": False,
     },
 }
