@@ -38,7 +38,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
     const [isHovered, setIsHovered] = useState(false);
     const { user } = useUser();
     const { signOut } = useClerk();
-    const { can } = useEntitlements();
+    const { can, isAdmin } = useEntitlements();
 
     const isCollapsed = !isHovered;
 
@@ -194,7 +194,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </Link>
                 )}
 
-                {/* Market Analysis (gappers) — admin-only en MVP */}
+                {/* Market Analysis (gappers) */}
                 {can("market.analysis.access") && (
                     <Link
                         href="/market-analysis"
@@ -247,20 +247,24 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </Link>
                 )}
 
-                {/* Feedback / votación de roadmap (abre modal, no es una página) */}
-                <button
-                    type="button"
-                    onClick={() => onOpenFeedback?.()}
-                    title="Feedback"
-                    style={{
-                        ...linkBase(isCollapsed),
-                        background: 'transparent',
-                        border: 'none',
-                    }}
-                >
-                    <MessageSquarePlus style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Feedback</span>
-                </button>
+                {/* Feedback / votación de roadmap (abre modal, no es una página).
+                    Admin-only: `isAdmin()` en vez de `can()` porque `can()` es
+                    optimista mientras carga y el botón parpadearía para el resto. */}
+                {isAdmin() && (
+                    <button
+                        type="button"
+                        onClick={() => onOpenFeedback?.()}
+                        title="Feedback"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            background: 'transparent',
+                            border: 'none',
+                        }}
+                    >
+                        <MessageSquarePlus style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Feedback</span>
+                    </button>
+                )}
             </nav>
 
             {/* Bottom Profile */}
