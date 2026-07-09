@@ -133,6 +133,16 @@ async def lifespan(app: FastAPI):
             load_tickers_cache()
             print(f"[TIMING] tickers: {round(time.time()-t0, 2)}s")
 
+            # Caches de Market Analysis (sector + derivado) — best-effort, no bloquean.
+            # Se calientan aquí para que el primer request NO dispare la carga (que en
+            # un hilo worker reinicializa las vistas GCS y cuelga el endpoint).
+            try:
+                from app.services.cache_service import load_ticker_sector_cache, load_ma_derived_cache
+                load_ticker_sector_cache()
+                load_ma_derived_cache()
+            except Exception as _e:
+                print(f"[WARN] caches Market Analysis no cargadas: {_e}")
+
             t0 = time.time()
             load_splits_cache()
             print(f"[TIMING] splits: {round(time.time()-t0, 2)}s")

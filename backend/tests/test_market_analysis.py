@@ -283,22 +283,58 @@ def test_build_split_index_filas_sin_ratio():
     assert len(anyday["WXYZ"]) == 1
 
 
-# ── Distribuciones (MA-02) ───────────────────────────────────────────────────
+# ── Gaps by Sector (PRD Gaps by Sector) ──────────────────────────────────────
 
-def test_distributions_example():
-    payload = compute_market_analysis([_example_record()], fade_threshold=30.0)
-    d = payload["distributions"]
-    assert d["hod_time"] == {"09:30-10:00": 100.0}
-    assert d["lod_time"] == {"15:00-15:30": 100.0}
-    assert d["pmh_time"] == {"07:00-07:30": 100.0}
+def test_gaps_by_sector_agrega_y_ordena():
+    from app.services.market_analysis_service import compute_gaps_by_sector
+    recs = [
+        {"ticker": "HIMS", "gap_pct": 40.0, "rth_open": 10.0, "rth_close": 8.0},   # Health, red
+        {"ticker": "SAVA", "gap_pct": 25.0, "rth_open": 5.0, "rth_close": 4.0},    # Health, red
+        {"ticker": "AAPL", "gap_pct": 22.0, "rth_open": 100.0, "rth_close": 110.0},# Tech, verde
+        {"ticker": "ZZZZ", "gap_pct": 30.0, "rth_open": 2.0, "rth_close": 1.5},    # sin mapa → Sin sector
+    ]
+    smap = {"HIMS": "Healthcare", "SAVA": "Healthcare", "AAPL": "Technology"}
+    out = compute_gaps_by_sector(recs, smap)
+    assert out["total_gaps"] == 4
+    # ordenado por count desc: Healthcare(2) primero
+    assert out["sectors"][0]["sector"] == "Healthcare"
+    assert out["sectors"][0]["count"] == 2
+    assert abs(out["sectors"][0]["close_red_pct"] - 100.0) < TOL
+    tech = next(s for s in out["sectors"] if s["sector"] == "Technology")
+    assert tech["close_red_pct"] == 0.0                       # AAPL cerró verde
+    sinsec = next(s for s in out["sectors"] if s["sector"] == "Sin sector")
+    assert sinsec["count"] == 1
+    assert abs(out["unknown_pct"] - 25.0) < TOL               # 1/4
 
 
-def test_distributions_ignore_missing_times():
-    r = _example_record()
-    r["hod_time"] = "--"  # sin tiempo válido → no cuenta en hod_time
-    d = compute_market_analysis([r], fade_threshold=30.0)["distributions"]
-    assert d["hod_time"] == {}
-    assert d["lod_time"] == {"15:00-15:30": 100.0}
+def test_gaps_by_sector_sin_mapa_todo_sin_sector():
+    from app.services.market_analysis_service import compute_gaps_by_sector
+    out = compute_gaps_by_sector([{"ticker": "X", "gap_pct": 30.0, "rth_open": 1.0, "rth_close": 0.5}], None)
+    assert out["sectors"][0]["sector"] == "Sin sector"
+    assert out["unknown_pct"] == 100.0
+
+
+def test_gaps_by_sector_vacio():
+    from app.services.market_analysis_service import compute_gaps_by_sector
+    out = compute_gaps_by_sector([], {})
+    assert out["total_gaps"] == 0 and out["sectors"] == [] and out["unknown_pct"] == 0.0
+
+
+# ── SIC → sector ─────────────────────────────────────────────────────────────
+
+def test_sic_to_sector_casos_clave():
+    from app.services.sector_service import sic_to_sector, NO_SECTOR
+    casos = {
+        3571: "Technology", 3674: "Technology", 7372: "Technology",
+        2834: "Healthcare", 8011: "Healthcare", 8731: "Healthcare",
+        6770: "Financial Services", 6021: "Financial Services",
+        6500: "Real Estate", 4899: "Communication Services",
+        1311: "Energy", 4911: "Utilities", 3721: "Industrials", 8742: "Industrials",
+    }
+    for sic, exp in casos.items():
+        assert sic_to_sector(sic) == exp, f"SIC {sic} → {sic_to_sector(sic)} (esperado {exp})"
+    assert sic_to_sector(None) == NO_SECTOR
+    assert sic_to_sector("nan") == NO_SECTOR
 
 
 # ── records para contexto Edgie (la UI ya no pinta tabla, §05) ───────────────
@@ -324,7 +360,7 @@ def test_empty_input_is_wellformed():
     assert payload["kpis"]["gappers_count"]["value"] == 0.0
     assert payload["kpis"]["gappers_count_pm"]["value"] == 0.0
     assert payload["kpis"]["avg_gap_pct"]["value"] is None
-    assert payload["distributions"]["hod_time"] == {}
+    assert "distributions" not in payload      # Distribución temporal retirada (08-jul-2026)
     fw = payload["fade_windows"]
     assert [row["franja"] for row in fw["rth"]] == ["09:30", "10:00", "10:30", "11:00"]
     for row in fw["rth"]:
