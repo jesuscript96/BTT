@@ -5,6 +5,7 @@ import type {
   BacktestResult,
 } from "@/types/backtest";
 import { clearDatasetsCache } from "./api_backtester";
+import { getClerkToken } from "./clerk_token";
 import { track, EVENTS } from "./analytics";
 
 // ─── Base URL ───────────────────────────────────────────────
@@ -17,21 +18,10 @@ export const API_BASE = (() => {
 })();
 
 // ─── Auth headers (Clerk) ───────────────────────────────────
-// Reads the active Clerk session token from the global Clerk instance (set by
-// ClerkProvider) and returns it as a Bearer header. Safe on the server / before
-// Clerk loads: returns no Authorization header so public calls still work.
-export async function getClerkToken(): Promise<string | null> {
-  if (typeof window === "undefined") return null;
-  try {
-    const clerk = (window as unknown as {
-      Clerk?: { session?: { getToken: () => Promise<string | null> } };
-    }).Clerk;
-    const token = await clerk?.session?.getToken?.();
-    return token ?? null;
-  } catch {
-    return null;
-  }
-}
+// Reads the active Clerk session token, esperando a que Clerk cargue. Ver
+// clerk_token.ts: leerlo antes de tiempo devolvía null y provocaba un 401 que
+// rebotaba al login aunque la sesión fuese válida.
+export { getClerkToken };
 
 export async function getAuthHeaders(): Promise<HeadersInit> {
   const token = await getClerkToken();
