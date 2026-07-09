@@ -144,6 +144,42 @@ def get_ma_derived_df() -> pd.DataFrame | None:
         load_ma_derived_cache()
     return _ma_derived_cache
 
+
+# ─── Tabla de referencia ticker → sector (PRD Gaps by Sector · S1) ───────────
+# cold_storage/reference/ticker_sector.parquet, generada por scripts/build_ticker_sector.py.
+# Aditiva; en request-time SIEMPRE se lee de aquí (nunca la API de Massive/SEC).
+_ticker_sector_cache: pd.DataFrame | None = None
+_ticker_sector_ts: datetime | None = None
+TICKER_SECTOR_TTL_HOURS = 6
+
+
+def load_ticker_sector_cache() -> None:
+    global _ticker_sector_cache, _ticker_sector_ts
+    con = get_db_connection()
+    provider = os.getenv("DB_PROVIDER", "motherduck").lower()
+    bucket = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+    src = ("ticker_sector" if provider == "local"
+           else f"gs://{bucket}/cold_storage/reference/ticker_sector.parquet")
+    q = (f"SELECT ticker, sic_code, sector, source FROM {src}" if provider == "local"
+         else f"SELECT ticker, sic_code, sector, source FROM read_parquet('{src}')")
+    try:
+        df = con.execute(q).fetchdf()
+        df["ticker"] = df["ticker"].astype(str).str.upper()
+        _ticker_sector_cache = df
+        print(f"[CACHE] ticker_sector loaded: {len(df)} rows")
+    except Exception as e:
+        print(f"[WARN] ticker_sector no disponible ({e}); Gaps by Sector sin sector hasta el build.")
+        _ticker_sector_cache = None
+    _ticker_sector_ts = datetime.now()
+
+
+def get_ticker_sector_df() -> pd.DataFrame | None:
+    global _ticker_sector_cache, _ticker_sector_ts
+    if _ticker_sector_ts is None or datetime.now() - _ticker_sector_ts > timedelta(hours=TICKER_SECTOR_TTL_HOURS):
+        load_ticker_sector_cache()
+    return _ticker_sector_cache
+
+
 # ─── Hot Storage — Gap Days ──────────────────────────────────
 _hot_daily_cache: pd.DataFrame | None = None
 

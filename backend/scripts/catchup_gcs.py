@@ -792,6 +792,19 @@ def main():
         except Exception as e:
             logger.warning(f"MA derived step failed (no bloquea la ingesta): {e}")
 
+    # 7. Tabla de sector (Gaps by Sector): enriquece solo los tickers nuevos del día
+    # (los que no estén ya en ticker_sector.parquet). Best-effort. --days 5 cubre el
+    # nuevo universo sin re-escanear el histórico.
+    if os.getenv("MA_SECTOR_ENABLED", "true").strip().lower() == "true" and trading_days:
+        logger.info("\n=== Ticker sector (Gaps by Sector) ===")
+        try:
+            from build_ticker_sector import build as build_sector
+            from datetime import timezone as _tz
+            build_sector(min_gap=20.0, days=10, workers=12, refresh_all=False,
+                         now_iso=datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        except Exception as e:
+            logger.warning(f"Ticker sector step failed (no bloquea la ingesta): {e}")
+
     logger.info("\n=== Done ===")
 
 if __name__ == "__main__":

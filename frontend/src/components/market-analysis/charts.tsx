@@ -315,33 +315,47 @@ function TornadoInner({
 //  3 · SeasonalityChart — 12 curvas mensuales superpuestas, una resaltada
 // ════════════════════════════════════════════════════════════════════════════
 type MonthCurve = { month: string; label: string; avg_gap_pct: number; points: { time: string; avg_change: number }[] };
-type SeasonTip = { time: string; value: number };
+
+// Paleta categórica para las curvas mensuales seleccionadas (acumulables). Copper
+// = marca en primer lugar; el resto, colores distinguibles sobre fondo oscuro.
+// Se asigna por índice de mes → cada mes tiene SIEMPRE el mismo color (chip y curva).
+export const SEASON_PALETTE = [
+  "#D87A3D", "#4C9AFF", "#5FD08A", "#E5565B", "#B58BF0", "#E8B84B",
+  "#49C5C5", "#F0883E", "#E06CA8", "#8FCB5A", "#7C9CF5", "#C9A24B",
+];
+
+type SeasonTipEntry = { label: string; value: number; color: string };
+type SeasonMultiTip = { time: string; entries: SeasonTipEntry[] };
 
 export function SeasonalityChart({
   months,
-  highlight,
+  highlighted,
+  colorByMonth,
   height = 260,
 }: {
   months: MonthCurve[];
-  highlight: string; // month key resaltado
+  highlighted: string[];        // meses seleccionados (acumulables)
+  colorByMonth: Record<string, string>;
   height?: number;
 }) {
   return (
     <div style={{ position: "relative", height }}>
       <ParentSize>
-        {({ width }) => <SeasonInner width={width} height={height} months={months} highlight={highlight} />}
+        {({ width }) => <SeasonInner width={width} height={height} months={months} highlighted={highlighted} colorByMonth={colorByMonth} />}
       </ParentSize>
     </div>
   );
 }
 
-function SeasonInner({ width, height, months, highlight }: { width: number; height: number; months: MonthCurve[]; highlight: string }) {
+function SeasonInner({ width, height, months, highlighted, colorByMonth }: { width: number; height: number; months: MonthCurve[]; highlighted: string[]; colorByMonth: Record<string, string> }) {
   const m = { top: 12, right: 14, bottom: 28, left: 38 };
   const iw = Math.max(0, width - m.left - m.right);
   const ih = Math.max(0, height - m.top - m.bottom);
 
-  const sel = months.find((mm) => mm.month === highlight) ?? months[months.length - 1];
-  const times = useMemo(() => sel?.points.map((p) => p.time) ?? [], [sel]);
+  const hlSet = useMemo(() => new Set(highlighted), [highlighted]);
+  // eje temporal: todas las curvas comparten la rejilla 04:00–16:00 → usar la 1ª con puntos
+  const times = useMemo(() => (months.find((mm) => mm.points.length)?.points.map((p) => p.time)) ?? [], [months]);
+  const selectedMonths = useMemo(() => months.filter((mm) => hlSet.has(mm.month)), [months, hlSet]);
 
   const x = useMemo(() => scalePoint<string>({ domain: times, range: [0, iw], padding: 0 }), [times, iw]);
   const [yMin, yMax] = useMemo(() => {
@@ -356,23 +370,28 @@ function SeasonInner({ width, height, months, highlight }: { width: number; heig
   const tickEvery = Math.max(1, Math.ceil(times.length / 7));
   const xTicks = times.filter((_, i) => i % tickEvery === 0);
 
-  const { showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen } = useTooltip<SeasonTip>();
+  const { showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen } = useTooltip<SeasonMultiTip>();
   const onMove = useCallback(
     (e: React.MouseEvent<SVGRectElement>) => {
-      if (!sel) return;
+      if (!times.length) return;
       const px = (localPoint(e)?.x ?? 0) - m.left;
-      let nearest = sel.points[0];
+      let nearest = times[0];
       let best = Infinity;
-      sel.points.forEach((p) => {
-        const d = Math.abs((x(p.time) ?? 0) - px);
-        if (d < best) { best = d; nearest = p; }
+      times.forEach((t) => {
+        const d = Math.abs((x(t) ?? 0) - px);
+        if (d < best) { best = d; nearest = t; }
       });
-      showTooltip({ tooltipData: { time: nearest.time, value: nearest.avg_change }, tooltipLeft: (x(nearest.time) ?? 0) + m.left, tooltipTop: y(nearest.avg_change) + m.top });
+      const entries: SeasonTipEntry[] = selectedMonths.map((mm) => ({
+        label: mm.label,
+        value: mm.points.find((p) => p.time === nearest)?.avg_change ?? 0,
+        color: colorByMonth[mm.month] ?? color.copper,
+      }));
+      showTooltip({ tooltipData: { time: nearest, entries }, tooltipLeft: (x(nearest) ?? 0) + m.left, tooltipTop: m.top + 8 });
     },
-    [sel, x, y, showTooltip, m.left, m.top],
+    [times, selectedMonths, colorByMonth, x, showTooltip, m.left, m.top],
   );
 
-  if (iw <= 0 || !sel) return null;
+  if (iw <= 0 || !times.length) return null;
   const openX = x("09:30");
 
   return (
@@ -387,8 +406,8 @@ function SeasonInner({ width, height, months, highlight }: { width: number; heig
             <Line from={{ x: openX, y: 0 }} to={{ x: openX, y: ih }} stroke={color.copper} strokeWidth={1} strokeOpacity={0.35} strokeDasharray="3 3" />
           )}
 
-          {/* curvas no seleccionadas, tenues */}
-          {months.filter((mm) => mm.month !== sel.month).map((mm) => (
+          {/* curvas NO seleccionadas, tenues (contexto) */}
+          {months.filter((mm) => !hlSet.has(mm.month)).map((mm) => (
             <LinePath
               key={mm.month}
               data={mm.points}
@@ -397,16 +416,28 @@ function SeasonInner({ width, height, months, highlight }: { width: number; heig
               curve={curveMonotoneX}
               stroke={color.textSecondary}
               strokeWidth={1}
-              strokeOpacity={0.16}
+              strokeOpacity={0.12}
             />
           ))}
-          {/* curva resaltada */}
-          <LinePath data={sel.points} x={(p) => x(p.time) ?? 0} y={(p) => y(p.avg_change)} curve={curveMonotoneX} stroke={color.copper} strokeWidth={2.25} />
+          {/* curvas seleccionadas, cada una con su color (persisten hasta deseleccionar) */}
+          {selectedMonths.map((mm) => (
+            <LinePath
+              key={mm.month}
+              data={mm.points}
+              x={(p) => x(p.time) ?? 0}
+              y={(p) => y(p.avg_change)}
+              curve={curveMonotoneX}
+              stroke={colorByMonth[mm.month] ?? color.copper}
+              strokeWidth={2.25}
+            />
+          ))}
 
           {tooltipOpen && tooltipData && (
             <>
               <Line from={{ x: x(tooltipData.time) ?? 0, y: 0 }} to={{ x: x(tooltipData.time) ?? 0, y: ih }} stroke={color.textSecondary} strokeWidth={1} strokeDasharray="3 3" />
-              <circle cx={x(tooltipData.time) ?? 0} cy={y(tooltipData.value)} r={3.5} fill={color.copper} stroke={color.bgBase} strokeWidth={1.5} />
+              {tooltipData.entries.map((en, i) => (
+                <circle key={i} cx={x(tooltipData.time) ?? 0} cy={y(en.value)} r={3.5} fill={en.color} stroke={color.bgBase} strokeWidth={1.5} />
+              ))}
             </>
           )}
 
@@ -417,14 +448,183 @@ function SeasonInner({ width, height, months, highlight }: { width: number; heig
         </Group>
       </svg>
 
-      {tooltipOpen && tooltipData && (
+      {tooltipOpen && tooltipData && tooltipData.entries.length > 0 && (
         <TooltipWithBounds top={tooltipTop} left={tooltipLeft} style={tooltipStyle}>
-          <div style={{ fontWeight: 700, color: color.textHigh }}>{sel.label} · {tooltipData.time}</div>
-          <div style={{ color: tooltipData.value >= 0 ? color.profit : color.loss, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
-            {tooltipData.value >= 0 ? "+" : ""}{tooltipData.value.toFixed(2)}% vs open
+          <div style={{ fontWeight: 700, color: color.textHigh, marginBottom: 4 }}>{tooltipData.time} · % vs open</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {tooltipData.entries.map((en, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: en.color, flexShrink: 0 }} />
+                <span style={{ color: color.textMuted, minWidth: 42 }}>{en.label}</span>
+                <span style={{ color: color.textHigh, marginLeft: "auto" }}>{en.value >= 0 ? "+" : ""}{en.value.toFixed(2)}%</span>
+              </div>
+            ))}
           </div>
         </TooltipWithBounds>
       )}
     </>
+  );
+}
+
+// ── SectorTreemap (Gaps by Sector) ───────────────────────────────────────────
+// Área = nº de gaps del sector; color = "mapa de calor" en NARANJA de marca del
+// % Close Red (más naranja/brillante = más bajista = a favor del short).
+import { Treemap, hierarchy, treemapSquarify } from "@visx/hierarchy";
+import { Text } from "@visx/text";
+
+export interface SectorDatum {
+  sector: string;
+  count: number;
+  close_red_pct: number | null;
+  avg_gap_pct: number | null;
+}
+
+// lerp entre dos hex (d3 no interpola var(--…)); ramp en naranja de marca (copper).
+function _hex(c: string) {
+  const n = parseInt(c.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function heatColor(pct: number): string {
+  const t = Math.max(0, Math.min(1, pct / 100));
+  const lo = _hex("#4a3423"); // naranja apagado/oscuro (valor bajo)
+  const hi = _hex("#e8863a"); // copper brillante (valor alto → bajista)
+  const m = lo.map((l, i) => Math.round(l + (hi[i] - l) * t));
+  return `rgb(${m[0]}, ${m[1]}, ${m[2]})`;
+}
+
+type TreeLeaf = { name: string; d?: SectorDatum; children?: TreeLeaf[] };
+
+export function SectorTreemap({
+  sectors,
+  colorMetric = "close_red",
+  height = 300,
+}: {
+  sectors: SectorDatum[];
+  colorMetric?: "close_red" | "avg_gap";
+  height?: number;
+}) {
+  const { showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen } =
+    useTooltip<SectorDatum>();
+
+  const root = useMemo(() => {
+    const data: TreeLeaf = { name: "root", children: sectors.map((s) => ({ name: s.sector, d: s })) };
+    return hierarchy<TreeLeaf>(data)
+      .sum((n) => (n.d ? Math.max(n.d.count, 0) : 0))
+      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+  }, [sectors]);
+
+  const colorFor = useCallback(
+    (d?: SectorDatum) => {
+      if (!d) return color.border;
+      const v = colorMetric === "avg_gap" ? d.avg_gap_pct : d.close_red_pct;
+      return v == null ? "#2f3a52" : heatColor(colorMetric === "avg_gap" ? Math.min(v, 100) : v);
+    },
+    [colorMetric],
+  );
+
+  if (!sectors.length) return null;
+
+  return (
+    <div style={{ position: "relative", width: "100%", height }}>
+      <ParentSize>
+        {({ width }) => {
+          if (width < 10) return null;
+          return (
+            <svg width={width} height={height}>
+              <Treemap<TreeLeaf>
+                root={root}
+                size={[width, height]}
+                tile={treemapSquarify}
+                paddingInner={3}
+                round
+              >
+                {(tree) => (
+                  <Group>
+                    {tree.leaves().map((node, i) => {
+                      const w = node.x1 - node.x0;
+                      const h = node.y1 - node.y0;
+                      const d = node.data.d;
+                      const pad = 6;
+                      // Tipografía proporcional al tamaño del recuadro. @visx/text
+                      // envuelve el nombre a 2+ líneas según el ancho disponible.
+                      const fs = Math.max(8, Math.min(15, Math.floor(Math.min(w / 6.5, h / 3.4))));
+                      const subFs = Math.max(7, fs - 3);
+                      const showName = w >= 30 && h >= 18;
+                      const showSub = w >= 54 && h >= 44;
+                      const metricTxt =
+                        colorMetric === "avg_gap"
+                          ? `${(d?.avg_gap_pct ?? 0).toFixed(0)}% gap`
+                          : `${(d?.close_red_pct ?? 0).toFixed(0)}% red`;
+                      return (
+                        <Group key={`n-${i}`} top={node.y0} left={node.x0}>
+                          <rect
+                            width={w}
+                            height={h}
+                            rx={4}
+                            fill={colorFor(d)}
+                            stroke={color.bgBase}
+                            strokeWidth={1}
+                            style={{ cursor: "default" }}
+                            onMouseMove={(e) => {
+                              const p = localPoint(e) ?? { x: node.x0, y: node.y0 };
+                              if (d) showTooltip({ tooltipData: d, tooltipLeft: p.x, tooltipTop: p.y });
+                            }}
+                            onMouseLeave={hideTooltip}
+                          />
+                          {showName && (
+                            <Text
+                              x={pad}
+                              y={pad}
+                              width={w - pad * 2}
+                              verticalAnchor="start"
+                              fontFamily={font.sans}
+                              fontSize={fs}
+                              fontWeight={700}
+                              fill="#FBF7F2"
+                              lineHeight={fs * 1.05}
+                              style={{ pointerEvents: "none" }}
+                            >
+                              {node.data.name}
+                            </Text>
+                          )}
+                          {showSub && (
+                            <Text
+                              x={pad}
+                              y={h - pad}
+                              width={w - pad * 2}
+                              verticalAnchor="end"
+                              fontFamily={font.sans}
+                              fontSize={subFs}
+                              fontWeight={600}
+                              fill="rgba(251,247,242,0.82)"
+                              style={{ pointerEvents: "none" }}
+                            >
+                              {`${d?.count} ${d?.count === 1 ? "gap" : "gaps"} · ${metricTxt}`}
+                            </Text>
+                          )}
+                        </Group>
+                      );
+                    })}
+                  </Group>
+                )}
+              </Treemap>
+            </svg>
+          );
+        }}
+      </ParentSize>
+      {tooltipOpen && tooltipData && (
+        <TooltipWithBounds top={tooltipTop} left={tooltipLeft} style={tooltipStyle}>
+          <div style={{ fontWeight: 700, color: color.textHigh, marginBottom: 4 }}>{tooltipData.sector}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: "2px 10px", fontVariantNumeric: "tabular-nums" }}>
+            <span style={{ color: color.textMuted }}>Gaps</span>
+            <span style={{ color: color.textHigh, textAlign: "right" }}>{tooltipData.count}</span>
+            <span style={{ color: color.textMuted }}>Close Red</span>
+            <span style={{ color: color.textHigh, textAlign: "right" }}>{(tooltipData.close_red_pct ?? 0).toFixed(1)}%</span>
+            <span style={{ color: color.textMuted }}>Avg Gap</span>
+            <span style={{ color: color.textHigh, textAlign: "right" }}>{(tooltipData.avg_gap_pct ?? 0).toFixed(1)}%</span>
+          </div>
+        </TooltipWithBounds>
+      )}
+    </div>
   );
 }

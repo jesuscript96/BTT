@@ -1,6 +1,10 @@
-import { SignUp } from "@clerk/nextjs";
+import Link from "next/link";
 
-// See sign-in page: opt out of static prerendering for Clerk's catch-all route.
+// Registro CERRADO: el alta está bloqueada en Clerk (Restrictions -> sign-up
+// mode = Restricted), que es lo que impide de verdad crear cuentas. Esta página
+// sustituye al <SignUp /> para que el visitante vea un mensaje en vez del error
+// crudo de Clerk. Para reabrir el registro: volver a poner <SignUp /> aquí Y
+// cambiar el sign-up mode a Public en el dashboard de Clerk (ambas cosas).
 export const dynamic = "force-dynamic";
 
 export default function SignUpPage() {
@@ -100,7 +104,7 @@ export default function SignUpPage() {
         </div>
       </div>
 
-      {/* RIGHT — formulario Clerk */}
+      {/* RIGHT — registro cerrado (sustituye al formulario de Clerk) */}
       <div
         style={{
           width: "480px",
@@ -112,7 +116,93 @@ export default function SignUpPage() {
           backgroundColor: "#101213",
         }}
       >
-        <SignUp />
+        <div
+          style={{
+            width: "100%",
+            maxWidth: "360px",
+            border: "0.5px solid #2C2F33",
+            borderRadius: "10px",
+            padding: "36px 32px",
+            backgroundColor: "#16181A",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "20px",
+            }}
+          >
+            <div
+              style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                backgroundColor: "#D87A3D",
+              }}
+            />
+            <span
+              style={{
+                fontFamily: "'General Sans', sans-serif",
+                fontSize: "10px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.15em",
+                color: "#D87A3D",
+              }}
+            >
+              Acceso por invitación
+            </span>
+          </div>
+
+          <h2
+            style={{
+              fontFamily: "'Fraunces', serif",
+              fontSize: "24px",
+              fontWeight: 600,
+              color: "#E4E2DF",
+              letterSpacing: "-0.3px",
+              lineHeight: 1.2,
+              marginBottom: "12px",
+            }}
+          >
+            El registro está cerrado
+          </h2>
+
+          <p
+            style={{
+              fontFamily: "'General Sans', sans-serif",
+              fontSize: "13px",
+              fontWeight: 400,
+              color: "#8B8E93",
+              lineHeight: 1.65,
+              marginBottom: "28px",
+            }}
+          >
+            Estamos afinando Edgecute con un grupo reducido de traders. Abriremos
+            el acceso muy pronto — si ya tienes una cuenta, puedes entrar con
+            ella.
+          </p>
+
+          <Link
+            href="/sign-in"
+            style={{
+              display: "block",
+              textAlign: "center",
+              fontFamily: "'General Sans', sans-serif",
+              fontSize: "13px",
+              fontWeight: 600,
+              color: "#16181A",
+              backgroundColor: "#D87A3D",
+              borderRadius: "6px",
+              padding: "11px 16px",
+              textDecoration: "none",
+            }}
+          >
+            Iniciar sesión
+          </Link>
+        </div>
       </div>
     </div>
   );
