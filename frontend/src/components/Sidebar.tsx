@@ -38,7 +38,13 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
     const [isHovered, setIsHovered] = useState(false);
     const { user } = useUser();
     const { signOut } = useClerk();
-    const { can, isAdmin } = useEntitlements();
+    const { can, isAdmin, loading } = useEntitlements();
+
+    // `can()` es OPTIMISTA: mientras carga /users/me/entitlements el mapa está
+    // vacío y devuelve true para todo, así que el sidebar pintaba los enlaces de
+    // Admin y los quitaba al llegar la respuesta. Hasta saber el tier, no pintamos
+    // nada que dependa de él.
+    const allowed = (feature: string) => !loading && can(feature);
 
     const isCollapsed = !isHovered;
 
@@ -155,7 +161,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                 )}
 
                 {/* Screener */}
-                {can("screener.access") && (
+                {allowed("screener.access") && (
                     <Link
                         href="/screener"
                         style={{
@@ -181,7 +187,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                 </Link>
 
                 {/* Market Sentiment (Stocktwits) */}
-                {can("market.sentiment.access") && (
+                {allowed("market.sentiment.access") && (
                     <Link
                         href="/market-sentiment"
                         style={{
@@ -195,7 +201,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                 )}
 
                 {/* Market Analysis (gappers) */}
-                {can("market.analysis.access") && (
+                {allowed("market.analysis.access") && (
                     <Link
                         href="/market-analysis"
                         style={{
@@ -234,7 +240,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                 </Link>
 
                 {/* Developer API console */}
-                {can("api.portal.access") && (
+                {allowed("api.portal.access") && (
                     <Link
                         href="/developers"
                         style={{

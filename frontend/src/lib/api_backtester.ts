@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getClerkToken } from "./clerk_token";
 
 /** Backend mounts routers at /api; accept env as origin only (e.g. Qlify/Hetzner URL without /api). */
 function apiBaseUrl(): string {
@@ -20,21 +21,16 @@ const api = axios.create({
 // Diagnostic logging for Production Network Error
 console.log("[API] Base URL configured as:", apiBaseUrl());
 
-// Inject the active Clerk session token on every request. Reads the global
-// Clerk instance (set by ClerkProvider); no-op on the server / before load.
+// Inject the active Clerk session token on every request. `getClerkToken` espera
+// a que Clerk cargue antes de leer la sesión: leerla antes de tiempo mandaba la
+// petición sin token, el backend devolvía 401 y el interceptor de abajo rebotaba
+// al login pese a haber sesión válida. Ver clerk_token.ts.
 api.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
-    try {
-      const clerk = (window as unknown as {
-        Clerk?: { session?: { getToken: () => Promise<string | null> } };
-      }).Clerk;
-      const token = await clerk?.session?.getToken?.();
-      if (token) {
-        config.headers = config.headers ?? {};
-        (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
-      }
-    } catch {
-      // No token available — let the request go out unauthenticated.
+    const token = await getClerkToken();
+    if (token) {
+      config.headers = config.headers ?? {};
+      (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
     }
   }
   return config;
