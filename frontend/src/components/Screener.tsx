@@ -517,6 +517,9 @@ export default function Screener() {
   const [profileLoading, setProfileLoading] = useState(false);
   const [gapLoading, setGapLoading] = useState(false);
   const [gapStatsResponse, setGapStatsResponse] = useState<GapStatsResponse | null>(null);
+  // True while the background enrichment (Finviz float/sector/ownership) may
+  // still land for the selected ticker — drives the "…" skeletons.
+  const [enrichPending, setEnrichPending] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<"day0" | "day1" | "day2">("day0");
   const [floatCollapsed, setFloatCollapsed] = useState(false);
 
@@ -614,6 +617,8 @@ export default function Screener() {
       .then((d) => {
         const detail = d as TickerDetail;
         setTickerDetail(detail);
+        // Enrichment still in flight? (float/sector are enrichment-sourced)
+        setEnrichPending(detail?.market?.float_shares == null && !detail?.profile?.sector);
         // Re-scope the floating Edgie assistant to this ticker
         window.dispatchEvent(new CustomEvent("ticker-loaded", {
           detail: { ticker: selectedTicker, data: detail, finvizNews: null, filings: null, secCompanyFacts: null },
@@ -684,7 +689,8 @@ export default function Screener() {
             return enriched ? d : prev;
           });
         })
-        .catch(() => { /* keep what we have */ });
+        .catch(() => { /* keep what we have */ })
+        .finally(() => { setEnrichPending(false); });
     }, 4000));
 
     return () => { ac.abort(); timers.forEach(clearTimeout); };
@@ -1103,18 +1109,20 @@ export default function Screener() {
                   <DetailGrid>
                     <DetailItem label="Market Cap" value={fmtMarketCap(tickerDetail?.market?.market_cap)} />
                     <DetailItem label="Shares Out." value={fmtShares(tickerDetail?.market?.shares_outstanding)} prefix="" />
-                    <DetailItem label="Float Shares" value={fmtShares(tickerDetail?.market?.float_shares)} prefix="" />
+                    <DetailItem label="Float Shares" value={fmtShares(tickerDetail?.market?.float_shares)} prefix="" pending={enrichPending} />
                     <DetailItem
                       label="Institutional %"
                       value={tickerDetail?.market?.held_percent_institutions != null
                         ? `${(tickerDetail.market.held_percent_institutions * 100).toFixed(1)}%`
                         : "—"}
+                      pending={enrichPending}
                     />
                     <DetailItem
                       label="Insider %"
                       value={tickerDetail?.market?.held_percent_insiders != null
                         ? `${(tickerDetail.market.held_percent_insiders * 100).toFixed(1)}%`
                         : "—"}
+                      pending={enrichPending}
                     />
                     <DetailItem label="Price" value={tickerDetail?.market?.price != null ? `$${fmtPrice(tickerDetail.market.price)}` : "—"} />
                   </DetailGrid>
@@ -1131,8 +1139,8 @@ export default function Screener() {
                 ) : tickerDetail?.profile ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     <DetailGrid>
-                      <DetailItem label="Sector" value={tickerDetail.profile.sector || "—"} />
-                      <DetailItem label="Industry" value={tickerDetail.profile.industry || "—"} />
+                      <DetailItem label="Sector" value={tickerDetail.profile.sector || "—"} pending={enrichPending} />
+                      <DetailItem label="Industry" value={tickerDetail.profile.industry || "—"} pending={enrichPending} />
                       <DetailItem label="Exchange" value={tickerDetail.profile.exchange || "—"} />
                     </DetailGrid>
                     {isEtfOrWarrant(selectedTicker, tickerDetail) && (
@@ -1208,7 +1216,7 @@ export default function Screener() {
                   </div>
                 </div>
 
-                {gapLoading ? (
+                {gapLoading || gapStatsResponse?.status === "calculating" || currentStats?.status === "calculating" ? (
                   <div style={{
                     display: "flex",
                     flexDirection: "column",
@@ -1486,7 +1494,7 @@ export default function Screener() {
 
                 {!floatCollapsed && (
                   <div style={{ marginTop: 8 }}>
-                    {gapLoading && !gapStatsResponse?.know_the_float ? (
+                    {(gapLoading || gapStatsResponse?.status === "calculating") && !gapStatsResponse?.know_the_float ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 0" }}>
                         <Loader2 style={{ width: 12, height: 12, color: "var(--color-ec-copper)", animation: "spin 1s linear infinite" }} />
                         <span style={{ fontSize: 9, color: "var(--color-ec-text-muted)" }}>Loading float comparisons...</span>
@@ -1568,12 +1576,39 @@ function DetailGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-function DetailItem({ label, value, color, prefix }: {
+/** Pulsing dots shown while a value is still being enriched in background. */
+function PendingDots() {
+  return (
+    <span className="animate-pulse" style={{ color: "var(--color-ec-copper)", letterSpacing: 2 }}>
+      ···
+    </span>
+  );
+}
+
+function DetailItem({ label, value, color, prefix, pending }: {
   label: string;
   value: string;
   color?: string;
   prefix?: string;
+  /** show pulsing dots instead of the em-dash while enrichment is in flight */
+  pending?: boolean;
 }) {
+  if (pending && (value === "—" || value === "")) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        <span style={{
+          fontSize: 7.5,
+          fontWeight: 700,
+          color: "var(--color-ec-text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.5px",
+        }}>
+          {label}
+        </span>
+        <span style={{ fontSize: 10.5, fontWeight: 700 }}><PendingDots /></span>
+      </div>
+    );
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
       <span style={{
