@@ -904,30 +904,41 @@ def _apply_enrichment(payload: dict, patch: dict | None) -> dict:
 
 def _enrich_analysis_job(ticker: str) -> None:
     try:
-        from app.services import alphavantage_service
+        from app.services import alphavantage_service, finviz_service
 
-        # 1) Alpha Vantage (primario, determinista): float + % ownership + ebitda
-        #    + sector/industry/country. None si sin cobertura o cuota agotada.
-        av = None
+        # 1) Finviz Elite (primario, API oficial de pago): sector/industry/país,
+        #    float, % ownership y short en UNA llamada CSV. Determinista.
+        fv = None
         try:
-            av = alphavantage_service.get_overview(ticker)
+            fv = finviz_service.get_snapshot(ticker)
         except Exception as e:
-            print(f"[ENRICH] Alpha Vantage failed for {ticker}: {e}")
+            print(f"[ENRICH] Finviz failed for {ticker}: {e}")
 
-        # 2) yfinance (best-effort): aporta officers (AV no los trae) y hace de
-        #    fallback para float/%/ebitda cuando AV no cubre. Su fallo no anula
-        #    el parche de AV.
+        # 2) Alpha Vantage (fallback determinista; cuota diaria limitada).
+        av = None
+        if not fv:
+            try:
+                av = alphavantage_service.get_overview(ticker)
+            except Exception as e:
+                print(f"[ENRICH] Alpha Vantage failed for {ticker}: {e}")
+
+        # 3) yfinance (best-effort): aporta officers (los otros no los traen) y
+        #    último fallback. Su fallo no anula los parches anteriores.
         info = {}
         try:
             info = yf.Ticker(ticker).info or {}
         except Exception as e:
             print(f"[ENRICH] yfinance info failed for {ticker}: {e}")
 
+        fv = fv or {}
         av = av or {}
 
-        def pick(av_key, yf_val):
-            v = av.get(av_key)
-            return v if v not in (None, "", []) else yf_val
+        def pick(key, yf_val):
+            for src in (fv, av):
+                v = src.get(key)
+                if v not in (None, "", []):
+                    return v
+            return yf_val
 
         patch = {
             "profile": {
@@ -945,7 +956,7 @@ def _enrich_analysis_job(ticker: str) -> None:
                 "ebitda": pick("ebitda", info.get("ebitda")),
             },
             "_enriched_at": time.time(),
-            "_source": "alphavantage" if av else "yfinance",
+            "_source": "finviz" if fv else ("alphavantage" if av else "yfinance"),
         }
         has_data = any(
             v not in (None, [], "")
@@ -1580,13 +1591,21 @@ def get_ticker_gap_stats(ticker: str):
                 return cached_data
 
     def _compute():
-        # knowthefloat es ENRIQUECIMIENTO (float por API no existe con las keys
-        # actuales — decisión Jesús 2026-07-07): si el scrape falla se sigue sin él.
+        # Float: Finviz Elite (API oficial, key propia) es la fila autoritativa;
+        # el scrape de knowthefloat queda como enriquecimiento best-effort para
+        # las demás fuentes comparativas de la tabla.
         know_the_float = {}
         try:
-            know_the_float = scrape_knowthefloat(ticker)
+            know_the_float = scrape_knowthefloat(ticker) or {}
         except Exception as e:
             print(f"[WARN] knowthefloat enrichment failed for {ticker}: {e}")
+        try:
+            from app.services import finviz_service
+            fv_row = finviz_service.get_float_row(ticker)
+            if fv_row:
+                know_the_float["Finviz"] = fv_row  # API pisa al scrape para Finviz
+        except Exception as e:
+            print(f"[WARN] finviz float enrichment failed for {ticker}: {e}")
 
         # Short interest oficial FINRA vía Massive (determinista, dato nuevo).
         short_interest = None
