@@ -51,6 +51,8 @@ REST_BASE = os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")
 WS_URL = os.getenv("MASSIVE_WS_URL", "wss://socket.massive.com/stocks")
 
 TOP_N = 50                   # rows streamed per tab
+MAX_CHANGE_PCT = 500.0       # outlier ceiling: a "move" beyond this is bad data
+                             # (stale prev_close, unadjusted split), not a runner
 SNAPSHOT_POLL_SECONDS = 20   # REST fallback cadence while WS is down / market closed
 TOP_CACHE_TTL = 1.0          # recompute a tab's leaderboard at most once per second
 
@@ -608,6 +610,12 @@ class LiveScreenerService:
         for st in states:
             m = self._metrics(st)            # no volume gate: rank purely by the tab metric
             if m is None:
+                continue
+            # Outlier gate: any tab metric past MAX_CHANGE_PCT is data corruption.
+            if any(
+                v is not None and abs(v) > MAX_CHANGE_PCT
+                for v in (m["change_pct"], m.get("pre_pct"), m.get("after_pct"))
+            ):
                 continue
             chg = m["change_pct"]
             if tab == TAB_LOSERS:

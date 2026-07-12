@@ -98,10 +98,21 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn,
         except Exception:
             return False
 
+    def _ensure_table(con):
+        # Self-heal: users.duckdb can arrive without the table (fresh file, or
+        # an init_db that missed it). Idempotent and ~free on a local DuckDB.
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS ticker_analysis_cache ("
+            "ticker VARCHAR, endpoint VARCHAR, payload JSON, "
+            "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+            "PRIMARY KEY (ticker, endpoint))"
+        )
+
     def _read():
         with get_user_db_lock():
             con = get_user_db_connection()
             try:
+                _ensure_table(con)
                 return con.execute(
                     "SELECT payload, updated_at FROM ticker_analysis_cache "
                     "WHERE ticker = ? AND endpoint = ?",
@@ -115,6 +126,7 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn,
             with get_user_db_lock():
                 con = get_user_db_connection()
                 try:
+                    _ensure_table(con)
                     con.execute(
                         "INSERT OR REPLACE INTO ticker_analysis_cache "
                         "(ticker, endpoint, payload, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
