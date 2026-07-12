@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import {
   API_BASE,
+  apiRequest,
   getTickerAnalysis,
   getTickerGapStats,
   getTickerFinvizNews,
@@ -635,26 +636,58 @@ export default function Screener() {
       })
       .catch(() => { /* news is optional, never block the panel */ });
 
-    // 3) Gap stats
-    getTickerGapStats(selectedTicker, { signal })
-      .then((g) => {
-        const res = g as GapStatsResponse;
-        if (res && (res as any).status === "calculating") {
-          // Backend still computing — keep loading spinner, poll with backoff
-          setGapLoading(true);
-        } else {
-          setGapStatsResponse(res);
-          setGapLoading(false);
-        }
-      })
-      .catch((e) => {
-        if ((e as Error)?.name !== "AbortError") {
-          setGapStatsResponse(null);
-          setGapLoading(false);
-        }
-      });
+    // 3) Gap stats — first visit returns a "calculating" placeholder while
+    // the backend computes in background; poll until it settles. Cold
+    // small-caps can take >1 min (GCS intraday reads), so allow ~75s;
+    // a revisit re-polls anyway.
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const isCalculating = (g: GapStatsResponse | null): boolean =>
+      !!g && (g.status === "calculating" || g.gap_stats?.status === "calculating");
 
-    return () => { ac.abort(); };
+    const pollGapStats = (attempt: number) => {
+      const call = attempt === 0
+        ? getTickerGapStats(selectedTicker, { signal })
+        : apiRequest<GapStatsResponse>(`/ticker-analysis/${encodeURIComponent(selectedTicker)}/gap-stats`, { signal });
+      call
+        .then((g) => {
+          const res = g as GapStatsResponse;
+          setGapStatsResponse((prev) => {
+            // Never replace real stats with a placeholder.
+            if (prev && !isCalculating(prev) && isCalculating(res)) return prev;
+            return res;
+          });
+          if (isCalculating(res) && attempt < 15) {
+            setGapLoading(true);
+            timers.push(setTimeout(() => pollGapStats(attempt + 1), 5000));
+          } else {
+            setGapLoading(false);
+          }
+        })
+        .catch((e) => {
+          if ((e as Error)?.name !== "AbortError") {
+            if (attempt === 0) setGapStatsResponse(null);
+            setGapLoading(false);
+          }
+        });
+    };
+    pollGapStats(0);
+
+    // Progressive fill: the first (cold) analysis response can arrive BEFORE
+    // the background enrichment (Finviz float/sector/ownership) lands in the
+    // cache. One silent refetch picks up the merged payload (~2ms warm)
+    // without re-firing analytics.
+    timers.push(setTimeout(() => {
+      apiRequest<TickerDetail>(`/ticker-analysis/${encodeURIComponent(selectedTicker)}`, { signal })
+        .then((d) => {
+          setTickerDetail((prev) => {
+            const enriched = d?.market?.float_shares != null || d?.profile?.sector;
+            return enriched ? d : prev;
+          });
+        })
+        .catch(() => { /* keep what we have */ });
+    }, 4000));
+
+    return () => { ac.abort(); timers.forEach(clearTimeout); };
   }, [selectedTicker]);
 
   // ── Get current stats by active sub-tab ──
