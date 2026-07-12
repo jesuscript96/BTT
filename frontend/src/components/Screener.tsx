@@ -612,13 +612,17 @@ export default function Screener() {
     // ALL fetches fire in PARALLEL (like TickerAnalysis.tsx), not chained.
     // Each passes { signal } so AbortController cancels them on ticker change.
 
-    // 1) Profile + market fundamentals
+    // 1) Profile + market fundamentals. Finviz is now INLINE server-side, so
+    // the first response normally arrives complete (~300 ms). Only when
+    // float/sector are still missing (rare: Finviz hiccup or no coverage) we
+    // schedule short retries to pick up the background enrichment.
     getTickerAnalysis(selectedTicker, { signal })
       .then((d) => {
         const detail = d as TickerDetail;
         setTickerDetail(detail);
-        // Enrichment still in flight? (float/sector are enrichment-sourced)
-        setEnrichPending(detail?.market?.float_shares == null && !detail?.profile?.sector);
+        const incomplete = detail?.market?.float_shares == null && !detail?.profile?.sector;
+        setEnrichPending(incomplete);
+        if (incomplete) scheduleEnrichRefetch();
         // Re-scope the floating Edgie assistant to this ticker
         window.dispatchEvent(new CustomEvent("ticker-loaded", {
           detail: { ticker: selectedTicker, data: detail, finvizNews: null, filings: null, secCompanyFacts: null },
@@ -677,21 +681,27 @@ export default function Screener() {
     };
     pollGapStats(0);
 
-    // Progressive fill: the first (cold) analysis response can arrive BEFORE
-    // the background enrichment (Finviz float/sector/ownership) lands in the
-    // cache. One silent refetch picks up the merged payload (~2ms warm)
-    // without re-firing analytics.
-    timers.push(setTimeout(() => {
-      apiRequest<TickerDetail>(`/ticker-analysis/${encodeURIComponent(selectedTicker)}`, { signal })
-        .then((d) => {
-          setTickerDetail((prev) => {
+    // Adaptive enrichment refetch — ONLY scheduled when the first payload came
+    // incomplete (rare now that Finviz runs inline server-side). Two quick,
+    // silent retries pick up the background-merged payload (~2ms warm) without
+    // re-firing analytics.
+    const scheduleEnrichRefetch = (attempt = 0) => {
+      timers.push(setTimeout(() => {
+        apiRequest<TickerDetail>(`/ticker-analysis/${encodeURIComponent(selectedTicker)}`, { signal })
+          .then((d) => {
             const enriched = d?.market?.float_shares != null || d?.profile?.sector;
-            return enriched ? d : prev;
-          });
-        })
-        .catch(() => { /* keep what we have */ })
-        .finally(() => { setEnrichPending(false); });
-    }, 4000));
+            if (enriched) {
+              setTickerDetail(d);
+              setEnrichPending(false);
+            } else if (attempt < 1) {
+              scheduleEnrichRefetch(attempt + 1);
+            } else {
+              setEnrichPending(false); // nothing upstream — settle the dashes
+            }
+          })
+          .catch(() => { setEnrichPending(false); });
+      }, attempt === 0 ? 2000 : 5000));
+    };
 
     return () => { ac.abort(); timers.forEach(clearTimeout); };
   }, [selectedTicker]);
@@ -1216,7 +1226,8 @@ export default function Screener() {
                   </div>
                 </div>
 
-                {gapLoading || gapStatsResponse?.status === "calculating" || currentStats?.status === "calculating" ? (
+                {(gapLoading || gapStatsResponse?.status === "calculating" || currentStats?.status === "calculating")
+                  && !(currentStats && currentStats.gap_days_count > 0) ? (
                   <div style={{
                     display: "flex",
                     flexDirection: "column",

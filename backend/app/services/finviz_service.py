@@ -19,6 +19,8 @@ import csv
 import io
 import logging
 import os
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -31,6 +33,14 @@ logger = logging.getLogger("btt.finviz")
 API_KEY = os.getenv("FINVIZ_API_KEY", "")
 BASE = "https://elite.finviz.com"
 TIMEOUT = 8.0
+
+# In-memory TTL cache for snapshots: the sync path and the background
+# enrichment both want the same row within seconds — one HTTP call must serve
+# both (Finviz 429s on bursts of ~5 rapid requests). Negative results are
+# cached too so uncovered/delisted tickers don't re-hit the API on every view.
+_SNAP_TTL = 600.0  # seconds
+_snap_cache: Dict[str, tuple] = {}  # ticker -> (expiry_ts, snapshot|None)
+_snap_lock = threading.Lock()
 
 # Columns requested from /export (v=152). Values are Finviz `c=` ids; we still
 # parse by header name — this list only controls what Finviz sends back.
@@ -81,13 +91,20 @@ def get_snapshot(ticker: str) -> Optional[Dict[str, Any]]:
     ticker = (ticker or "").upper().strip()
     if not ticker:
         return None
+    now = time.time()
+    with _snap_lock:
+        hit = _snap_cache.get(ticker)
+        if hit and hit[0] > now:
+            return hit[1]
     try:
         rows = _get_csv("/export", {"v": 152, "t": ticker, "c": _EXPORT_COLS})
     except Exception as e:  # noqa: BLE001
         logger.warning("[FINVIZ] snapshot failed for %s: %s", ticker, e)
-        return None
+        return None  # transient (429/red): NOT cached, next call retries
     row = next((r for r in rows if r.get("Ticker", "").upper() == ticker), None)
     if row is None:
+        with _snap_lock:
+            _snap_cache[ticker] = (now + _SNAP_TTL, None)  # no coverage: cache it
         return None
     snap = {
         "name": (row.get("Company") or "").strip() or None,
@@ -111,7 +128,9 @@ def get_snapshot(ticker: str) -> Optional[Dict[str, Any]]:
     }
     # Coverage check: a row with a ticker but no fundamentals is useless.
     if all(snap[k] is None for k in ("market_cap", "float_shares", "shares_outstanding", "price")):
-        return None
+        snap = None
+    with _snap_lock:
+        _snap_cache[ticker] = (now + _SNAP_TTL, snap)
     return snap
 
 

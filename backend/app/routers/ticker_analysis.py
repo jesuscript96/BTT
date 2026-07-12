@@ -10,7 +10,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from app.database import get_db_connection
 from app.redis_client import get_redis
-from app.services import massive_service, edgar_service
+from app.services import massive_service, edgar_service, finviz_service
 
 router = APIRouter(
     prefix="/api/ticker-analysis",
@@ -505,7 +505,11 @@ def compute_price_change_chart(ticker: str, dates: list) -> list:
     return compute_price_change_chart_from_df(df, rth_opens, dates)
 
 
-def get_gap_stats_all_days(ticker: str) -> dict:
+def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
+    """Runner stats por offset. Con include_chart=False se salta la lectura
+    intradía de GCS (la parte de 30-80 s en fríos): los promedios/frecuencias
+    salen íntegros del hot cache diario en RAM en <1 s. El chart 15-min
+    (price_change_chart) queda [] y lo aporta la pasada completa."""
     ticker = ticker.upper()
     df = pd.DataFrame()
     
@@ -626,7 +630,7 @@ def get_gap_stats_all_days(ticker: str) -> dict:
     
     # Query intraday_1m ONCE for all combined target dates (huge GCS optimization)
     intraday_df = pd.DataFrame()
-    if all_target_dates:
+    if all_target_dates and include_chart:
         # Collect distinct year/month partitions needed for these target dates
         ym_dates = {}
         for d_str in all_target_dates:
@@ -720,7 +724,10 @@ def get_gap_stats_all_days(ticker: str) -> dict:
             close_above_pmh = (c > pm_h).astype(float) * 100
             close_above_pmh = close_above_pmh.mask(pm_h <= 0, None)
             
-        chart_data = compute_price_change_chart_from_df(intraday_df, rth_opens_map, recent_target_dates)
+        chart_data = (
+            compute_price_change_chart_from_df(intraday_df, rth_opens_map, recent_target_dates)
+            if include_chart else []
+        )
             
         def safe_mean(s):
             if s is None or s.empty:
@@ -965,12 +972,30 @@ def _enrich_analysis_job(ticker: str) -> None:
         )
         if not has_data:
             return
+        # Cash XBRL de la SEC (~1,2 s): sacado del camino bloqueante del
+        # endpoint — aquí en background su coste es irrelevante.
+        try:
+            cik = edgar_service.resolve_cik(ticker)
+            if cik:
+                cash_hist = edgar_service.get_xbrl_concept_history(str(cik).zfill(10))
+                if cash_hist:
+                    patch["financials"]["cash"] = cash_hist[-1]["value"]
+        except Exception as e:
+            print(f"[ENRICH] SEC XBRL cash failed for {ticker}: {e}")
+
         _swr_db_store_payload(ticker, "analysis_enrich", patch)
 
         # Fusionar en el payload principal ya almacenado + cachés calientes
         current = _swr_db_read_payload(ticker, "analysis")
         if isinstance(current, dict) and current.get("status") != "calculating":
             merged = _apply_enrichment(current, patch)
+            # El EV se calculó sin cash (llega aquí): recomputarlo con él.
+            fin = merged.get("financials") or {}
+            mkt = merged.get("market") or {}
+            if fin.get("cash") is not None and mkt.get("market_cap") is not None:
+                fin["enterprise_value"] = (
+                    float(mkt["market_cap"]) + float(fin.get("total_debt") or 0) - float(fin["cash"])
+                )
             _swr_db_store_payload(ticker, "analysis", merged)
             now = datetime.now()
             with _analysis_cache_lock:
@@ -1084,18 +1109,23 @@ def get_ticker_analysis(ticker: str):
 
     def _compute():
         # Fuentes deterministas EN PARALELO: overview + precio + fundamentales
-        # (Massive) y perfil DB propio. yfinance ya no está en el camino
-        # bloqueante — ver _enrich_analysis_job.
+        # (Massive), Finviz (float/sector/ownership) y perfil DB propio. El
+        # camino bloqueante cuesta max(fuentes) ≈ 300-600 ms. yfinance y el
+        # cash XBRL de la SEC (~1,2 s) van en background — ver
+        # _enrich_analysis_job — porque no justifican bloquear la respuesta.
+        t_start = time.time()
         overview = {}
         price = None
         fin_results = []
         db_info = {}
-        executor = ThreadPoolExecutor(max_workers=4)
+        fv = {}
+        executor = ThreadPoolExecutor(max_workers=5)
         try:
             fut_over = executor.submit(massive_service.get_overview, ticker)
             fut_price = executor.submit(massive_service.get_snapshot_price, ticker)
             fut_fin = executor.submit(massive_service.get_financials, ticker)
             fut_db = executor.submit(_fetch_db_profile, ticker)
+            fut_fv = executor.submit(finviz_service.get_snapshot, ticker)
             try:
                 overview = fut_over.result(timeout=8) or {}
             except Exception as e:
@@ -1112,19 +1142,17 @@ def get_ticker_analysis(ticker: str):
                 db_info = fut_db.result(timeout=6) or {}
             except Exception as e:
                 print(f"Error fetching database tickers info fallback for {ticker}: {e}")
+            try:
+                fv = fut_fv.result(timeout=6) or {}
+            except Exception as e:
+                print(f"[WARN] Finviz snapshot failed for {ticker}: {e}")
         finally:
             # No esperar a un hilo colgado para devolver la respuesta.
             executor.shutdown(wait=False)
 
-        # Cash: Massive no expone posición de caja en balance → XBRL oficial SEC.
-        cik = overview.get("cik")
-        cik = str(cik).zfill(10) if cik else edgar_service.resolve_cik(ticker)
+        # Cash (XBRL SEC, ~1,2 s): fuera del camino bloqueante. Llega vía
+        # _enrich_analysis_job, que recalcula también el enterprise value.
         cash_hist = []
-        if cik:
-            try:
-                cash_hist = edgar_service.get_xbrl_concept_history(cik)
-            except Exception as e:
-                print(f"[WARN] SEC XBRL cash failed for {ticker}: {e}")
 
         # Logo legacy del perfil (la UI usa /logo; esto es solo fallback visual)
         website = overview.get("homepage_url")
@@ -1140,40 +1168,41 @@ def get_ticker_analysis(ticker: str):
 
         address = overview.get("address") or {}
 
-        # --- Profile --- (Massive overview → DB propia; sector/officers vía enrichment)
+        # --- Profile --- (Finviz para sector/industry legibles; Massive/DB de base)
         profile = {
-            "sector": None,
-            "industry": overview.get("sic_description"),
+            "sector": fv.get("sector"),
+            "industry": fv.get("industry") or overview.get("sic_description"),
             "website": website,
             "description": overview.get("description"),
-            "employees": overview.get("total_employees"),
+            "employees": overview.get("total_employees") or fv.get("employees"),
             "address": address.get("address1"),
             "city": address.get("city"),
             "state": address.get("state"),
-            "country": "United States" if overview.get("locale") == "us" else None,
+            "country": fv.get("country") or ("United States" if overview.get("locale") == "us" else None),
             "exchange": overview.get("primary_exchange") or db_info.get("exchange"),
-            "name": overview.get("name") or db_info.get("longName"),
+            "name": overview.get("name") or fv.get("name") or db_info.get("longName"),
             "logo_url": logo_url,
             # Roster de directivos: lo aporta el enriquecimiento yfinance y/o la
             # pre-extracción SEC de Edgie. Nunca bloquea esta respuesta.
             "officers": [],
         }
 
-        # --- Market --- (Massive; float y % ownership vía enrichment)
+        # --- Market --- (Massive + Finviz inline: float y % ownership YA vienen)
         shares_outstanding = (
             overview.get("share_class_shares_outstanding")
             or overview.get("weighted_shares_outstanding")
+            or fv.get("shares_outstanding")
         )
-        market_cap = overview.get("market_cap")
+        market_cap = overview.get("market_cap") or fv.get("market_cap")
         if market_cap is None and shares_outstanding and price:
             market_cap = float(shares_outstanding) * float(price)
         market = {
             "market_cap": market_cap,
             "shares_outstanding": shares_outstanding,
-            "float_shares": None,
-            "held_percent_institutions": None,
-            "held_percent_insiders": None,
-            "price": price,
+            "float_shares": fv.get("float_shares"),
+            "held_percent_institutions": fv.get("held_percent_institutions"),
+            "held_percent_insiders": fv.get("held_percent_insiders"),
+            "price": price if price is not None else fv.get("price"),
         }
 
         # Price fallback para deslistados/mercado sin snapshot: último cierre
@@ -1241,6 +1270,7 @@ def get_ticker_analysis(ticker: str):
         # Reaplicar el último enriquecimiento persistido para que un refresh
         # del payload primario no borre officers/held%/float ya conocidos.
         patch = _swr_db_read_payload(ticker, "analysis_enrich")
+        _log_fetch("analysis", ticker, t_start, True)
         return _apply_enrichment(payload, patch)
 
     def _validate(p: dict) -> bool:
@@ -1591,32 +1621,61 @@ def get_ticker_gap_stats(ticker: str):
                 return cached_data
 
     def _compute():
-        # Float: Finviz Elite (API oficial, key propia) es la fila autoritativa;
-        # el scrape de knowthefloat queda como enriquecimiento best-effort para
-        # las demás fuentes comparativas de la tabla.
+        # Fuentes auxiliares EN PARALELO desde el arranque: Finviz (float
+        # oficial, ~0,3 s), short interest FINRA (~0,2 s) y el scrape de
+        # knowthefloat (lento, best-effort — antes bloqueaba 4-6 s en serie).
+        aux = ThreadPoolExecutor(max_workers=3)
+        fut_scrape = aux.submit(scrape_knowthefloat, ticker)
+        fut_fv_row = aux.submit(finviz_service.get_float_row, ticker)
+        fut_si = aux.submit(massive_service.get_short_interest, ticker)
+        aux.shutdown(wait=False)
+
         know_the_float = {}
         try:
-            know_the_float = scrape_knowthefloat(ticker) or {}
-        except Exception as e:
-            print(f"[WARN] knowthefloat enrichment failed for {ticker}: {e}")
-        try:
-            from app.services import finviz_service
-            fv_row = finviz_service.get_float_row(ticker)
+            fv_row = fut_fv_row.result(timeout=5)
             if fv_row:
-                know_the_float["Finviz"] = fv_row  # API pisa al scrape para Finviz
+                know_the_float["Finviz"] = fv_row
         except Exception as e:
             print(f"[WARN] finviz float enrichment failed for {ticker}: {e}")
-
-        # Short interest oficial FINRA vía Massive (determinista, dato nuevo).
         short_interest = None
         try:
-            si = massive_service.get_short_interest(ticker)
+            si = fut_si.result(timeout=5)
             if si:
                 short_interest = si[0]
         except Exception as e:
             print(f"[WARN] Massive short interest failed for {ticker}: {e}")
 
+        # FASE 1 — números desde el hot cache diario en RAM (<1 s), sin el
+        # chart intradía de GCS (30-80 s en fríos). Se PUBLICA YA con status
+        # "calculating" para que el poll del frontend pinte los Runner Stats
+        # en segundos; la fase 2 la sustituye con el chart completo.
+        try:
+            fast = get_gap_stats_all_days(ticker, include_chart=False)
+            partial = {
+                "status": "calculating",  # el front sigue el poll hasta la fase 2
+                "know_the_float": know_the_float,
+                "short_interest": short_interest,
+                "gap_stats": fast["gap_stats"],
+                "gap_stats_plus_1": fast["gap_stats_plus_1"],
+                "gap_stats_plus_2": fast["gap_stats_plus_2"],
+                "gap_dates": fast.get("gap_dates", []),
+            }
+            _swr_db_store_payload(ticker, "gap_stats", partial)
+            print(f"[GAP-FAST] partial stats published for {ticker} "
+                  f"({partial['gap_stats'].get('gap_days_count')} gap days, chart pending)")
+        except Exception as e:
+            print(f"[WARN] fast gap-stats phase failed for {ticker}: {e}")
+
+        # FASE 2 — pasada completa con el chart 15-min (GCS) + scrape
+        # comparativo de floats (si llegó).
         all_stats = get_gap_stats_all_days(ticker)
+        try:
+            scraped = fut_scrape.result(timeout=10) or {}
+            for src, vals in scraped.items():
+                know_the_float.setdefault(src, vals)
+        except Exception as e:
+            print(f"[WARN] knowthefloat enrichment failed for {ticker}: {e}")
+
         return {
             "know_the_float": know_the_float,
             "short_interest": short_interest,
