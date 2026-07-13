@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import type { ScreenerRecord } from "@/lib/api";
 import { ChatBot } from "./ChatBot";
+import { LocatesCalculator } from "./LocatesCalculator";
 import { Pill } from "@/components/ui";
 import { track, EVENTS } from "@/lib/analytics";
 
@@ -1138,6 +1139,14 @@ export default function Screener() {
                     <DetailItem label="Price" value={tickerDetail?.market?.price != null ? `$${fmtPrice(tickerDetail.market.price)}` : "—"} />
                   </DetailGrid>
                 )}
+              </DetailSection>
+
+              {/* ── Calculadora de locates (determinista; Entry pre-rellenado con el precio) ── */}
+              <DetailSection title="Locates">
+                <LocatesCalculator
+                  key={selectedTicker}
+                  initialEntry={tickerDetail?.market?.price ?? undefined}
+                />
               </DetailSection>
 
               {/* ── Profile Section ── */}
