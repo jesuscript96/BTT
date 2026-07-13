@@ -10,9 +10,7 @@ import {
     MessageSquarePlus,
     Flame,
     BarChart3,
-    Calculator,
 } from "lucide-react";
-import { LocatesCalculator } from "./LocatesCalculator";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, useClerk } from "@clerk/nextjs";
@@ -38,8 +36,6 @@ const wordmarkStyle: React.CSSProperties = {
 export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => {
     const pathname = usePathname();
     const [isHovered, setIsHovered] = useState(false);
-    // Calculadora de locates: determinista, fuera de Edgie (decisión de producto).
-    const [showLocates, setShowLocates] = useState(false);
     const { user } = useUser();
     const { signOut } = useClerk();
     const { can, isAdmin, loading } = useEntitlements();
@@ -257,21 +253,6 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </Link>
                 )}
 
-                {/* Calculadora de locates (modal determinista, no es una página) */}
-                <button
-                    type="button"
-                    onClick={() => setShowLocates(true)}
-                    title="Calculadora de locates"
-                    style={{
-                        ...linkBase(isCollapsed),
-                        background: 'transparent',
-                        border: 'none',
-                    }}
-                >
-                    <Calculator style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Locates</span>
-                </button>
-
                 {/* Feedback / votación de roadmap (abre modal, no es una página).
                     Admin-only: `isAdmin()` en vez de `can()` porque `can()` es
                     optimista mientras carga y el botón parpadearía para el resto. */}
@@ -359,8 +340,6 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </div>
                 )}
             </div>
-
-            {showLocates && <LocatesCalculator onClose={() => setShowLocates(false)} />}
         </aside>
     );
 };
