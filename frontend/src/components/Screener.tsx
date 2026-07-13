@@ -356,7 +356,8 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
     );
   }
 
-  const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal", "Dilution Tracker"];
+  // Dilution Tracker retirado: no tenemos acceso a esa fuente (siempre salía vacío).
+  const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal"];
 
   return (
     <div style={{ overflowX: 'auto', width: '100%' }} className="custom-scrollbar">
@@ -490,8 +491,7 @@ const MOCK_GAP_STATS_SPCB: GapStatsResponse = {
   know_the_float: {
     "Yahoo Finance": { float: "8.85M", short_percent: "13.9%", outstanding: "10.29M" },
     "Finviz": { float: "8.90M", short_percent: "14.2%", outstanding: "10.29M" },
-    "Wall Street Journal": { float: "8.90M", short_percent: "14.0%", outstanding: "10.29M" },
-    "Dilution Tracker": { float: "9.20M", short_percent: "—", outstanding: "11.10M" }
+    "Wall Street Journal": { float: "8.90M", short_percent: "14.0%", outstanding: "10.29M" }
   },
   gap_stats: {
     gap_days_count: 24,
@@ -559,8 +559,7 @@ const MOCK_GAP_STATS_CNM: GapStatsResponse = {
   know_the_float: {
     "Yahoo Finance": { float: "184.60M", short_percent: "4.5%", outstanding: "213.00M" },
     "Finviz": { float: "185.00M", short_percent: "4.8%", outstanding: "213.00M" },
-    "Wall Street Journal": { float: "185.00M", short_percent: "4.7%", outstanding: "213.00M" },
-    "Dilution Tracker": { float: "192.00M", short_percent: "—", outstanding: "220.00M" }
+    "Wall Street Journal": { float: "185.00M", short_percent: "4.7%", outstanding: "213.00M" }
   },
   gap_stats: {
     gap_days_count: 15,
@@ -646,8 +645,7 @@ const getMockGapStats = (ticker: string): GapStatsResponse => {
     know_the_float: {
       "Yahoo Finance": { float: "95.2M", short_percent: "8.5%", outstanding: "125.0M" },
       "Finviz": { float: "98.0M", short_percent: "8.2%", outstanding: "125.0M" },
-      "Wall Street Journal": { float: "98.0M", short_percent: "8.3%", outstanding: "125.0M" },
-      "Dilution Tracker": { float: "102.5M", short_percent: "—", outstanding: "130.0M" }
+      "Wall Street Journal": { float: "98.0M", short_percent: "8.3%", outstanding: "125.0M" }
     },
     gap_stats: {
       gap_days_count: 12,

@@ -886,7 +886,8 @@ const KnowTheFloatTable = ({ floatData }: { floatData?: FloatData }) => {
         );
     }
 
-    const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal", "Dilution Tracker"];
+    // Dilution Tracker retirado: no tenemos acceso a esa fuente (siempre salía vacío).
+    const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal"];
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
