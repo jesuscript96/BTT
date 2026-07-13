@@ -170,6 +170,41 @@ def get_daily_bars(ticker: str, years: int = 5) -> list[dict]:
     return (data or {}).get("results") or []
 
 
+def get_minute_bars_for_dates(ticker: str, dates: list[str], max_workers: int = 16) -> list[dict]:
+    """Barras 1-min de fechas concretas vía /v2/aggs, EN PARALELO.
+
+    Sustituye a la lectura de particiones mensuales de GCS para el chart de
+    runner stats: ~24-72 fechas → 2-5 s frente a 15-80 s. Devuelve
+    [{date_str, t(ms), o, c}] plano; las fechas sin datos o con error
+    transitorio se omiten (el chart promedia las que haya).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    ticker = (ticker or "").upper().strip()
+    dates = sorted(set(d for d in dates if d))
+    if not ticker or not dates:
+        return []
+
+    def _one(d: str) -> list[dict]:
+        try:
+            data = _get(
+                f"/v2/aggs/ticker/{ticker}/range/1/minute/{d}/{d}",
+                {"adjusted": "true", "sort": "asc", "limit": 5000},
+            )
+            return [
+                {"date_str": d, "t": r.get("t"), "o": r.get("o"), "c": r.get("c")}
+                for r in ((data or {}).get("results") or [])
+            ]
+        except Exception:  # noqa: BLE001 — una fecha caída no tumba el chart
+            return []
+
+    out: list[dict] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for rows in ex.map(_one, dates):
+            out.extend(rows)
+    return out
+
+
 def get_financials(ticker: str) -> list[dict]:
     """Fundamentales XBRL trimestrales de /vX/reference/financials (asc).
 

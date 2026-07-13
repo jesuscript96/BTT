@@ -667,9 +667,11 @@ export default function Screener() {
             if (prev && !isCalculating(prev) && isCalculating(res)) return prev;
             return res;
           });
-          if (isCalculating(res) && attempt < 15) {
+          if (isCalculating(res) && attempt < 20) {
             setGapLoading(true);
-            timers.push(setTimeout(() => pollGapStats(attempt + 1), 5000));
+            // La fase 1 del backend se publica a los ~2 s: el primer re-poll
+            // corto la pinta cuanto antes; después cadencia normal.
+            timers.push(setTimeout(() => pollGapStats(attempt + 1), attempt === 0 ? 2000 : 4000));
           } else {
             setGapLoading(false);
           }

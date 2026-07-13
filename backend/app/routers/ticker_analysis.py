@@ -628,9 +628,33 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
         
     rth_opens_map = {pd.to_datetime(row['timestamp']).strftime('%Y-%m-%d'): row['rth_open'] for _, row in df.iterrows() if not pd.isna(row['rth_open'])}
     
-    # Query intraday_1m ONCE for all combined target dates (huge GCS optimization)
+    # Intradía para el chart 15-min. PRIMARIO: velas 1-min de la API de Massive
+    # solo para las fechas de gap, en paralelo (~2-5 s medidos). El path GCS
+    # (particiones mensuales de parquet, 15-80 s en frío) queda como fallback.
     intraday_df = pd.DataFrame()
     if all_target_dates and include_chart:
+        try:
+            t_aggs = time.time()
+            bars = massive_service.get_minute_bars_for_dates(ticker, all_target_dates)
+            if bars:
+                intraday_df = pd.DataFrame(bars)
+                # Massive `t` es epoch-ms UTC; el chart binéa por hora de NY
+                # naive (mismo contrato que la tabla intraday_1m).
+                intraday_df["timestamp"] = (
+                    pd.to_datetime(intraday_df["t"], unit="ms", utc=True)
+                    .dt.tz_convert("America/New_York")
+                    .dt.tz_localize(None)
+                )
+                intraday_df = intraday_df.rename(columns={"o": "open", "c": "close"})[
+                    ["date_str", "timestamp", "open", "close"]
+                ]
+                print(f"[GAP-CHART] Massive aggs: {len(intraday_df)} bars / "
+                      f"{intraday_df['date_str'].nunique()} fechas en {(time.time()-t_aggs)*1000:.0f}ms")
+        except Exception as e:
+            print(f"[GAP-CHART] Massive aggs failed for {ticker} ({e}); falling back to GCS")
+            intraday_df = pd.DataFrame()
+
+    if all_target_dates and include_chart and intraday_df.empty:
         # Collect distinct year/month partitions needed for these target dates
         ym_dates = {}
         for d_str in all_target_dates:
