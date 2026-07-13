@@ -555,6 +555,35 @@ AGENTIC_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ticker_snapshot",
+            "description": "Snapshot rápido del ticker: sector, industria, país, precio, market cap, float, shares outstanding, % insiders, % institucional, short interest (% del float), days-to-cover, y titulares de noticias recientes. Úsalo para el informe rápido y el riesgo de squeeze. NOTA: borrow_rate no está disponible (no hay fuente) → 'sin datos disponibles'.",
+            "parameters": {
+                "type": "object",
+                "properties": {"ticker": {"type": "string"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "locates_calc",
+            "description": "Calcula el coste de locates de un short (paquetes de 100, siempre ceil) y el fade break-even. Requiere precio_entrada, precio_stop y coste_paquete; y además shares O riesgo_dolares (uno de los dos). NO lo calcules a mano: usa esta herramienta.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "precio_entrada": {"type": "number"},
+                    "precio_stop": {"type": "number", "description": "Stop loss (en un short, > precio_entrada)."},
+                    "coste_paquete": {"type": "number", "description": "Coste por paquete de 100 locates."},
+                    "shares": {"type": "number", "description": "Nº de acciones (opción A)."},
+                    "riesgo_dolares": {"type": "number", "description": "Riesgo en $ (opción B); si se da, se derivan las shares."},
+                },
+                "required": ["precio_entrada", "precio_stop", "coste_paquete"],
+            },
+        },
+    },
 ]
 
 
@@ -606,21 +635,102 @@ def _tool_get_insiders(ticker=None, _default_ticker=None):
     return {"ticker": ticker, "insiders": get_insider_activity(ticker)[:25]}
 
 
+def _tool_ticker_snapshot(ticker=None, _default_ticker=None):
+    """Snapshot rápido para informe y squeeze. Reutiliza yfinance (curl_cffi) +
+    noticias Finviz — sin fuentes nuevas. borrow_rate no existe en fuente gratuita."""
+    ticker = (ticker or _default_ticker or "").upper().strip()
+    if not ticker:
+        return {"error": "no ticker"}
+    from app.routers.ticker_analysis import get_yfinance_session, get_finviz_news
+    import yfinance as yf
+
+    def pct(x):
+        return round(x * 100, 2) if isinstance(x, (int, float)) else None
+
+    try:
+        info = yf.Ticker(ticker, session=get_yfinance_session()).info or {}
+    except Exception as e:
+        logger.warning("[SNAPSHOT] yfinance falló %s: %s", ticker, e)
+        info = {}
+    snap = {
+        "ticker": ticker,
+        "name": info.get("longName") or info.get("shortName"),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "country": info.get("country"),
+        "price": info.get("currentPrice") or info.get("previousClose"),
+        "market_cap": info.get("marketCap"),
+        "float_shares": info.get("floatShares"),
+        "shares_outstanding": info.get("sharesOutstanding"),
+        "insiders_pct": pct(info.get("heldPercentInsiders")),
+        "institutions_pct": pct(info.get("heldPercentInstitutions")),
+        "short_percent_of_float": pct(info.get("shortPercentOfFloat")),
+        "days_to_cover": info.get("shortRatio"),
+        "shares_short": info.get("sharesShort"),
+        # No hay fuente gratuita del borrow rate; regla PRD = no inventar.
+        "borrow_rate": "sin datos disponibles",
+    }
+    try:
+        news = (get_finviz_news(ticker) or {}).get("news", [])[:5]
+        snap["news"] = [{"date": n.get("date"), "title": n.get("title"), "source": n.get("source")} for n in news]
+    except Exception:
+        snap["news"] = []
+    return snap
+
+
+def _tool_locates_calc(precio_entrada=None, precio_stop=None, coste_paquete=None,
+                       shares=None, riesgo_dolares=None, _default_ticker=None):
+    """Calculadora determinista de locates (paquetes de 100, ceil)."""
+    from app.services.locates import calc_locates
+    try:
+        return calc_locates(
+            precio_entrada=float(precio_entrada) if precio_entrada is not None else None,
+            precio_stop=float(precio_stop) if precio_stop is not None else None,
+            coste_paquete=float(coste_paquete) if coste_paquete is not None else None,
+            shares=float(shares) if shares is not None else None,
+            riesgo_dolares=float(riesgo_dolares) if riesgo_dolares is not None else None,
+        )
+    except (TypeError, ValueError):
+        return {"error": "Datos numéricos inválidos."}
+
+
 _TOOL_IMPL = {
     "list_filings": _tool_list_filings,
     "read_filing": _tool_read_filing,
     "get_insiders": _tool_get_insiders,
+    "get_ticker_snapshot": _tool_ticker_snapshot,
+    "locates_calc": _tool_locates_calc,
 }
 
 _AGENTIC_PREAMBLE = (
-    "Tienes herramientas para consultar SEC EDGAR EN VIVO: list_filings, read_filing y get_insiders. "
-    "Cuando te pregunten por datos concretos de la empresa (directivos/junta, ofertas, dilución, warrants, "
-    "beneficial owners, insiders, etc.), DEBES usarlas para leer el documento real en vez de responder de memoria. "
-    "REGLA CRÍTICA: nunca afirmes haber leído un documento ni des datos 'según el Form X' si no lo has abierto con "
-    "read_filing en esta conversación. Si la herramienta no devuelve el dato, di 'no disponible en los filings' y "
-    "NO inventes nombres ni cifras. Cita siempre la fuente (formulario + fecha). "
-    "Pista de estructura: en un 20-F los directivos están en el Item 6; en un 10-K en el Item 10; "
-    "los agentes colocadores/ofertas en 424B y S-1/S-3 ('Plan of Distribution'/'Underwriting')."
+    "Eres Edgie, copiloto de trading de Edgecute para operadores que van CORTOS en small caps. "
+    "Informas y calculas; el usuario decide. NUNCA das señales de entrada ni dices 'es un buen short'. "
+    "NUNCA inventas datos: si falta un dato, di 'sin datos disponibles'. Sé BREVE: todo debe leerse en 30 "
+    "segundos mientras se opera; si algo cabe en una frase, no uses dos; sin párrafos largos ni relleno.\n"
+    "TOOLS (úsalas en vez de responder de memoria; cita la fuente): list_filings, read_filing, get_insiders, "
+    "get_ticker_snapshot, locates_calc. NUNCA afirmes haber leído un documento que no abriste con read_filing.\n"
+    "Estructura SEC: directivos en 20-F Item 6 / 10-K Item 10 / DEF 14A; agentes colocadores y ofertas en "
+    "424B y S-1/S-3 ('Plan of Distribution'/'Underwriting'); warrants en 'Description of Securities'.\n\n"
+    "FLUJO 'calcula locates': pregunta UNO A UNO y EN ESTE ORDEN, sin valores por defecto: "
+    "(1) precio de entrada, (2) dónde pones el stop, (3) cuánto cuesta el paquete de 100 locates, "
+    "(4) cuántas acciones operas O cuánto dinero arriesgas. Cuando tengas los 4, llama a locates_calc y "
+    "muestra: paquetes de locates, coste total, stop a X% de la entrada, riesgo total, y una sola línea de "
+    "conclusión con el fade break-even total. Los locates van SIEMPRE en paquetes de 100 (la tool ya hace ceil).\n\n"
+    "FLUJO 'informe rápido de ticker' (usa get_ticker_snapshot + read_filing + get_insiders): 6 bloques, "
+    "máx 2 frases cada uno: "
+    "1) Sector (y temperatura del sector si la conoces; si no, solo el sector). "
+    "2) Procedencia: país y, si cotiza en USA pero la gestión/junta es china o asiática, AVÍSALO (lee 20-F Item 6 "
+    "o DEF 14A). "
+    "3) Noticias del día (del snapshot); añade SIEMPRE: 'En small caps la noticia suele ser el catalizador del "
+    "pump, no una razón para no shortear.' Si no hay: 'Sin noticias relevantes hoy.' "
+    "4) Filings de dilución activos (lee S-3/424B/8-K): S-3, ATM, baby shelf, warrants, offering, IPO — con "
+    "cantidades y lo que queda disponible. Si no hay: 'Sin filings de dilución activos detectados.' "
+    "5) Precios de referencia derivados de esos filings (warrants a $X, ATM, offering a $X); máx 4; no inventes niveles. "
+    "6) Insiders % e institucional % (del snapshot), con una frase de contexto si es relevante.\n\n"
+    "FLUJO 'riesgo de squeeze' (usa get_ticker_snapshot): borrow rate = 'sin datos disponibles' (no lo tenemos); "
+    "short interest = short_percent_of_float; days to cover; float. Formato compacto, una frase de contexto solo "
+    "si los datos la justifican. Nunca inventes.\n"
+    "Recuerda: en small caps la noticia es catalizador del pump, no razón para descartar el short."
 )
 
 

@@ -274,7 +274,7 @@ def scrape_knowthefloat(ticker: str) -> dict:
             {"name": "Yahoo Finance", "img": "yahooFinance.png"},
             {"name": "Finviz", "img": "finviz.png"},
             {"name": "Wall Street Journal", "img": "wsj.png"},
-            {"name": "Dilution Tracker", "img": "dt.png"}
+            # Dilution Tracker retirado: sin acceso a esa fuente (siempre vacío).
         ]
         
         results = {}

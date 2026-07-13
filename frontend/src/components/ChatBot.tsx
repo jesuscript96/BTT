@@ -59,8 +59,18 @@ export function ChatBot() {
     // limpia (null) al desmontar para no contaminar otras páginas.
     const [maContext, setMaContext] = useState<Record<string, unknown> | null>(null);
     const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
-    
+    // Pills de acceso rápido (PRD Edgie v1): visibles directamente sobre el input
+    // (sin paso intermedio, sin emojis). Al pulsar una se envía el texto como si
+    // lo escribiera el usuario y desaparecen hasta resetear el chat.
+    const [showChips, setShowChips] = useState(true);
+
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+    const EDGIE_CHIPS = [
+        { title: 'Calculadora de locates', desc: 'Entrada · stop · acciones → ¿vale la pena?', prompt: 'Quiero calcular locates para un short.' },
+        { title: 'Informe rápido de ticker', desc: 'Sector · dilución · noticias · precios clave', prompt: activeTicker ? `Dame el informe rápido de ${activeTicker}.` : 'Dame el informe rápido de un ticker.' },
+        { title: 'Riesgo de squeeze', desc: 'Borrow rate · short interest · days to cover', prompt: activeTicker ? `¿Riesgo de squeeze de ${activeTicker}?` : 'Dime el riesgo de squeeze de un ticker.' },
+    ];
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +158,7 @@ export function ChatBot() {
 
     const handleResetChat = () => {
         setAttachedFile(null);
+        setShowChips(true);
         initWelcomeMessage(activeTicker);
     };
 
@@ -224,12 +235,12 @@ export function ChatBot() {
         });
     };
 
-    const handleSend = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!input.trim() || isGenerating) return;
-
-        const userText = input.trim();
-        setInput('');
+    const handleSend = async (e?: React.FormEvent, overrideText?: string) => {
+        e?.preventDefault();
+        const userText = (overrideText ?? input).trim();
+        if (!userText || isGenerating) return;
+        if (overrideText === undefined) setInput('');
+        setShowChips(false);
 
         track(EVENTS.ASSISTANT_MESSAGE_SENT, {
             length: userText.length,
@@ -684,6 +695,33 @@ export function ChatBot() {
                                     >
                                         <X size={14} />
                                     </button>
+                                </div>
+                            )}
+
+                            {/* Pills de acceso rápido (PRD Edgie v1): directas, sin emojis */}
+                            {showChips && (
+                                <div style={{
+                                    display: 'flex', flexWrap: 'wrap', gap: 6,
+                                    padding: '0 16px 8px', backgroundColor: 'var(--color-ec-bg-sidebar)', flexShrink: 0,
+                                }}>
+                                    {EDGIE_CHIPS.map((chip) => (
+                                        <button
+                                            key={chip.title}
+                                            type="button"
+                                            title={chip.desc}
+                                            onClick={() => handleSend(undefined, chip.prompt)}
+                                            disabled={isGenerating}
+                                            style={{
+                                                fontSize: 12, fontWeight: 500, color: 'var(--color-ec-text-high)',
+                                                background: 'var(--color-ec-bg-base)', border: '1px solid var(--color-ec-border)',
+                                                borderRadius: 999, padding: '5px 12px',
+                                                cursor: isGenerating ? 'default' : 'pointer', whiteSpace: 'nowrap',
+                                            }}
+                                            className="hover:border-[var(--color-ec-copper)] transition-colors"
+                                        >
+                                            {chip.title}
+                                        </button>
+                                    ))}
                                 </div>
                             )}
 
