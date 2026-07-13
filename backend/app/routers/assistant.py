@@ -623,14 +623,16 @@ def _tool_ticker_snapshot(ticker=None, _default_ticker=None):
     ticker = (ticker or _default_ticker or "").upper().strip()
     if not ticker:
         return {"error": "no ticker"}
-    from app.routers.ticker_analysis import get_yfinance_session, get_finviz_news
+    # yfinance 1.x gestiona su propia sesión (la sesión custom daba 401 Invalid
+    # Crumb y fue retirada de ticker_analysis).
+    from app.routers.ticker_analysis import get_finviz_news
     import yfinance as yf
 
     def pct(x):
         return round(x * 100, 2) if isinstance(x, (int, float)) else None
 
     try:
-        info = yf.Ticker(ticker, session=get_yfinance_session()).info or {}
+        info = yf.Ticker(ticker).info or {}
     except Exception as e:
         logger.warning("[SNAPSHOT] yfinance falló %s: %s", ticker, e)
         info = {}
@@ -693,8 +695,8 @@ _AGENTIC_PREAMBLE = (
     "5) Precios de referencia derivados de esos filings (warrants a $X, ATM, offering a $X); máx 4; no inventes niveles. "
     "6) Insiders % e institucional % (del snapshot), con una frase de contexto si es relevante.\n\n"
     "FLUJO 'riesgo de squeeze' (usa get_ticker_snapshot): borrow rate = 'sin datos disponibles' (no lo tenemos); "
-    "short interest = short_percent_of_float; days to cover; float. Formato compacto, una frase de contexto solo "
-    "si los datos la justifican. Nunca inventes.\n"
+    "days to cover; float. NO incluyas el short interest en la respuesta (omítelo del todo). Formato compacto, una "
+    "frase de contexto solo si los datos la justifican. Nunca inventes.\n"
     "Recuerda: en small caps la noticia es catalizador del pump, no razón para descartar el short."
 )
 
