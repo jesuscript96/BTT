@@ -66,8 +66,9 @@ export function ChatBot() {
 
     const [messages, setMessages] = useState<ChatMessage[]>([]);
 
+    // Locates se calcula ahora de forma determinista en el sidebar (LocatesCalculator),
+    // fuera de Edgie — aquí solo quedan las acciones que sí orquesta el asistente.
     const EDGIE_CHIPS = [
-        { title: 'Calculadora de locates', desc: 'Entrada · stop · acciones → ¿vale la pena?', prompt: 'Quiero calcular locates para un short.' },
         { title: 'Informe rápido de ticker', desc: 'Sector · dilución · noticias · precios clave', prompt: activeTicker ? `Dame el informe rápido de ${activeTicker}.` : 'Dame el informe rápido de un ticker.' },
         { title: 'Riesgo de squeeze', desc: 'Borrow rate · short interest · days to cover', prompt: activeTicker ? `¿Riesgo de squeeze de ${activeTicker}?` : 'Dime el riesgo de squeeze de un ticker.' },
     ];
@@ -698,12 +699,20 @@ export function ChatBot() {
                                 </div>
                             )}
 
-                            {/* Pills de acceso rápido (PRD Edgie v1): directas, sin emojis */}
+                            {/* Pills de acceso rápido (PRD Edgie v1): directas, sin emojis.
+                                Mismo fondo que el cuerpo del chat (bg-surface). */}
                             {showChips && (
                                 <div style={{
-                                    display: 'flex', flexWrap: 'wrap', gap: 6,
-                                    padding: '0 16px 8px', backgroundColor: 'var(--color-ec-bg-sidebar)', flexShrink: 0,
+                                    padding: '0 16px 10px', backgroundColor: 'var(--color-ec-bg-surface)', flexShrink: 0,
                                 }}>
+                                    <span style={{
+                                        fontSize: 8, fontWeight: 700, color: 'var(--color-ec-copper)',
+                                        textTransform: 'uppercase', letterSpacing: '1.5px',
+                                        display: 'block', marginBottom: 6,
+                                    }}>
+                                        Acciones rápidas
+                                    </span>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                     {EDGIE_CHIPS.map((chip) => (
                                         <button
                                             key={chip.title}
@@ -722,6 +731,7 @@ export function ChatBot() {
                                             {chip.title}
                                         </button>
                                     ))}
+                                    </div>
                                 </div>
                             )}
 

@@ -1110,7 +1110,7 @@ export default function Screener() {
               padding: 0,
             }}>
               {/* ── Market Data Section ── */}
-              <DetailSection title="Market Data">
+              <DetailSection title="Market Data" note="Datos combinados de varias fuentes; puede haber pequeñas discrepancias.">
                 {profileLoading ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 0" }}>
                     <Loader2 style={{ width: 12, height: 12, color: "var(--color-ec-copper)", animation: "spin 1s linear infinite" }} />
@@ -1467,8 +1467,8 @@ export default function Screener() {
                 )}
               </div>
 
-              {/* ── Float Comparison (Collapsible) ── */}
-              <div style={{
+              {/* ── Float Comparison (Collapsible) ── oculto de momento por decisión de producto */}
+              {false && <div style={{
                 padding: "8px 16px",
                 borderBottom: "1px solid var(--color-ec-border)",
               }}>
@@ -1516,7 +1516,7 @@ export default function Screener() {
                     )}
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* ── Screener Row Data ── */}
               {(() => {
@@ -1554,7 +1554,7 @@ export default function Screener() {
 //  SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════════
 
-function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+function DetailSection({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
     <div style={{
       padding: "8px 16px",
@@ -1570,6 +1570,17 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
         marginBottom: 6,
       }}>
         {title}
+        {note && (
+          <span style={{
+            marginLeft: 6,
+            fontWeight: 500,
+            color: "var(--color-ec-text-muted)",
+            textTransform: "none",
+            letterSpacing: "0.2px",
+          }}>
+            {note}
+          </span>
+        )}
       </span>
       {children}
     </div>

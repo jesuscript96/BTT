@@ -3062,7 +3062,8 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 />
                             ) : (
                             <>
-                            <KnowTheFloatTable floatData={data?.know_the_float} shortInterest={data?.short_interest} />
+                            {/* Float Comparison oculto de momento por decisión de producto */}
+                            {false && <KnowTheFloatTable floatData={data?.know_the_float} shortInterest={data?.short_interest} />}
                             <GapStatsSection
                                 gapStats={data?.gap_stats}
                                 gapStatsPlus1={data?.gap_stats_plus_1}

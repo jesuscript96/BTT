@@ -566,24 +566,6 @@ AGENTIC_TOOLS = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "locates_calc",
-            "description": "Calcula el coste de locates de un short (paquetes de 100, siempre ceil) y el fade break-even. Requiere precio_entrada, precio_stop y coste_paquete; y además shares O riesgo_dolares (uno de los dos). NO lo calcules a mano: usa esta herramienta.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "precio_entrada": {"type": "number"},
-                    "precio_stop": {"type": "number", "description": "Stop loss (en un short, > precio_entrada)."},
-                    "coste_paquete": {"type": "number", "description": "Coste por paquete de 100 locates."},
-                    "shares": {"type": "number", "description": "Nº de acciones (opción A)."},
-                    "riesgo_dolares": {"type": "number", "description": "Riesgo en $ (opción B); si se da, se derivan las shares."},
-                },
-                "required": ["precio_entrada", "precio_stop", "coste_paquete"],
-            },
-        },
-    },
 ]
 
 
@@ -678,28 +660,14 @@ def _tool_ticker_snapshot(ticker=None, _default_ticker=None):
     return snap
 
 
-def _tool_locates_calc(precio_entrada=None, precio_stop=None, coste_paquete=None,
-                       shares=None, riesgo_dolares=None, _default_ticker=None):
-    """Calculadora determinista de locates (paquetes de 100, ceil)."""
-    from app.services.locates import calc_locates
-    try:
-        return calc_locates(
-            precio_entrada=float(precio_entrada) if precio_entrada is not None else None,
-            precio_stop=float(precio_stop) if precio_stop is not None else None,
-            coste_paquete=float(coste_paquete) if coste_paquete is not None else None,
-            shares=float(shares) if shares is not None else None,
-            riesgo_dolares=float(riesgo_dolares) if riesgo_dolares is not None else None,
-        )
-    except (TypeError, ValueError):
-        return {"error": "Datos numéricos inválidos."}
-
+# Locates se calcula ahora de forma determinista en el frontend (sidebar,
+# LocatesCalculator.tsx) — fuera de Edgie por decisión de producto.
 
 _TOOL_IMPL = {
     "list_filings": _tool_list_filings,
     "read_filing": _tool_read_filing,
     "get_insiders": _tool_get_insiders,
     "get_ticker_snapshot": _tool_ticker_snapshot,
-    "locates_calc": _tool_locates_calc,
 }
 
 _AGENTIC_PREAMBLE = (
@@ -708,14 +676,11 @@ _AGENTIC_PREAMBLE = (
     "NUNCA inventas datos: si falta un dato, di 'sin datos disponibles'. Sé BREVE: todo debe leerse en 30 "
     "segundos mientras se opera; si algo cabe en una frase, no uses dos; sin párrafos largos ni relleno.\n"
     "TOOLS (úsalas en vez de responder de memoria; cita la fuente): list_filings, read_filing, get_insiders, "
-    "get_ticker_snapshot, locates_calc. NUNCA afirmes haber leído un documento que no abriste con read_filing.\n"
+    "get_ticker_snapshot. NUNCA afirmes haber leído un documento que no abriste con read_filing.\n"
     "Estructura SEC: directivos en 20-F Item 6 / 10-K Item 10 / DEF 14A; agentes colocadores y ofertas en "
     "424B y S-1/S-3 ('Plan of Distribution'/'Underwriting'); warrants en 'Description of Securities'.\n\n"
-    "FLUJO 'calcula locates': pregunta UNO A UNO y EN ESTE ORDEN, sin valores por defecto: "
-    "(1) precio de entrada, (2) dónde pones el stop, (3) cuánto cuesta el paquete de 100 locates, "
-    "(4) cuántas acciones operas O cuánto dinero arriesgas. Cuando tengas los 4, llama a locates_calc y "
-    "muestra: paquetes de locates, coste total, stop a X% de la entrada, riesgo total, y una sola línea de "
-    "conclusión con el fade break-even total. Los locates van SIEMPRE en paquetes de 100 (la tool ya hace ceil).\n\n"
+    "LOCATES: tú NO calculas locates. Si te lo piden, indica que usen la calculadora de locates del menú "
+    "lateral (icono de calculadora), que lo hace de forma exacta.\n\n"
     "FLUJO 'informe rápido de ticker' (usa get_ticker_snapshot + read_filing + get_insiders): 6 bloques, "
     "máx 2 frases cada uno: "
     "1) Sector (y temperatura del sector si la conoces; si no, solo el sector). "
