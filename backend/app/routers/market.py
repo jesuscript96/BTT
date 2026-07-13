@@ -4,6 +4,15 @@ from typing import Optional
 from app.database import get_db_connection
 import math
 import json
+import os
+
+# Suelo del rango que la app ANUNCIA como disponible.
+# daily_metrics conserva filas de 2017, pero 2017 es un muestreo (~208 tickers/día
+# frente a ~11.000) y de 2018-2021 no hay intraday. Sin este suelo, MIN(timestamp)
+# devuelve 2017 y el usuario podía pedir un rango para el que no hay datos y recibir
+# cero resultados sin explicación. Alcance acordado (Jesús, 2026-07-13): 2022 → hoy.
+# Configurable por si se amplía el histórico en el futuro.
+MIN_AVAILABLE_DATE = os.getenv("MIN_AVAILABLE_DATE", "2022-01-01")
 
 def safe_float(v):
     if v is None: return 0.0
@@ -115,12 +124,16 @@ def get_available_date_range():
     con = None
     try:
         con = get_db_connection(read_only=True)
-        row = con.execute("SELECT CAST(MIN(timestamp) AS VARCHAR)[:10], CAST(MAX(timestamp) AS VARCHAR)[:10] FROM daily_metrics").fetchone()
+        row = con.execute(
+            "SELECT CAST(MIN(timestamp) AS VARCHAR)[:10], CAST(MAX(timestamp) AS VARCHAR)[:10] "
+            "FROM daily_metrics WHERE timestamp >= CAST(? AS DATE)",
+            [MIN_AVAILABLE_DATE],
+        ).fetchone()
         if row and row[0] and row[1]:
             return {"min_date": str(row[0]), "max_date": str(row[1])}
-        return {"min_date": "2022-01-01", "max_date": date.today().isoformat()}
+        return {"min_date": MIN_AVAILABLE_DATE, "max_date": date.today().isoformat()}
     except Exception as e:
-        return {"min_date": "2022-01-01", "max_date": date.today().isoformat()}
+        return {"min_date": MIN_AVAILABLE_DATE, "max_date": date.today().isoformat()}
     finally:
         if con: con.close()
 

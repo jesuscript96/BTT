@@ -31,6 +31,17 @@ GCS_HMAC_SECRET = os.getenv('GCS_HMAC_SECRET', '')
 GAP_PCT_MIN = 5.0        # candidatos con gap >= 5%
 PM_RUNNER_MIN = 10.0     # candidatos con pmh estimado >= 10%
 
+# FULL-MARKET: descargar el intraday de TODOS los tickers del día, no solo de los
+# candidatos de gap. El filtro de candidatos abarata el cron diario, pero deja
+# daily_metrics con ~800 tickers/día en vez de ~12.000, y sus campos derivados de
+# intraday (pm_high, rth_run_pct, m15..m180) solo existen para quien se descargó.
+# Los años "buenos" (2022 → 2026-02) son full-market porque vinieron del volcado
+# masivo original, NO de este script. Cualquier mes que este script rellene solo
+# quedará full-market si se corre con FULL_MARKET_ENABLED=true.
+# OJO: cuesta ~12.000 req/día en vez de ~600 → usar solo en backfills, nunca en el
+# cron diario (que lo deja en false por defecto).
+FULL_MARKET_ENABLED = os.getenv("FULL_MARKET_ENABLED", "false").strip().lower() == "true"
+
 # Throttling artificial de FREE TIER (5 req/min). El plan pago de Massive/Polygon
 # tiene llamadas ilimitadas (soft-limit ~100 req/s), así que por defecto NO se
 # aplica. Poner MASSIVE_THROTTLE_ENABLED=true vuelve al comportamiento free-tier.
@@ -722,10 +733,13 @@ def main():
             gap = abs((o - pc) / pc * 100)
             pm_runner_est = ((h - pc) / pc * 100) if pc > 0 else 0
 
-            if gap >= GAP_PCT_MIN or pm_runner_est >= PM_RUNNER_MIN:
+            if FULL_MARKET_ENABLED or gap >= GAP_PCT_MIN or pm_runner_est >= PM_RUNNER_MIN:
                 candidates.append((t, date_str, pc))
 
-        logger.info(f"  Candidates (gap >= {GAP_PCT_MIN}% or pmh est >= {PM_RUNNER_MIN}%): {len(candidates)}")
+        if FULL_MARKET_ENABLED:
+            logger.info(f"  FULL-MARKET: {len(candidates)} tickers (sin filtro de gap)")
+        else:
+            logger.info(f"  Candidates (gap >= {GAP_PCT_MIN}% or pmh est >= {PM_RUNNER_MIN}%): {len(candidates)}")
 
         # 3c. Descargar 1m bars en paralelo
         day_metrics = []
