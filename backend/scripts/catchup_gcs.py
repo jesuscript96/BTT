@@ -38,9 +38,13 @@ PM_RUNNER_MIN = 10.0     # candidatos con pmh estimado >= 10%
 # Los años "buenos" (2022 → 2026-02) son full-market porque vinieron del volcado
 # masivo original, NO de este script. Cualquier mes que este script rellene solo
 # quedará full-market si se corre con FULL_MARKET_ENABLED=true.
-# OJO: cuesta ~12.000 req/día en vez de ~600 → usar solo en backfills, nunca en el
-# cron diario (que lo deja en false por defecto).
+# Cuesta ~12.000 req/día en vez de ~600 (≈5 min de reloj). El cron diario lo lleva
+# ACTIVADO desde 2026-07-14 (se pasa por -e en el crontab del host); el defecto sigue
+# en false para no cambiar el comportamiento de quien lo invoque a mano.
 FULL_MARKET_ENABLED = os.getenv("FULL_MARKET_ENABLED", "false").strip().lower() == "true"
+
+# Sesiones hacia atrás que se leen para sembrar prev_closes. Ver _seed_prev_closes.
+SEED_LOOKBACK_SESSIONS = int(os.getenv("SEED_LOOKBACK_SESSIONS", "5"))
 
 # Throttling artificial de FREE TIER (5 req/min). El plan pago de Massive/Polygon
 # tiene llamadas ilimitadas (soft-limit ~100 req/s), así que por defecto NO se
@@ -615,13 +619,34 @@ def _seed_prev_closes(seed_date: date) -> dict[str, float]:
     día por ejecución y entonces la tabla se come a sí misma: cada noche entran solo
     los tickers de la noche anterior, menos los que se caigan. Medido el 2026-07-13:
     91,0% de cobertura y bajando, con techo real 98,3% al sembrar desde Massive.
+
+    Se miran SEED_LOOKBACK_SESSIONS sesiones, no solo la última, porque el cierre previo
+    de un ticker que no cotizó ayer es el de la última sesión en que sí lo hizo. Un run de
+    varios días ya lo hacía sin querer (arrastra los cierres en memoria); el cron de un día
+    no, y por eso se dejaba fuera a los tickers que se saltan una sesión. Medido sobre
+    2026-07-13: 1 sesión → 98,3% de techo, 5 → 99,7% (a partir de ahí es calderilla).
     """
-    logger.info(f"Seeding prev_closes from grouped-daily for {seed_date}...")
-    rows = get_grouped_daily(seed_date.isoformat())
-    result = {r["T"]: r["c"] for r in rows if r.get("T") and r.get("c", 0) > 0}
-    if result:
-        logger.info(f"Seeded {len(result)} tickers from {seed_date} (grouped-daily)")
-        return result
+    logger.info(f"Seeding prev_closes from grouped-daily (hasta {seed_date})...")
+    closes: dict[str, float] = {}
+    sesiones = 0
+    dia = seed_date
+    # Se cuentan sesiones CON datos, no días de calendario: los festivos no gastan cupo.
+    while sesiones < SEED_LOOKBACK_SESSIONS and (seed_date - dia).days <= 20:
+        if dia.weekday() < 5:
+            rows = get_grouped_daily(dia.isoformat())
+            if rows:
+                sesiones += 1
+                for r in rows:
+                    t, c = r.get("T"), r.get("c", 0)
+                    # setdefault: se recorre de la sesión más reciente hacia atrás,
+                    # así que el primer cierre que se ve para un ticker es el bueno.
+                    if t and c > 0:
+                        closes.setdefault(t, c)
+        dia -= timedelta(days=1)
+
+    if closes:
+        logger.info(f"Seeded {len(closes)} tickers de {sesiones} sesiones (grouped-daily)")
+        return closes
 
     logger.warning("grouped-daily no dio cierres; cayendo al lake (techo más bajo)")
     return _seed_prev_closes_from_lake(seed_date)
