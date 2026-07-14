@@ -606,7 +606,29 @@ def get_trading_days(start: date, end: date) -> list[str]:
 
 
 def _seed_prev_closes(seed_date: date) -> dict[str, float]:
-    """Lee los closes de seed_date desde GCS para arrancar prev_closes."""
+    """Cierres de seed_date para arrancar prev_closes, tomados de grouped-daily.
+
+    La fuente es Massive y NO nuestra tabla a propósito: un ticker sin cierre previo
+    se descarta (`if pc <= 0: continue`), así que sembrar desde `daily_metrics` pone
+    como techo del día lo que ya teníamos ayer. En un run de varios días no se nota
+    (a partir del día 2 los cierres salen de grouped-daily), pero el cron procesa UN
+    día por ejecución y entonces la tabla se come a sí misma: cada noche entran solo
+    los tickers de la noche anterior, menos los que se caigan. Medido el 2026-07-13:
+    91,0% de cobertura y bajando, con techo real 98,3% al sembrar desde Massive.
+    """
+    logger.info(f"Seeding prev_closes from grouped-daily for {seed_date}...")
+    rows = get_grouped_daily(seed_date.isoformat())
+    result = {r["T"]: r["c"] for r in rows if r.get("T") and r.get("c", 0) > 0}
+    if result:
+        logger.info(f"Seeded {len(result)} tickers from {seed_date} (grouped-daily)")
+        return result
+
+    logger.warning("grouped-daily no dio cierres; cayendo al lake (techo más bajo)")
+    return _seed_prev_closes_from_lake(seed_date)
+
+
+def _seed_prev_closes_from_lake(seed_date: date) -> dict[str, float]:
+    """Respaldo: lee los closes de seed_date desde GCS."""
     logger.info(f"Seeding prev_closes from GCS for {seed_date}...")
     try:
         con = duckdb.connect()
