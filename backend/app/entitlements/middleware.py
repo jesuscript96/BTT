@@ -35,8 +35,10 @@ def get_tier(user_id: Optional[str]) -> str:
     """
     Resolve a user's tier from Clerk publicMetadata.tier.
 
-    Fails open to Free on any of: no user_id (auth disabled / anonymous),
-    no CLERK_SECRET_KEY, missing/unknown tier, or a network/HTTP error.
+    Cae a DEFAULT_TIER ("Beta", el MENOS permisivo) en cualquiera de estos casos: sin
+    user_id (auth desactivada / anónimo), sin CLERK_SECRET_KEY, tier ausente o
+    desconocido, o error de red/HTTP. Es un fail-CLOSED: si no sabemos quién eres, ves
+    lo mínimo. Antes caía a "Free", que ve Market Analysis.
 
     Local-dev escape hatch: if DEV_TIER is set to a known tier it overrides
     resolution, so Admin-gated features (e.g. the screener) are testable
@@ -48,11 +50,11 @@ def get_tier(user_id: Optional[str]) -> str:
         return dev_tier
 
     if not user_id:
-        return policy.FREE_TIER
+        return policy.DEFAULT_TIER
 
     secret = os.getenv("CLERK_SECRET_KEY", "").strip()
     if not secret:
-        return policy.FREE_TIER
+        return policy.DEFAULT_TIER
 
     try:
         resp = httpx.get(
@@ -67,7 +69,7 @@ def get_tier(user_id: Optional[str]) -> str:
             return tier
     except Exception:
         pass
-    return policy.FREE_TIER
+    return policy.DEFAULT_TIER
 
 
 # Kept as the documented internal name; get_tier is the public, reusable form.

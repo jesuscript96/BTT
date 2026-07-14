@@ -16,7 +16,17 @@ Sentiment y el portal de API; el resto del backend sigue sin guarda.
 """
 from typing import Dict, Union
 
-# Default tier for any user without an explicit tier in Clerk publicMetadata.
+# Tier de quien NO tiene tier en el publicMetadata de Clerk. Es el MENOS permisivo a
+# propósito: el registro es por invitación, así que quien llega sin tier es un beta-tester
+# recién dado de alta. Antes el defecto era "Free" (que ve Market Analysis), y eso obligaba
+# a entrar en la ficha de cada invitado DESPUÉS de que se registrase para ponerle el tier;
+# entre medias veía secciones que no le tocan, y olvidarlo no daba ningún error. Con el
+# defecto en Beta, olvidarse es inofensivo.
+# Los internos (Jaume, Álvaro, Jesús, Adrián) llevan "Admin" explícito en Clerk.
+DEFAULT_TIER = "Beta"
+
+# Nombre del tier gratuito. Ya NO es el defecto; se conserva para cuando se abra el
+# registro público.
 FREE_TIER = "Free"
 
 FeatureValue = Union[bool, int]
@@ -51,7 +61,8 @@ LIMIT_WINDOWS: Dict[str, str] = {
 }
 
 # Declarative tier table — THE source of truth.
-# MVP: all open. Comments show the proposed production values to flip later.
+# Free/Mid/Pro siguen casi abiertos (los comentarios muestran el valor de producción
+# propuesto). Beta es el que restringe de verdad, y es el DEFECTO.
 POLICY: Dict[str, Dict[str, FeatureValue]] = {
     "Admin": {
         "backtester.run": True,
@@ -145,19 +156,19 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
 
 
 def tier_policy(tier: str) -> Dict[str, FeatureValue]:
-    """Return a COPY of the full feature map for a tier (Free if unknown)."""
-    return dict(POLICY.get(tier, POLICY[FREE_TIER]))
+    """Return a COPY of the full feature map for a tier (DEFAULT_TIER if unknown)."""
+    return dict(POLICY.get(tier, POLICY[DEFAULT_TIER]))
 
 
 def can(tier: str, feature: str) -> bool:
-    """Boolean access check. Unknown tier -> Free; unknown feature -> allow."""
-    table = POLICY.get(tier, POLICY[FREE_TIER])
+    """Boolean access check. Unknown tier -> DEFAULT_TIER; unknown feature -> allow."""
+    table = POLICY.get(tier, POLICY[DEFAULT_TIER])
     return bool(table.get(feature, True))
 
 
 def limit(tier: str, feature: str) -> int:
-    """Numeric limit (-1 = unlimited). Unknown tier -> Free; unknown -> -1."""
-    table = POLICY.get(tier, POLICY[FREE_TIER])
+    """Numeric limit (-1 = unlimited). Unknown tier -> DEFAULT_TIER; unknown -> -1."""
+    table = POLICY.get(tier, POLICY[DEFAULT_TIER])
     value = table.get(feature, -1)
     # Defensive: a boolean stored where a limit is expected -> treat as unlimited.
     if isinstance(value, bool):
