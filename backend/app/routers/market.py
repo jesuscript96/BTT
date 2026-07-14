@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import date
 from typing import Optional
 from app.database import get_db_connection
+from app.entitlements.middleware import require
 import math
 import json
 import os
@@ -34,7 +35,7 @@ from app.services.market_analysis_service import get_market_analysis, get_avg_ch
 import pandas as pd
 
 @router.get("/screener")
-def market_analysis(request: Request):
+def market_analysis(request: Request, _=Depends(require("market.analysis.access"))):
     """
     Market Analysis — payload analítico del MVP sobre los gappers del periodo filtrado:
     KPIs (MA-01), distribuciones temporales (MA-02), MAE/MFE (MA-05) y Recent Gaps (MA-06).
@@ -119,6 +120,9 @@ def get_latest_market_date():
     finally:
         if con: con.close()
 
+# SIN guarda a propósito: vive bajo /api/market pero NO es de Market Analysis — lo
+# consumen los builders de dataset/estrategia del Backtester, que el tier Beta sí tiene.
+# Cerrar el router entero en vez de endpoint por endpoint rompería el Backtester.
 @router.get("/available-date-range")
 def get_available_date_range():
     con = None
@@ -138,7 +142,7 @@ def get_available_date_range():
         if con: con.close()
 
 @router.get("/aggregate/intraday")
-def avg_change_from_open(request: Request):
+def avg_change_from_open(request: Request, _=Depends(require("market.analysis.access"))):
     """
     Market Analysis MA-04 — Avg Change from Open de los últimos 12 meses naturales.
     Contrato: docs/market-analysis/PRD.md §4.2. Lógica en
@@ -153,7 +157,7 @@ def avg_change_from_open(request: Request):
 
 
 @router.get("/gaps-by-sector")
-def gaps_by_sector(request: Request):
+def gaps_by_sector(request: Request, _=Depends(require("market.analysis.access"))):
     """
     Market Analysis — Gaps Up by Sector (treemap). Gappers con gap>=min_gap de la
     ventana (5d/30d/90d) agregados por sector de la empresa.

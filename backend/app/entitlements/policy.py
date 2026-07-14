@@ -1,14 +1,18 @@
 """
 Entitlements policy — single source of truth for tiers and feature access.
 
-Phase 1 / MVP: everything is open (booleans True, limits -1 = unlimited) for
-every tier, so the app behaves exactly as before. The ONLY thing that varies by
-tier today is `admin.preview_features`, which gates in-development features and
-is True only for the "Admin" tier (Jaume).
+Free / Mid / Pro siguen prácticamente abiertos (booleans True, limits -1 = ilimitado):
+la app se comporta como antes para ellos. Lo que varía hoy por tier es
+`admin.preview_features` (solo Admin) y el tier "Beta", que sí restringe de verdad.
 
-To activate real restrictions later (see docs/entitlements/ARQUITECTURA.md),
-edit the values in POLICY below — nothing else in the codebase needs to change.
-The comment after each limit shows the proposed production value.
+"Beta" (2026-07) es para los beta-testers invitados: solo Screener, Ticker Analysis,
+Backtester y Baúl. Es el ÚNICO tier con `market.analysis.access` en False.
+
+Para activar el resto de restricciones (ver docs/entitlements/ARQUITECTURA.md) basta
+con editar los valores de POLICY — el comentario tras cada límite muestra el valor de
+producción propuesto. Pero OJO: para que un cambio aquí BLOQUEE algo, el endpoint tiene
+que llevar `Depends(require(...))`. Hoy solo lo llevan los de Market Analysis, Market
+Sentiment y el portal de API; el resto del backend sigue sin guarda.
 """
 from typing import Dict, Union
 
@@ -98,6 +102,26 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "api.portal.access": False,
         "market.sentiment.access": False,
         "market.analysis.access": True,
+        "admin.preview_features": False,
+    },
+    # Beta-testers invitados (2026-07): SOLO Screener, Ticker Analysis, Backtester
+    # y Baúl. Todo lo demás cerrado — es el único tier con market.analysis.access
+    # en False, y por eso el gating de Market Analysis solo muerde aquí.
+    "Beta": {
+        "backtester.run": True,
+        "backtester.surface_3d": True,
+        "backtester.runs_per_day": -1,
+        "backtester.date_range_years": -1,
+        "ticker.edgie_assessment": True,
+        "ticker.edgie_messages_per_day": -1,
+        "vault.access": True,
+        "vault.max_strategies": -1,
+        "api.access": False,
+        "api.runs_per_month": 0,
+        "screener.access": True,
+        "api.portal.access": False,
+        "market.sentiment.access": False,
+        "market.analysis.access": False,
         "admin.preview_features": False,
     },
     "Free": {
