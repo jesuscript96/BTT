@@ -171,32 +171,11 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
             print(f"Error building Strategy: {e}")
             continue
 
-    # Fallback: GCS hot cache — return raw dicts (legacy records may not pass Pydantic strict)
-    out: list = [s.model_dump() if hasattr(s, "model_dump") else s for s in strategies]
-    try:
-        from app.db.gcs_cache import get_strategies_df
-        df = get_strategies_df()
-        if df is not None and not df.empty:
-            local_ids = {s.get("id") for s in out}
-            for record in df.to_dict(orient="records"):
-                if record.get("id") not in local_ids:
-                    definition = record.get("definition", {})
-                    if isinstance(definition, str):
-                        try:
-                            definition = json.loads(definition)
-                        except Exception:
-                            definition = {}
-                    out.append({**definition,
-                        "id": record.get("id"),
-                        "name": record.get("name"),
-                        "description": record.get("description"),
-                        "created_at": str(record.get("created_at", "")),
-                        "updated_at": str(record.get("updated_at", "")),
-                    })
-    except Exception as e:
-        print(f"[WARN] Could not read strategies from GCS: {e}")
-
-    return out
+    # El respaldo a GCS se ha quitado: ese parquet es una foto congelada de marzo de
+    # 2026, SIN columna de dueño, y se servía a todo el mundo sin filtrar (33 estrategias
+    # tipo "Test V17"/"asgfasdg"). Con varios usuarios en la app eso es una fuga y ensucia
+    # el Baúl de todos. El parquet sigue en GCS por si hiciera falta; simplemente no se lista.
+    return [s.model_dump() if hasattr(s, "model_dump") else s for s in strategies]
 
 @router.get("/{strategy_id}")
 def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
@@ -219,30 +198,8 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
     finally:
         con.close()
 
-    # Fallback: GCS — return raw dict (legacy records may not pass Pydantic strict)
-    try:
-        from app.db.gcs_cache import get_strategies_df
-        df = get_strategies_df()
-        if df is not None and not df.empty:
-            row_gcs = df[df["id"] == strategy_id]
-            if not row_gcs.empty:
-                record = row_gcs.iloc[0].to_dict()
-                definition = record.get("definition", {})
-                if isinstance(definition, str):
-                    try:
-                        definition = json.loads(definition)
-                    except Exception:
-                        definition = {}
-                return {**definition,
-                    "id": record.get("id"),
-                    "name": record.get("name"),
-                    "description": record.get("description"),
-                    "created_at": str(record.get("created_at", "")),
-                    "updated_at": str(record.get("updated_at", "")),
-                }
-    except Exception as e:
-        print(f"[WARN] Could not read strategy {strategy_id} from GCS: {e}")
-
+    # Sin respaldo a GCS: servía cualquier estrategia del parquet legacy por id, sin mirar
+    # dueño — bastaba conocer el id para leer la de otro. Ver list_strategies.
     raise HTTPException(status_code=404, detail="Strategy not found")
 
 @router.delete("/{strategy_id}")
