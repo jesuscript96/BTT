@@ -69,23 +69,39 @@ MAX_WORKERS = max(1, int(os.getenv("MASSIVE_MAX_WORKERS", "10")))
 MASSIVE_ADJUSTED = os.getenv("MASSIVE_ADJUSTED", "false").strip().lower() == "true"
 _ADJUSTED_PARAM = "true" if MASSIVE_ADJUSTED else "false"
 
-# ─── Missprint (bad-tick) clip — NBBO-based, gated OFF por defecto ───────────
-# Los aggregates 1m de Polygon incluyen prints fuera del NBBO (bad-ticks) en el
-# high/low, sobre todo en horario extendido (premarket). Un backtest bar-a-bar
-# que pise esa barra dispara un stop/entrada falso — y premarket es la sesión
-# MÁS usada (Jaume 2026-07-03), así que NO es cosmético para ese caso. Este clip
-# detecta barras sospechosas (mecha/salto anómalo vs mediana móvil de close) y
-# recorta SOLO su high/low al extremo consistente con el NBBO vigente del minuto
-# (/v3/quotes + /v3/trades). Conservador: nunca recorta dentro del cuerpo
-# (open/close), solo pide NBBO para las barras flagged (raras) y solo clipa si el
-# cambio supera MIN_CLIP. Coste 0 si desactivado. Activar con MISSPRINT_CLIP_ENABLED=true
-# tras validar. Ver memoria btt-missprint-analysis (override Jaume) + btt-motor-v2-merged.
+# ─── Missprint (bad-tick) — reconstrucción de vela completa NBBO, gated OFF ───
+# Los aggregates 1m de Polygon incluyen prints fuera del NBBO (bad-ticks), sobre
+# todo en horario extendido (premarket). NO corrompen SOLO high/low: la vela
+# ENTERA (open/close incluidos) queda envenenada — validado con ticks reales el
+# 2026-07-15 (GTBP 2025-01-13 close LAKE 4.10 vs real NBBO 2.19, +87%). Y premarket
+# es la sesión MÁS usada (Jaume 2026-07-03). Una estrategia que entra por "Bar
+# Close Crosses VWAP" pisa el CIERRE phantom (y el VWAP, que se calcula sobre
+# H+L+C, también queda envenenado) → entrada/stop falsos.
+#
+# Por eso NO se recorta la mecha: se SUSTITUYE la vela completa (O/H/L/C) por la
+# reconstruida desde los trades dentro del NBBO vigente del minuto (/v3/trades +
+# /v3/quotes): open=primer trade válido, close=último, high/low=max/min. La
+# detección es RELATIVA (desviación de CUALQUIER campo vs la mediana móvil centrada
+# del close), no un umbral fijo de mecha que se dejaba fuera los pequeños. Multipasada:
+# la mediana se limpia entre pasadas → caza clusters de barras malas consecutivas.
+# Fallback si no hay NBBO: copiar la vela anterior (petición de Jaume). Conservador:
+# solo pide NBBO para las barras flagged (raras), best-effort (sin NBBO deja intacta),
+# y solo sustituye si el cambio supera MIN_CLIP (no toca barras reales volátiles que
+# se reconstruyen a sí mismas). Coste 0 si desactivado. Activar con
+# MISSPRINT_CLIP_ENABLED=true tras validar. Ver memoria btt-missprint-analysis
+# (forense Jaume 2026-07-15) + btt-motor-v2-merged.
 MISSPRINT_CLIP_ENABLED = os.getenv("MISSPRINT_CLIP_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
-MISSPRINT_WICK_PCT = float(os.getenv("MISSPRINT_WICK_PCT", "0.20"))    # mecha/salto > 20% del cuerpo/mediana
+MISSPRINT_DEV_PCT = float(os.getenv("MISSPRINT_DEV_PCT", "0.10"))      # flag si CUALQUIER campo O/H/L/C se desvía >10% de la mediana móvil
 MISSPRINT_NBBO_TOL = float(os.getenv("MISSPRINT_NBBO_TOL", "0.10"))    # trade válido dentro de [bid*0.9, ask*1.1]
 MISSPRINT_MIN_PRICE = float(os.getenv("MISSPRINT_MIN_PRICE", "1.0"))   # ignora sub-$1 (ruido de baja liquidez)
 MISSPRINT_CTX_WIN = int(os.getenv("MISSPRINT_CTX_WIN", "15"))          # ventana de la mediana móvil (barras)
-MISSPRINT_MIN_CLIP = float(os.getenv("MISSPRINT_MIN_CLIP", "0.02"))    # solo clipar si el extremo cambia > 2%
+MISSPRINT_MIN_CLIP = float(os.getenv("MISSPRINT_MIN_CLIP", "0.02"))    # solo sustituir si algún campo cambia > 2%
+MISSPRINT_MAX_PASSES = int(os.getenv("MISSPRINT_MAX_PASSES", "3"))     # pasadas anti-cluster (la mediana se limpia entre pasadas)
+# Lead-in de quotes: se piden desde N min ANTES del minuto de interés para que los
+# primeros trades del minuto tengan quote previo con el que validar (merge_asof
+# backward). Sin él, el open reconstruido se sesga (los 1ros trades quedan sin NBBO
+# y se caen). Hace que el path per-bar (ingesta) coincida con el windowed (backfill).
+MISSPRINT_QUOTE_LEAD_NS = int(os.getenv("MISSPRINT_QUOTE_LEAD_MIN", "15")) * 60_000_000_000
 
 # ─── Massive client ───────────────────────────────────
 
@@ -241,89 +257,211 @@ def _polygon_results(url: str, params: dict, max_retries: int = 4,
     return None
 
 
-def _detect_and_clip_missprints(ticker: str, df_1m: pd.DataFrame):
-    """Detecta bad-ticks (mecha/salto anómalo del high/low vs mediana móvil de
-    close) y recorta SOLO su high/low al extremo consistente con el NBBO vigente
-    del minuto. Conservador: nunca recorta por debajo del cuerpo (open/close),
-    solo pide NBBO para las barras flagged, y solo clipa si el cambio supera
-    MISSPRINT_MIN_CLIP. Devuelve (df posiblemente modificado, nº de clips).
-    No-op (coste 0) si MISSPRINT_CLIP_ENABLED=false. Best-effort: cualquier fallo
-    de red/NBBO deja la barra intacta (nunca corrompe por no poder validar)."""
-    if not MISSPRINT_CLIP_ENABLED or df_1m.empty or len(df_1m) < 3:
-        return df_1m, 0
+class PolygonFetchError(RuntimeError):
+    """No se pudieron leer los ticks (red, 429/5xx, o cuerpo truncado). Distinto de
+    'Polygon no tiene ticks': ante ESTO el caller NO debe reconstruir ni aplicar el
+    fallback, porque un tramo parcial de quotes da un NBBO falso y una vela
+    'corregida' peor que la original. Se deja el dato intacto y se reintenta."""
 
-    o = df_1m["open"].to_numpy(dtype="float64")
-    h = df_1m["high"].to_numpy(dtype="float64")
-    l = df_1m["low"].to_numpy(dtype="float64")
-    c = df_1m["close"].to_numpy(dtype="float64")
-    body_top = np.maximum(o, c)
-    body_bot = np.minimum(o, c)
 
-    med = (df_1m["close"].rolling(MISSPRINT_CTX_WIN, center=True, min_periods=1)
+def _polygon_paginated(url: str, ns_gte: int, ns_lt: int,
+                       max_pages: int = 40, retries_empty: int = 3,
+                       retries_page: int = 4) -> list:
+    """Trae TODOS los results de un endpoint /v3 en [ns_gte, ns_lt) siguiendo
+    next_url (Polygon pagina a 50000). Serial con sleep para respetar el soft-limit.
+    Reintenta la 1ª página ante 200-vacío (ráfaga). Lista (posiblemente vacía).
+
+    Cada página se reintenta ante red caída, 429/5xx y cuerpo truncado (Polygon
+    corta el JSON a media respuesta bajo carga: visto a 421 KB el 2026-07-16).
+    Si tras retries_page sigue sin poder leerse, lanza PolygonFetchError en vez de
+    devolver el tramo parcial: devolver menos quotes de las reales no se distingue
+    de 'no hay quotes' y acabaría fabricando velas. Un 4xx definitivo (404 ticker
+    inexistente) sí es 'no hay datos' y devuelve lo acumulado."""
+    params = {"timestamp.gte": ns_gte, "timestamp.lt": ns_lt, "limit": 50000,
+              "order": "asc", "sort": "timestamp", "apiKey": API_KEY}
+    out: list = []
+    next_url, use_params, empty_tries = url, params, 0
+    for _ in range(max_pages):
+        payload = None
+        for attempt in range(retries_page):
+            try:
+                r = requests.get(next_url, params=use_params, verify=False, timeout=40)
+            except Exception:
+                time.sleep(1.0 * (attempt + 1))
+                continue
+            if r.status_code == 200:
+                try:
+                    payload = r.json()
+                    break
+                except ValueError:      # cuerpo truncado/corrupto: reintentar la MISMA página
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+            if r.status_code in (429, 500, 502, 503, 504):
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            return out                  # 4xx definitivo: Polygon no tiene esto, no es fallo
+        if payload is None:
+            raise PolygonFetchError(f"página irrecuperable tras {retries_page} intentos: "
+                                    f"{url.rsplit('/', 1)[-1]}")
+        res = payload.get("results", [])
+        if not res and not out:
+            empty_tries += 1
+            if empty_tries >= retries_empty:
+                break
+            time.sleep(1.0)
+            continue
+        out.extend(res)
+        nxt = payload.get("next_url")
+        if not nxt or not res:
+            break
+        next_url, use_params = nxt, {"apiKey": API_KEY}  # next_url ya lleva cursor+filtros
+        time.sleep(0.2)
+    return out
+
+
+def _valid_nbbo_trades(trades: list, quotes: list) -> Optional[pd.DataFrame]:
+    """merge_asof trade↔quote vigente, deja solo trades dentro del NBBO. None si nada."""
+    if not trades or not quotes:
+        return None
+    try:
+        dt = pd.DataFrame(trades)[["price", "sip_timestamp"]].sort_values("sip_timestamp")
+        dq = (pd.DataFrame(quotes)[["bid_price", "ask_price", "sip_timestamp"]]
+              .sort_values("sip_timestamp"))
+        m = pd.merge_asof(dt, dq, on="sip_timestamp", direction="backward").dropna(
+            subset=["bid_price", "ask_price"])
+        m = m[(m["bid_price"] > 0) & (m["ask_price"] > 0)]
+        ok = m[(m["price"] <= m["ask_price"] * (1 + MISSPRINT_NBBO_TOL)) &
+               (m["price"] >= m["bid_price"] * (1 - MISSPRINT_NBBO_TOL))]
+    except Exception:
+        return None
+    return ok if not ok.empty else None
+
+
+def _fetch_day_nbbo_window(ticker: str, ts_start, ts_end) -> dict:
+    """WINDOWED: una sola pasada (paginada) de trades+quotes para [ts_start, ts_end)
+    y reconstruye O/H/L/C por minuto desde trades NBBO-válidos. Devuelve
+    {minute_ts_naive_ny: {open,high,low,close}}; {} si no hay datos. Reemplaza N
+    llamadas por-barra por 2 (+ páginas) por ticker-día — para el backfill masivo."""
+    ns0 = _ny_naive_to_utc_ns(ts_start)
+    ns1 = _ny_naive_to_utc_ns(ts_end)
+    trades = _polygon_paginated(f"{BASE_URL}/v3/trades/{ticker}", ns0, ns1)
+    # quotes con lead-in: contexto NBBO para los primeros trades del inicio de la ventana
+    quotes = _polygon_paginated(f"{BASE_URL}/v3/quotes/{ticker}", ns0 - MISSPRINT_QUOTE_LEAD_NS, ns1)
+    ok = _valid_nbbo_trades(trades, quotes)
+    if ok is None:
+        return {}
+    ny = (pd.to_datetime(ok["sip_timestamp"], unit="ns", utc=True)
+          .dt.tz_convert("America/New_York").dt.tz_localize(None))
+    ok = ok.assign(_minute=ny.dt.floor("min"))
+    cache = {}
+    for minute, g in ok.groupby("_minute"):
+        p = g["price"].to_numpy(dtype="float64")
+        cache[pd.Timestamp(minute)] = {"open": float(p[0]), "high": float(p.max()),
+                                       "low": float(p.min()), "close": float(p[-1])}
+    return cache
+
+
+def _reconstruct_bar_from_nbbo(ticker: str, ts, day_cache: Optional[dict] = None) -> Optional[dict]:
+    """Reconstruye O/H/L/C de un minuto desde SOLO los trades dentro del NBBO
+    vigente. open=primer trade válido, close=último, high/low=max/min. Verdad de
+    terreno, sin umbrales. Si `day_cache` (de _fetch_day_nbbo_window) se pasa, lo
+    consulta sin red (path backfill windowed); si no, hace la llamada por-barra
+    (path ingesta nightly). None si no hay NBBO o ningún trade válido → el caller
+    decide el fallback (nunca corrompe por no poder validar)."""
+    if day_cache is not None:
+        return day_cache.get(pd.Timestamp(ts))
+    ns0 = _ny_naive_to_utc_ns(ts)
+    tbase = {"timestamp.gte": ns0, "timestamp.lt": ns0 + 60_000_000_000,
+             "limit": 50000, "order": "asc", "sort": "timestamp"}
+    # quotes con lead-in (ns0 - LEAD): contexto NBBO para los 1ros trades del minuto,
+    # si no el open reconstruido se sesga. Iguala este path (ingesta) al windowed (backfill).
+    qbase = {"timestamp.gte": ns0 - MISSPRINT_QUOTE_LEAD_NS, "timestamp.lt": ns0 + 60_000_000_000,
+             "limit": 50000, "order": "asc", "sort": "timestamp"}
+    trades = _polygon_results(f"{BASE_URL}/v3/trades/{ticker}", tbase)
+    quotes = _polygon_results(f"{BASE_URL}/v3/quotes/{ticker}", qbase)
+    ok = _valid_nbbo_trades(trades, quotes)
+    if ok is None:
+        return None
+    p = ok["price"].to_numpy(dtype="float64")
+    return {"open": float(p[0]), "high": float(p.max()),
+            "low": float(p.min()), "close": float(p[-1])}
+
+
+def _flag_missprint_bars(df: pd.DataFrame) -> np.ndarray:
+    """Detector RELATIVO: máscara booleana de barras cuya O/H/L/C se desvía
+    >MISSPRINT_DEV_PCT de la mediana móvil centrada del close (referencia local
+    robusta). Favorece recall (sobre-marcar es inofensivo: una barra real se
+    reconstruye a sí misma). Único punto de verdad de la detección — lo comparten
+    la ingesta y el backfill para que se comporten idéntico."""
+    o = df["open"].to_numpy(dtype="float64")
+    h = df["high"].to_numpy(dtype="float64")
+    l = df["low"].to_numpy(dtype="float64")
+    c = df["close"].to_numpy(dtype="float64")
+    med = (df["close"].rolling(MISSPRINT_CTX_WIN, center=True, min_periods=1)
            .median().to_numpy(dtype="float64"))
     med = np.where(med > 0, med, np.nan)
-
-    # mecha sobre el cuerpo (fracción) + salto del extremo vs mediana móvil.
-    # La mediana centrada de 15 barras es robusta a un único outlier (no se auto-tapa).
     with np.errstate(divide="ignore", invalid="ignore"):
-        upper_wick = np.where(body_top > 0, (h - body_top) / body_top, 0.0)
-        lower_wick = np.where(body_bot > 0, (body_bot - l) / body_bot, 0.0)
-        high_spike = np.where(np.isfinite(med), (h - med) / med, 0.0)
-        low_spike = np.where(np.isfinite(med), (med - l) / med, 0.0)
+        dev = np.maximum.reduce([np.abs(o - med), np.abs(h - med),
+                                 np.abs(l - med), np.abs(c - med)]) / med
+    return np.isfinite(med) & (med >= MISSPRINT_MIN_PRICE) & (dev > MISSPRINT_DEV_PCT)
 
-    flag_high = (body_top >= MISSPRINT_MIN_PRICE) & (
-        (upper_wick > MISSPRINT_WICK_PCT) | (high_spike > MISSPRINT_WICK_PCT))
-    flag_low = (body_bot >= MISSPRINT_MIN_PRICE) & (
-        (lower_wick > MISSPRINT_WICK_PCT) | (low_spike > MISSPRINT_WICK_PCT))
 
-    idx = np.where(flag_high | flag_low)[0]
-    if idx.size == 0:
+def _detect_and_clip_missprints(ticker: str, df_1m: pd.DataFrame,
+                                day_cache: Optional[dict] = None):
+    """Detecta barras con bad-ticks (desviación anómala de CUALQUIER campo O/H/L/C
+    vs la mediana móvil centrada del close) y SUSTITUYE la vela COMPLETA por la
+    reconstruida desde trades NBBO-válidos. A diferencia del clip antiguo (que solo
+    recortaba high/low), corrige open/close — donde vive el daño real: una estrategia
+    que entra por 'Bar Close Crosses VWAP' pisa el cierre phantom (forense con ticks
+    2026-07-15: GTBP close 4.10 vs real 2.19). Multipasada: la mediana se limpia entre
+    pasadas → caza clusters de barras malas consecutivas. Fallback si no hay NBBO:
+    copiar la vela anterior (petición de Jaume). Solo sustituye si algún campo cambia
+    > MISSPRINT_MIN_CLIP (no toca barras reales volátiles que se reconstruyen a sí
+    mismas). Devuelve (df posiblemente modificado, nº de velas sustituidas). No-op
+    (coste 0) si MISSPRINT_CLIP_ENABLED=false. Best-effort: sin NBBO deja intacta."""
+    if not MISSPRINT_CLIP_ENABLED or df_1m.empty or len(df_1m) < 3:
         return df_1m, 0
 
     df = df_1m.reset_index(drop=True).copy()
     ts_col = df["timestamp"]
-    n_clips = 0
-    for i in idx:
-        ns0 = _ny_naive_to_utc_ns(ts_col.iloc[i])
-        base = {"timestamp.gte": ns0, "timestamp.lt": ns0 + 60_000_000_000,
-                "limit": 50000, "order": "asc", "sort": "timestamp"}
-        trades = _polygon_results(f"{BASE_URL}/v3/trades/{ticker}", base)
-        quotes = _polygon_results(f"{BASE_URL}/v3/quotes/{ticker}", base)
-        if not trades or not quotes:
-            continue  # sin NBBO no se valida -> barra intacta
-        try:
-            dt = pd.DataFrame(trades)[["price", "sip_timestamp"]].sort_values("sip_timestamp")
-            dq = (pd.DataFrame(quotes)[["bid_price", "ask_price", "sip_timestamp"]]
-                  .sort_values("sip_timestamp"))
-            m = pd.merge_asof(dt, dq, on="sip_timestamp", direction="backward").dropna(
-                subset=["bid_price", "ask_price"])
-            m = m[(m["bid_price"] > 0) & (m["ask_price"] > 0)]
-            ok = m[(m["price"] <= m["ask_price"] * (1 + MISSPRINT_NBBO_TOL)) &
-                   (m["price"] >= m["bid_price"] * (1 - MISSPRINT_NBBO_TOL))]
-        except Exception:
-            continue
-        if ok.empty:
-            continue
-        valid_hi = float(ok["price"].max())
-        valid_lo = float(ok["price"].min())
-        changed = False
-        # high phantom por encima del máximo NBBO-válido -> recortar (nunca bajo el cuerpo)
-        if flag_high[i] and h[i] > valid_hi:
-            new_hi = max(float(body_top[i]), min(float(h[i]), valid_hi))
-            if h[i] > 0 and (h[i] - new_hi) / h[i] > MISSPRINT_MIN_CLIP:
-                df.at[i, "high"] = new_hi
-                changed = True
-        # low phantom por debajo del mínimo NBBO-válido -> recortar (nunca sobre el cuerpo)
-        if flag_low[i] and l[i] < valid_lo:
-            new_lo = min(float(body_bot[i]), max(float(l[i]), valid_lo))
-            if l[i] > 0 and (new_lo - l[i]) / l[i] > MISSPRINT_MIN_CLIP:
-                df.at[i, "low"] = new_lo
-                changed = True
-        if changed:
-            n_clips += 1
-    if n_clips:
-        logger.info(f"  [MISSPRINT] {ticker}: clipped {n_clips} bad-tick bar(s)")
-    return df, n_clips
+    seen: dict = {}   # idx -> rec | None  (cache: no re-pedir NBBO entre pasadas)
+    n_sub = 0
+
+    for _pass in range(MISSPRINT_MAX_PASSES):
+        o = df["open"].to_numpy(dtype="float64")
+        h = df["high"].to_numpy(dtype="float64")
+        l = df["low"].to_numpy(dtype="float64")
+        c = df["close"].to_numpy(dtype="float64")
+        # Detector relativo compartido con el backfill (mediana móvil centrada del
+        # close, robusta a outliers/clusters — se re-limpia entre pasadas).
+        flag = _flag_missprint_bars(df)
+        idx = [int(i) for i in np.where(flag)[0] if int(i) not in seen]
+        if not idx:
+            break
+        for i in idx:
+            rec = _reconstruct_bar_from_nbbo(ticker, ts_col.iloc[i], day_cache)
+            seen[i] = rec
+            if rec is None:
+                # fallback: copiar la vela anterior (ya limpia por orden temporal)
+                if i > 0:
+                    for f in ("open", "high", "low", "close"):
+                        df.at[i, f] = float(df.at[i - 1, f])
+                    n_sub += 1
+                continue
+            # sustituir la vela COMPLETA solo si difiere materialmente (evita churn
+            # en barras reales volátiles que se reconstruyen a sí mismas)
+            old = {"open": o[i], "high": h[i], "low": l[i], "close": c[i]}
+            material = any(
+                old[f] > 0 and abs(rec[f] - old[f]) / old[f] > MISSPRINT_MIN_CLIP
+                for f in ("open", "high", "low", "close")
+            )
+            if material:
+                for f in ("open", "high", "low", "close"):
+                    df.at[i, f] = rec[f]
+                n_sub += 1
+    if n_sub:
+        logger.info(f"  [MISSPRINT] {ticker}: reconstruidas {n_sub} vela(s) bad-tick")
+    return df, n_sub
 
 # ─── Processor ────────────────────────────────────────
 
