@@ -512,8 +512,13 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     (price_change_chart) queda [] y lo aporta la pasada completa."""
     ticker = ticker.upper()
     df = pd.DataFrame()
-    
-    con = get_db_connection()
+
+    # NO abrir la conexión aquí: get_db_connection() es thread-local y, en un
+    # thread NUEVO del executor de background + modo GCS, establecerla cuesta
+    # ~7 s (attach de las views de parquet de GCS + credenciales). Como casi
+    # todos los tickers del screener están en el hot cache diario en RAM, la
+    # conexión se abre PEREZOSAMENTE, solo si hace falta el fallback a
+    # daily_metrics. (Era EL cuello de los runner stats: ~7 s por click frío.)
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
     
     # 1. Try to query database daily_metrics using in-memory cache directly
@@ -549,6 +554,7 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     # Fallback to unpruned database query if empty or error occurred
     if df.empty:
         try:
+            con = get_db_connection()  # lazy: solo si el hot cache no cubrió el ticker
             query = "SELECT * FROM daily_metrics WHERE ticker = ? ORDER BY timestamp ASC"
             df = con.execute(query, [ticker]).fetchdf()
         except Exception as e:
@@ -605,10 +611,16 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     offset_data = {}
     all_target_dates = set()
     
-    # Use ALL gap indices as requested by the user, ensuring stats and chart are fully aligned on the whole history
+    # Los NÚMEROS (spikes/fades/frecuencias, gap_days_count) usan TODOS los
+    # gaps → sub_df sin recortar. El CHART (promedio intradía 15-min) usa solo
+    # las N fechas MÁS RECIENTES por offset: es un promedio, 24 muestras bastan,
+    # y evita pedir/parsear cientos de fechas (MULN: 159 fechas / 127k barras
+    # con iterrows = ~3 s; con 24 baja a ~1 s). Cambia solo cuántas fechas
+    # alimentan el chart, no las estadísticas.
+    CHART_MAX_DATES = 24
     recent_gap_indices = gap_indices
     recent_target_dates_map = {}
-    
+
     for offset in [0, 1, 2]:
         target_indices = [idx + offset for idx in recent_gap_indices if idx + offset < len(df)]
         if not target_indices:
@@ -617,14 +629,16 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
             }
             recent_target_dates_map[offset] = []
             continue
-        sub_df = df.loc[target_indices].copy()
+        sub_df = df.loc[target_indices].copy()   # NÚMEROS: historia completa
         offset_data[offset] = {
             "sub_df": sub_df
         }
-        
-        recent_target_dates = pd.to_datetime(sub_df['timestamp']).dt.strftime('%Y-%m-%d').tolist()
-        all_target_dates.update(recent_target_dates)
-        recent_target_dates_map[offset] = recent_target_dates
+
+        offset_dates = pd.to_datetime(sub_df['timestamp']).dt.strftime('%Y-%m-%d').tolist()
+        # CHART: solo las más recientes (offset_dates viene en orden ascendente).
+        chart_dates = offset_dates[-CHART_MAX_DATES:] if include_chart else []
+        all_target_dates.update(chart_dates)
+        recent_target_dates_map[offset] = chart_dates
         
     rth_opens_map = {pd.to_datetime(row['timestamp']).strftime('%Y-%m-%d'): row['rth_open'] for _, row in df.iterrows() if not pd.isna(row['rth_open'])}
     
@@ -634,7 +648,6 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     intraday_df = pd.DataFrame()
     if all_target_dates and include_chart:
         try:
-            t_aggs = time.time()
             bars = massive_service.get_minute_bars_for_dates(ticker, all_target_dates)
             if bars:
                 intraday_df = pd.DataFrame(bars)
@@ -648,8 +661,6 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
                 intraday_df = intraday_df.rename(columns={"o": "open", "c": "close"})[
                     ["date_str", "timestamp", "open", "close"]
                 ]
-                print(f"[GAP-CHART] Massive aggs: {len(intraday_df)} bars / "
-                      f"{intraday_df['date_str'].nunique()} fechas en {(time.time()-t_aggs)*1000:.0f}ms")
         except Exception as e:
             print(f"[GAP-CHART] Massive aggs failed for {ticker} ({e}); falling back to GCS")
             intraday_df = pd.DataFrame()
@@ -692,6 +703,7 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
                 ORDER BY timestamp ASC
             """
             try:
+                con = get_db_connection()  # lazy: solo en modo local y solo si Massive aggs no cubrió el chart
                 intraday_df = con.execute(query, [ticker]).fetchdf()
             except Exception as e:
                 print(f"Error fetching DB intraday for gap stats: {e}")
@@ -772,7 +784,14 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
             "price_change_chart": chart_data
         }
 
-    results["gap_dates"] = recent_target_dates_map.get(0, [])
+    # gap_dates = TODAS las fechas de gap (offset 0), independiente del recorte
+    # del chart, para no cambiar el dato que consume TickerAnalysis ni la
+    # detección de gapper-hoy (usa gap_dates[-1]).
+    sub0 = offset_data.get(0, {}).get("sub_df")
+    if sub0 is not None and not sub0.empty:
+        results["gap_dates"] = pd.to_datetime(sub0['timestamp']).dt.strftime('%Y-%m-%d').tolist()
+    else:
+        results["gap_dates"] = []
     return results
 
 def scrape_finviz_snapshot(ticker: str) -> dict:
@@ -1644,113 +1663,131 @@ def get_ticker_gap_stats(ticker: str):
             if now < expiry:
                 return cached_data
 
-    def _compute():
-        # Fuentes auxiliares EN PARALELO desde el arranque: Finviz (float
-        # oficial, ~0,3 s), short interest FINRA (~0,2 s) y el scrape de
-        # knowthefloat (lento, best-effort — antes bloqueaba 4-6 s en serie).
-        aux = ThreadPoolExecutor(max_workers=3)
-        fut_scrape = aux.submit(scrape_knowthefloat, ticker)
-        fut_fv_row = aux.submit(finviz_service.get_float_row, ticker)
-        fut_si = aux.submit(massive_service.get_short_interest, ticker)
-        aux.shutdown(wait=False)
+    # ── FASE 1 (síncrona, ~5 ms) ────────────────────────────────────────────
+    # SOLO los números de runner stats, desde el hot cache diario en RAM. Es la
+    # queja del usuario ("runner stats lentos") y ahora sale INSTANTÁNEA en la
+    # primera respuesta. NADA de fuentes externas aquí: float/short/chart van a
+    # la fase 2, para que un Finviz/short lento (visto: 7,5 s en algún ticker)
+    # nunca bloquee el panel. Antes esto se publicaba dentro de un job en
+    # background y el cliente recibía un placeholder vacío hasta el poll de +2 s.
+    def _phase1() -> dict:
+        fast = get_gap_stats_all_days(ticker, include_chart=False)
+        return {
+            "status": "calculating",
+            "know_the_float": {},        # dict (no None) → distingue de placeholder viejo
+            "short_interest": None,
+            "gap_stats": fast["gap_stats"],
+            "gap_stats_plus_1": fast["gap_stats_plus_1"],
+            "gap_stats_plus_2": fast["gap_stats_plus_2"],
+            "gap_dates": fast.get("gap_dates", []),
+        }
 
-        know_the_float = {}
+    # ── FASE 2 (background) ──────────────────────────────────────────────────
+    # Float (Finviz) + short interest FINRA + scrape comparativo (en paralelo) +
+    # chart intradía 15-min (Massive aggs). Produce el payload settled.
+    def _phase2() -> dict:
+        # El chart (get_gap_stats_all_days, ~0,5-2,5 s) NO depende de float/
+        # short/scrape → lanzarlo en paralelo con ellos, no en serie después.
+        aux = ThreadPoolExecutor(max_workers=4)
+        fut_chart = aux.submit(get_gap_stats_all_days, ticker)  # include_chart=True
+        fut_fv = aux.submit(finviz_service.get_float_row, ticker)
+        fut_si = aux.submit(massive_service.get_short_interest, ticker)
+        fut_scrape = aux.submit(scrape_knowthefloat, ticker)
+        aux.shutdown(wait=False)
+        ktf: dict = {}
         try:
-            fv_row = fut_fv_row.result(timeout=5)
+            fv_row = fut_fv.result(timeout=6)
             if fv_row:
-                know_the_float["Finviz"] = fv_row
+                ktf["Finviz"] = fv_row
         except Exception as e:
-            print(f"[WARN] finviz float enrichment failed for {ticker}: {e}")
+            print(f"[WARN] finviz float failed for {ticker}: {e}")
+        try:
+            scraped = fut_scrape.result(timeout=8) or {}
+            for src, vals in scraped.items():
+                ktf.setdefault(src, vals)
+        except Exception as e:
+            print(f"[WARN] knowthefloat failed for {ticker}: {e}")
         short_interest = None
         try:
-            si = fut_si.result(timeout=5)
+            si = fut_si.result(timeout=6)
             if si:
                 short_interest = si[0]
         except Exception as e:
-            print(f"[WARN] Massive short interest failed for {ticker}: {e}")
-
-        # FASE 1 — números desde el hot cache diario en RAM (<1 s), sin el
-        # chart intradía de GCS (30-80 s en fríos). Se PUBLICA YA con status
-        # "calculating" para que el poll del frontend pinte los Runner Stats
-        # en segundos; la fase 2 la sustituye con el chart completo.
-        try:
-            fast = get_gap_stats_all_days(ticker, include_chart=False)
-            partial = {
-                "status": "calculating",  # el front sigue el poll hasta la fase 2
-                "know_the_float": know_the_float,
-                "short_interest": short_interest,
-                "gap_stats": fast["gap_stats"],
-                "gap_stats_plus_1": fast["gap_stats_plus_1"],
-                "gap_stats_plus_2": fast["gap_stats_plus_2"],
-                "gap_dates": fast.get("gap_dates", []),
-            }
-            _swr_db_store_payload(ticker, "gap_stats", partial)
-            print(f"[GAP-FAST] partial stats published for {ticker} "
-                  f"({partial['gap_stats'].get('gap_days_count')} gap days, chart pending)")
-        except Exception as e:
-            print(f"[WARN] fast gap-stats phase failed for {ticker}: {e}")
-
-        # FASE 2 — pasada completa con el chart 15-min (GCS) + scrape
-        # comparativo de floats (si llegó).
-        all_stats = get_gap_stats_all_days(ticker)
-        try:
-            scraped = fut_scrape.result(timeout=10) or {}
-            for src, vals in scraped.items():
-                know_the_float.setdefault(src, vals)
-        except Exception as e:
-            print(f"[WARN] knowthefloat enrichment failed for {ticker}: {e}")
-
+            print(f"[WARN] short interest failed for {ticker}: {e}")
+        alls = fut_chart.result(timeout=25)
         return {
-            "know_the_float": know_the_float,
+            "know_the_float": ktf,
             "short_interest": short_interest,
-            "gap_stats": all_stats["gap_stats"],
-            "gap_stats_plus_1": all_stats["gap_stats_plus_1"],
-            "gap_stats_plus_2": all_stats["gap_stats_plus_2"],
-            "gap_dates": all_stats.get("gap_dates", [])
+            "gap_stats": alls["gap_stats"],
+            "gap_stats_plus_1": alls["gap_stats_plus_1"],
+            "gap_stats_plus_2": alls["gap_stats_plus_2"],
+            "gap_dates": alls.get("gap_dates", []),
         }
 
-    try:
-        res = _swr_cache(
-            ticker, "gap_stats", GAP_STATS_CACHE_TTL, _compute,
-            validate=_validate_gap_stats, background_first=True,
-        )
-        if isinstance(res, dict) and res.get("status") != "calculating":
-            # Invalidación dirigida: el ticker gapea HOY y las stats no lo saben.
-            if _gapped_today_needs_refresh(ticker, res):
-                key = (ticker, "gap_stats")
-                with _swr_inflight_lock:
-                    already = key in _swr_inflight
-                    if not already:
-                        _swr_inflight.add(key)
-                if not already:
-                    def _refresh_today():
-                        try:
-                            fresh = _compute()
-                            if _validate_gap_stats(fresh):
-                                _swr_db_store_payload(ticker, "gap_stats", fresh)
-                                with _gap_stats_cache_lock:
-                                    _gap_stats_cache.pop(ticker, None)
-                                if r:
-                                    try:
-                                        r.delete(f"ticker:gap_stats:{ticker}")
-                                    except Exception:
-                                        pass
-                                print(f"[GAP-TODAY] refreshed gap stats for {ticker} (gapper hoy)")
-                        except Exception as e:
-                            print(f"[GAP-TODAY] refresh failed for {ticker}: {e}")
-                        finally:
-                            with _swr_inflight_lock:
-                                _swr_inflight.discard(key)
-                    _BG_EXECUTOR.submit(_refresh_today)
+    def _settle(full: dict) -> None:
+        _swr_db_store_payload(ticker, "gap_stats", full)
+        with _gap_stats_cache_lock:
+            _gap_stats_cache[ticker] = (full, datetime.now() + GAP_STATS_CACHE_TTL)
+        if r:
+            try:
+                r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(full))
+            except Exception:
+                pass
 
+    def _submit_bg(compute_full) -> None:
+        """Corre compute_full() → settled en background, con dedup in-flight."""
+        key = (ticker, "gap_stats")
+        with _swr_inflight_lock:
+            if key in _swr_inflight:
+                return
+            _swr_inflight.add(key)
+
+        def _job():
+            t0 = time.time()
+            try:
+                full = compute_full()
+                if _validate_gap_stats(full):
+                    _settle(full)
+                    _log_fetch("gap_stats", ticker, t0, True, "phase2-bg")
+            except Exception as e:
+                _log_fetch("gap_stats", ticker, t0, False, f"phase2-error={e}")
+            finally:
+                with _swr_inflight_lock:
+                    _swr_inflight.discard(key)
+
+        _BG_EXECUTOR.submit(_job)
+
+    try:
+        stored = _swr_db_read_payload(ticker, "gap_stats")
+
+        # (1) Payload settled y válido → servir (+ refresh si gapea hoy).
+        if isinstance(stored, dict) and stored.get("status") != "calculating" \
+                and _validate_gap_stats(stored):
+            if _gapped_today_needs_refresh(ticker, stored):
+                _submit_bg(_phase2)
             with _gap_stats_cache_lock:
-                _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
+                _gap_stats_cache[ticker] = (stored, now + GAP_STATS_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(res))
-                except Exception as e:
-                    print(f"[REDIS] write failed for ticker:gap_stats:{ticker}: {e}")
-        return res
+                    r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(stored))
+                except Exception:
+                    pass
+            return stored
+
+        # (2) Fase 1 ya publicada (visita/pre-warm reciente: know_the_float es
+        #     dict, no el None del placeholder viejo) → seguir a fase 2 y servir.
+        if isinstance(stored, dict) and stored.get("status") == "calculating" \
+                and stored.get("know_the_float") is not None:
+            _submit_bg(_phase2)
+            return stored
+
+        # (3) Primera visita: fase 1 SÍNCRONA (~400 ms) + fase 2 en background.
+        t0 = time.time()
+        p1 = _phase1()
+        _swr_db_store_payload(ticker, "gap_stats", p1)
+        _log_fetch("gap_stats", ticker, t0, True, "phase1-sync")
+        _submit_bg(_phase2)
+        return p1
     except Exception as e:
         print(f"Error fetching gap stats for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

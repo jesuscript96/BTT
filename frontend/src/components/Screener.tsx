@@ -529,6 +529,31 @@ export default function Screener() {
   const activeTabRef = useRef<TabKey>(activeTab);
   activeTabRef.current = activeTab;
 
+  // ── Pre-warm on hover ────────────────────────────────────────────────────
+  // Al pasar el ratón por una fila, precalentar en el backend (fase 1 síncrona
+  // + fase 2 en background) ANTES del click. Para cuando el usuario clica
+  // (~200 ms después) el panel ya está caliente → runner stats + chart al
+  // instante. Fire-and-forget, dedup por ticker, sin analytics (no es un
+  // "abrir ticker" real). Debounce 120 ms para no calentar filas que solo se
+  // cruzan con el ratón. El backend deduplica el cómputo por ticker, así que
+  // varios hovers del mismo símbolo cuestan una sola pasada.
+  const warmedRef = useRef<Set<string>>(new Set());
+  const warmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmTicker = useCallback((ticker: string) => {
+    if (!ticker || warmedRef.current.has(ticker)) return;
+    warmedRef.current.add(ticker);
+    apiRequest(`/ticker-analysis/${encodeURIComponent(ticker)}`).catch(() => {});
+    apiRequest(`/ticker-analysis/${encodeURIComponent(ticker)}/gap-stats`).catch(() => {});
+  }, []);
+  const scheduleWarm = useCallback((ticker: string) => {
+    if (warmedRef.current.has(ticker)) return;
+    if (warmTimerRef.current) clearTimeout(warmTimerRef.current);
+    warmTimerRef.current = setTimeout(() => warmTicker(ticker), 120);
+  }, [warmTicker]);
+  const cancelWarm = useCallback(() => {
+    if (warmTimerRef.current) { clearTimeout(warmTimerRef.current); warmTimerRef.current = null; }
+  }, []);
+
   // ── Live WebSocket: one persistent connection, auto-reconnect on drop. The
   // backend streams the top-50 of the subscribed tab once per second. ──
   useEffect(() => {
@@ -671,7 +696,7 @@ export default function Screener() {
             setGapLoading(true);
             // La fase 1 del backend se publica a los ~2 s: el primer re-poll
             // corto la pinta cuanto antes; después cadencia normal.
-            timers.push(setTimeout(() => pollGapStats(attempt + 1), attempt === 0 ? 2000 : 4000));
+            timers.push(setTimeout(() => pollGapStats(attempt + 1), attempt === 0 ? 1200 : 3000));
           } else {
             setGapLoading(false);
           }
@@ -984,11 +1009,13 @@ export default function Screener() {
                           }}
                           onMouseEnter={(e) => {
                             if (!isSelected) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.03)";
+                            scheduleWarm(rec.ticker);
                           }}
                           onMouseLeave={(e) => {
                             if (!isSelected) {
                               e.currentTarget.style.backgroundColor = i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)";
                             }
+                            cancelWarm();
                           }}
                         >
                           {COLUMNS_BY_TAB[activeTab].map((col) => renderScreenerCell(col, rec))}
