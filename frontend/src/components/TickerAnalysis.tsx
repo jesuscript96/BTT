@@ -2259,7 +2259,7 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                     if (calculating && pollAttempt < 30) {
                         setLoadingGap(!hasStats); // spinner solo si aún no hay NADA que enseñar
                         pollAttempt += 1;
-                        pollTimer = setTimeout(fetchGapStats, pollAttempt === 1 ? 2000 : 4000);
+                        pollTimer = setTimeout(fetchGapStats, pollAttempt === 1 ? 1200 : 3000);
                     } else {
                         setLoadingGap(false);
                     }

@@ -1644,113 +1644,128 @@ def get_ticker_gap_stats(ticker: str):
             if now < expiry:
                 return cached_data
 
-    def _compute():
-        # Fuentes auxiliares EN PARALELO desde el arranque: Finviz (float
-        # oficial, ~0,3 s), short interest FINRA (~0,2 s) y el scrape de
-        # knowthefloat (lento, best-effort — antes bloqueaba 4-6 s en serie).
-        aux = ThreadPoolExecutor(max_workers=3)
-        fut_scrape = aux.submit(scrape_knowthefloat, ticker)
-        fut_fv_row = aux.submit(finviz_service.get_float_row, ticker)
-        fut_si = aux.submit(massive_service.get_short_interest, ticker)
-        aux.shutdown(wait=False)
+    # ── FASE 1 (síncrona, ~5 ms) ────────────────────────────────────────────
+    # SOLO los números de runner stats, desde el hot cache diario en RAM. Es la
+    # queja del usuario ("runner stats lentos") y ahora sale INSTANTÁNEA en la
+    # primera respuesta. NADA de fuentes externas aquí: float/short/chart van a
+    # la fase 2, para que un Finviz/short lento (visto: 7,5 s en algún ticker)
+    # nunca bloquee el panel. Antes esto se publicaba dentro de un job en
+    # background y el cliente recibía un placeholder vacío hasta el poll de +2 s.
+    def _phase1() -> dict:
+        fast = get_gap_stats_all_days(ticker, include_chart=False)
+        return {
+            "status": "calculating",
+            "know_the_float": {},        # dict (no None) → distingue de placeholder viejo
+            "short_interest": None,
+            "gap_stats": fast["gap_stats"],
+            "gap_stats_plus_1": fast["gap_stats_plus_1"],
+            "gap_stats_plus_2": fast["gap_stats_plus_2"],
+            "gap_dates": fast.get("gap_dates", []),
+        }
 
-        know_the_float = {}
+    # ── FASE 2 (background) ──────────────────────────────────────────────────
+    # Float (Finviz) + short interest FINRA + scrape comparativo (en paralelo) +
+    # chart intradía 15-min (Massive aggs). Produce el payload settled.
+    def _phase2() -> dict:
+        aux = ThreadPoolExecutor(max_workers=3)
+        fut_fv = aux.submit(finviz_service.get_float_row, ticker)
+        fut_si = aux.submit(massive_service.get_short_interest, ticker)
+        fut_scrape = aux.submit(scrape_knowthefloat, ticker)
+        aux.shutdown(wait=False)
+        ktf: dict = {}
         try:
-            fv_row = fut_fv_row.result(timeout=5)
+            fv_row = fut_fv.result(timeout=6)
             if fv_row:
-                know_the_float["Finviz"] = fv_row
+                ktf["Finviz"] = fv_row
         except Exception as e:
-            print(f"[WARN] finviz float enrichment failed for {ticker}: {e}")
+            print(f"[WARN] finviz float failed for {ticker}: {e}")
+        try:
+            scraped = fut_scrape.result(timeout=8) or {}
+            for src, vals in scraped.items():
+                ktf.setdefault(src, vals)
+        except Exception as e:
+            print(f"[WARN] knowthefloat failed for {ticker}: {e}")
         short_interest = None
         try:
-            si = fut_si.result(timeout=5)
+            si = fut_si.result(timeout=6)
             if si:
                 short_interest = si[0]
         except Exception as e:
-            print(f"[WARN] Massive short interest failed for {ticker}: {e}")
-
-        # FASE 1 — números desde el hot cache diario en RAM (<1 s), sin el
-        # chart intradía de GCS (30-80 s en fríos). Se PUBLICA YA con status
-        # "calculating" para que el poll del frontend pinte los Runner Stats
-        # en segundos; la fase 2 la sustituye con el chart completo.
-        try:
-            fast = get_gap_stats_all_days(ticker, include_chart=False)
-            partial = {
-                "status": "calculating",  # el front sigue el poll hasta la fase 2
-                "know_the_float": know_the_float,
-                "short_interest": short_interest,
-                "gap_stats": fast["gap_stats"],
-                "gap_stats_plus_1": fast["gap_stats_plus_1"],
-                "gap_stats_plus_2": fast["gap_stats_plus_2"],
-                "gap_dates": fast.get("gap_dates", []),
-            }
-            _swr_db_store_payload(ticker, "gap_stats", partial)
-            print(f"[GAP-FAST] partial stats published for {ticker} "
-                  f"({partial['gap_stats'].get('gap_days_count')} gap days, chart pending)")
-        except Exception as e:
-            print(f"[WARN] fast gap-stats phase failed for {ticker}: {e}")
-
-        # FASE 2 — pasada completa con el chart 15-min (GCS) + scrape
-        # comparativo de floats (si llegó).
-        all_stats = get_gap_stats_all_days(ticker)
-        try:
-            scraped = fut_scrape.result(timeout=10) or {}
-            for src, vals in scraped.items():
-                know_the_float.setdefault(src, vals)
-        except Exception as e:
-            print(f"[WARN] knowthefloat enrichment failed for {ticker}: {e}")
-
+            print(f"[WARN] short interest failed for {ticker}: {e}")
+        alls = get_gap_stats_all_days(ticker)  # include_chart=True
         return {
-            "know_the_float": know_the_float,
+            "know_the_float": ktf,
             "short_interest": short_interest,
-            "gap_stats": all_stats["gap_stats"],
-            "gap_stats_plus_1": all_stats["gap_stats_plus_1"],
-            "gap_stats_plus_2": all_stats["gap_stats_plus_2"],
-            "gap_dates": all_stats.get("gap_dates", [])
+            "gap_stats": alls["gap_stats"],
+            "gap_stats_plus_1": alls["gap_stats_plus_1"],
+            "gap_stats_plus_2": alls["gap_stats_plus_2"],
+            "gap_dates": alls.get("gap_dates", []),
         }
 
-    try:
-        res = _swr_cache(
-            ticker, "gap_stats", GAP_STATS_CACHE_TTL, _compute,
-            validate=_validate_gap_stats, background_first=True,
-        )
-        if isinstance(res, dict) and res.get("status") != "calculating":
-            # Invalidación dirigida: el ticker gapea HOY y las stats no lo saben.
-            if _gapped_today_needs_refresh(ticker, res):
-                key = (ticker, "gap_stats")
-                with _swr_inflight_lock:
-                    already = key in _swr_inflight
-                    if not already:
-                        _swr_inflight.add(key)
-                if not already:
-                    def _refresh_today():
-                        try:
-                            fresh = _compute()
-                            if _validate_gap_stats(fresh):
-                                _swr_db_store_payload(ticker, "gap_stats", fresh)
-                                with _gap_stats_cache_lock:
-                                    _gap_stats_cache.pop(ticker, None)
-                                if r:
-                                    try:
-                                        r.delete(f"ticker:gap_stats:{ticker}")
-                                    except Exception:
-                                        pass
-                                print(f"[GAP-TODAY] refreshed gap stats for {ticker} (gapper hoy)")
-                        except Exception as e:
-                            print(f"[GAP-TODAY] refresh failed for {ticker}: {e}")
-                        finally:
-                            with _swr_inflight_lock:
-                                _swr_inflight.discard(key)
-                    _BG_EXECUTOR.submit(_refresh_today)
+    def _settle(full: dict) -> None:
+        _swr_db_store_payload(ticker, "gap_stats", full)
+        with _gap_stats_cache_lock:
+            _gap_stats_cache[ticker] = (full, datetime.now() + GAP_STATS_CACHE_TTL)
+        if r:
+            try:
+                r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(full))
+            except Exception:
+                pass
 
+    def _submit_bg(compute_full) -> None:
+        """Corre compute_full() → settled en background, con dedup in-flight."""
+        key = (ticker, "gap_stats")
+        with _swr_inflight_lock:
+            if key in _swr_inflight:
+                return
+            _swr_inflight.add(key)
+
+        def _job():
+            t0 = time.time()
+            try:
+                full = compute_full()
+                if _validate_gap_stats(full):
+                    _settle(full)
+                    _log_fetch("gap_stats", ticker, t0, True, "phase2-bg")
+            except Exception as e:
+                _log_fetch("gap_stats", ticker, t0, False, f"phase2-error={e}")
+            finally:
+                with _swr_inflight_lock:
+                    _swr_inflight.discard(key)
+
+        _BG_EXECUTOR.submit(_job)
+
+    try:
+        stored = _swr_db_read_payload(ticker, "gap_stats")
+
+        # (1) Payload settled y válido → servir (+ refresh si gapea hoy).
+        if isinstance(stored, dict) and stored.get("status") != "calculating" \
+                and _validate_gap_stats(stored):
+            if _gapped_today_needs_refresh(ticker, stored):
+                _submit_bg(_phase2)
             with _gap_stats_cache_lock:
-                _gap_stats_cache[ticker] = (res, now + GAP_STATS_CACHE_TTL)
+                _gap_stats_cache[ticker] = (stored, now + GAP_STATS_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(res))
-                except Exception as e:
-                    print(f"[REDIS] write failed for ticker:gap_stats:{ticker}: {e}")
-        return res
+                    r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(stored))
+                except Exception:
+                    pass
+            return stored
+
+        # (2) Fase 1 ya publicada (visita/pre-warm reciente: know_the_float es
+        #     dict, no el None del placeholder viejo) → seguir a fase 2 y servir.
+        if isinstance(stored, dict) and stored.get("status") == "calculating" \
+                and stored.get("know_the_float") is not None:
+            _submit_bg(_phase2)
+            return stored
+
+        # (3) Primera visita: fase 1 SÍNCRONA (~400 ms) + fase 2 en background.
+        t0 = time.time()
+        p1 = _phase1()
+        _swr_db_store_payload(ticker, "gap_stats", p1)
+        _log_fetch("gap_stats", ticker, t0, True, "phase1-sync")
+        _submit_bg(_phase2)
+        return p1
     except Exception as e:
         print(f"Error fetching gap stats for {ticker}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
