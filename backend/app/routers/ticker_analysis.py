@@ -512,8 +512,13 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     (price_change_chart) queda [] y lo aporta la pasada completa."""
     ticker = ticker.upper()
     df = pd.DataFrame()
-    
-    con = get_db_connection()
+
+    # NO abrir la conexión aquí: get_db_connection() es thread-local y, en un
+    # thread NUEVO del executor de background + modo GCS, establecerla cuesta
+    # ~7 s (attach de las views de parquet de GCS + credenciales). Como casi
+    # todos los tickers del screener están en el hot cache diario en RAM, la
+    # conexión se abre PEREZOSAMENTE, solo si hace falta el fallback a
+    # daily_metrics. (Era EL cuello de los runner stats: ~7 s por click frío.)
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
     
     # 1. Try to query database daily_metrics using in-memory cache directly
@@ -549,6 +554,7 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     # Fallback to unpruned database query if empty or error occurred
     if df.empty:
         try:
+            con = get_db_connection()  # lazy: solo si el hot cache no cubrió el ticker
             query = "SELECT * FROM daily_metrics WHERE ticker = ? ORDER BY timestamp ASC"
             df = con.execute(query, [ticker]).fetchdf()
         except Exception as e:
@@ -605,10 +611,16 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     offset_data = {}
     all_target_dates = set()
     
-    # Use ALL gap indices as requested by the user, ensuring stats and chart are fully aligned on the whole history
+    # Los NÚMEROS (spikes/fades/frecuencias, gap_days_count) usan TODOS los
+    # gaps → sub_df sin recortar. El CHART (promedio intradía 15-min) usa solo
+    # las N fechas MÁS RECIENTES por offset: es un promedio, 24 muestras bastan,
+    # y evita pedir/parsear cientos de fechas (MULN: 159 fechas / 127k barras
+    # con iterrows = ~3 s; con 24 baja a ~1 s). Cambia solo cuántas fechas
+    # alimentan el chart, no las estadísticas.
+    CHART_MAX_DATES = 24
     recent_gap_indices = gap_indices
     recent_target_dates_map = {}
-    
+
     for offset in [0, 1, 2]:
         target_indices = [idx + offset for idx in recent_gap_indices if idx + offset < len(df)]
         if not target_indices:
@@ -617,14 +629,16 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
             }
             recent_target_dates_map[offset] = []
             continue
-        sub_df = df.loc[target_indices].copy()
+        sub_df = df.loc[target_indices].copy()   # NÚMEROS: historia completa
         offset_data[offset] = {
             "sub_df": sub_df
         }
-        
-        recent_target_dates = pd.to_datetime(sub_df['timestamp']).dt.strftime('%Y-%m-%d').tolist()
-        all_target_dates.update(recent_target_dates)
-        recent_target_dates_map[offset] = recent_target_dates
+
+        offset_dates = pd.to_datetime(sub_df['timestamp']).dt.strftime('%Y-%m-%d').tolist()
+        # CHART: solo las más recientes (offset_dates viene en orden ascendente).
+        chart_dates = offset_dates[-CHART_MAX_DATES:] if include_chart else []
+        all_target_dates.update(chart_dates)
+        recent_target_dates_map[offset] = chart_dates
         
     rth_opens_map = {pd.to_datetime(row['timestamp']).strftime('%Y-%m-%d'): row['rth_open'] for _, row in df.iterrows() if not pd.isna(row['rth_open'])}
     
@@ -634,7 +648,6 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
     intraday_df = pd.DataFrame()
     if all_target_dates and include_chart:
         try:
-            t_aggs = time.time()
             bars = massive_service.get_minute_bars_for_dates(ticker, all_target_dates)
             if bars:
                 intraday_df = pd.DataFrame(bars)
@@ -648,8 +661,6 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
                 intraday_df = intraday_df.rename(columns={"o": "open", "c": "close"})[
                     ["date_str", "timestamp", "open", "close"]
                 ]
-                print(f"[GAP-CHART] Massive aggs: {len(intraday_df)} bars / "
-                      f"{intraday_df['date_str'].nunique()} fechas en {(time.time()-t_aggs)*1000:.0f}ms")
         except Exception as e:
             print(f"[GAP-CHART] Massive aggs failed for {ticker} ({e}); falling back to GCS")
             intraday_df = pd.DataFrame()
@@ -692,6 +703,7 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
                 ORDER BY timestamp ASC
             """
             try:
+                con = get_db_connection()  # lazy: solo en modo local y solo si Massive aggs no cubrió el chart
                 intraday_df = con.execute(query, [ticker]).fetchdf()
             except Exception as e:
                 print(f"Error fetching DB intraday for gap stats: {e}")
@@ -772,7 +784,14 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
             "price_change_chart": chart_data
         }
 
-    results["gap_dates"] = recent_target_dates_map.get(0, [])
+    # gap_dates = TODAS las fechas de gap (offset 0), independiente del recorte
+    # del chart, para no cambiar el dato que consume TickerAnalysis ni la
+    # detección de gapper-hoy (usa gap_dates[-1]).
+    sub0 = offset_data.get(0, {}).get("sub_df")
+    if sub0 is not None and not sub0.empty:
+        results["gap_dates"] = pd.to_datetime(sub0['timestamp']).dt.strftime('%Y-%m-%d').tolist()
+    else:
+        results["gap_dates"] = []
     return results
 
 def scrape_finviz_snapshot(ticker: str) -> dict:
@@ -1667,7 +1686,10 @@ def get_ticker_gap_stats(ticker: str):
     # Float (Finviz) + short interest FINRA + scrape comparativo (en paralelo) +
     # chart intradía 15-min (Massive aggs). Produce el payload settled.
     def _phase2() -> dict:
-        aux = ThreadPoolExecutor(max_workers=3)
+        # El chart (get_gap_stats_all_days, ~0,5-2,5 s) NO depende de float/
+        # short/scrape → lanzarlo en paralelo con ellos, no en serie después.
+        aux = ThreadPoolExecutor(max_workers=4)
+        fut_chart = aux.submit(get_gap_stats_all_days, ticker)  # include_chart=True
         fut_fv = aux.submit(finviz_service.get_float_row, ticker)
         fut_si = aux.submit(massive_service.get_short_interest, ticker)
         fut_scrape = aux.submit(scrape_knowthefloat, ticker)
@@ -1692,7 +1714,7 @@ def get_ticker_gap_stats(ticker: str):
                 short_interest = si[0]
         except Exception as e:
             print(f"[WARN] short interest failed for {ticker}: {e}")
-        alls = get_gap_stats_all_days(ticker)  # include_chart=True
+        alls = fut_chart.result(timeout=25)
         return {
             "know_the_float": ktf,
             "short_interest": short_interest,
