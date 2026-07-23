@@ -2965,7 +2965,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         gap: 24,
                         paddingBottom: 0
                     }}>
-                        <MetricCard title="Market Cap" value={formatNumber(data?.market?.market_cap)} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
+                        <MetricCard title="Market Cap" value={formatNumber(
+                            // En vivo (precio × shares outstanding); coherente con Edgie. Fallback al campo.
+                            data?.market?.price != null && data?.market?.shares_outstanding != null
+                                ? data.market.price * data.market.shares_outstanding
+                                : data?.market?.market_cap
+                        )} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
                         <MetricCard title="Shares Outstanding" value={formatNumber(data?.market?.shares_outstanding).replace('$', '')} icon={<Users size={12} />} indicatorColor="var(--color-ec-copper)" />
                         <MetricCard
                             title="Float Shares"
