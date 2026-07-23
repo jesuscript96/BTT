@@ -473,9 +473,22 @@ const CELL_BASE: React.CSSProperties = {
 function renderScreenerCell(col: ColumnDef, rec: ScreenerRecord, dir?: "up" | "down"): React.ReactNode {
   const k = col.key;
   if (k === "ticker") {
+    // Misma marca ▲/▼ que en Change %, también sobre el nombre.
+    const mark = dir === "up" ? "▲" : dir === "down" ? "▼" : "";
     return (
       <td key={k} style={{ ...CELL_BASE, textAlign: "left", fontWeight: 700, color: "var(--color-ec-text-high)" }}>
-        {rec.ticker}
+        <span
+          key={`${rec.ticker}:${dir ?? "na"}`}
+          className={dir === "up" ? "scr-flash-up" : dir === "down" ? "scr-flash-down" : undefined}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+        >
+          {mark && (
+            <span style={{ fontSize: CELL_FONT - 3, lineHeight: 1, color: dir === "up" ? "var(--color-ec-profit)" : "var(--color-ec-loss)" }}>
+              {mark}
+            </span>
+          )}
+          {rec.ticker}
+        </span>
       </td>
     );
   }
@@ -540,6 +553,8 @@ const ALARM_FIELDS: { key: AlarmField; label: string }[] = [
 const DEFAULT_ALARM_CONFIG: AlarmConfig = { soundEnabled: false, volume: 0.5, rules: [] };
 const ALARM_STORAGE_KEY = "screener.alarmConfig.v1";
 const ALARM_COOLDOWN_MS = 15_000;
+// Cuánto persiste la marca ▲/▼ tras el último movimiento (antes duraba 1 snapshot ~1s).
+const FLASH_DURATION_MS = 4_000;
 
 function loadAlarmConfig(): AlarmConfig {
   if (typeof window === "undefined") return DEFAULT_ALARM_CONFIG;
@@ -636,6 +651,8 @@ export default function Screener() {
   const [alarmModalOpen, setAlarmModalOpen] = useState(false);
   const [alarmToasts, setAlarmToasts] = useState<{ id: string; ticker: string; change: number }[]>([]);
   const [flashMap, setFlashMap] = useState<Record<string, "up" | "down">>({});
+  // Vigencia de cada marca ▲/▼: se refresca al moverse y se mantiene FLASH_DURATION_MS.
+  const flashUntilRef = useRef<Map<string, { dir: "up" | "down"; until: number }>>(new Map());
 
   const wsRef = useRef<WebSocket | null>(null);
   const activeTabRef = useRef<TabKey>(activeTab);
@@ -705,7 +722,17 @@ export default function Screener() {
     prevTickersRef.current = nextTickers;
     prevChangeRef.current = nextChange;
     prevMatchRef.current = nextMatch;
-    setFlashMap(dirs);
+
+    // Persistir la marca ▲/▼ un tiempo tras el último movimiento (no solo el
+    // snapshot en que se movió), y purgar las caducadas.
+    const fu = flashUntilRef.current;
+    for (const [tk, d] of Object.entries(dirs)) fu.set(tk, { dir: d, until: now + FLASH_DURATION_MS });
+    const nextFlash: Record<string, "up" | "down"> = {};
+    for (const [tk, e] of fu) {
+      if (e.until > now) nextFlash[tk] = e.dir;
+      else fu.delete(tk);
+    }
+    setFlashMap(nextFlash);
 
     if (fired.length) {
       if (cfg.soundEnabled) playBeep(cfg.volume);
@@ -1015,8 +1042,8 @@ export default function Screener() {
       <style>{`
         @keyframes scrFlashUp { 0% { background: color-mix(in srgb, var(--color-ec-profit) 55%, transparent); } 100% { background: transparent; } }
         @keyframes scrFlashDown { 0% { background: color-mix(in srgb, var(--color-ec-loss) 55%, transparent); } 100% { background: transparent; } }
-        .scr-flash-up { animation: scrFlashUp 0.7s ease-out; border-radius: 3px; padding: 1px 4px; }
-        .scr-flash-down { animation: scrFlashDown 0.7s ease-out; border-radius: 3px; padding: 1px 4px; }
+        .scr-flash-up { animation: scrFlashUp 1.4s ease-out; border-radius: 3px; padding: 1px 4px; }
+        .scr-flash-down { animation: scrFlashDown 1.4s ease-out; border-radius: 3px; padding: 1px 4px; }
         @keyframes scrToastIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
       `}</style>
       {/* ── Header ── */}
@@ -1382,7 +1409,16 @@ export default function Screener() {
                   </div>
                 ) : (
                   <DetailGrid>
-                    <DetailItem label="Market Cap" value={fmtMarketCap(tickerDetail?.market?.market_cap)} />
+                    <DetailItem
+                      label="Market Cap"
+                      value={fmtMarketCap(
+                        // Calculado en vivo (precio × shares outstanding); el campo
+                        // market_cap del feed venía desincronizado. Fallback al campo.
+                        tickerDetail?.market?.price != null && tickerDetail?.market?.shares_outstanding != null
+                          ? tickerDetail.market.price * tickerDetail.market.shares_outstanding
+                          : tickerDetail?.market?.market_cap
+                      )}
+                    />
                     <DetailItem label="Shares Out." value={fmtShares(tickerDetail?.market?.shares_outstanding)} prefix="" />
                     <DetailItem label="Float Shares" value={fmtShares(tickerDetail?.market?.float_shares)} prefix="" pending={enrichPending} />
                     <DetailItem

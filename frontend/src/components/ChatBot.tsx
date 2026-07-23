@@ -69,7 +69,7 @@ export function ChatBot() {
     // Locates se calcula ahora de forma determinista en el sidebar (LocatesCalculator),
     // fuera de Edgie — aquí solo quedan las acciones que sí orquesta el asistente.
     const EDGIE_CHIPS = [
-        { title: 'Informe rápido de ticker', desc: 'Sector · dilución · noticias · precios clave', prompt: activeTicker ? `Dame el informe rápido de ${activeTicker}.` : 'Dame el informe rápido de un ticker.' },
+        { title: 'Informe rápido de ticker', desc: 'Sector · dilución · noticias · precios clave', prompt: activeTicker ? `Dame el informe rápido de ${activeTicker}; estoy interesado en hacer short.` : 'Dame el informe rápido de un ticker; estoy interesado en hacer short.' },
         { title: 'Riesgo de squeeze', desc: 'Borrow rate · short interest · days to cover', prompt: activeTicker ? `¿Riesgo de squeeze de ${activeTicker}?` : 'Dime el riesgo de squeeze de un ticker.' },
     ];
 
@@ -214,26 +214,77 @@ export function ChatBot() {
             displayContent = `${fileHeader}\n\n${queryLines.join('\n').trim()}`;
         }
 
-        return displayContent.split('\n').map((line, idx) => {
+        // Detección de tablas markdown: filas con pipes (con o sin separador GFM),
+        // para renderizarlas como <table> real y no como texto ilegible.
+        const isPipeRow = (l: string) => {
+            const t = l.trim();
+            return t.includes('|') && (t.startsWith('|') || (t.match(/\|/g) || []).length >= 2);
+        };
+        const isSepish = (l: string) => {
+            const t = l.trim().replace(/\|/g, '');
+            return t.length > 0 && /^[-—–+:\s]+$/.test(t);
+        };
+        const parseCells = (l: string) =>
+            l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+
+        const lines = displayContent.split('\n');
+        const out: React.ReactNode[] = [];
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i];
+
+            // Bloque de tabla: run de filas con pipes; ≥2 filas no-separadoras.
+            if (isPipeRow(line)) {
+                let j = i;
+                const block: string[] = [];
+                while (j < lines.length && isPipeRow(lines[j])) { block.push(lines[j]); j++; }
+                const rows = block.filter(l => !isSepish(l)).map(parseCells);
+                if (rows.length >= 2) {
+                    const header = rows[0];
+                    const body = rows.slice(1);
+                    out.push(
+                        <div key={i} style={{ overflowX: 'auto', margin: '8px 0' }}>
+                            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
+                                <thead>
+                                    <tr>{header.map((h, hi) => (
+                                        <th key={hi} style={{ textAlign: 'left', padding: '4px 8px', borderBottom: '1px solid var(--color-ec-border)', color: 'var(--color-ec-copper-bright)', fontWeight: 700, whiteSpace: 'nowrap' }}>{renderBoldText(h)}</th>
+                                    ))}</tr>
+                                </thead>
+                                <tbody>
+                                    {body.map((r, ri) => (
+                                        <tr key={ri}>{header.map((_, ci) => (
+                                            <td key={ci} style={{ padding: '4px 8px', borderBottom: '1px solid color-mix(in srgb, var(--color-ec-border) 40%, transparent)', color: 'var(--color-ec-text-primary)', verticalAlign: 'top', lineHeight: 1.35 }}>{renderBoldText(r[ci] ?? '')}</td>
+                                        ))}</tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    );
+                    i = j;
+                    continue;
+                }
+                // Solo una fila con pipes: no es tabla, cae a texto normal.
+            }
+
             if (line.startsWith('### ')) {
-                return <h4 key={idx} style={{ color: 'var(--color-ec-copper-bright)', fontSize: 13, fontWeight: 700, margin: '10px 0 4px 0', fontFamily: 'var(--font-sans)' }}>{line.replace('### ', '')}</h4>;
-            }
-            if (line.startsWith('## ')) {
-                return <h3 key={idx} style={{ color: 'var(--color-ec-copper-bright)', fontSize: 14, fontWeight: 700, margin: '14px 0 6px 0', fontFamily: 'var(--font-sans)' }}>{line.replace('## ', '')}</h3>;
-            }
-            if (line.startsWith('- ') || line.startsWith('* ')) {
+                out.push(<h4 key={i} style={{ color: 'var(--color-ec-copper-bright)', fontSize: 13, fontWeight: 700, margin: '10px 0 4px 0', fontFamily: 'var(--font-sans)' }}>{line.replace('### ', '')}</h4>);
+            } else if (line.startsWith('## ')) {
+                out.push(<h3 key={i} style={{ color: 'var(--color-ec-copper-bright)', fontSize: 14, fontWeight: 700, margin: '14px 0 6px 0', fontFamily: 'var(--font-sans)' }}>{line.replace('## ', '')}</h3>);
+            } else if (line.startsWith('- ') || line.startsWith('* ')) {
                 const text = line.substring(2);
-                return (
-                    <ul key={idx} style={{ margin: '3px 0 3px 14px', paddingLeft: 0, listStyleType: 'disc' }}>
+                out.push(
+                    <ul key={i} style={{ margin: '3px 0 3px 14px', paddingLeft: 0, listStyleType: 'disc' }}>
                         <li style={{ fontSize: 12, color: 'var(--color-ec-text-primary)', lineHeight: 1.4 }}>{renderBoldText(text)}</li>
                     </ul>
                 );
+            } else if (line.trim() === '') {
+                out.push(<div key={i} style={{ height: '6px' }} />);
+            } else {
+                out.push(<p key={i} style={{ fontSize: 12, color: 'var(--color-ec-text-primary)', lineHeight: 1.4, margin: '4px 0' }}>{renderBoldText(line)}</p>);
             }
-            if (line.trim() === '') {
-                return <div key={idx} style={{ height: '6px' }} />;
-            }
-            return <p key={idx} style={{ fontSize: 12, color: 'var(--color-ec-text-primary)', lineHeight: 1.4, margin: '4px 0' }}>{renderBoldText(line)}</p>;
-        });
+            i++;
+        }
+        return out;
     };
 
     const handleSend = async (e?: React.FormEvent, overrideText?: string) => {
