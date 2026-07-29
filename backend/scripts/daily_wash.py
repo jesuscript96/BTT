@@ -145,6 +145,14 @@ def wash_day(c, d):
             marcadas = int(mt.group(1).replace(",", "")); limpiadas = int(mt.group(2).replace(",", ""))
         run([sys.executable, MERGE, "--year", str(y), "--month", str(m), "--date", d,
              "--staging", WASH_DIR, "--backup", f"{WASH_DIR}/backup"])
+        # push del día limpio a GCS (mantener GCS limpio; opt-in via PUSH_CLEAN_TO_GCS=1)
+        if os.getenv("PUSH_CLEAN_TO_GCS", "0") == "1":
+            try:
+                c.execute(f"COPY (SELECT * FROM read_parquet('{local_intraday(y,m,d)}')) "
+                          f"TO '{gcs_intraday(y,m,d)}' (FORMAT PARQUET)")
+                log(f"  [5/gcs-push] {d}: día limpio subido a GCS")
+            except Exception as e:
+                log(f"  [5/gcs-push] {d}: FALLÓ subida a GCS ({e})")
     else:
         log(f"  {d}: universo vacío, nada que lavar (fichero espejado tal cual)")
     ckpt["done"].append(d); json.dump(ckpt, open(CKPT, "w"))
