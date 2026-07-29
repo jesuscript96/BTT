@@ -22,7 +22,7 @@ Env (todas presentes en prod): MASSIVE_API_KEY, GCS_BUCKET, GCS_ACCESS_KEY_ID,
 GCS_SECRET_ACCESS_KEY, CACHE_DIR, LOCAL_LAKE_DIR. Opcionales: WASH_DIR (/tmp/daily_wash),
 WASH_LOOKBACK_DAYS (5), AUGUS_WORKERS (8), AUGUS_GAP_MIN (5).
 """
-import os, sys, json, subprocess, argparse, logging
+import os, sys, json, re, subprocess, argparse, logging, urllib.request
 from datetime import datetime, timedelta, date
 
 import duckdb
@@ -76,6 +76,7 @@ def mirror(c, y, m, d):
     c.execute(f"COPY (SELECT * FROM read_parquet('{src}')) TO '{dst}' (FORMAT PARQUET)")
     n = c.execute("SELECT count(*) FROM read_parquet(?)", [dst]).fetchone()[0]
     log(f"  [1/mirror] {d}: {n:,} filas GCS->local")
+    return n
 
 
 def build_universe_csv(c, y, m, d):
@@ -113,24 +114,41 @@ def run(cmd, extra_env=None):
     return r.stdout
 
 
+def notify_discord(content):
+    url = os.getenv("ALERT_DISCORD_WEBHOOK", "").strip()
+    if not url:
+        log("  (sin ALERT_DISCORD_WEBHOOK — no aviso Discord)"); return
+    data = json.dumps({"content": content[:1900]}).encode()
+    req = urllib.request.Request(url, data=data,
+        headers={"Content-Type": "application/json", "User-Agent": "btt-daily-wash/1.0"})
+    try:
+        urllib.request.urlopen(req, timeout=15); log("  aviso Discord enviado")
+    except Exception as e:
+        log(f"  aviso Discord FALLÓ: {e}")
+
+
 def wash_day(c, d):
     dt = datetime.strptime(d, "%Y-%m-%d").date()
     y, m = dt.year, dt.month
     if not gcs_file_exists(c, gcs_intraday(y, m, d)):
-        log(f"  {d}: no hay fichero en GCS todavía, skip"); return False
+        log(f"  {d}: no hay fichero en GCS todavía, skip"); return None
     log(f"=== LAVANDO {d} ===")
-    mirror(c, y, m, d)
+    filas = mirror(c, y, m, d)
     csv, n = build_universe_csv(c, y, m, d)
     stg = f"{WASH_DIR}/y{y}_m{m}.parquet"
+    marcadas = limpiadas = 0
     if n > 0:
-        run([sys.executable, GEN, "--csv", csv, "--window", "--workers", WORKERS, "--out", stg, "--tag", f"daily {d}"],
-            extra_env={"AUGUS_GAP_MIN": GAP_MIN, "AUGUS_PROGRESS": f"{WASH_DIR}/progress_{d}.json"})
+        out = run([sys.executable, GEN, "--csv", csv, "--window", "--workers", WORKERS, "--out", stg, "--tag", f"daily {d}"],
+                  extra_env={"AUGUS_GAP_MIN": GAP_MIN, "AUGUS_PROGRESS": f"{WASH_DIR}/progress_{d}.json"})
+        mt = re.search(r"\[FIN\][^\n]*marcadas=([\d,]+)[^\n]*limpiadas=([\d,]+)", out)
+        if mt:
+            marcadas = int(mt.group(1).replace(",", "")); limpiadas = int(mt.group(2).replace(",", ""))
         run([sys.executable, MERGE, "--year", str(y), "--month", str(m), "--date", d,
              "--staging", WASH_DIR, "--backup", f"{WASH_DIR}/backup"])
     else:
         log(f"  {d}: universo vacío, nada que lavar (fichero espejado tal cual)")
     ckpt["done"].append(d); json.dump(ckpt, open(CKPT, "w"))
-    return (y, m)
+    return {"date": d, "ym": (y, m), "filas": filas, "td": n, "marcadas": marcadas, "limpiadas": limpiadas}
 
 
 def purge_cache(months):
@@ -168,19 +186,35 @@ def main():
     log(f"días objetivo: {days}")
 
     c = _ddb()
-    touched = set()
-    n_dias = 0
+    results = []
     for d in days:
         try:
             r = wash_day(c, d)
             if r:
-                touched.add(r); n_dias += 1
+                results.append(r)
         except Exception as e:
             log(f"  {d}: FALLÓ ({e}); sigo con el resto")
+    touched = sorted({r["ym"] for r in results})
     if touched:
-        log(f"purgando cache de meses tocados: {sorted(touched)}")
+        log(f"purgando cache de meses tocados: {touched}")
         purge_cache(touched)
-    log(f"[FIN] dias_lavados={n_dias} meses_tocados={sorted(touched)}")
+    # aviso Discord con las métricas del lavado
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if results:
+        tot_td = sum(r["td"] for r in results)
+        tot_m = sum(r["marcadas"] for r in results)
+        tot_l = sum(r["limpiadas"] for r in results)
+        lineas = "\n".join(
+            f"• {r['date']}: {r['filas']:,} filas · {r['td']} td gap≥{GAP_MIN} · "
+            f"{r['marcadas']:,} marcadas · {r['limpiadas']:,} reconstruidas" for r in results)
+        msg = (f"🧼 **Lavado diario Augus** ({ahora})\n"
+               f"Días lavados: **{len(results)}** · ticker-días gap≥{GAP_MIN}: **{tot_td}** · "
+               f"marcadas: **{tot_m:,}** · reconstruidas: **{tot_l:,}**\n{lineas}\n"
+               f"Lake local al día · prewarm se recarga en el restart.")
+        notify_discord(msg)
+    else:
+        notify_discord(f"🧼 Lavado diario Augus ({ahora}): nada nuevo en GCS que lavar.")
+    log(f"[FIN] dias_lavados={len(results)} meses_tocados={touched}")
 
 
 if __name__ == "__main__":
