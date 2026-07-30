@@ -28,6 +28,12 @@ PM_END   = pd.to_datetime("09:30").time()
 SLEEP_MIN, SLEEP_TKR = 0.15, 0.3
 CLUSTER_GAP_MIN = int(os.getenv("AUGUS_CLUSTER_GAP_MIN", "15"))  # windowed: agrupa marcadas a <=N min
 MAX_RPS = float(os.getenv("AUGUS_MAX_RPS", "80"))                 # techo global de requests/seg (soft ~100)
+# Opción A (feedback cliente 2026-07-30): además del precio, reconstruye el VOLUMEN de la
+# vela limpiada = suma de shares de los trades NBBO-válidos (fórmula Valeri/Augus). Así el
+# pico de volumen de los misprints (p.ej. 8am) desaparece. transactions = nº de trades válidos,
+# por coherencia. El volumen crudo queda preservado en los backups (_raw_backup + locales).
+# Flag para poder generar staging "solo precio" (comparación A/B); por defecto ON.
+CLEAN_VOLUME = os.getenv("AUGUS_CLEAN_VOLUME", "1") == "1"
 
 PROGRESS = os.getenv("AUGUS_PROGRESS", "/root/backfill_logs/augus_progress.json")
 
@@ -148,6 +154,8 @@ def clean_ticker_day(ticker, date_str):
         nc=c0 if low<=c0<=high else float(ok.iloc[-1]["price"])
         if abs(high-float(bar["high"]))>1e-6 or abs(low-float(bar["low"]))>1e-6: cleaned+=1
         df.at[idx,"open"]=no; df.at[idx,"high"]=high; df.at[idx,"low"]=low; df.at[idx,"close"]=nc
+        if CLEAN_VOLUME:  # Opción A: volumen/transactions solo de los trades NBBO-válidos
+            df.at[idx,"volume"]=int(ok["size"].sum()); df.at[idx,"transactions"]=int(len(ok))
         time.sleep(SLEEP_MIN)
     return df, flagged, cleaned
 
@@ -209,6 +217,8 @@ def clean_ticker_day_windowed(ticker, date_str):
             nc = c0 if low <= c0 <= high else float(ok.iloc[-1]["price"])
             if abs(high-float(bar["high"]))>1e-6 or abs(low-float(bar["low"]))>1e-6: cleaned += 1
             df.at[idx,"open"]=no; df.at[idx,"high"]=high; df.at[idx,"low"]=low; df.at[idx,"close"]=nc
+            if CLEAN_VOLUME:  # Opción A: volumen/transactions solo de los trades NBBO-válidos
+                df.at[idx,"volume"]=int(ok["size"].sum()); df.at[idx,"transactions"]=int(len(ok))
         time.sleep(SLEEP_MIN)
     return df, flagged, cleaned
 
