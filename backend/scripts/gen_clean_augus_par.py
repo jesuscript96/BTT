@@ -132,6 +132,7 @@ def clean_ticker_day(ticker, date_str):
     df = get_fullday_raw(ticker, date_str)
     if df.empty: return None, 0, 0
     df = df.copy(); df["ticker"] = ticker
+    df["vol_recon"] = False   # marca de vela con volumen reconstruido (Opción A estricta)
     flagged = cleaned = 0
     for idx, bar in df.iterrows():
         if not (PM_START <= bar["timestamp"].time() < PM_END): continue
@@ -156,6 +157,7 @@ def clean_ticker_day(ticker, date_str):
         df.at[idx,"open"]=no; df.at[idx,"high"]=high; df.at[idx,"low"]=low; df.at[idx,"close"]=nc
         if CLEAN_VOLUME:  # Opción A: volumen/transactions solo de los trades NBBO-válidos
             df.at[idx,"volume"]=int(ok["size"].sum()); df.at[idx,"transactions"]=int(len(ok))
+            df.at[idx,"vol_recon"]=True
         time.sleep(SLEEP_MIN)
     return df, flagged, cleaned
 
@@ -190,6 +192,7 @@ def clean_ticker_day_windowed(ticker, date_str):
     df = get_fullday_raw(ticker, date_str)
     if df.empty: return None, 0, 0
     df = df.copy(); df["ticker"] = ticker
+    df["vol_recon"] = False   # marca de vela con volumen reconstruido (Opción A estricta)
     fmins = _flagged_pm_minutes(df)
     flagged = len(fmins); cleaned = 0
     if flagged == 0: return df, 0, 0
@@ -219,6 +222,7 @@ def clean_ticker_day_windowed(ticker, date_str):
             df.at[idx,"open"]=no; df.at[idx,"high"]=high; df.at[idx,"low"]=low; df.at[idx,"close"]=nc
             if CLEAN_VOLUME:  # Opción A: volumen/transactions solo de los trades NBBO-válidos
                 df.at[idx,"volume"]=int(ok["size"].sum()); df.at[idx,"transactions"]=int(len(ok))
+                df.at[idx,"vol_recon"]=True
         time.sleep(SLEEP_MIN)
     return df, flagged, cleaned
 
@@ -328,11 +332,13 @@ def main():
     full = pd.concat(frames, ignore_index=True)
     full["date"] = pd.to_datetime(full["timestamp"]).dt.date
     full["month"] = m; full["year"] = y
-    full = full[["ticker","volume","open","close","high","low","timestamp","transactions","date","month","year"]]
+    if "vol_recon" not in full.columns:
+        full["vol_recon"] = False
+    full = full[["ticker","volume","open","close","high","low","timestamp","transactions","date","month","year","vol_recon"]]
     con = duckdb.connect(); con.register("d", full)
     con.execute(f"""COPY (SELECT ticker, TRY_CAST(volume AS BIGINT) AS volume,
         open, close, high, low, CAST(timestamp AS TIMESTAMP) AS timestamp,
-        transactions, date, month, year FROM d) TO '{args.out}' (FORMAT PARQUET)""")
+        transactions, date, month, year, COALESCE(vol_recon, FALSE) AS vol_recon FROM d) TO '{args.out}' (FORMAT PARQUET)""")
     con.close()
     el = time.time()-started
     write_progress({"tag": args.tag, "done": n, "total": n, "flagged": tf, "cleaned_bars": tc,
