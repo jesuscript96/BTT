@@ -1,9 +1,9 @@
-import { ApiConsole } from "@/components/developers/ApiConsole";
+import ApiConsoleGuard from "./ApiConsoleGuard";
 
 export const metadata = {
   title: "Edgecute API — Developer Console",
 };
 
 export default function DevelopersPage() {
-  return <ApiConsole />;
+  return <ApiConsoleGuard />;
 }

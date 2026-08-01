@@ -188,13 +188,21 @@ def get_current_user_id(authorization: Optional[str] = Header(default=None)) -> 
 
 def scope_clause(user_id: Optional[str], column: str = "user_id"):
     """
-    Build a NULL-tolerant ownership filter for user-scoped reads.
+    Build an ownership filter for user-scoped reads.
 
-    Returns (sql_fragment, params). When user_id is None (auth disabled) the
-    filter is empty so all rows are returned exactly as before. When set, the
-    caller sees their own rows plus legacy rows that predate scoping (user_id
-    IS NULL), so existing data and the read-only GCS fallback never vanish.
+    Returns (sql_fragment, params). Cada usuario ve SOLO sus filas.
+
+    Antes el filtro era `user_id = ? OR user_id IS NULL`, tolerante a NULL, para que
+    las filas anteriores al scoping no desaparecieran. Con varios usuarios reales en
+    la app eso es una fuga: toda fila huérfana es visible —y borrable— por cualquiera.
+    Las únicas que quedaban (2 saved_queries + 2 datasets de junio, "prueba local")
+    eran chatarra de desarrollo, así que se corta la tolerancia en vez de repartirlas.
+    Quedan en la tabla, simplemente ya no las lista nadie.
+
+    Con user_id None el fragmento va vacío (WHERE sin filtro). Ese camino solo se da
+    con CLERK_AUTH_ENABLED=false (desarrollo): en prod está en true y
+    get_current_user_id devuelve 401 sin token, así que no es alcanzable.
     """
     if not user_id:
         return "", []
-    return f" AND ({column} = ? OR {column} IS NULL)", [user_id]
+    return f" AND {column} = ?", [user_id]

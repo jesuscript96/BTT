@@ -12,15 +12,24 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth.clerk import get_current_user_id
 from app.api_public import config
 from app.api_public.core.auth import PLANS
 from app.api_public.core.store import ApiKeyRow, get_store
+from app.entitlements.middleware import require
 
-router = APIRouter(prefix="/api/console", tags=["API Console"])
+# Guarda a nivel de router: los 9 endpoints son del portal, ninguno se comparte con
+# otra sección. Sin esto la consola (claves, uso, facturación) quedaba abierta a
+# cualquier usuario con sesión: el sidebar escondía el enlace, pero /developers se
+# alcanzaba tecleando la URL.
+router = APIRouter(
+    prefix="/api/console",
+    tags=["API Console"],
+    dependencies=[Depends(require("api.portal.access"))],
+)
 
 # When Clerk auth is disabled (dev), all console calls resolve to this owner so
 # the dashboard is usable locally without logging in.

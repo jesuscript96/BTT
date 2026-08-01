@@ -7,15 +7,16 @@ vive en `app/services/stocktwits_service.py`; aquí solo se valida la entrada, s
 serializa el contrato Pydantic y se mapean los errores tipados a los códigos HTTP
 (404/429/503) acordados.
 
-Gating de monetización (DECISIÓN DIFERIDA a Jesús — ver 07_DECISIONES_ABIERTAS.md):
-se deja el hook `require_pro_tier` como placeholder no-op. En el MVP todos los
-endpoints son públicos; activar el gating en el futuro será cambiar la
-implementación del hook SIN tocar las firmas de los endpoints.
+Gating de monetización: el hook `require_pro_tier` era un no-op (`return None`), así
+que estos endpoints estaban abiertos pese a aparentar lo contrario. Desde 2026-07 el
+hook delega en la policy de entitlements (`market.sentiment.access`), que es la única
+fuente de verdad; las firmas de los endpoints no cambian.
 """
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 from typing import List, Optional
 
+from app.entitlements.middleware import require
 from app.services import stocktwits_service as st
 
 router = APIRouter(
@@ -24,12 +25,8 @@ router = APIRouter(
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Placeholder de gating (no-op en MVP). Ver decisión diferida §A.1.
-# ─────────────────────────────────────────────────────────────────────────────
-def require_pro_tier() -> None:
-    """Hook de tier Pro. MVP: público (no-op). Futuro: validar Clerk aquí."""
-    return None
+# Gating real. Se conserva el nombre porque los 5 endpoints ya dependen de él.
+require_pro_tier = require("market.sentiment.access")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +96,7 @@ def _handle_stocktwits_error(exc: Exception):
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/trending", response_model=List[TrendingItem])
-def get_social_trending(_: None = Depends(require_pro_tier)):
+def get_social_trending(_: bool = Depends(require_pro_tier)):
     """Radar de Momentum: small caps (< $2,000M) en tendencia social."""
     try:
         return st.get_trending()
@@ -108,7 +105,7 @@ def get_social_trending(_: None = Depends(require_pro_tier)):
 
 
 @router.get("/ticker/{symbol}/summary", response_model=SummaryResponse)
-def get_social_summary(symbol: str, _: None = Depends(require_pro_tier)):
+def get_social_summary(symbol: str, _: bool = Depends(require_pro_tier)):
     """Why It's Trending: catalizador en lenguaje natural."""
     try:
         return st.get_summary(symbol)
@@ -117,7 +114,7 @@ def get_social_summary(symbol: str, _: None = Depends(require_pro_tier)):
 
 
 @router.get("/ticker/{symbol}/sentiment", response_model=SentimentResponse)
-def get_social_sentiment(symbol: str, _: None = Depends(require_pro_tier)):
+def get_social_sentiment(symbol: str, _: bool = Depends(require_pro_tier)):
     """Sentiment Gauge: sentimiento + volumen de mensajes a 15m."""
     try:
         return st.get_sentiment(symbol)
@@ -129,7 +126,7 @@ def get_social_sentiment(symbol: str, _: None = Depends(require_pro_tier)):
 def get_social_stream(
     symbol: str,
     limit: int = Query(default=st.DEFAULT_STREAM_LIMIT, ge=1, le=st.MAX_STREAM_LIMIT),
-    _: None = Depends(require_pro_tier),
+    _: bool = Depends(require_pro_tier),
 ):
     """Zona de Debate Limpia: hilos populares filtrados de spam."""
     try:
@@ -139,7 +136,7 @@ def get_social_stream(
 
 
 @router.get("/newsletter", response_model=List[NewsletterItem])
-def get_social_newsletter(_: None = Depends(require_pro_tier)):
+def get_social_newsletter(_: bool = Depends(require_pro_tier)):
     """Newsletters & Chart Art: agregador RSS formateado en JSON."""
     try:
         return st.get_newsletter()

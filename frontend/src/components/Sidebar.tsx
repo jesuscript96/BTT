@@ -38,7 +38,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
     const [isHovered, setIsHovered] = useState(false);
     const { user } = useUser();
     const { signOut } = useClerk();
-    const { can, isAdmin, loading } = useEntitlements();
+    const { can, isAdmin, loading, tier } = useEntitlements();
 
     // `can()` es OPTIMISTA: mientras carga /users/me/entitlements el mapa está
     // vacío y devuelve true para todo, así que el sidebar pintaba los enlaces de
@@ -53,7 +53,10 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
         user?.emailAddresses[0]?.emailAddress ??
         "Usuario";
     const avatarLetter = displayName[0]?.toUpperCase() ?? "U";
-    const tier = (user?.publicMetadata?.tier as string) ?? "Free";
+    // El tier lo dice el BACKEND (useEntitlements), no el publicMetadata de Clerk.
+    // Leerlo de Clerk mentía: quien no tiene tier puesto cae a DEFAULT_TIER ("Beta")
+    // en el backend, pero aquí se pintaba "Free" porque el metadata venía vacío. El
+    // menú ya salía bien (esconde por feature); era solo la etiqueta la que engañaba.
 
     const isActive = (href: string) => {
         if (href === "/") return pathname === "/";
@@ -335,7 +338,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                             letterSpacing: '1.5px',
                             color: 'var(--color-ec-copper)',
                         }}>
-                            {tier}
+                            {loading ? "" : tier}
                         </span>
                     </div>
                 )}

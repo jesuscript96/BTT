@@ -36,9 +36,53 @@ ALLOW_MOCK_DATA = os.getenv("ALLOW_MOCK_DATA", "false").lower() == "true"
 INTRADAY_BATCH_SIZE = int(os.getenv("INTRADAY_BATCH_SIZE", "500"))
 CACHE_DIR = os.getenv("CACHE_DIR", ".cache/intraday")
 
+# ─── Lake local (camino caliente) ────────────────────────────────────────────
+# Espejo del lake en el disco del servidor, con la MISMA estructura que el bucket
+# (<LOCAL_LAKE_DIR>/cold_storage/intraday_1m[_optimized]/year=Y/month=M/*.parquet).
+# Si un mes está en disco, se lee de disco; si no, se sigue leyendo de gs:// como
+# hasta ahora. GCS deja de ser el camino caliente pero sigue siendo el respaldo y
+# el destino de la ingesta: NO se elimina ningún fallback.
+#
+# Clave del diseño: NO decide qué leer. La elección optimized-vs-raw (y la guardia
+# anti-copia-obsoleta de _prune_stale_optimized_paths) se hace igual que siempre
+# contra GCS; esto solo reescribe el PREFIJO de la ruta ya elegida. Así el disco no
+# puede saltarse la guardia y servir un mes rancio.
+#
+# Vacío (default) = desactivado, comportamiento idéntico al actual.
+LOCAL_LAKE_DIR = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/")
+
 from app.db.connection import get_connection
 
 logger = logging.getLogger("backtester.cache")
+
+_lake_hits: set = set()  # (year, month, kind) ya logueados, para no repetir
+
+
+def _to_local_lake(gs_path: str) -> str:
+    """Traduce una ruta gs://<bucket>/cold_storage/... a su equivalente en disco.
+
+    Devuelve la ruta local SOLO si ese mes existe de verdad en el disco (hay al
+    menos un .parquet). En cualquier otro caso devuelve la ruta gs:// original,
+    así que un espejo incompleto degrada a GCS en vez de romper.
+    """
+    if not LOCAL_LAKE_DIR or not gs_path:
+        return gs_path
+    prefijo = f"gs://{GCS_BUCKET}/"
+    if not gs_path.startswith(prefijo):
+        return gs_path
+    local = os.path.join(LOCAL_LAKE_DIR, gs_path[len(prefijo):])
+    carpeta = os.path.dirname(local)
+    try:
+        if not os.path.isdir(carpeta):
+            return gs_path
+        if not any(f.endswith(".parquet") for f in os.listdir(carpeta)):
+            return gs_path
+    except OSError:
+        return gs_path
+    if carpeta not in _lake_hits:
+        _lake_hits.add(carpeta)
+        logger.info(f"  [LAKE LOCAL] {carpeta} — leyendo de disco, no de GCS")
+    return local
 
 # Log once: raw (non-reclustered) intraday explains long silent GCS reads
 _warned_raw_intraday_slow = False
@@ -342,14 +386,18 @@ def _select_intraday_glob_for_month(conn, year: int, month: int) -> str | None:
         opt_pattern = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/"
         for p in _available_optimized_paths:
             if p.startswith(opt_pattern):
-                return f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
-                
+                # _to_local_lake NO cambia la decisión (optimized vs raw), solo el
+                # prefijo: la guardia anti-copia-obsoleta ya ha filtrado este path.
+                return _to_local_lake(
+                    f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet")
+
     # Check raw paths
     for pad in (f"{month:02d}", str(month)):
         raw_pattern = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/"
         for p in _available_raw_paths:
             if p.startswith(raw_pattern):
-                return f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
+                return _to_local_lake(
+                    f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet")
 
     return None
 
@@ -615,8 +663,12 @@ def fetch_intraday_batch(
     src_path = None
     if not ALLOW_MOCK_DATA:
         for pad in (f"{month:02d}", str(month)):
-            opt_glob = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet"
-            raw_glob = f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"
+            # Mismo orden de preferencia de siempre (optimized > raw); _to_local_lake
+            # solo redirige a disco el mes que ya esté espejado, y si no, deja gs://.
+            opt_glob = _to_local_lake(
+                f"gs://{GCS_BUCKET}/cold_storage/intraday_1m_optimized/year={year}/month={pad}/*.parquet")
+            raw_glob = _to_local_lake(
+                f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet")
             try:
                 if conn.execute(f"SELECT count(*) FROM glob('{opt_glob}')").fetchall()[0][0] > 0:
                     src_path = opt_glob

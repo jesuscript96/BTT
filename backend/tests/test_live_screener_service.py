@@ -308,3 +308,13 @@ class TestSessionClock:
         assert _ts_in_pre(pre) is True and _ts_in_rth(pre) is False
         assert _ts_in_after(aft) is True and _ts_in_rth(aft) is False
         assert _ts_in_rth(None) is False
+
+
+class TestOutlierGate:
+    def test_moves_beyond_500pct_are_dropped(self):
+        svc = _svc_with([
+            _state("REAL", 10.0, 14.0, day_volume=1_000_000),   # +40% ok
+            _state("CORRUPT", 1.0, 10.0, day_volume=1_000_000), # +900% -> outlier
+        ])
+        tickers = [r["ticker"] for r in svc.get_top(TAB_GAINERS)]
+        assert "REAL" in tickers and "CORRUPT" not in tickers

@@ -27,8 +27,11 @@ export interface Entitlements {
 // API_BASE already ends with /api, so the path is relative to that.
 const ENDPOINT = "/users/me/entitlements";
 
-// Optimistic fallback used while loading or on error (MVP: all open).
-const OPTIMISTIC: Entitlements = { tier: "Free", entitlements: {}, usage: {} };
+// Fallback mientras carga o si la llamada falla. El mapa vacío hace que `can()` sea
+// optimista (devuelve true), que es lo que queremos para no parpadear; quien pinta algo
+// que dependa del tier debe esperar a `loading === false`. El tier va VACÍO a propósito:
+// poner "Free" aquí era mentir, porque el backend resuelve el defecto a "Beta".
+const OPTIMISTIC: Entitlements = { tier: "", entitlements: {}, usage: {} };
 
 // ─── Shared cache (dedupe one fetch across all mounted components) ──────────
 let _cache: Entitlements | null = null;

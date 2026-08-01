@@ -147,12 +147,13 @@ def init_db():
     except Exception as e:
         print(f"[WARN] Warning: Could not initialize market data views: {e}")
 
-    # 2. Create user tables in the default writeable database AND users.duckdb
+    # 2. Create user tables in the default writeable database AND users.duckdb.
+    # IMPORTANT: always BOTH. The old GCS-mode dedup assumed they were the same
+    # connection, but get_user_db_connection() opens the users.duckdb file —
+    # skipping it left users.duckdb without tables, so every SWR cache read
+    # (ticker_analysis_cache) failed and ticker-analysis refetched slow sources
+    # on each click until Yahoo/Finviz rate-limited us.
     db_connections = [get_db_connection(), get_user_db_connection()]
-    
-    # Remove duplicates if GCS mode where they are the same
-    if provider == "gcs":
-        db_connections = [db_connections[0]]
 
     for conn in db_connections:
         conn.execute("""

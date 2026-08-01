@@ -922,7 +922,8 @@ const KnowTheFloatTable = ({ floatData, shortInterest }: { floatData?: FloatData
         );
     }
 
-    const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal", "Dilution Tracker"];
+    // Dilution Tracker retirado: no tenemos acceso a esa fuente (siempre salía vacío).
+    const sources = ["Yahoo Finance", "Finviz", "Wall Street Journal"];
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
@@ -2235,9 +2236,13 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             })
             .catch(e => { if (!cancelled) console.error("Error fetching balance sheet:", e); });
 
-        // Gap stats: primera vez el backend responde "calculating" y computa en
-        // background → poll con backoff (4s → 8s → 16s… cap 2 min) en vez de
-        // martillear cada 4s durante cálculos largos.
+        // Gap stats: primera visita el backend responde "calculating" y computa
+        // en background EN DOS FASES — la fase 1 (números de runner stats +
+        // float, sin chart) se publica a los ~2 s y HAY QUE PINTARLA (antes se
+        // descartaba y el usuario esperaba 20-120 s mirando un spinner). El
+        // poll es corto y fijo (2s, luego 4s, tope ~2 min), sin backoff
+        // exponencial: con backoff, una fase 2 lista en el segundo 29 no se
+        // veía hasta el poll del segundo 60.
         let pollTimer: NodeJS.Timeout;
         let pollAttempt = 0;
         const fetchGapStats = () => {
@@ -2245,13 +2250,17 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                 .then(v => {
                     if (cancelled) return;
                     const res = v as any;
-                    if (res && res.status === "calculating") {
-                        setLoadingGap(true);
-                        const delay = Math.min(4000 * Math.pow(2, pollAttempt), 120000);
+                    const calculating = res && res.status === "calculating";
+                    const hasStats = (res?.gap_stats?.gap_days_count ?? 0) > 0
+                        || Object.keys(res?.know_the_float ?? {}).length > 0;
+                    if (res && (!calculating || hasStats)) {
+                        merge(res);           // fase 1: pinta números aunque el chart siga en cámara
+                    }
+                    if (calculating && pollAttempt < 30) {
+                        setLoadingGap(!hasStats); // spinner solo si aún no hay NADA que enseñar
                         pollAttempt += 1;
-                        pollTimer = setTimeout(fetchGapStats, delay);
+                        pollTimer = setTimeout(fetchGapStats, pollAttempt === 1 ? 1200 : 3000);
                     } else {
-                        merge(res);
                         setLoadingGap(false);
                     }
                 })
@@ -2956,7 +2965,12 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                         gap: 24,
                         paddingBottom: 0
                     }}>
-                        <MetricCard title="Market Cap" value={formatNumber(data?.market?.market_cap)} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
+                        <MetricCard title="Market Cap" value={formatNumber(
+                            // En vivo (precio × shares outstanding); coherente con Edgie. Fallback al campo.
+                            data?.market?.price != null && data?.market?.shares_outstanding != null
+                                ? data.market.price * data.market.shares_outstanding
+                                : data?.market?.market_cap
+                        )} icon={<Activity size={12} />} indicatorColor="var(--color-ec-copper)" />
                         <MetricCard title="Shares Outstanding" value={formatNumber(data?.market?.shares_outstanding).replace('$', '')} icon={<Users size={12} />} indicatorColor="var(--color-ec-copper)" />
                         <MetricCard
                             title="Float Shares"
@@ -3061,7 +3075,8 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
                                 />
                             ) : (
                             <>
-                            <KnowTheFloatTable floatData={data?.know_the_float} shortInterest={data?.short_interest} />
+                            {/* Float Comparison oculto de momento por decisión de producto */}
+                            {false && <KnowTheFloatTable floatData={data?.know_the_float} shortInterest={data?.short_interest} />}
                             <GapStatsSection
                                 gapStats={data?.gap_stats}
                                 gapStatsPlus1={data?.gap_stats_plus_1}

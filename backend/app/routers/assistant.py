@@ -531,14 +531,15 @@ AGENTIC_TOOLS = [
         "type": "function",
         "function": {
             "name": "read_filing",
-            "description": "Abre y LEE el contenido real del filing más reciente de un tipo dado y devuelve la parte relevante. Para 20-F/10-K usa 'item' (ej. directivos de un 20-F = item 6; de un 10-K = item 10). Para prospectos (424B/S-1) usa 'query' (ej. 'plan of distribution', 'warrant exercise price'). Úsalo SIEMPRE antes de afirmar datos de un documento.",
+            "description": "Abre y LEE el contenido real de un filing y devuelve la parte relevante. Por defecto abre el MÁS RECIENTE del tipo; pasa 'date' (YYYY-MM-DD) para abrir uno ANTERIOR (la respuesta trae 'available_dates' con otras fechas disponibles). Para dilución NO te quedes con un solo documento ni solo el 8-K más reciente: lee TODOS los tipos relevantes (10-K/10-Q, 424B/S-1/S-3, y los 8-K de las fechas pertinentes). Para 20-F/10-K usa 'item' (directivos: 20-F item 6, 10-K item 10). Para prospectos/warrants usa 'query' (ej. 'plan of distribution', 'warrant exercise price', 'description of securities'). Úsalo SIEMPRE antes de afirmar datos de un documento.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "ticker": {"type": "string"},
-                    "form_type": {"type": "string", "description": "Formulario a abrir (ej: '20-F', '424B5', 'S-1', '8-K')."},
+                    "form_type": {"type": "string", "description": "Formulario a abrir (ej: '20-F', '424B5', 'S-1', 'S-3', '8-K')."},
                     "query": {"type": "string", "description": "Qué buscas dentro del documento (texto libre)."},
                     "item": {"type": "integer", "description": "Nº de ITEM a extraer en filings estructurados (20-F/10-K/10-Q)."},
+                    "date": {"type": "string", "description": "Fecha del filing a abrir (YYYY-MM-DD) para leer uno anterior en vez del más reciente."},
                 },
                 "required": ["form_type"],
             },
@@ -549,6 +550,17 @@ AGENTIC_TOOLS = [
         "function": {
             "name": "get_insiders",
             "description": "Transacciones de insiders (compras/ventas de directivos) desde SEC Forms 3/4/5. Útil para small caps US; los emisores extranjeros (20-F) suelen estar exentos.",
+            "parameters": {
+                "type": "object",
+                "properties": {"ticker": {"type": "string"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ticker_snapshot",
+            "description": "Snapshot rápido del ticker: sector, industria, país, precio, market cap, float, shares outstanding, % insiders, % institucional, short interest (% del float), days-to-cover, y titulares de noticias recientes. Úsalo para el informe rápido y el riesgo de squeeze. NOTA: borrow_rate no está disponible (no hay fuente) → 'sin datos disponibles'.",
             "parameters": {
                 "type": "object",
                 "properties": {"ticker": {"type": "string"}},
@@ -572,17 +584,30 @@ def _tool_list_filings(ticker=None, form_type=None, _default_ticker=None):
     ]}
 
 
-def _tool_read_filing(form_type, ticker=None, query="", item=None, _default_ticker=None):
+def _tool_read_filing(form_type, ticker=None, query="", item=None, date=None, _default_ticker=None):
     ticker = (ticker or _default_ticker or "").upper().strip()
     if not ticker:
         return {"error": "no ticker"}
     cik = edgar_service.resolve_cik(ticker)
     if not cik:
         return {"error": f"No se encontró CIK para {ticker}."}
-    fl = edgar_service.list_filings(cik, forms=[form_type], limit=5)
+    # Historial amplio: NO solo el más reciente. Permite abrir un filing antiguo.
+    fl = edgar_service.list_filings(cik, forms=[form_type], limit=30)
     if not fl:
         return {"error": f"No hay filings tipo {form_type} para {ticker}."}
-    f = fl[0]
+
+    # Selección del filing: por fecha exacta, o el más reciente en/antes de `date`;
+    # si no, el más reciente. `fl` viene en orden descendente por fecha.
+    if date:
+        exact = [x for x in fl if (x.get("date") or "") == date]
+        if exact:
+            f = exact[0]
+        else:
+            before = [x for x in fl if (x.get("date") or "") <= date]
+            f = before[0] if before else fl[-1]
+    else:
+        f = fl[0]
+
     text = edgar_service.fetch_document_text(cik, f["accession"], f["primary_document"])
     if not text:
         return {"error": "No se pudo descargar el documento."}
@@ -594,7 +619,10 @@ def _tool_read_filing(form_type, ticker=None, query="", item=None, _default_tick
         "form": f["form"], "date": f["date"],
         "url": edgar_service._doc_url(cik, f["accession"], f["primary_document"]),
         "content": (seg or "")[:9000],
-        "note": "Responde SOLO con lo que aparezca en 'content'. Si el dato no está, di que no está; no inventes.",
+        # Otras fechas disponibles de este tipo, para que el modelo pueda pedir otra.
+        "available_dates": [x.get("date") for x in fl[:12]],
+        "note": "Responde SOLO con lo que aparezca en 'content'. Si el dato no está aquí, "
+                "prueba otra fecha de 'available_dates' u otro tipo de filing; no inventes.",
     }
 
 
@@ -606,21 +634,106 @@ def _tool_get_insiders(ticker=None, _default_ticker=None):
     return {"ticker": ticker, "insiders": get_insider_activity(ticker)[:25]}
 
 
+def _tool_ticker_snapshot(ticker=None, _default_ticker=None):
+    """Snapshot rápido para informe y squeeze. Reutiliza yfinance (curl_cffi) +
+    noticias de Massive (misma fuente que el panel "PR Releases", con fecha).
+    Sin fuentes nuevas. borrow_rate no existe en fuente gratuita."""
+    ticker = (ticker or _default_ticker or "").upper().strip()
+    if not ticker:
+        return {"error": "no ticker"}
+    # yfinance 1.x gestiona su propia sesión (la sesión custom daba 401 Invalid
+    # Crumb y fue retirada de ticker_analysis).
+    import yfinance as yf
+
+    def pct(x):
+        return round(x * 100, 2) if isinstance(x, (int, float)) else None
+
+    try:
+        info = yf.Ticker(ticker).info or {}
+    except Exception as e:
+        logger.warning("[SNAPSHOT] yfinance falló %s: %s", ticker, e)
+        info = {}
+    snap = {
+        "ticker": ticker,
+        "name": info.get("longName") or info.get("shortName"),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "country": info.get("country"),
+        "price": info.get("currentPrice") or info.get("previousClose"),
+        "market_cap": info.get("marketCap"),
+        "float_shares": info.get("floatShares"),
+        "shares_outstanding": info.get("sharesOutstanding"),
+        "insiders_pct": pct(info.get("heldPercentInsiders")),
+        "institutions_pct": pct(info.get("heldPercentInstitutions")),
+        "short_percent_of_float": pct(info.get("shortPercentOfFloat")),
+        "days_to_cover": info.get("shortRatio"),
+        "shares_short": info.get("sharesShort"),
+        # No hay fuente gratuita del borrow rate; regla PRD = no inventar.
+        "borrow_rate": "sin datos disponibles",
+    }
+    # Noticias desde Massive (/v2/reference/news) — trae published_utc, así que
+    # Edgie sabe la FECHA de cada titular y puede juzgar recencia (p.ej. un reverse
+    # split de hace 2 días es reciente y material). Es la fuente del panel PR Releases.
+    try:
+        from app.services import massive_service
+        raw = massive_service.get_news(ticker, limit=10) or []
+        snap["news"] = [{
+            "date": (n.get("published_utc") or "")[:10],
+            "title": n.get("title"),
+            "publisher": (n.get("publisher") or {}).get("name"),
+        } for n in raw[:6]]
+    except Exception as e:
+        logger.warning("[SNAPSHOT] noticias Massive fallaron %s: %s", ticker, e)
+        snap["news"] = []
+    return snap
+
+
+# Locates se calcula ahora de forma determinista en el frontend (sidebar,
+# LocatesCalculator.tsx) — fuera de Edgie por decisión de producto.
+
 _TOOL_IMPL = {
     "list_filings": _tool_list_filings,
     "read_filing": _tool_read_filing,
     "get_insiders": _tool_get_insiders,
+    "get_ticker_snapshot": _tool_ticker_snapshot,
 }
 
 _AGENTIC_PREAMBLE = (
-    "Tienes herramientas para consultar SEC EDGAR EN VIVO: list_filings, read_filing y get_insiders. "
-    "Cuando te pregunten por datos concretos de la empresa (directivos/junta, ofertas, dilución, warrants, "
-    "beneficial owners, insiders, etc.), DEBES usarlas para leer el documento real en vez de responder de memoria. "
-    "REGLA CRÍTICA: nunca afirmes haber leído un documento ni des datos 'según el Form X' si no lo has abierto con "
-    "read_filing en esta conversación. Si la herramienta no devuelve el dato, di 'no disponible en los filings' y "
-    "NO inventes nombres ni cifras. Cita siempre la fuente (formulario + fecha). "
-    "Pista de estructura: en un 20-F los directivos están en el Item 6; en un 10-K en el Item 10; "
-    "los agentes colocadores/ofertas en 424B y S-1/S-3 ('Plan of Distribution'/'Underwriting')."
+    "Eres Edgie, copiloto de trading de Edgecute para operadores que van CORTOS en small caps. "
+    "Informas y calculas; el usuario decide. NUNCA das señales de entrada ni dices 'es un buen short'. "
+    "NUNCA inventas datos: si falta un dato, di 'sin datos disponibles'. Sé BREVE: todo debe leerse en 30 "
+    "segundos mientras se opera; si algo cabe en una frase, no uses dos; sin párrafos largos ni relleno.\n"
+    "FORMATO: cuando compares datos (dilución, warrants, ownership) usa TABLAS markdown GFM con fila separadora "
+    "(| Col | Col |, luego |---|---|), NUNCA filas de pipes sueltas sin cabecera — se renderizan como tabla real y "
+    "se leen de un vistazo.\n"
+    "TOOLS (úsalas en vez de responder de memoria; cita la fuente): list_filings, read_filing, get_insiders, "
+    "get_ticker_snapshot. NUNCA afirmes haber leído un documento que no abriste con read_filing.\n"
+    "Estructura SEC: directivos en 20-F Item 6 / 10-K Item 10 / DEF 14A; agentes colocadores y ofertas en "
+    "424B y S-1/S-3 ('Plan of Distribution'/'Underwriting'); warrants en 'Description of Securities'. "
+    "Para dilución/warrants NO te quedes en un solo documento ni solo el 8-K más reciente: lee VARIOS tipos y "
+    "fechas (10-K/Q, 424B, S-1/S-3, 8-K) y usa read_filing con 'date' para abrir uno anterior. "
+    "WARRANTS ≠ stock options de directivos/empleados: reporta el 'warrants outstanding' y el 'exercise price' "
+    "EXACTOS del documento del warrant (no los mezcles con opciones ni planes de incentivos); horquilla solo si "
+    "hay tramos reales.\n\n"
+    "LOCATES: tú NO calculas locates. Si te lo piden, indica que usen la calculadora de locates del panel de "
+    "detalle del Screener (al seleccionar un ticker), que lo hace de forma exacta.\n\n"
+    "FLUJO 'informe rápido de ticker' (el usuario EVALÚA UN SHORT; usa get_ticker_snapshot + read_filing + "
+    "get_insiders): 6 bloques, máx 2 frases cada uno: "
+    "1) Sector (y temperatura del sector si la conoces; si no, solo el sector). "
+    "2) Procedencia: país y, si cotiza en USA pero la gestión/junta es china o asiática, AVÍSALO (lee 20-F Item 6 "
+    "o DEF 14A). "
+    "3) Noticias recientes (del snapshot; cada titular trae FECHA): menciona lo material de los últimos ~7 días "
+    "(reverse split, offering, contrato, etc.); 2 días atrás ES reciente. Añade SIEMPRE: 'En small caps la noticia "
+    "suele ser el catalizador del pump, no una razón para no shortear.' Solo si de verdad no hay nada reciente: "
+    "'Sin noticias relevantes.' "
+    "4) Filings de dilución activos (lee S-3/424B/8-K): S-3, ATM, baby shelf, warrants, offering, IPO — con "
+    "cantidades y lo que queda disponible. Si no hay: 'Sin filings de dilución activos detectados.' "
+    "5) Precios de referencia derivados de esos filings (warrants a $X, ATM, offering a $X); máx 4; no inventes niveles. "
+    "6) Insiders % e institucional % (del snapshot), con una frase de contexto si es relevante.\n\n"
+    "FLUJO 'riesgo de squeeze' (usa get_ticker_snapshot): borrow rate = 'sin datos disponibles' (no lo tenemos); "
+    "days to cover; float. NO incluyas el short interest en la respuesta (omítelo del todo). Formato compacto, una "
+    "frase de contexto solo si los datos la justifican. Nunca inventes.\n"
+    "Recuerda: en small caps la noticia es catalizador del pump, no razón para descartar el short."
 )
 
 
