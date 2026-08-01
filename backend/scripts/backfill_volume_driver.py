@@ -61,7 +61,13 @@ def lake_files(y, mo):
     if y <= 2025:
         f = f"{d}/data_0.parquet"
         return [f] if os.path.exists(f) else []
-    return sorted(glob.glob(f"{d}/catchup_intraday_*.parquet"))
+    # 2026+: días sueltos catchup_*, PERO 2026-01/02 llegaron como data_0.parquet
+    # mensual (consolidados aparte). Incluir ambos para no dejar meses sin re-pasar.
+    files = sorted(glob.glob(f"{d}/catchup_intraday_*.parquet"))
+    f0 = f"{d}/data_0.parquet"
+    if os.path.exists(f0):
+        files.append(f0)
+    return files
 
 def main():
     frm = os.getenv("BV_FROM", "2022-1"); to = os.getenv("BV_TO", "2026-6")

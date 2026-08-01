@@ -80,17 +80,24 @@ def mirror(c, y, m, d):
 
 
 def build_universe_csv(c, y, m, d):
-    """Universo gap>=GAP_MIN · CS/ADRC · sin splits del día -> CSV Ticker,Date."""
-    dm = f"gs://{BUCKET}/cold_storage/daily_metrics/year={y}/month={m}/*.parquet"
+    """Universo POR-SPREAD (método de Augus, gap-independiente): tickers con alguna barra
+    premarket (04:00-09:30 NY) con (high-low)/open*100 > SPREAD_LIMIT en el día ya espejado
+    a local · CS/ADRC. SIN filtro de gap → caza también los misprints de BAJO gap (p.ej.
+    LIFW gap -0,35% / BQ gap 4,2%) que el universo gap>=5 dejaba pasar cada día. La
+    validación NBBO del gen sigue siendo el árbitro (spread ancho real no se toca)."""
+    local = local_intraday(y, m, d)
+    spread = float(os.getenv("SPREAD_LIMIT", "5.0"))
     q = f"""
-      SELECT DISTINCT dm.ticker AS ticker
-      FROM read_parquet('{dm}') dm
+      WITH pm AS (
+        SELECT DISTINCT ticker FROM read_parquet('{local}')
+        WHERE open > 0
+          AND (extract(hour FROM timestamp)*60 + extract(minute FROM timestamp)) BETWEEN 240 AND 569
+          AND (high - low)/open*100 > {spread}
+      )
+      SELECT DISTINCT pm.ticker AS ticker
+      FROM pm
       JOIN (SELECT DISTINCT ticker,type FROM read_parquet('gs://{BUCKET}/cold_storage/tickers/*.parquet')) tk
-        ON dm.ticker=tk.ticker AND tk.type IN ('CS','ADRC')
-      WHERE dm.gap_pct >= {float(GAP_MIN)}
-        AND CAST(dm.timestamp AS DATE) = DATE '{d}'
-        AND NOT EXISTS (SELECT 1 FROM read_parquet('gs://{BUCKET}/cold_storage/splits/*.parquet') sp
-                        WHERE sp.ticker=dm.ticker AND CAST(sp.execution_date AS DATE)=DATE '{d}')
+        ON pm.ticker = tk.ticker AND tk.type IN ('CS','ADRC')
     """
     tickers = [r[0] for r in c.execute(q).fetchall()]
     csv = f"{WASH_DIR}/uni_{d}.csv"
@@ -98,7 +105,7 @@ def build_universe_csv(c, y, m, d):
         f.write("Ticker,Date\n")
         for t in tickers:
             f.write(f"{t},{d}\n")
-    log(f"  [2/universo] {d}: {len(tickers)} ticker-días gap>={GAP_MIN}")
+    log(f"  [2/universo] {d}: {len(tickers)} tickers con misprint (spread>{spread}%, sin filtro de gap)")
     return csv, len(tickers)
 
 
@@ -213,10 +220,10 @@ def main():
         tot_m = sum(r["marcadas"] for r in results)
         tot_l = sum(r["limpiadas"] for r in results)
         lineas = "\n".join(
-            f"• {r['date']}: {r['filas']:,} filas · {r['td']} td gap≥{GAP_MIN} · "
+            f"• {r['date']}: {r['filas']:,} filas · {r['td']} tickers c/misprint (spread) · "
             f"{r['marcadas']:,} marcadas · {r['limpiadas']:,} reconstruidas" for r in results)
         msg = (f"🧼 **Lavado diario Augus** ({ahora})\n"
-               f"Días lavados: **{len(results)}** · ticker-días gap≥{GAP_MIN}: **{tot_td}** · "
+               f"Días lavados: **{len(results)}** · tickers con misprint (spread, sin gap): **{tot_td}** · "
                f"marcadas: **{tot_m:,}** · reconstruidas: **{tot_l:,}**\n{lineas}\n"
                f"Lake local al día · prewarm se recarga en el restart.")
         notify_discord(msg)
