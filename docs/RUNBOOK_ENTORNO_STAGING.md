@@ -1,8 +1,64 @@
 # Runbook — Entorno de desarrollo / staging (co-ubicado en Falkenstein)
 
-**Fecha:** 2026-07-30
-**Estado:** DISEÑADO y con groundwork hecho. **Ejecución APLAZADA** — se monta *después* de terminar la limpieza del porcentaje restante de misprints (Opción A de volumen). Ver `docs/REGISTRO_DECISION_MISPRINTS_2026-07-22.md` §12.
+**Fecha:** 2026-07-30 (diseño) · **2026-08-01 (EJECUTADO)**
+**Estado:** ✅ **VIVO en producción del servidor** — montado y verificado el 2026-08-01. El groundwork de diseño se conserva abajo; el estado real (as-built) está en la sección 0.
 **Objetivo:** dar un entorno de pruebas real para validar cambios (filtros de datos, features) **antes de subir a prod**, y así **eliminar el anti-patrón actual** de meter gating admin/por-usuario en el código de prod solo para que los devs vean los cambios.
+
+---
+
+## 0. Estado REAL (as-built, 2026-08-01) ✅
+
+Montado y verificado el **1 de agosto de 2026**. Todo lo de abajo (secciones 1-7) fue el diseño; esto es cómo quedó de verdad.
+
+**Backend (API) — en el propio servidor principal**
+- **Vive en el dedicado de Falkenstein `176.9.117.155`** como 2º contenedor aislado, junto a prod. Coste incremental 0. NO es máquina aparte.
+- App Coolify: `b-t-t:develop-x2u32befrq2181gmym43yfhn`, proyecto `btt-marketanalysis-nuevo`, env `production` (Coolify 4.1.2 no dejó crear un env `staging`; **el aislamiento lo dan env+mounts+rama, no la etiqueta del environment**).
+- **Rama:** `develop` (auto-deploy). `develop` sincronizada con `main` al montarlo.
+- **URL API:** `https://x2u32befrq2181gmym43yfhn.176.9.117.155.sslip.io` (HTTPS con cert Let's Encrypt válido).
+
+**Especificaciones con las que quedó**
+| Parámetro | Valor |
+|---|---|
+| Rama | `develop` |
+| Base Directory | **`/backend`** (Nixpacks fallaba con `/`: el backend está en subdir) |
+| Build / Start | `pip install -r requirements.txt` / `uvicorn app.main:app --host 0.0.0.0 --port 3000` |
+| RAM (tope cgroup) | **32 GiB** |
+| CPU | **8** |
+| `BACKTEST_PARALLEL_WORKERS` | `4` |
+| `INTRADAY_STREAM_WORKERS` | `2` |
+| `DUCKDB_MEMORY_LIMIT` | `12GB` |
+| `DISABLE_GCS_SYNC` | `true` |
+| `LIVE_SCREENER_ENABLED` | `false` |
+| `REDIS_URL` | *(vacío)* |
+| `LOCAL_LAKE_DIR` | `/lake` |
+
+**Mounts (3)**
+| Source (host) | Destination | Tipo |
+|---|---|---|
+| `/data/btt_lake` | `/lake` | Directory (RW; Coolify no da RO, ver nota) |
+| `/data/btt_staging_cache` | `/tmp/btt_intraday_cache` | Directory (caché propia) |
+| `/data/btt_staging/users.duckdb` | `/app/users.duckdb` | **File** (Directory Mount + "Convert to file") |
+
+**Aislamiento verificado (staging NO puede dañar prod)**
+- `DISABLE_GCS_SYNC=true` → no baja/sube `users.duckdb` a GCS. **Verificado**: la DB de prod en GCS quedó idéntica (byte a byte) tras el deploy de staging.
+- `LIVE_SCREENER_ENABLED=false` → no arranca el WS de Massive → no pelea con prod (ver más abajo).
+- Lake RW pero **la app nunca escribe/borra el lake** (verificado en código: `LOCAL_LAKE_DIR` solo se usa para leer). Caché en carpeta propia. Tope de RAM propio.
+- Prod tras montar staging: contenedor con **0 reinicios**, DB intacta, screener sano.
+
+**3 gotchas resueltos al montarlo (para la próxima)**
+1. **Base Directory:** debe ser `/backend`, no `/` (si no, Nixpacks: *"failed to detect application type"*).
+2. **Read-only del lake:** Coolify 4.1.2 **no ofrece toggle RO** en Directory Mounts. Se dejó RW; es seguro porque la app no escribe el lake (verificado). Si algún día se quiere RO físico, hay que hacerlo por config avanzada.
+3. **HTTPS/cert:** el dominio hay que ponerlo con **`https://`** en General→Domains. Si se deja `http://`, Coolify solo crea el router `http-0` (sin `tls.certresolver`) y Traefik nunca pide cert → aviso de "conexión no privada". Con `https://` + redeploy, Let's Encrypt emite bien.
+4. **`LIVE_SCREENER_ENABLED=false` es IMPRESCINDIBLE** (faltaba en el diseño original): el WS de Massive admite 1 conexión por API key; si staging arranca el screener, pelea con prod (error `1008` en bucle) y **degrada el screener en vivo de PROD**. Verificado en `live_screener_service.py:152`.
+
+**Frontend (Vercel) — lo gestiona Jesús**
+- Deploy de staging del frontend, rama `develop`, con env:
+  `NEXT_PUBLIC_API_URL = https://x2u32befrq2181gmym43yfhn.176.9.117.155.sslip.io`
+  (el front añade `/api` solo, `api.ts:15`).
+- **CORS ya resuelto:** el backend acepta cualquier origen `*.vercel.app` (regex en `main.py:240`) → los previews funcionan sin tocar CORS.
+- El cert válido de la API es imprescindible para que el `fetch` de Vercel (HTTPS) no se bloquee.
+
+**Flujo resultante:** `push a develop → auto-deploy staging (back en servidor + front en Vercel) → validar → merge a main (prod)`.
 
 ---
 
