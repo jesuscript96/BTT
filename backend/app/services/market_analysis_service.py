@@ -592,9 +592,9 @@ def _hot_records(df, filters, limit):
     return r.to_dict("records")
 
 
-def _fetch_records(con, filters, limit):
+def _fetch_records(con, filters, limit, table_name="daily_metrics"):
     from app.services.query_service import build_screener_query
-    rec_query, sql_p, _, _, _, _ = build_screener_query(filters, limit=limit)
+    rec_query, sql_p, _, _, _, _ = build_screener_query(filters, limit=limit, table_name=table_name)
     cur = con.execute(rec_query, sql_p)
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -642,11 +642,13 @@ def _load_quality_inputs():
     return splits, valid, derived_map
 
 
-def get_market_analysis(filters: Dict[str, Any]) -> Dict[str, Any]:
+def get_market_analysis(filters: Dict[str, Any], adjusted: bool = False) -> Dict[str, Any]:
     """
     Orquestación con BD (router fino → lógica aquí). Resuelve periodo, trae records del
     periodo actual y del anterior equivalente (vía build_screener_query), calcula el payload
     analítico y las deltas de KPI. `source` indica el proveedor de datos.
+
+    Cuando adjusted=True: lee de daily_metrics_adj (data ajustada por splits), sin hot cache.
     """
     import os
     from datetime import date, timedelta
@@ -656,13 +658,17 @@ def get_market_analysis(filters: Dict[str, Any]) -> Dict[str, Any]:
     limit = int(safe_float(filters.get("limit")) or 5000)
     effective_gap = max(safe_float(filters.get("min_gap")), safe_float(filters.get("min_gap_at_open_pct")))
 
+    tbl = "daily_metrics_adj" if adjusted else "daily_metrics"
+
     # Hot cache (gap_pct>=10 en RAM) para el caso común → <100ms sin tocar GCS.
+    # En modo adjusted: sin hot cache (fuerza cold path sobre la tabla ajustada).
     hot_df = None
-    try:
-        from app.services.cache_service import get_hot_daily_df
-        hot_df = get_hot_daily_df()
-    except Exception:
-        hot_df = None
+    if not adjusted:
+        try:
+            from app.services.cache_service import get_hot_daily_df
+            hot_df = get_hot_daily_df()
+        except Exception:
+            hot_df = None
     use_hot = hot_df is not None and getattr(hot_df, "empty", True) is False and effective_gap >= 10.0
 
     # Claves propias de Market Analysis que NO son columnas de daily_metrics (no deben ir al SQL).
@@ -679,7 +685,7 @@ def get_market_analysis(filters: Dict[str, Any]) -> Dict[str, Any]:
                 latest = None
         if latest is None:
             con = get_db_connection(read_only=True)
-            row = con.execute("SELECT CAST(MAX(timestamp) AS DATE) FROM daily_metrics").fetchone()
+            row = con.execute(f"SELECT CAST(MAX(timestamp) AS DATE) FROM {tbl}").fetchone()
             latest = row[0] if row and row[0] else date.today()
             if isinstance(latest, str):
                 latest = _as_date(latest)
@@ -698,8 +704,8 @@ def get_market_analysis(filters: Dict[str, Any]) -> Dict[str, Any]:
         else:
             if con is None:
                 con = get_db_connection(read_only=True)
-            cur_records = _fetch_records(con, cur_filters, limit)
-            prev_records = _fetch_records(con, prev_filters, limit)
+            cur_records = _fetch_records(con, cur_filters, limit, table_name=tbl)
+            prev_records = _fetch_records(con, prev_filters, limit, table_name=tbl)
             source = os.getenv("DB_PROVIDER", "motherduck").lower()
 
         # Patch v2.1 §01 — calidad de universo en AMBOS periodos (los deltas
@@ -876,7 +882,7 @@ def compute_gaps_by_sector(
     }
 
 
-def get_gaps_by_sector(filters: Dict[str, Any]) -> Dict[str, Any]:
+def get_gaps_by_sector(filters: Dict[str, Any], adjusted: bool = False) -> Dict[str, Any]:
     """
     Orquestación con BD (router fino → aquí). Ventana 5d/30d/90d (independiente del
     selector global de la página, como lo era Time Distribution), gappers con
@@ -884,6 +890,8 @@ def get_gaps_by_sector(filters: Dict[str, Any]) -> Dict[str, Any]:
 
     Reusa el hot cache + apply_quality_filters. El sector viene de la tabla de
     referencia (cache_service.get_ticker_sector_df) — NUNCA se llama a la API aquí.
+
+    Cuando adjusted=True: lee de daily_metrics_adj, sin hot cache.
     """
     import os
     from datetime import date, timedelta
@@ -893,6 +901,8 @@ def get_gaps_by_sector(filters: Dict[str, Any]) -> Dict[str, Any]:
     days = _SECTOR_WINDOW_DAYS.get(window, 5)
     min_gap = safe_float(filters.get("min_gap")) or 20.0
     metric = str(filters.get("metric", "count")).lower()
+
+    tbl = "daily_metrics_adj" if adjusted else "daily_metrics"
 
     # sector map (tabla de referencia)
     sector_map = None
@@ -905,12 +915,14 @@ def get_gaps_by_sector(filters: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[WARN] gaps-by-sector sin tabla de sector: {e}")
 
     # universo de la ventana desde el hot cache (gap>=10 en RAM); cold fallback
+    # En modo adjusted: sin hot cache (fuerza cold path sobre la tabla ajustada).
     hot_df = None
-    try:
-        from app.services.cache_service import get_hot_daily_df
-        hot_df = get_hot_daily_df()
-    except Exception:
-        hot_df = None
+    if not adjusted:
+        try:
+            from app.services.cache_service import get_hot_daily_df
+            hot_df = get_hot_daily_df()
+        except Exception:
+            hot_df = None
 
     con = None
     try:
@@ -924,14 +936,14 @@ def get_gaps_by_sector(filters: Dict[str, Any]) -> Dict[str, Any]:
             source = "hot_cache"
         else:
             con = get_db_connection(read_only=True)
-            row = con.execute("SELECT CAST(MAX(timestamp) AS DATE) FROM daily_metrics").fetchone()
+            row = con.execute(f"SELECT CAST(MAX(timestamp) AS DATE) FROM {tbl}").fetchone()
             latest = row[0] if row and row[0] else date.today()
             if isinstance(latest, str):
                 latest = _as_date(latest)
             start = latest - timedelta(days=days)
             f = {"start_date": str(start), "end_date": str(latest + timedelta(days=1)),
                  "min_gap": min_gap, "limit": 100000}
-            records = _fetch_records(con, f, 100000)
+            records = _fetch_records(con, f, 100000, table_name=tbl)
             source = os.getenv("DB_PROVIDER", "motherduck").lower()
 
         # filtros de calidad (mismo universo que el resto de la página)

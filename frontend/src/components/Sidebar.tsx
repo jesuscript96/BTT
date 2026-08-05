@@ -60,7 +60,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
 
     const isActive = (href: string) => {
         if (href === "/") return pathname === "/";
-        return pathname.startsWith(href);
+        return pathname === href || pathname.startsWith(href + "/");
     };
 
     const linkActive = (href: string): React.CSSProperties =>
@@ -214,6 +214,20 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <BarChart3 style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Market Analysis</span>
+                    </Link>
+                )}
+
+                {/* Market Analysis — Adjusted (split-adjusted data) */}
+                {allowed("market.analysis.access") && (
+                    <Link
+                        href="/market-analysis-adjusted"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/market-analysis-adjusted"),
+                        }}
+                    >
+                        <BarChart3 style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit', opacity: 0.6 }} />
+                        <span style={labelFade(isCollapsed)}>MA · Adjusted</span>
                     </Link>
                 )}
 

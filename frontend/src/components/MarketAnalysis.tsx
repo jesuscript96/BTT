@@ -20,8 +20,11 @@ import { SeasonalityChart, SectorTreemap, SEASON_PALETTE } from "@/components/ma
 import { ChatBot } from "@/components/ChatBot";
 import {
   getMarketAnalysis,
+  getMarketAnalysisAdjusted,
   getAvgChangeFromOpen,
+  getAvgChangeFromOpenAdjusted,
   getGapsBySector,
+  getGapsBySectorAdjusted,
   type MarketAnalysisResponse,
   type MaKpiValue,
   type MaMonthCurve,
@@ -85,7 +88,7 @@ function activeFilterCount(f: Filters): number {
 }
 
 // ── componente principal ─────────────────────────────────────────────────────
-export default function MarketAnalysis() {
+export default function MarketAnalysis({ adjusted = false }: { adjusted?: boolean }) {
   const [filters, setFilters] = useState<Filters>(DEFAULTS);
   const [data, setData] = useState<MarketAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,7 +99,8 @@ export default function MarketAnalysis() {
 
   const load = useCallback(
     (signal?: AbortSignal) => {
-      return getMarketAnalysis(params, signal)
+      const fn = adjusted ? getMarketAnalysisAdjusted : getMarketAnalysis;
+      return fn(params, signal)
         .then((res) => { setData(res); setError(null); })
         .catch((e) => {
           if ((e as Error)?.name === "AbortError") return;
@@ -104,7 +108,7 @@ export default function MarketAnalysis() {
         })
         .finally(() => setLoading(false));
     },
-    [params],
+    [params, adjusted],
   );
 
   useEffect(() => {
@@ -134,14 +138,14 @@ export default function MarketAnalysis() {
       records_sample: data.records.slice(0, 20),
     };
     (window as unknown as Record<string, unknown>).__lastMarketAnalysisContext = detail;
-    window.dispatchEvent(new CustomEvent("market-analysis-context", { detail }));
-  }, [data, filters]);
+    window.dispatchEvent(new CustomEvent(adjusted ? "market-analysis-adjusted-context" : "market-analysis-context", { detail }));
+  }, [data, filters, adjusted]);
 
   useEffect(() => () => {
     if (typeof window === "undefined") return;
     (window as unknown as Record<string, unknown>).__lastMarketAnalysisContext = null;
-    window.dispatchEvent(new CustomEvent("market-analysis-context", { detail: null }));
-  }, []);
+    window.dispatchEvent(new CustomEvent(adjusted ? "market-analysis-adjusted-context" : "market-analysis-context", { detail: null }));
+  }, [adjusted]);
 
   const isEmpty = data ? (data.kpis.gappers_count.value ?? 0) === 0 : false;
   const nActive = activeFilterCount(filters);
@@ -153,9 +157,9 @@ export default function MarketAnalysis() {
       {/* ── Header ── */}
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "14px 24px", borderBottom: `1px solid ${color.border}`, flexShrink: 0 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <h1 style={{ fontFamily: font.serif, fontSize: 20, fontWeight: 500, color: color.textHigh, margin: 0 }}>Market Analysis</h1>
+          <h1 style={{ fontFamily: font.serif, fontSize: 20, fontWeight: 500, color: color.textHigh, margin: 0 }}>{adjusted ? "Market Analysis · Adjusted" : "Market Analysis"}</h1>
           <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, color: color.textMuted }}>
-            Condiciones de mercado · gappers small-cap
+            {adjusted ? "Data ajustada por splits · " : ""}Condiciones de mercado · gappers small-cap
             {data?.period ? ` · ${data.period.start} → ${data.period.end}` : ""}
           </span>
         </div>
@@ -217,9 +221,9 @@ export default function MarketAnalysis() {
                 title="Avg Change from Open"
                 subtitle="Perfil intradía medio · 12 meses · universo estándar (gap ≥30% · vol día ≥1M)"
               >
-                <SeasonalityModule />
+                <SeasonalityModule adjusted={adjusted} />
               </Panel>
-              <SectorPanel />
+              <SectorPanel adjusted={adjusted} />
             </div>
           </>
         ) : null}
@@ -321,7 +325,7 @@ const SECTOR_WINDOWS = [
 ] as const;
 type SectorWindow = (typeof SECTOR_WINDOWS)[number]["id"];
 
-function SectorPanel() {
+function SectorPanel({ adjusted = false }: { adjusted?: boolean }) {
   const [win, setWin] = useState<SectorWindow>("30d");
   const [colorMetric, setColorMetric] = useState<"close_red" | "avg_gap">("close_red");
   const [data, setData] = useState<MaGapsBySector | null>(null);
@@ -333,12 +337,13 @@ function SectorPanel() {
     // el skeleton inicial lo da loading=true; al cambiar de ventana el treemap
     // se actualiza en sitio (sin parpadeo) — no reseteamos loading síncronamente.
     const p = new URLSearchParams({ window: win, min_gap: "20", metric: "count" });
-    getGapsBySector(p, ctrl.signal)
+    const fn = adjusted ? getGapsBySectorAdjusted : getGapsBySector;
+    fn(p, ctrl.signal)
       .then((res) => { setData(res); setFailed(false); })
       .catch((e) => { if ((e as Error)?.name !== "AbortError") setFailed(true); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [win]);
+  }, [win, adjusted]);
 
   return (
     <Panel
@@ -433,7 +438,7 @@ function FadeWindowsPanel({ data }: { data: MarketAnalysisResponse }) {
 // los filtros globales — la independencia se declara en el subtítulo del panel.
 // Los meses son ACUMULABLES: cada mes seleccionado se dibuja con su color y
 // persiste hasta que se deselecciona (clic en el chip lo activa/desactiva).
-function SeasonalityModule() {
+function SeasonalityModule({ adjusted = false }: { adjusted?: boolean }) {
   const [months, setMonths] = useState<MaMonthCurve[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -441,7 +446,8 @@ function SeasonalityModule() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    getAvgChangeFromOpen("", ctrl.signal)
+    const fn = adjusted ? getAvgChangeFromOpenAdjusted : getAvgChangeFromOpen;
+    fn("", ctrl.signal)
       .then((res) => {
         setMonths(res);
         setSelected(res.length ? [res[res.length - 1].month] : []); // arranca con el último mes
@@ -450,7 +456,7 @@ function SeasonalityModule() {
       .catch((e) => { if ((e as Error)?.name !== "AbortError") setFailed(true); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, []);
+  }, [adjusted]);
 
   // color estable por mes (índice en el array) — chip y curva comparten color
   const colorByMonth = useMemo(() => {

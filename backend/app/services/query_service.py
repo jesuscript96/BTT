@@ -153,6 +153,7 @@ def build_screener_query(
     limit: int = 5000,
     minimal_for_backtest: bool = False,
     backtest_no_joins: bool = False,
+    table_name: str = "daily_metrics",
 ) -> Tuple[str, List[Any], str, str, str]:
     sql_p = []
     m_filters = []
@@ -201,7 +202,7 @@ def build_screener_query(
             except: pass
         
     if ticker:
-        m_filters.append("daily_metrics.ticker = ?")
+        m_filters.append(f"{table_name}.ticker = ?")
         sql_p.append(ticker.upper())
 
     # close_red: tri-estado yes|no|all (Market Analysis v2.1) — no es numérico,
@@ -302,12 +303,12 @@ def build_screener_query(
     # Explicit Columns (minimal for backtest reduces plan size and avoids MotherDuck 4MB gRPC limit)
     if minimal_for_backtest:
         cols = [
-            "daily_metrics.ticker", "timestamp",
+            f"{table_name}.ticker", "timestamp",
             "pm_high", "pm_volume", "gap_pct", "day_return_pct", "rth_run_pct"
         ]
     else:
         cols = [
-            "daily_metrics.ticker", "volume", "open", "close", "high", "low", "timestamp", "transactions",
+            f"{table_name}.ticker", "volume", "open", "close", "high", "low", "timestamp", "transactions",
             "pm_volume", "pm_high", "pm_low", "pm_high_time", "pm_low_time", "gap_pct", "pmh_gap_pct",
             "pmh_fade_pct", "rth_volume", "rth_open", "rth_high", "rth_low", "rth_close", "hod_time",
             "lod_time", "rth_run_pct", "rth_fade_pct", "rth_range_pct", "m15_return_pct", "m30_return_pct",
@@ -327,7 +328,7 @@ def build_screener_query(
     if backtest_no_joins:
         rec_query = f"""
         SELECT ticker, timestamp, pm_high, pm_volume, gap_pct, day_return_pct, rth_run_pct
-        FROM daily_metrics
+        FROM {table_name}
         WHERE {where_m}
         ORDER BY timestamp DESC, gap_pct DESC
         LIMIT {int(limit)}
@@ -335,9 +336,9 @@ def build_screener_query(
     else:
         rec_query = f"""
         SELECT {col_str}
-        FROM daily_metrics
-        JOIN massive.tickers t ON daily_metrics.ticker = t.ticker
-        LEFT JOIN massive.splits sp ON daily_metrics.ticker = sp.ticker AND DATE_TRUNC('day', daily_metrics.timestamp) = sp.execution_date
+        FROM {table_name}
+        JOIN massive.tickers t ON {table_name}.ticker = t.ticker
+        LEFT JOIN massive.splits sp ON {table_name}.ticker = sp.ticker AND DATE_TRUNC('day', {table_name}.timestamp) = sp.execution_date
         WHERE {where_combined}
         ORDER BY timestamp DESC, gap_pct DESC
         LIMIT {int(limit)}
@@ -353,7 +354,7 @@ def build_screener_query(
     # We can change where_m to be: {where_m} AND ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS'))
     # This avoids changing the join structure in get_stats_sql_logic which might be fragile.
     
-    where_m_stats = f"{where_m} AND daily_metrics.ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS')) AND NOT EXISTS (SELECT 1 FROM massive.splits sp WHERE sp.ticker = daily_metrics.ticker AND sp.execution_date = DATE_TRUNC('day', daily_metrics.timestamp))"
+    where_m_stats = f"{where_m} AND {table_name}.ticker IN (SELECT ticker FROM massive.tickers WHERE type IN ('CS', 'ADRC', 'OS')) AND NOT EXISTS (SELECT 1 FROM massive.splits sp WHERE sp.ticker = {table_name}.ticker AND sp.execution_date = DATE_TRUNC('day', {table_name}.timestamp))"
     
     return rec_query, sql_p, "1=1", "1=1", where_m_stats, where_m_stats
 

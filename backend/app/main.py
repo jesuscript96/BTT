@@ -261,7 +261,7 @@ async def add_cors_headers_to_all_responses(request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
-from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
+from app.routers import data, strategies, backtest, query, market, market_adjusted, strategy_search, ticker_analysis
 from app.routers import optimization, users, edgie
 from app.routers import screener
 from app.routers import assistant
@@ -280,6 +280,7 @@ app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
 app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=["Strategy Search"])
 app.include_router(ticker_analysis.router)
 app.include_router(market.router)
+app.include_router(market_adjusted.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(screener.router)
 from app.routers import news

@@ -40,6 +40,21 @@ def _init_connection_views(con, provider):
             con.execute("CREATE OR REPLACE VIEW intraday_1m AS SELECT * FROM massive.intraday_1m")
             con.execute("CREATE OR REPLACE VIEW tickers AS SELECT * FROM massive.tickers")
             con.execute("CREATE OR REPLACE VIEW splits AS SELECT * FROM massive.splits")
+
+            _local_lake = os.getenv("LOCAL_LAKE_DIR", "/lake")
+            try:
+                con.execute(f"""
+                    CREATE OR REPLACE VIEW massive.daily_metrics_adj AS
+                    SELECT * EXCLUDE (pmh_gap_pct),
+                           gap_pct AS gap_at_open_pct,
+                           ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct
+                    FROM read_parquet('{_local_lake}/cold_storage/daily_metrics_adj/*/*/*.parquet', hive_partitioning=true)
+                """)
+                con.execute(f"CREATE OR REPLACE VIEW massive.intraday_1m_adj AS SELECT * FROM read_parquet('{_local_lake}/cold_storage/intraday_1m_adj/*/*/*.parquet', hive_partitioning=true)")
+                con.execute("CREATE OR REPLACE VIEW daily_metrics_adj AS SELECT * FROM massive.daily_metrics_adj")
+                con.execute("CREATE OR REPLACE VIEW intraday_1m_adj AS SELECT * FROM massive.intraday_1m_adj")
+            except Exception as _adj_e:
+                print(f"[WARN] Adjusted views not created: {_adj_e}")
         elif provider == "local":
             try: con.execute("ATTACH ':memory:' AS massive;")
             except Exception as e:

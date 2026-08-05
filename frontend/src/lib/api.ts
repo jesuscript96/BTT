@@ -624,6 +624,32 @@ export function getAvgChangeFromOpen(
   return apiRequest<MaMonthCurve[]>(`/market/aggregate/intraday?${qs}`, { signal });
 }
 
+// ── Adjusted (split-adjusted data) ── mismos tipos, distintos endpoints ──────
+
+export function getMarketAnalysisAdjusted(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MarketAnalysisResponse> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MarketAnalysisResponse>(`/market-adjusted/screener?${qs}`, { signal });
+}
+
+export function getAvgChangeFromOpenAdjusted(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MaMonthCurve[]> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MaMonthCurve[]>(`/market-adjusted/aggregate/intraday?${qs}`, { signal });
+}
+
+export function getGapsBySectorAdjusted(
+  params: URLSearchParams | string,
+  signal?: AbortSignal,
+): Promise<MaGapsBySector> {
+  const qs = typeof params === "string" ? params : params.toString();
+  return apiRequest<MaGapsBySector>(`/market-adjusted/gaps-by-sector?${qs}`, { signal });
+}
+
 export function getMarketNews(): Promise<unknown> {
   return apiRequest<unknown>("/market/news");
 }
