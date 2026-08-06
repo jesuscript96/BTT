@@ -6,7 +6,7 @@ import InlineStrategyBuilder, { type Draft } from "@/components/backtester/Inlin
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
 import StrategyModeSelector from "@/components/strategy-builder/StrategyModeSelector";
 import { GraduationCap } from "lucide-react";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/authCompat";
 import { usePostHog } from "posthog-js/react";
 import { useBacktestHelper, hasSeenHelper } from "@/components/backtester/helper/useBacktestHelper";
 import {

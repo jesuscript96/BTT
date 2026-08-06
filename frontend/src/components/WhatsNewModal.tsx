@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/authCompat";
 import { Sparkles, X } from "lucide-react";
 import { LATEST_RELEASE } from "@/data/releases";
 import { track, EVENTS } from "@/lib/analytics";

@@ -22,6 +22,39 @@ LIVE_SCREENER_ENABLED=false  # si no, peleas la conexión en vivo y DEGRADAS el 
 
 Si al arrancar el backend **no** ves el log `GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true)`, **para el servidor**: falta la variable. El porqué está en `docs/GUIA_DEV_LOCAL_Y_DEVELOP_PARA_IA.md` §5.
 
+## 🧪 Backtests / análisis con el motor real (no réplicas manuales)
+
+Cuando se pida un backtest o análisis, usar siempre la lógica ya
+existente en el motor (`run_backtest_orchestrator`, `translate_strategy`,
+etc.) — nunca una réplica manual con lógica propia. Si una regla no se
+puede expresar tal cual con el motor, parar y decirlo, no improvisar
+una aproximación silenciosa.
+
+**Antes de lanzar cualquier backtest, análisis o consulta**, mostrar
+siempre la lista completa de campos que el usuario NO ha especificado
+y que el motor va a rellenar por su cuenta — con el valor por defecto
+de cada uno y si afecta o no al resultado. No decidir por criterio
+propio cuál es "neutro": verificarlo leyendo el código de ejecución
+real (el orquestador puede pisar el default del propio motor), no solo
+la firma de la función. Si un campo cambia el resultado y el usuario
+no lo ha dicho, preguntar antes de rellenarlo.
+
+Motivo: en la sesión del 2026-08-05 esto falló dos veces seguidas —
+`market_sessions` sin especificar cae en `["RTH"]` por un default del
+orquestador (no de `run_backtest()`, que sugiere "sin restricción"),
+borrando toda vela premarket sin ningún error; y `accept_reentries`/
+`max_reentries` del esquema de estrategia por defecto son `true`/`-1`
+(reentradas ilimitadas), no acotadas. Las dos veces se dijo que el
+default era neutro y las dos veces no lo era.
+
+**`look_ahead_prevention: true` siempre**, en todos los backtests de
+Álvaro. Cuando una vela M1 cierra, ya no se puede ejecutar a ese
+precio — entrar al cierre de la propia vela de señal es look-ahead
+encubierto (información que en tiempo real no estaría disponible
+todavía). La ejecución realista entra en la apertura de la vela
+siguiente. No es un valor por defecto neutro que se pueda dejar sin
+especificar: fijarlo explícito a `true` en cada backtest.
+
 ## 👤 Reglas por desarrollador (rama + flujo)
 
 Aplica el archivo que corresponda al usuario actual:

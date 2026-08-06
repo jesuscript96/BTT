@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useUser } from "@clerk/nextjs";
+import { useUser } from "@/lib/authCompat";
 import { X, Check, Send } from "lucide-react";
 import {
   getFeedbackBoard,

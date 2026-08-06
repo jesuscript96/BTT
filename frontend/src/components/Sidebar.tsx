@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useUser, useClerk } from "@clerk/nextjs";
+import { useUser, useClerk } from "@/lib/authCompat";
 import { useEntitlements } from "@/lib/entitlements";
 
 const ISOTIPO = (

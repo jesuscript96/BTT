@@ -50,6 +50,10 @@ export async function waitForClerk(
 }
 
 export async function getClerkToken(): Promise<string | null> {
+  // Bypass local (ver src/lib/authCompat.ts): sin ClerkProvider montado,
+  // window.Clerk nunca aparece y esperaríamos los 10s completos en cada
+  // petición. El backend con CLERK_AUTH_ENABLED=false no necesita token.
+  if (process.env.NEXT_PUBLIC_LOCAL_AUTH_BYPASS === "true") return null;
   if (typeof window === "undefined") return null;
   try {
     const clerk = await waitForClerk();

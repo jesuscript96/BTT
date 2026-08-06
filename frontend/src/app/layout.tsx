@@ -40,11 +40,43 @@ export const metadata: Metadata = {
   },
 };
 
+const LOCAL_AUTH_BYPASS = process.env.NEXT_PUBLIC_LOCAL_AUTH_BYPASS === "true";
+
+function AppBody({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..700&display=swap" rel="stylesheet" />
+        <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap" rel="stylesheet" />
+      </head>
+      <body>
+        <PHProvider>
+          <Suspense fallback={null}>
+            <PostHogPageView />
+          </Suspense>
+          <PostHogIdentify />
+          <LayoutShell>{children}</LayoutShell>
+        </PHProvider>
+      </body>
+    </html>
+  );
+}
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Bypass local (ver src/lib/authCompat.ts y middleware.ts): sin claves de
+  // Clerk reales, ni siquiera montamos <ClerkProvider> — eso es lo que dispara
+  // el "modo keyless" (llamada de red a Clerk) al arrancar. Quitar en cuanto
+  // lleguen claves de test de Adrian.
+  if (LOCAL_AUTH_BYPASS) {
+    return <AppBody>{children}</AppBody>;
+  }
+
   return (
     <ClerkProvider
       appearance={{

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useUser } from '@clerk/nextjs'
+import { useUser } from '@/lib/authCompat'
 import { usePostHog } from 'posthog-js/react'
 
 /**
