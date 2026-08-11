@@ -322,12 +322,15 @@ def safe_mean(series):
 def _massive_bars_df(ticker: str, years: int = 5) -> pd.DataFrame:
     """Barras diarias de Massive como DataFrame timestamp/open/high/low/close/volume.
 
-    Sustituye al histórico de yfinance: cubre también deslistados (MULN: 932
-    barras donde Yahoo devuelve 0) y es determinista. DataFrame vacío si la
-    API no tiene datos o falla (el llamador aplica su fallback a hot cache/DB).
+    OHLC en CRUDO (precio real, para mostrar) MÁS columnas `adj_open`/`adj_close`
+    (serie ajustada por splits, continua) para calcular gaps/returns sin que los
+    reverse splits en cascada (p. ej. SMX) creen artefactos. Sustituye al histórico
+    de yfinance: cubre también deslistados (MULN: 932 barras donde Yahoo devuelve 0)
+    y es determinista. DataFrame vacío si la API no tiene datos o falla (el llamador
+    aplica su fallback a hot cache/DB).
     """
     try:
-        bars = massive_service.get_daily_bars(ticker, years=years)
+        bars = massive_service.get_daily_bars(ticker, years=years, adjusted=False)
     except massive_service.MassiveError as e:
         print(f"[ERROR] Massive daily bars for {ticker}: {e}")
         return pd.DataFrame()
@@ -341,7 +344,21 @@ def _massive_bars_df(ticker: str, years: int = 5) -> pd.DataFrame:
     # t viene en UTC-ms; las velas diarias se sellan a medianoche ET → normalizar
     # a fecha (igual que daily_metrics) para que los cálculos por día casen.
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True).dt.tz_convert('America/New_York').dt.normalize().dt.tz_localize(None)
-    keep = [c for c in ('timestamp', 'open', 'high', 'low', 'close', 'volume') if c in df.columns]
+
+    # Serie ajustada (continua, sin saltos de split) para gap/returns. Se casa por
+    # fecha con la cruda; si la API no la devuelve, se omite (sin splits crudo==adj).
+    try:
+        adj = massive_service.get_daily_bars(ticker, years=years, adjusted=True)
+    except massive_service.MassiveError as e:
+        print(f"[WARN] Massive adjusted daily bars for {ticker}: {e}")
+        adj = []
+    if adj:
+        adj_df = pd.DataFrame(adj)
+        adj_df['timestamp'] = pd.to_datetime(adj_df['t'], unit='ms', utc=True).dt.tz_convert('America/New_York').dt.normalize().dt.tz_localize(None)
+        adj_map = adj_df.set_index('timestamp')[['o', 'c']].rename(columns={'o': 'adj_open', 'c': 'adj_close'})
+        df = df.merge(adj_map, left_on='timestamp', right_index=True, how='left')
+
+    keep = [c for c in ('timestamp', 'open', 'high', 'low', 'close', 'volume', 'adj_open', 'adj_close') if c in df.columns]
     return df[keep].sort_values('timestamp').reset_index(drop=True)
 
 
@@ -591,9 +608,16 @@ def get_gap_stats_all_days(ticker: str, include_chart: bool = True) -> dict:
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df = df.sort_values('timestamp').reset_index(drop=True)
     
-    # Calculate gap_pct if not exists
+    # Calculate gap_pct if not exists. Fuente preferida: la serie AJUSTADA por
+    # splits (adj_open/adj_close que aporta _massive_bars_df) → gap continuo, sin
+    # que un reverse split cree un gap FALSO en su día. El precio mostrado sigue
+    # siendo crudo; solo el cálculo del gap usa lo ajustado. (daily_metrics ya
+    # trae su propio gap_pct/pmh_gap_pct y no entra en esta rama.)
     if 'gap_pct' not in df.columns or df['gap_pct'].isnull().all():
-        if 'close' in df.columns and 'open' in df.columns:
+        if 'adj_close' in df.columns and 'adj_open' in df.columns:
+            prev_adj = df['adj_close'].shift(1)
+            df['gap_pct'] = (df['adj_open'] - prev_adj) / prev_adj * 100
+        elif 'close' in df.columns and 'open' in df.columns:
             df['prev_close'] = df['close'].shift(1)
             df['gap_pct'] = (df['open'] - df['prev_close']) / df['prev_close'] * 100
         else:
@@ -1430,10 +1454,15 @@ def get_ticker_chart(ticker: str):
             hist = hist.dropna(subset=["Close"])
             
         if not hist.empty:
-            current = hist["Close"].iloc[-1]
+            # Los RETURNS (1w/1m/1y/YTD) usan la serie AJUSTADA por splits cuando
+            # existe (continua, sin saltos de reverse split); el precio MOSTRADO
+            # sigue siendo el crudo (Close) en daily_history. Sin splits
+            # adj_close == Close, así que el comportamiento no cambia.
+            ret_col = "adj_close" if "adj_close" in hist.columns else "Close"
+            current = hist[ret_col].iloc[-1]
             def get_ret(days):
                 if len(hist) > days:
-                    prev = hist["Close"].iloc[-days-1]
+                    prev = hist[ret_col].iloc[-days-1]
                     if pd.isna(prev) or prev == 0 or pd.isna(current):
                         return None
                     return ((current - prev) / prev) * 100
@@ -1448,13 +1477,25 @@ def get_ticker_chart(ticker: str):
             # YTD
             ytd_start = hist[hist.index.year == datetime.now().year]
             if not ytd_start.empty:
-                start_price = ytd_start["Close"].iloc[0]
+                start_price = ytd_start[ret_col].iloc[0]
                 if pd.isna(start_price) or start_price == 0 or pd.isna(current):
                     perf["ytd"] = None
                 else:
                     perf["ytd"] = safe_float(((current - start_price) / start_price) * 100)
             else:
                  perf["ytd"] = None
+
+            # Gap % por día desde la serie AJUSTADA (continua, sin saltos de reverse
+            # split) → la tabla del chart no mostrará gaps FALSOS en días de split
+            # (p. ej. AUUD 25:1, FFAI 150:1). Fallback a crudo si no hay serie
+            # ajustada (path de daily_metrics). El frontend debe USAR este gap_pct
+            # en vez de recalcularlo del open/close crudo.
+            if "adj_close" in hist.columns and "adj_open" in hist.columns:
+                prev_adj = hist["adj_close"].shift(1)
+                hist["gap_pct"] = (hist["adj_open"] - prev_adj) / prev_adj * 100
+            elif "Close" in hist.columns and "Open" in hist.columns:
+                prev_close = hist["Close"].shift(1)
+                hist["gap_pct"] = (hist["Open"] - prev_close) / prev_close * 100
 
             # Extract daily history for chart
             try:
@@ -1473,7 +1514,8 @@ def get_ticker_chart(ticker: str):
                         "high": safe_float(r.get('High')),
                         "low": safe_float(r.get('Low')),
                         "close": safe_float(r.get('Close')),
-                        "volume": safe_float(r.get('Volume'))
+                        "volume": safe_float(r.get('Volume')),
+                        "gap_pct": safe_float(r.get('gap_pct'))
                     })
             except Exception as e:
                 print(f"Error extracting daily history for {ticker}: {e}")
