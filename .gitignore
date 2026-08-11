@@ -40,6 +40,8 @@ pythonvenv*
 # Cache directories
 .cache/
 backend/.cache/
+# Backtest job results (runtime data, BTT_JOB_RESULTS_DIR default)
+backend/data/
 
 # Node / Frontend
 node_modules/

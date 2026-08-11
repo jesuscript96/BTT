@@ -6,12 +6,163 @@ from typing import List, Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import json
+import os
 import uuid
 
 from app.database import get_db_connection, get_user_db_connection, get_user_db_lock
 from app.auth import get_current_user_id, scope_clause
 
 router = APIRouter()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Auto-persistence helpers (PRD_persistir_backtests_ANTIGRAVITY — Parte A)
+# ──────────────────────────────────────────────────────────────────────────
+# Reused by the manual save endpoint (save_backtest_result) AND the background
+# auto-save on every successful backtest (routers/backtest.py). Centralizing
+# the aggregate_metrics → column mapping keeps the Baúl reading non-zero values
+# regardless of who wrote the row.
+
+AUTOSAVE_KEEP = int(os.getenv("BTT_AUTOSAVE_KEEP", "50"))
+
+
+def _map_aggregate_metrics(results_json: dict) -> dict:
+    """Map AggregateMetrics field names → backtest_results columns."""
+    aggregate = (
+        results_json.get("aggregate_metrics") or {}
+        if isinstance(results_json, dict)
+        else {}
+    )
+    return {
+        "win_rate": aggregate.get("win_rate_pct", aggregate.get("win_rate", 0)) or 0,
+        "profit_factor": aggregate.get("avg_profit_factor", aggregate.get("profit_factor", 0)) or 0,
+        "sharpe_ratio": aggregate.get("avg_sharpe", aggregate.get("sharpe_ratio", 0)) or 0,
+        "avg_r_multiple": aggregate.get("avg_r_per_day", aggregate.get("avg_r_multiple", 0)) or 0,
+        "total_return_pct": aggregate.get("total_return_pct", 0) or 0,
+        "total_return_r": aggregate.get("total_return_r", 0) or 0,
+        "max_drawdown_pct": aggregate.get("max_drawdown_pct", 0) or 0,
+        "total_trades": aggregate.get("total_trades", 0) or 0,
+    }
+
+
+def persist_backtest_row(
+    con,
+    *,
+    id: str,
+    strategy_ids,
+    results_json: dict,
+    search_mode: str,
+    search_space: str,
+    user_id,
+):
+    """INSERT OR REPLACE a backtest_results row (idempotent on `id`).
+
+    The caller owns the connection (and the user-db lock). Maps
+    results_json['aggregate_metrics'] to the typed columns so the Baúl shows
+    non-zero metrics. Used by manual saves and auto-saves alike.
+    """
+    m = _map_aggregate_metrics(results_json or {})
+    now = datetime.now()
+    con.execute(
+        """
+        INSERT OR REPLACE INTO backtest_results (
+            id, strategy_ids, results_json,
+            total_trades, win_rate, profit_factor,
+            avg_r_multiple, total_return_r, total_return_pct,
+            max_drawdown_pct, sharpe_ratio, executed_at,
+            search_mode, search_space, user_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            id,
+            json.dumps(strategy_ids),
+            json.dumps(results_json),
+            m["total_trades"],
+            m["win_rate"],
+            m["profit_factor"],
+            m["avg_r_multiple"],
+            m["total_return_r"],
+            m["total_return_pct"],
+            m["max_drawdown_pct"],
+            m["sharpe_ratio"],
+            now,
+            search_mode,
+            search_space,
+            user_id,
+        ],
+    )
+
+
+def prune_autosaved(con, keep: int):
+    """Keep only the `keep` most recent search_mode='auto' rows.
+
+    Deletes the overflow (oldest by executed_at DESC) AND their on-disk
+    {id}.result / {id}.equity files. Never touches 'manual' rows. Best-effort:
+    any error is swallowed so it can never break a backtest.
+    """
+    if keep is None or keep < 0:
+        return
+    try:
+        overflow = con.execute(
+            "SELECT id FROM backtest_results WHERE search_mode = 'auto' "
+            "ORDER BY executed_at DESC OFFSET ?",
+            [keep],
+        ).fetchall()
+    except Exception as e:
+        print(f"[WARN] prune_autosaved select failed: {e}")
+        return
+
+    # Lazy import to avoid a circular dependency at module load time.
+    try:
+        from app.services import backtest_jobs
+        _path_fns = [backtest_jobs._result_path, backtest_jobs._equity_path]
+    except Exception:
+        _path_fns = []
+
+    for (old_id,) in overflow:
+        try:
+            con.execute("DELETE FROM backtest_results WHERE id = ?", [old_id])
+        except Exception:
+            pass
+        for path_fn in _path_fns:
+            try:
+                p = path_fn(old_id)
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                continue
+
+
+def autosave_backtest(
+    job_id: str,
+    *,
+    strategy_ids,
+    results_json: dict,
+    user_id,
+    keep: int = AUTOSAVE_KEEP,
+):
+    """Persist a successful backtest as search_mode='auto' + prune overflow.
+
+    Opens its own user-db connection under the lock. Intended to be called from
+    the background runner wrapped in try/except (never raises out of the
+    caller's success path).
+    """
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            persist_backtest_row(
+                con,
+                id=job_id,
+                strategy_ids=strategy_ids,
+                results_json=results_json,
+                search_mode="auto",
+                search_space="auto_run",
+                user_id=user_id,
+            )
+            prune_autosaved(con, keep)
+        finally:
+            con.close()
 
 
 class PassCriteria(BaseModel):
@@ -60,49 +211,18 @@ def save_backtest_result(data: dict, background_tasks: BackgroundTasks, user_id:
         con = get_user_db_connection()
         try:
             new_id = str(uuid.uuid4())
-            now = datetime.now()
-
             strategy_ids = data.get("strategy_ids", [])
             results_json = data.get("results_json", {})
 
-            # AggregateMetrics uses different field names than backtest_results columns;
-            # map carefully so the Baul reads non-zero values.
-            aggregate = results_json.get("aggregate_metrics", {}) or {}
-
-            win_rate = aggregate.get("win_rate_pct", aggregate.get("win_rate", 0)) or 0
-            profit_factor = aggregate.get("avg_profit_factor", aggregate.get("profit_factor", 0)) or 0
-            sharpe = aggregate.get("avg_sharpe", aggregate.get("sharpe_ratio", 0)) or 0
-            avg_r = aggregate.get("avg_r_per_day", aggregate.get("avg_r_multiple", 0)) or 0
-            total_return_pct = aggregate.get("total_return_pct", 0) or 0
-            total_return_r = aggregate.get("total_return_r", 0) or 0
-            max_dd = aggregate.get("max_drawdown_pct", 0) or 0
-            total_trades = aggregate.get("total_trades", 0) or 0
-
-            con.execute("""
-                INSERT INTO backtest_results (
-                    id, strategy_ids, results_json,
-                    total_trades, win_rate, profit_factor,
-                    avg_r_multiple, total_return_r, total_return_pct,
-                    max_drawdown_pct, sharpe_ratio, executed_at,
-                    search_mode, search_space, user_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
-                new_id,
-                json.dumps(strategy_ids),
-                json.dumps(results_json),
-                total_trades,
-                win_rate,
-                profit_factor,
-                avg_r,
-                total_return_r,
-                total_return_pct,
-                max_dd,
-                sharpe,
-                now,
-                "manual",
-                "user_save",
-                user_id,
-            ])
+            persist_backtest_row(
+                con,
+                id=new_id,
+                strategy_ids=strategy_ids,
+                results_json=results_json,
+                search_mode="manual",
+                search_space="user_save",
+                user_id=user_id,
+            )
         finally:
             con.close()
 
@@ -238,11 +358,11 @@ def list_all_strategies(
                 id, strategy_ids, results_json,
                 total_trades, win_rate, profit_factor,
                 avg_r_multiple, total_return_r, total_return_pct,
-                max_drawdown_pct, sharpe_ratio, executed_at
-            FROM backtest_results
-            WHERE 1=1{scope_sql}
-            ORDER BY executed_at DESC
-            LIMIT ? OFFSET ?
+                max_drawdown_pct, sharpe_ratio, executed_at, search_mode
+                FROM backtest_results
+                WHERE 1=1{scope_sql}
+                ORDER BY executed_at DESC
+                LIMIT ? OFFSET ?
             """,
             [*scope_params, limit, offset],
         ).fetchall()
@@ -266,6 +386,8 @@ def list_all_strategies(
                 "max_drawdown_pct": row[9],
                 "sharpe_ratio": row[10],
                 "executed_at": row[11],
+                "search_mode": row[12],
+                "label": (results_json.get("label") if isinstance(results_json, dict) else None),
                 "results_json": results_json,
                 "is_validated": is_validated
             })

@@ -339,4 +339,7 @@ class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    # PRD_persistir_backtests_ANTIGRAVITY — Parte C: persistent flag for the
+    # "Trading Incubator" watchlist (saved strategies under monitoring).
+    in_incubator: Optional[bool] = False
 

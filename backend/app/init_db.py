@@ -176,6 +176,15 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # in_incubator: persistent flag for the "Trading Incubator" watchlist
+        # (PRD_persistir_backtests_ANTIGRAVITY — Parte C). Self-healing &
+        # idempotent: runs on every startup so existing DBs get the column.
+        try:
+            conn.execute(
+                "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS in_incubator BOOLEAN DEFAULT FALSE"
+            )
+        except Exception as e:
+            print(f"[WARN] Could not add in_incubator to strategies: {e}")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS datasets (

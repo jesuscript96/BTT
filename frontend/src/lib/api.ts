@@ -205,6 +205,19 @@ export function deleteStrategy(id: string): Promise<void> {
   });
 }
 
+export function toggleIncubator(
+  id: string,
+  monitoring: boolean,
+): Promise<{ status: string; in_incubator: boolean }> {
+  return apiRequest<{ status: string; in_incubator: boolean }>(
+    `/strategies/${encodeURIComponent(id)}/incubator`,
+    {
+      method: "POST",
+      body: JSON.stringify({ monitoring }),
+    },
+  );
+}
+
 // ─── Queries (Datasets) ─────────────────────────────────────
 export interface SavedQuery {
   id: string;
@@ -296,6 +309,12 @@ export function toggleBacktestValidation(
       method: "POST",
     },
   );
+}
+
+export function deleteBacktest(id: string): Promise<void> {
+  return apiRequest<void>(`/strategy-search/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 

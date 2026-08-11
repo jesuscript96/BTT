@@ -1,16 +1,19 @@
 import logging
 import os
 import threading
+from datetime import datetime
 from functools import lru_cache
+from typing import Optional
 
 try:
     import psutil
 except ImportError:  # optional dep — the memory guard degrades to a no-op if absent
     psutil = None
 
-from fastapi import APIRouter, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel
 
+from app.auth import get_current_user_id
 from app.services.data_service import fetch_day_candles
 from app.services.backtest_orchestrator import (
     BacktestRequest,
@@ -80,7 +83,47 @@ class WhatIfRequest(BaseModel):
     params: dict
 
 
-def _run_backtest_in_background(req: BacktestRequest, job_id: str):
+def _autosave_success(req: BacktestRequest, job_id: str, result: dict, user_id):
+    """Persist a finished backtest into backtest_results (search_mode='auto').
+
+    See PRD_persistir_backtests_ANTIGRAVITY — Parte A (A3). Builds a LIGHT
+    results_json (no equity_curves/day_results) + the backtest params + a
+    strategy-definition snapshot + a human-readable label, so the run can be
+    reopened later from "Últimas pruebas" even if it was never saved as a
+    strategy.
+    """
+    from app.routers.strategy_search import autosave_backtest
+
+    # Light payload: drop the heavy per-day/equity blobs (same trim the
+    # frontend applies when saving manually).
+    light = {k: v for k, v in result.items() if k not in ("equity_curves", "day_results")}
+
+    strat_name = (
+        (req.strategy_definition or {}).get("name")
+        if isinstance(req.strategy_definition, dict)
+        else None
+    ) or "Borrador"
+    date_range = f"{req.start_date or '?'} → {req.end_date or '?'}"
+    label = f"[auto] {strat_name} · {date_range} · {datetime.now():%Y-%m-%d %H:%M}"
+
+    results_json = {
+        **light,
+        "backtest_params": req.model_dump(),
+        "strategy_definition": req.strategy_definition,
+        "strategy_names": [strat_name],
+        "label": label,
+    }
+
+    strategy_ids = [req.strategy_id] if req.strategy_id else []
+    autosave_backtest(
+        job_id,
+        strategy_ids=strategy_ids,
+        results_json=results_json,
+        user_id=user_id,
+    )
+
+
+def _run_backtest_in_background(req: BacktestRequest, job_id: str, user_id: Optional[str] = None):
     """Background thread (F3): run the orchestrator, mirror progress into the
     job store, and persist the result to disk. Never raises — terminal states
     are written to the job store instead."""
@@ -99,6 +142,13 @@ def _run_backtest_in_background(req: BacktestRequest, job_id: str):
             percent=100.0, current=n, total=n,
         )
         logger.info(f"[JOB] {job_id} succeeded ({n} days)")
+
+        # Auto-persist as search_mode='auto' (PRD_persistir_backtests_ANTIGRAVITY — A3).
+        # Persistence must NEVER take down a successful backtest → log-only on error.
+        try:
+            _autosave_success(req, job_id, result, user_id)
+        except Exception as persist_err:
+            logger.warning(f"[JOB] {job_id} auto-persist failed: {persist_err}", exc_info=True)
     except HTTPException as he:
         # The orchestrator raises 400 "Backtest cancelado" on cancel, 500 on error.
         detail = he.detail if isinstance(he.detail, str) else str(he.detail)
@@ -118,6 +168,7 @@ def run_backtest_endpoint(
     req: BacktestRequest,
     response: Response,
     x_backtest_sync: str | None = Header(default=None),
+    user_id: Optional[str] = Depends(get_current_user_id),
 ):
     # Memory guard: refuse to start when the host is already critically low on
     # RAM (e.g. another heavy run in flight, or the RAM-cache reload after a
@@ -169,7 +220,7 @@ def run_backtest_endpoint(
     backtest_jobs.set_job_state(job_id, req.dataset_id, "running")
 
     thread = threading.Thread(
-        target=_run_backtest_in_background, args=(req, job_id), daemon=True,
+        target=_run_backtest_in_background, args=(req, job_id, user_id), daemon=True,
     )
     thread.start()
     logger.info(f"[JOB] {job_id} launched for dataset={req.dataset_id}")

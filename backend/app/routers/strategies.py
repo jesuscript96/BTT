@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from typing import List, Optional
+from pydantic import BaseModel
 import json
 from uuid import uuid4
 from datetime import datetime
@@ -132,13 +133,71 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
         updated_at=now.isoformat()
     )
 
+
+class IncubatorToggleRequest(BaseModel):
+    monitoring: bool
+
+
+@router.post("/{strategy_id}/incubator")
+def toggle_incubator(
+    strategy_id: str,
+    body: IncubatorToggleRequest,
+    background_tasks: BackgroundTasks,
+    user_id: Optional[str] = Depends(get_current_user_id),
+):
+    """Mark/unmark a saved strategy for the persistent 'Trading Incubator'.
+
+    PRD_persistir_backtests_ANTIGRAVITY — Parte C (C2). A strategy must already
+    exist in `strategies` to be monitored (Incubator = subset of saved ones).
+    """
+    lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
+    with lock:
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                f"SELECT id FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            now = datetime.now()
+            con.execute(
+                f"UPDATE strategies SET in_incubator = ?, updated_at = ? WHERE id = ?{scope_sql}",
+                [bool(body.monitoring), now, strategy_id, *scope_params],
+            )
+            row = con.execute(
+                f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
+                f"FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+        finally:
+            con.close()
+
+    try:
+        from app.gcs_sync import upload_user_db
+        background_tasks.add_task(upload_user_db)
+        print("[GCS] users.duckdb upload scheduled in background after incubator toggle")
+    except Exception as e:
+        print(f"[WARN] GCS upload background scheduling failed: {e}")
+
+    strategy_dict = json.loads(row[5]) if isinstance(row[5], str) else (row[5] or {})
+    strategy_dict["id"] = row[0]
+    strategy_dict["name"] = row[1]
+    strategy_dict["description"] = row[2]
+    strategy_dict["created_at"] = str(row[3]) if row[3] else None
+    strategy_dict["updated_at"] = str(row[4]) if row[4] else None
+    strategy_dict["in_incubator"] = bool(row[6])
+    return strategy_dict
+
+
 @router.get("/")
 def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
     con = get_user_db_connection(read_only=True)
     scope_sql, scope_params = scope_clause(user_id)
     try:
         rows = con.execute(
-            f"SELECT id, name, description, created_at, updated_at, definition "
+            f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
             f"FROM strategies WHERE 1=1{scope_sql} ORDER BY created_at DESC",
             scope_params,
         ).fetchall()
@@ -166,6 +225,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
             strategy_dict["description"] = row[2]
             strategy_dict["created_at"] = str(row[3]) if row[3] else None
             strategy_dict["updated_at"] = str(row[4]) if row[4] else None
+            strategy_dict["in_incubator"] = bool(row[6])
             strategies.append(Strategy(**strategy_dict))
         except Exception as e:
             print(f"Error building Strategy: {e}")
@@ -183,7 +243,7 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
     scope_sql, scope_params = scope_clause(user_id)
     try:
         row = con.execute(
-            f"SELECT id, name, description, created_at, updated_at, definition "
+            f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
             f"FROM strategies WHERE id = ?{scope_sql}",
             [strategy_id, *scope_params],
         ).fetchone()
@@ -194,6 +254,7 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
             strategy_dict["description"] = row[2]
             strategy_dict["created_at"] = str(row[3]) if row[3] else None
             strategy_dict["updated_at"] = str(row[4]) if row[4] else None
+            strategy_dict["in_incubator"] = bool(row[6])
             return strategy_dict
     finally:
         con.close()

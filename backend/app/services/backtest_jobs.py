@@ -36,7 +36,12 @@ except Exception:  # pragma: no cover
 
 
 JOB_TTL_S = int(os.getenv("BACKTEST_JOB_TTL", "3600"))
-RESULTS_DIR = os.getenv("BTT_JOB_RESULTS_DIR", "/tmp/btt_job_results")
+# Persistent by default: outside /tmp so results survive PC/container restarts.
+# Override with an absolute path via BTT_JOB_RESULTS_DIR (see backend/.env).
+RESULTS_DIR = os.getenv(
+    "BTT_JOB_RESULTS_DIR",
+    os.path.join(os.getcwd(), "data", "btt_job_results"),
+)
 
 _JOB_KEY = "backtest:job:{}"
 _DATASET_KEY = "backtest:dataset:{}"

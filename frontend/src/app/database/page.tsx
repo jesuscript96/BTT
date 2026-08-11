@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { 
-  Briefcase, 
-  Trash2, 
-  Play, 
-  Layers, 
+import {
+  Briefcase,
+  Trash2,
+  Play,
+  Layers,
   AlertCircle,
   Clock,
   Database,
@@ -15,15 +15,20 @@ import {
   Minus,
   X,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Pencil,
+  Check,
 } from 'lucide-react'
-import { 
-  getStrategies, 
-  getQueries, 
-  getSavedBacktests, 
-  deleteStrategy, 
+import {
+  getStrategies,
+  getQueries,
+  getSavedBacktests,
+  deleteStrategy,
   deleteQuery,
-  toggleBacktestValidation
+  toggleBacktestValidation,
+  updateStrategy,
+  toggleIncubator,
+  deleteBacktest,
 } from '@/lib/api'
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from '@/components/strategy-builder/ConditionBuilder'
 
@@ -77,23 +82,23 @@ const Sparkline = ({ points, isPositive }: { points: number[]; isPositive: boole
   const axisColor = 'rgba(255, 255, 255, 0.12)'
   const color = isPositive ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)'
   const fillColor = isPositive ? 'rgba(74, 157, 127, 0.18)' : 'rgba(201, 77, 63, 0.18)'
-  
+
   // Scale points to leave room for the axes at the bottom and left
   const svgPoints = points.map((p, i) => {
     const x = (i / (points.length - 1)) * (width - 8) + 6
     const y = (height - 4) - ((p - min) / range) * (height - 6)
     return { x, y }
   })
-  
+
   const linePath = svgPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
   const fillPath = `M ${svgPoints[0].x.toFixed(1)} 18.0 L ${svgPoints[0].x.toFixed(1)} ${svgPoints[0].y.toFixed(1)} ${linePath.substring(1)} L ${svgPoints[svgPoints.length - 1].x.toFixed(1)} 18.0 Z`
-  
+
   return (
     <svg width={width} height={height} style={{ overflow: 'visible' }}>
       {/* Mini axes */}
       <line x1="4" y1="2" x2="4" y2="18" stroke={axisColor} strokeWidth="0.5" />
       <line x1="4" y1="18" x2={width - 2} y2="18" stroke={axisColor} strokeWidth="0.5" />
-      
+
       {/* Flat Area Fill and Outline */}
       <path d={fillPath} fill={fillColor} />
       <path d={linePath} fill="none" stroke={color} strokeWidth="0.8" />
@@ -105,11 +110,11 @@ const Sparkline = ({ points, isPositive }: { points: number[]; isPositive: boole
 const DetailedEquityChart = ({ points }: { points: number[] }) => {
   if (!points || points.length < 2) {
     return (
-      <div 
-        style={{ 
-          height: 120, 
-          display: 'flex', 
-          alignItems: 'center', 
+      <div
+        style={{
+          height: 120,
+          display: 'flex',
+          alignItems: 'center',
           justifyContent: 'center',
           border: '1px dashed var(--color-ec-border)',
           borderRadius: 0,
@@ -124,13 +129,13 @@ const DetailedEquityChart = ({ points }: { points: number[] }) => {
 
   const width = 200
   const height = 120
-  
+
   // Equity calculations
   const minEq = Math.min(...points)
   const maxEq = Math.max(...points)
   const eqRange = maxEq - minEq || 1
   const eqHeight = 80 // top area for equity line
-  
+
   const eqSvgPoints = points.map((p, i) => {
     const x = (i / (points.length - 1)) * (width - 16) + 8
     const y = eqHeight - ((p - minEq) / eqRange) * (eqHeight - 15) - 5
@@ -146,13 +151,13 @@ const DetailedEquityChart = ({ points }: { points: number[] }) => {
     if (p > maxSoFar) maxSoFar = p
     return maxSoFar > 0 ? ((p - maxSoFar) / maxSoFar) * 100 : 0 // will be <= 0
   })
-  
+
   const minDD = Math.min(...drawdowns)
   const absMinDD = Math.abs(minDD) || 1
-  
+
   const ddZeroY = 98 // zero line for drawdown bars
   const ddMaxHeight = 18 // max height of drawdown bars
-  
+
   const ddBars = drawdowns.map((dd, i) => {
     const x = (i / (drawdowns.length - 1)) * (width - 16) + 8
     const barHeight = (Math.abs(dd) / absMinDD) * ddMaxHeight
@@ -195,7 +200,7 @@ const DetailedEquityChart = ({ points }: { points: number[] }) => {
             opacity="0.8"
           />
         ))}
-        
+
         {/* End point glow dots */}
         <circle cx={eqSvgPoints[eqSvgPoints.length - 1].x} cy={eqSvgPoints[eqSvgPoints.length - 1].y} r="2" fill={color} />
         <circle cx={eqSvgPoints[eqSvgPoints.length - 1].x} cy={eqSvgPoints[eqSvgPoints.length - 1].y} r="4" fill={color} opacity="0.3" />
@@ -218,11 +223,11 @@ const COMPARISON_COLORS = [
 const MultiEquityChart = ({ strategiesData }: { strategiesData: { name: string; curveR: number[]; color: string }[] }) => {
   if (!strategiesData || strategiesData.length === 0) {
     return (
-      <div 
-        style={{ 
-          height: 180, 
-          display: 'flex', 
-          alignItems: 'center', 
+      <div
+        style={{
+          height: 180,
+          display: 'flex',
+          alignItems: 'center',
           justifyContent: 'center',
           border: '1px dashed var(--color-ec-border)',
           borderRadius: 0,
@@ -237,32 +242,32 @@ const MultiEquityChart = ({ strategiesData }: { strategiesData: { name: string; 
 
   // Find max length of curves to scale X axis
   const maxLen = Math.max(...strategiesData.map(s => s.curveR.length), 2)
-  
+
   // Find min and max of all R values to scale Y axis
   let allVals: number[] = [0] // always include 0 R
   strategiesData.forEach(s => allVals.push(...s.curveR))
   const minVal = Math.min(...allVals)
   const maxVal = Math.max(...allVals)
   const valRange = maxVal - minVal || 1
-  
+
   const width = 400
   const height = 180
   const paddingLeft = 32
   const paddingRight = 10
   const paddingTop = 10
   const paddingBottom = 15
-  
+
   const chartWidth = width - paddingLeft - paddingRight
   const chartHeight = height - paddingTop - paddingBottom
-  
+
   const getX = (index: number, totalPoints: number) => {
     return paddingLeft + (index / (totalPoints - 1 || 1)) * chartWidth
   }
-  
+
   const getY = (val: number) => {
     return paddingTop + chartHeight - ((val - minVal) / valRange) * chartHeight
   }
-  
+
   // Grid lines
   const yTicks = 4
   const gridTicks = []
@@ -279,20 +284,20 @@ const MultiEquityChart = ({ strategiesData }: { strategiesData: { name: string; 
           const y = getY(val)
           return (
             <g key={idx}>
-              <line 
-                x1={paddingLeft} 
-                y1={y} 
-                x2={width - paddingRight} 
-                y2={y} 
-                stroke="rgba(255, 255, 255, 0.05)" 
-                strokeWidth="0.5" 
-                strokeDasharray="2,2" 
+              <line
+                x1={paddingLeft}
+                y1={y}
+                x2={width - paddingRight}
+                y2={y}
+                stroke="rgba(255, 255, 255, 0.05)"
+                strokeWidth="0.5"
+                strokeDasharray="2,2"
               />
-              <text 
-                x={paddingLeft - 5} 
-                y={y + 3} 
-                fill="var(--color-ec-text-muted)" 
-                fontSize="9" 
+              <text
+                x={paddingLeft - 5}
+                y={y + 3}
+                fill="var(--color-ec-text-muted)"
+                fontSize="9"
                 textAnchor="end"
                 fontFamily="'General Sans', sans-serif"
               >
@@ -304,13 +309,13 @@ const MultiEquityChart = ({ strategiesData }: { strategiesData: { name: string; 
 
         {/* 0 R Baseline */}
         {minVal < 0 && maxVal > 0 && (
-          <line 
-            x1={paddingLeft} 
-            y1={getY(0)} 
-            x2={width - paddingRight} 
-            y2={getY(0)} 
-            stroke="rgba(255, 255, 255, 0.15)" 
-            strokeWidth="0.8" 
+          <line
+            x1={paddingLeft}
+            y1={getY(0)}
+            x2={width - paddingRight}
+            y2={getY(0)}
+            stroke="rgba(255, 255, 255, 0.15)"
+            strokeWidth="0.8"
           />
         )}
 
@@ -318,53 +323,53 @@ const MultiEquityChart = ({ strategiesData }: { strategiesData: { name: string; 
         {strategiesData.map((s, sIdx) => {
           const curve = s.curveR
           if (curve.length < 2) return null
-          
+
           const svgPoints = curve.map((val, idx) => {
             return { x: getX(idx, curve.length), y: getY(val) }
           })
-          
+
           const linePath = svgPoints.map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
-          
+
           return (
             <g key={sIdx}>
               {/* Glow */}
-              <path 
-                d={linePath} 
-                fill="none" 
-                stroke={s.color} 
-                strokeWidth="2" 
-                opacity="0.1" 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
+              <path
+                d={linePath}
+                fill="none"
+                stroke={s.color}
+                strokeWidth="2"
+                opacity="0.1"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
               {/* Primary Line */}
-              <path 
-                d={linePath} 
-                fill="none" 
-                stroke={s.color} 
-                strokeWidth="1.2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round" 
+              <path
+                d={linePath}
+                fill="none"
+                stroke={s.color}
+                strokeWidth="1.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
               {/* End dot */}
-              <circle 
-                cx={svgPoints[svgPoints.length - 1].x} 
-                cy={svgPoints[svgPoints.length - 1].y} 
-                r="2" 
-                fill={s.color} 
+              <circle
+                cx={svgPoints[svgPoints.length - 1].x}
+                cy={svgPoints[svgPoints.length - 1].y}
+                r="2"
+                fill={s.color}
               />
             </g>
           )
         })}
       </svg>
-      
+
       {/* Legend */}
-      <div 
-        style={{ 
-          display: 'flex', 
-          flexWrap: 'wrap', 
-          gap: '4px 10px', 
-          justifyContent: 'center', 
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '4px 10px',
+          justifyContent: 'center',
           marginTop: 10,
           padding: '0 4px'
         }}
@@ -432,16 +437,27 @@ export default function TrunkPage() {
   }))
   */
 
-  const [incubatorStrategies, setIncubatorStrategies] = useState<any[]>([])
   const [datasets, setDatasets] = useState<any[]>([])
   const [backtests, setBacktests] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  
+
   const [selectedStrategyIds, setSelectedStrategyIds] = useState<string[]>([])
   const [showCharts, setShowCharts] = useState<Record<string, boolean>>({})
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null)
-  
+  const [expandedBacktestId, setExpandedBacktestId] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  // C3: Incubator is now derived from the persistent in_incubator flag (no local mock state)
+  const incubatorStrategies = strategies.filter((s: any) => s.in_incubator === true)
+  const activeStrategies = strategies.filter((s: any) => !s.in_incubator)
+  // B2: auto-saved backtests for "Últimas pruebas" (search_mode='auto', newest first, max 50)
+  const recentBacktests = backtests
+    .filter((bt: any) => bt.search_mode === 'auto')
+    .sort((a: any, b: any) => new Date(b.executed_at || 0).getTime() - new Date(a.executed_at || 0).getTime())
+    .slice(0, 50)
+
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deletingType, setDeletingType] = useState<'strategy' | 'dataset' | null>(null)
 
@@ -451,7 +467,7 @@ export default function TrunkPage() {
       if (saved) {
         try {
           return JSON.parse(saved)
-        } catch (e) {}
+        } catch (e) { }
       }
     }
     return {
@@ -475,7 +491,7 @@ export default function TrunkPage() {
     e.preventDefault();
     const stats = getStats(strat);
     const mockKey = getMockKey(strat);
-    
+
     if (mockKey) {
       const current = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : MOCK_STRATEGY_STATS[mockKey].isValidated;
       const nextVal = !current;
@@ -493,7 +509,7 @@ export default function TrunkPage() {
         alert("No backtest result found for this strategy to validate.");
         return;
       }
-      
+
       const currentStatus = realBt.is_validated !== undefined && realBt.is_validated !== null
         ? realBt.is_validated
         : (realBt.win_rate >= 50 && realBt.sharpe_ratio > 1.5);
@@ -509,7 +525,7 @@ export default function TrunkPage() {
                 const parsed = JSON.parse(bt.results_json);
                 parsed.is_validated = nextStatus;
                 nextResultsJson = JSON.stringify(parsed);
-              } catch (e) {}
+              } catch (e) { }
             } else if (bt.results_json && typeof bt.results_json === 'object') {
               nextResultsJson = { ...bt.results_json, is_validated: nextStatus };
             }
@@ -552,12 +568,12 @@ export default function TrunkPage() {
     }
     if (ind.elapsed_minutes != null && ind.elapsed_minutes !== "") params.push(`Elapsed:${ind.elapsed_minutes}m`);
     if (ind.band_line != null && ind.band_line !== "") params.push(`${ind.band_line}`);
-    
+
     let offsetStr = "";
     if (ind.offset != null && ind.offset > 0) {
       offsetStr = `[t-${ind.offset}]`;
     }
-    
+
     const paramsStr = params.length > 0 ? `(${params.join(",")})` : "";
     const nameStr = ind.name ? (INDICATOR_LABELS[ind.name] || ind.name) : "Variable";
     return `${nameStr}${paramsStr}${offsetStr}`;
@@ -568,8 +584,8 @@ export default function TrunkPage() {
     if (cond.type === 'indicator_comparison') {
       const sourceStr = formatIndicator(cond.source);
       const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator || "=";
-      const targetStr = typeof cond.target === 'number' 
-        ? cond.target.toString() 
+      const targetStr = typeof cond.target === 'number'
+        ? cond.target.toString()
         : formatIndicator(cond.target);
       const tfStr = cond.timeframe ? `[${cond.timeframe}] ` : "";
       return `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
@@ -586,11 +602,11 @@ export default function TrunkPage() {
 
   const getConditionTags = (group?: any): string[] => {
     if (!group) return [];
-    
+
     const parseGroup = (g: any): string[] => {
       let results: string[] = [];
       const op = g.operator || "AND";
-      
+
       if (g.conditions) {
         g.conditions.forEach((c: any) => {
           if (c.type === 'group') {
@@ -605,7 +621,7 @@ export default function TrunkPage() {
       }
       return results;
     };
-    
+
     return parseGroup(group);
   }
 
@@ -614,7 +630,7 @@ export default function TrunkPage() {
     const dayLabel = pre.day === 'gap_day' ? 'Gap Day' : 'Gap+1 Day';
     let metricLabel = 'Cierre';
     let valLabel = '';
-    
+
     if (pre.metric === 'volume') {
       metricLabel = 'Volumen Total';
       const volVal = pre.value ?? 0;
@@ -729,7 +745,7 @@ export default function TrunkPage() {
   const getUniverseTags = (filters?: any): string[] => {
     if (!filters) return [];
     const tags: string[] = [];
-    
+
     const formatDateStr = (dStr?: string) => {
       if (!dStr) return '';
       const parts = dStr.split('-');
@@ -762,7 +778,7 @@ export default function TrunkPage() {
   const getRiskTags = (risk?: any): string[] => {
     if (!risk) return [];
     const tags: string[] = [];
-    
+
     // Stop Loss
     if (risk.use_hard_stop && risk.hard_stop?.value != null && risk.hard_stop.value !== "") {
       tags.push(`SL: ${risk.hard_stop.value}${risk.hard_stop.type === 'Percentage' ? '%' : 'R'}`);
@@ -828,27 +844,50 @@ export default function TrunkPage() {
     return tags;
   }
 
-  const addToIncubator = (strat: any) => {
-    if (incubatorStrategies.some(s => s.id === strat.id)) {
-      alert("This strategy is already in the incubator list.")
+  // C3: Incubator persistence — toggle the in_incubator flag via API and refresh locally
+  const addToIncubator = async (strat: any) => {
+    if (incubatorStrategies.some(s => s.id === strat.id)) return
+    try {
+      await toggleIncubator(strat.id, true)
+      setStrategies(prev => prev.map(s => s.id === strat.id ? { ...s, in_incubator: true } : s))
+    } catch (err) {
+      console.error(err)
+      alert('Could not add to Incubator.')
+    }
+  }
+
+  const removeFromIncubator = async (id: string) => {
+    try {
+      await toggleIncubator(id, false)
+      setStrategies(prev => prev.map(s => s.id === id ? { ...s, in_incubator: false } : s))
+    } catch (err) {
+      console.error(err)
+      alert('Could not remove from Incubator.')
+    }
+  }
+
+  // B3: Rename a saved strategy (preserves the full definition, only changes name)
+  const startRename = (strat: any) => {
+    setRenamingId(strat.id)
+    setRenameValue(strat.name || '')
+  }
+
+  const commitRename = async (strat: any) => {
+    const newName = renameValue.trim()
+    if (!newName || newName === strat.name) {
+      setRenamingId(null)
       return
     }
-    setIncubatorStrategies(prev => [...prev, strat])
-  }
-
-  const removeFromIncubator = (id: string) => {
-    setIncubatorStrategies(prev => prev.filter(s => s.id !== id))
-  }
-
-  // Seed incubator with EMA Cross mock strategy once strategies load
-  useEffect(() => {
-    if (strategies.length > 0 && incubatorStrategies.length === 0) {
-      const seedStrat = strategies.find(s => s.id === 'mock_strategy_3' || s.name === 'EMA 9/20 Cross Long') || strategies[2]
-      if (seedStrat) {
-        setIncubatorStrategies([seedStrat])
-      }
+    try {
+      const updated = await updateStrategy(strat.id, { ...strat, name: newName })
+      setStrategies(prev => prev.map(s => s.id === strat.id ? { ...s, ...updated } : s))
+    } catch (err) {
+      console.error(err)
+      alert('Could not rename strategy.')
+    } finally {
+      setRenamingId(null)
     }
-  }, [strategies])
+  }
 
   useEffect(() => {
     loadData()
@@ -880,12 +919,12 @@ export default function TrunkPage() {
         getQueries(),
         getSavedBacktests().catch(() => ({ strategies: [], total_count: 0 }))
       ])
-      
+
       const strategiesData = stratsList || []
       setStrategies(strategiesData)
       setDatasets(queriesList || [])
       setBacktests(backtestsList?.strategies || [])
-      
+
       if (strategiesData.length > 0 && strategiesData[0].id) {
         setSelectedStrategyIds([strategiesData[0].id])
       }
@@ -920,6 +959,21 @@ export default function TrunkPage() {
     }
   }
 
+  // B2: Delete an auto-saved backtest row from "Últimas pruebas"
+  const handleDeleteBacktest = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    setDeletingId(id)
+    try {
+      await deleteBacktest(id)
+      setBacktests(prev => prev.filter(bt => bt.id !== id))
+    } catch (err) {
+      console.error(err)
+      alert('Error deleting backtest')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   // Resolves stats for a strategy
   const getStats = (strat: any) => {
     const realBt = backtests.find(bt => {
@@ -935,17 +989,17 @@ export default function TrunkPage() {
       let isValidated = realBt.is_validated !== undefined && realBt.is_validated !== null
         ? realBt.is_validated
         : false
-      
+
       try {
-        const results = typeof realBt.results_json === 'string' 
-          ? JSON.parse(realBt.results_json) 
+        const results = typeof realBt.results_json === 'string'
+          ? JSON.parse(realBt.results_json)
           : realBt.results_json
         const rawCurve = results?.global_equity || results?.equity_curve || []
         bParams = results?.backtest_params || null
         if (results?.is_validated !== undefined && results?.is_validated !== null) {
           isValidated = results.is_validated
         }
-        
+
         // Parse and sort by time, return the full curve (no slicing/limiting to 6 months)
         if (rawCurve.length > 0) {
           const mapped = rawCurve.map((c: any) => {
@@ -993,8 +1047,8 @@ export default function TrunkPage() {
     if (mockKey) {
       const baseStats = MOCK_STRATEGY_STATS[mockKey]
       const isVal = mockValidationStates[mockKey] !== undefined ? mockValidationStates[mockKey] : baseStats.isValidated
-      return { 
-        ...baseStats, 
+      return {
+        ...baseStats,
         isValidated: isVal,
         isReal: false,
         backtestParams: mockKey === 'mock_strategy_1' ? {
@@ -1066,10 +1120,10 @@ export default function TrunkPage() {
 
     const minVol = filters.min_rth_volume !== undefined ? filters.min_rth_volume : filters.min_volume
     if (minVol) {
-      const formatted = minVol >= 1000000 
-        ? `${(minVol / 1000000).toFixed(1)}M` 
-        : minVol >= 1000 
-          ? `${(minVol / 1000).toFixed(0)}k` 
+      const formatted = minVol >= 1000000
+        ? `${(minVol / 1000000).toFixed(1)}M`
+        : minVol >= 1000
+          ? `${(minVol / 1000).toFixed(0)}k`
           : minVol.toString()
       tags.push({ label: 'Vol', value: `> ${formatted}`, icon: '📊' })
     }
@@ -1094,11 +1148,11 @@ export default function TrunkPage() {
   const getThreeMonthStatsAndCurve = (strat: any) => {
     const stats = getStats(strat)
     const curve = stats.equityCurve || []
-    
+
     // 3 months is approx the last 4 points for small mock curves or last 60 trading days/points for full curves
     const sliceLen = curve.length <= 20 ? 4 : 60
     const threeMonthCurve = curve.slice(-sliceLen)
-    
+
     if (threeMonthCurve.length < 2) {
       return {
         stats: {
@@ -1114,18 +1168,18 @@ export default function TrunkPage() {
         curveR: []
       }
     }
-    
+
     const initial = threeMonthCurve[0]
     const final = threeMonthCurve[threeMonthCurve.length - 1]
     const profit = final - initial
-    
+
     // Normalise: 1R = 1% of initial capital (or $100 if initial is 0 or null)
     const R_value = initial > 0 ? initial * 0.01 : 100
     const profitR = profit / R_value
-    
+
     // Normalized R curve starting at 0 R
     const curveR = threeMonthCurve.map(val => (val - initial) / R_value)
-    
+
     // Max Drawdown in % over this 3-month period
     let peak = threeMonthCurve[0]
     let maxDDPct = 0
@@ -1134,17 +1188,17 @@ export default function TrunkPage() {
       const ddPct = peak > 0 ? ((peak - val) / peak) * 100 : 0
       if (ddPct > maxDDPct) maxDDPct = ddPct
     })
-    
+
     // Ratio of 3-month period trades to total trades
     const ratio = threeMonthCurve.length / (curve.length || 1)
     const tradesCount = Math.round((stats.trades || 80) * ratio)
-    
+
     // Calculate Sharpe and Profit Factor relative to base stats with slight variation to look realistic
     const winRate = stats.winRate ? Math.min(100, Math.max(0, stats.winRate + (strat.id === 'mock_strategy_2' ? -2.1 : 1.5))) : 50.0
     const profitFactor = stats.profitFactor ? Math.max(0.5, stats.profitFactor + (strat.id === 'mock_strategy_2' ? -0.15 : 0.1)) : 1.5
     const sharpe = stats.sharpe ? Math.max(0.1, stats.sharpe + (strat.id === 'mock_strategy_2' ? -0.2 : 0.15)) : 1.6
     const avgRDay = stats.avgRDay ? stats.avgRDay * 0.95 : 0.35
-    
+
     return {
       stats: {
         profit,
@@ -1171,13 +1225,13 @@ export default function TrunkPage() {
           const val = stats3M[valueKey]
           const displayColor = colorFn ? colorFn(val) : 'var(--color-ec-text-primary)'
           return (
-            <td 
-              key={strat.id} 
-              style={{ 
-                padding: '8px 10px', 
-                fontSize: 12, 
-                fontWeight: 600, 
-                color: displayColor, 
+            <td
+              key={strat.id}
+              style={{
+                padding: '8px 10px',
+                fontSize: 12,
+                fontWeight: 600,
+                color: displayColor,
                 textAlign: 'right',
                 borderLeft: '0.5px solid var(--color-ec-border)',
                 fontFamily: 'monospace'
@@ -1203,7 +1257,7 @@ export default function TrunkPage() {
     const initial = curve[0]
     const final = curve[curve.length - 1]
     const profit = final - initial
-    
+
     // Max Drawdown calculation
     let peak = curve[0]
     let maxDDValue = 0
@@ -1233,11 +1287,149 @@ export default function TrunkPage() {
     }
   }
 
+  // B2: Render "Últimas pruebas" — auto-saved backtests table with inline reopen
+  const renderRecentBacktests = () => {
+    if (recentBacktests.length === 0) {
+      return (
+        <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--color-ec-text-muted)' }}>
+          <p style={{ fontSize: 11, margin: 0 }}>No recent backtests yet. Run a backtest to see it here.</p>
+        </div>
+      )
+    }
+    return (
+      <div
+        style={{
+          maxHeight: '260px',
+          overflowY: 'auto',
+          border: '0.5px solid var(--color-ec-border)',
+          borderRadius: 0,
+          backgroundColor: 'var(--color-ec-bg-surface)',
+          marginBottom: 20
+        }}
+      >
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+          <thead>
+            <tr style={{ borderBottom: '0.5px solid var(--color-ec-border)', backgroundColor: 'rgba(28, 30, 33, 0.3)' }}>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Label</th>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>W.Rate</th>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>P.Factor</th>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Return</th>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Trades</th>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Sharpe</th>
+              <th style={{ padding: '6px 10px', fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>Date</th>
+              <th style={{ padding: '6px 10px', textAlign: 'right' }} />
+            </tr>
+          </thead>
+          <tbody>
+            {recentBacktests.map(bt => {
+              const isBtExpanded = expandedBacktestId === bt.id
+              let parsed: any = null
+              try {
+                parsed = typeof bt.results_json === 'string' ? JSON.parse(bt.results_json) : bt.results_json
+              } catch { parsed = null }
+              const dateStr = bt.executed_at ? new Date(bt.executed_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
+              return (
+                <React.Fragment key={bt.id}>
+                  <tr
+                    onClick={() => setExpandedBacktestId(isBtExpanded ? null : bt.id)}
+                    style={{
+                      borderBottom: '0.5px solid rgba(44, 47, 51, 0.25)',
+                      cursor: 'pointer',
+                      backgroundColor: isBtExpanded ? 'rgba(216, 122, 61, 0.06)' : 'transparent',
+                      borderLeft: isBtExpanded ? '2px solid var(--color-ec-copper)' : '2px solid transparent',
+                      transition: 'background-color 150ms ease'
+                    }}
+                  >
+                    <td style={{ padding: '6px 10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); setExpandedBacktestId(isBtExpanded ? null : bt.id) }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-ec-text-muted)', padding: 2, display: 'flex' }}>
+                          {isBtExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--color-ec-text-high)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 180 }} title={bt.label || bt.id}>
+                          {bt.label || bt.id}
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: bt.win_rate != null ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
+                      {bt.win_rate != null ? `${bt.win_rate.toFixed(1)}%` : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: bt.profit_factor ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
+                      {bt.profit_factor ? bt.profit_factor.toFixed(2) : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: bt.total_return_pct != null ? (bt.total_return_pct >= 0 ? 'var(--color-ec-profit)' : 'var(--color-ec-loss)') : 'var(--color-ec-text-muted)' }}>
+                      {bt.total_return_pct != null ? `${bt.total_return_pct >= 0 ? '+' : ''}${bt.total_return_pct.toFixed(1)}%` : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-primary)' }}>
+                      {bt.total_trades || '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 11, fontWeight: 600, color: bt.sharpe_ratio ? 'var(--color-ec-text-primary)' : 'var(--color-ec-text-muted)' }}>
+                      {bt.sharpe_ratio ? bt.sharpe_ratio.toFixed(2) : '—'}
+                    </td>
+                    <td style={{ padding: '6px 10px', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>
+                      {dateStr}
+                    </td>
+                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      <button
+                        disabled={deletingId === bt.id}
+                        onClick={(e) => handleDeleteBacktest(e, bt.id)}
+                        style={{ background: 'transparent', border: 'none', padding: 2, cursor: 'pointer', color: 'var(--color-ec-text-muted)' }}
+                        title="Delete backtest"
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </td>
+                  </tr>
+                  {isBtExpanded && parsed && (
+                    <tr style={{ backgroundColor: 'rgba(28, 30, 33, 0.25)' }}>
+                      <td colSpan={8} style={{ padding: '12px 16px', borderBottom: '0.5px solid rgba(44, 47, 51, 0.2)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px 20px' }}>
+                          {[
+                            { label: 'Win Rate', value: bt.win_rate != null ? `${bt.win_rate.toFixed(1)}%` : '—' },
+                            { label: 'Profit Factor', value: bt.profit_factor ? bt.profit_factor.toFixed(2) : '—' },
+                            { label: 'Total Return', value: bt.total_return_pct != null ? `${bt.total_return_pct.toFixed(1)}%` : '—' },
+                            { label: 'Return (R)', value: bt.total_return_r != null ? `${bt.total_return_r.toFixed(1)} R` : '—' },
+                            { label: 'Max Drawdown', value: bt.max_drawdown_pct != null ? `-${bt.max_drawdown_pct.toFixed(1)}%` : '—' },
+                            { label: 'Sharpe', value: bt.sharpe_ratio ? bt.sharpe_ratio.toFixed(2) : '—' },
+                            { label: 'Avg R/Multiple', value: bt.avg_r_multiple != null ? bt.avg_r_multiple.toFixed(2) : '—' },
+                            { label: 'Total Trades', value: bt.total_trades || '—' },
+                          ].map((m, i) => (
+                            <div key={i}>
+                              <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-ec-text-muted)' }}>{m.label}</div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-ec-text-high)', marginTop: 2 }}>{m.value}</div>
+                            </div>
+                          ))}
+                        </div>
+                        {parsed?.backtest_params && (
+                          <div style={{ marginTop: 10, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                            {parsed.backtest_params.date_from && parsed.backtest_params.date_to && (
+                              <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>
+                                Range: {parsed.backtest_params.date_from} → {parsed.backtest_params.date_to}
+                              </span>
+                            )}
+                            {parsed.backtest_params.market_sessions?.length > 0 && (
+                              <span style={{ fontSize: 9, color: 'var(--color-ec-text-muted)' }}>
+                                Sessions: {parsed.backtest_params.market_sessions.join(', ')}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
   const renderStrategyTable = (stratList: any[], isIncubator: boolean) => {
     return (
-      <div 
-        style={{ 
-          maxHeight: '260px', 
+      <div
+        style={{
+          maxHeight: '260px',
           overflowY: 'auto',
           border: '0.5px solid var(--color-ec-border)',
           borderRadius: 0,
@@ -1272,7 +1464,7 @@ export default function TrunkPage() {
                 const isSelected = selectedStrategyIds.includes(strat.id)
                 const isPositive = stats.winRate ? stats.winRate >= 50 : true
                 const isExpanded = expandedRowId === strat.id
-                
+
                 return (
                   <React.Fragment key={strat.id}>
                     <tr
@@ -1317,23 +1509,53 @@ export default function TrunkPage() {
                           >
                             {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                           </button>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--color-ec-text-high)' }}>{strat.name}</div>
-                            {strat.description && (
-                              <div style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', marginTop: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 120 }} title={strat.description}>
-                                {strat.description}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {renamingId === strat.id ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <input
+                                  autoFocus
+                                  value={renameValue}
+                                  onChange={e => setRenameValue(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') commitRename(strat)
+                                    if (e.key === 'Escape') setRenamingId(null)
+                                  }}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{
+                                    fontSize: 12, fontWeight: 600, color: 'var(--color-ec-text-high)',
+                                    background: 'var(--color-ec-bg-base)', border: '0.5px solid var(--color-ec-copper)',
+                                    padding: '2px 6px', width: 120, outline: 'none',
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={e => { e.stopPropagation(); commitRename(strat) }}
+                                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-ec-profit)', display: 'flex' }}
+                                  title="Confirm rename"
+                                >
+                                  <Check size={12} />
+                                </button>
                               </div>
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--color-ec-text-high)' }}>{strat.name}</div>
+                                {strat.description && (
+                                  <div style={{ fontSize: 9, color: 'var(--color-ec-text-muted)', marginTop: 1, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: 120 }} title={strat.description}>
+                                    {strat.description}
+                                  </div>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
                       </td>
                       <td style={{ padding: '6px 10px' }}>
-                        <span 
-                          style={{ 
-                            fontSize: 8, 
-                            fontWeight: 700, 
-                            padding: '1px 4px', 
-                            borderRadius: 0, 
+                        <span
+                          style={{
+                            fontSize: 8,
+                            fontWeight: 700,
+                            padding: '1px 4px',
+                            borderRadius: 0,
                             textTransform: 'uppercase',
                             backgroundColor: strat.bias === 'short' ? 'rgba(201, 77, 63, 0.12)' : 'rgba(74, 157, 127, 0.12)',
                             color: strat.bias === 'short' ? 'var(--color-ec-loss)' : 'var(--color-ec-profit)',
@@ -1410,6 +1632,24 @@ export default function TrunkPage() {
                           >
                             <Play size={10} fill="currentColor" />
                           </button>
+                          {!isIncubator && renamingId !== strat.id && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                startRename(strat)
+                              }}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                padding: 2,
+                                cursor: 'pointer',
+                                color: 'var(--color-ec-text-muted)'
+                              }}
+                              title="Rename Strategy"
+                            >
+                              <Pencil size={10} />
+                            </button>
+                          )}
                           {!isIncubator ? (
                             <button
                               onClick={(e) => {
@@ -1464,7 +1704,7 @@ export default function TrunkPage() {
                         </div>
                       </td>
                     </tr>
-                    
+
                     {/* Collapsible tags row */}
                     {isExpanded && (
                       <tr style={{ backgroundColor: 'rgba(28, 30, 33, 0.25)' }}>
@@ -1478,7 +1718,7 @@ export default function TrunkPage() {
                                   Strategy Definition
                                 </h4>
                               </div>
-                              
+
                               {/* Preconditions */}
                               {((strat.postgap_preconditions && strat.postgap_preconditions.length > 0) || strat.apply_day) && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1660,7 +1900,7 @@ export default function TrunkPage() {
   }
 
   return (
-    <div 
+    <div
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -1672,7 +1912,7 @@ export default function TrunkPage() {
       }}
     >
       {/* Premium Workspace Header */}
-      <div 
+      <div
         style={{
           padding: '16px 24px 12px 24px',
           borderBottom: '0.5px solid var(--color-ec-border)',
@@ -1684,7 +1924,7 @@ export default function TrunkPage() {
         }}
       >
         <div>
-          <h1 
+          <h1
             style={{
               fontFamily: "'Fraunces', serif",
               fontSize: 24,
@@ -1696,7 +1936,7 @@ export default function TrunkPage() {
           >
             BAÚL
           </h1>
-          <p 
+          <p
             style={{
               fontSize: 9,
               fontWeight: 700,
@@ -1738,15 +1978,15 @@ export default function TrunkPage() {
 
       {loading ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div 
-            style={{ 
-              width: 24, 
-              height: 24, 
+          <div
+            style={{
+              width: 24,
+              height: 24,
               border: '2px solid var(--color-ec-border)',
               borderTopColor: 'var(--color-ec-copper)',
               borderRadius: '50%',
               animation: 'spin 0.8s linear infinite'
-            }} 
+            }}
           />
         </div>
       ) : error ? (
@@ -1756,7 +1996,7 @@ export default function TrunkPage() {
         </div>
       ) : (
         /* Workspace Split Layout */
-        <div 
+        <div
           style={{
             flex: 1,
             display: 'flex',
@@ -1766,7 +2006,7 @@ export default function TrunkPage() {
           className="flex-col lg:flex-row"
         >
           {/* Main Left Workspace: Strategies (Scrollable Rows) + Datasets (Below) */}
-          <div 
+          <div
             style={{
               flex: '0 0 65%',
               borderRight: '0.5px solid var(--color-ec-border)',
@@ -1778,35 +2018,9 @@ export default function TrunkPage() {
             }}
             className="w-full lg:w-[65%]"
           >
-            {/* 1. Strategy Rows Section */}
+            {/* 1. Trading incubator strategies Section (persistent watchlist — C3) */}
             <div style={{ padding: '16px 20px 0 20px' }}>
-              <div 
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 10,
-                  borderBottom: '0.5px solid rgba(44, 47, 51, 0.4)',
-                  paddingBottom: 6
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Briefcase size={12} color="var(--color-ec-copper)" />
-                  <h2 style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--color-ec-text-high)', margin: 0 }}>
-                    Trading Strategies
-                  </h2>
-                </div>
-                <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 0, backgroundColor: 'var(--color-ec-bg-surface)', border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-muted)' }}>
-                  {strategies.length} Saved
-                </span>
-              </div>
-
-              {renderStrategyTable(strategies, false)}
-            </div>
-
-            {/* 2. Trading incubator strategies Section */}
-            <div style={{ padding: '0 20px 0 20px' }}>
-              <div 
+              <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1830,11 +2044,63 @@ export default function TrunkPage() {
               {renderStrategyTable(incubatorStrategies, true)}
             </div>
 
+            {/* 2. Trading Strategies Section */}
+            <div style={{ padding: '0 20px 0 20px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                  borderBottom: '0.5px solid rgba(44, 47, 51, 0.4)',
+                  paddingBottom: 6
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Briefcase size={12} color="var(--color-ec-copper)" />
+                  <h2 style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--color-ec-text-high)', margin: 0 }}>
+                    Trading Strategies
+                  </h2>
+                </div>
+                <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 0, backgroundColor: 'var(--color-ec-bg-surface)', border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-muted)' }}>
+                  {activeStrategies.length} Saved
+                </span>
+              </div>
+
+              {renderStrategyTable(activeStrategies, false)}
+            </div>
+
+            {/* 3. Últimas pruebas Section (auto-saved backtests — B2) */}
+            <div style={{ padding: '0 20px 20px 20px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                  borderBottom: '0.5px solid rgba(44, 47, 51, 0.4)',
+                  paddingBottom: 6
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Clock size={12} color="var(--color-ec-copper)" />
+                  <h2 style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--color-ec-text-high)', margin: 0 }}>
+                    Últimas pruebas
+                  </h2>
+                </div>
+                <span style={{ fontSize: 8, fontWeight: 700, padding: '1px 6px', borderRadius: 0, backgroundColor: 'var(--color-ec-bg-surface)', border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-muted)' }}>
+                  {recentBacktests.length} pruebas
+                </span>
+              </div>
+
+              {renderRecentBacktests()}
+            </div>
+
 
           </div>
 
           {/* Right-Hand Pane: Selected Strategy Details Panel (No container card, side-by-side metrics/chart) */}
-          <div 
+          <div
             style={{
               flex: '0 0 35%',
               backgroundColor: 'rgba(16, 18, 19, 0.4)',
@@ -1869,13 +2135,13 @@ export default function TrunkPage() {
                         {selectedStrategies.map((strat, idx) => {
                           const color = COMPARISON_COLORS[idx % COMPARISON_COLORS.length]
                           return (
-                            <th 
-                              key={strat.id} 
-                              style={{ 
-                                padding: '8px 10px', 
-                                fontSize: 11, 
-                                fontWeight: 700, 
-                                textTransform: 'uppercase', 
+                            <th
+                              key={strat.id}
+                              style={{
+                                padding: '8px 10px',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
                                 color: 'var(--color-ec-text-high)',
                                 textAlign: 'right',
                                 borderLeft: '0.5px solid var(--color-ec-border)',
@@ -1926,7 +2192,7 @@ export default function TrunkPage() {
                   <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', color: 'var(--color-ec-text-muted)', marginBottom: 8 }}>
                     Superimposed Equity Curves (Accumulated R)
                   </div>
-                  <MultiEquityChart 
+                  <MultiEquityChart
                     strategiesData={selectedStrategies.map((strat, idx) => {
                       const data3M = getThreeMonthStatsAndCurve(strat)
                       return {
