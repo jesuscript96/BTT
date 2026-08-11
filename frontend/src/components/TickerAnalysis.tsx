@@ -96,6 +96,9 @@ interface DailyDataPoint {
     low: number;
     close: number;
     volume: number;
+    // Gap % split-ajustado que manda el backend (adj_open vs prev adj_close).
+    // Presente cuando daily_history viene de Massive; ausente en fallbacks.
+    gap_pct?: number;
 }
 
 interface FinvizNewsItem {
@@ -629,7 +632,13 @@ const DailyStockChart = ({
             const prevClose = dailyData[i - 1].close;
             const d = dailyData[i];
             if (gapDatesSet.has(d.time)) {
-                const gapPct = prevClose > 0 ? ((d.open - prevClose) / prevClose) * 100 : 0;
+                // Prefer the backend gap_pct (split-adjusted: adj_open vs prev
+                // adj_close) so reverse-split days don't show a FALSE gap = the
+                // split ratio (p. ej. AUUD/FFAI). Fall back to raw open-vs-prevClose
+                // only when the backend didn't supply it.
+                const gapPct = (typeof d.gap_pct === 'number' && isFinite(d.gap_pct))
+                    ? d.gap_pct
+                    : (prevClose > 0 ? ((d.open - prevClose) / prevClose) * 100 : 0);
                 gaps.push({
                     time: d.time,
                     gapPct,

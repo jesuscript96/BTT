@@ -155,17 +155,21 @@ def get_snapshot_price(ticker: str) -> float | None:
     return None
 
 
-def get_daily_bars(ticker: str, years: int = 5) -> list[dict]:
-    """Barras diarias ajustadas de /v2/aggs (cubre también deslistados).
+def get_daily_bars(ticker: str, years: int = 5, adjusted: bool = True) -> list[dict]:
+    """Barras diarias de /v2/aggs (cubre también deslistados).
 
-    Devuelve [{t(ms), o, h, l, c, v}] ascendente; [] si no hay datos.
+    `adjusted=True` (default) back-ajusta los precios viejos por el factor acumulado
+    de splits → serie continua, ideal para gaps/returns. `adjusted=False` devuelve el
+    precio CRUDO (real) para mostrar OHLC sin que los reverse splits en cascada
+    disparen los valores a millones (p. ej. SMX). Devuelve [{t(ms), o, h, l, c, v}]
+    ascendente; [] si no hay datos.
     """
     ticker = (ticker or "").upper().strip()
     d_to = date.today().isoformat()
     d_from = (date.today() - timedelta(days=365 * years + 5)).isoformat()
     data = _get(
         f"/v2/aggs/ticker/{ticker}/range/1/day/{d_from}/{d_to}",
-        {"adjusted": "true", "sort": "asc", "limit": 50000},
+        {"adjusted": "true" if adjusted else "false", "sort": "asc", "limit": 50000},
     )
     return (data or {}).get("results") or []
 
@@ -194,7 +198,10 @@ def get_minute_bars_for_dates(ticker: str, dates: list[str], minutes: int = 15,
         try:
             data = _get(
                 f"/v2/aggs/ticker/{ticker}/range/{minutes}/minute/{d}/{d}",
-                {"adjusted": "true", "sort": "asc", "limit": 500},
+                # CRUDO: el chart "precio medio desde el open" normaliza por el open
+                # del propio día (ratio), así que el crudo es correcto y evita mezclar
+                # escalas de distintos splits (antes salía +495M% en local).
+                {"adjusted": "false", "sort": "asc", "limit": 500},
             )
             return [
                 {"date_str": d, "t": r.get("t"), "o": r.get("o"), "c": r.get("c")}
