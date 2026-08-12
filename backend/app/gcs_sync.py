@@ -131,9 +131,10 @@ def download_user_db() -> bool:
     if not client:
         return False
 
+    from app.database import user_db_path
     bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
     object_name = "users.duckdb"
-    local_file = "users.duckdb"
+    local_file = user_db_path()
 
     global _startup_download_ok
     print(f"[INFO] Attempting to download {object_name} from gs://{bucket_name}...")
@@ -175,7 +176,8 @@ def upload_user_db(only_if_dirty: bool = False) -> bool:
     if os.getenv("DB_PROVIDER", "motherduck").lower() != "gcs":
         return False
 
-    local_file = "users.duckdb"
+    from app.database import user_db_path
+    local_file = user_db_path()
     if not os.path.exists(local_file):
         print("[WARN] users.duckdb does not exist locally. Nothing to upload.")
         return False

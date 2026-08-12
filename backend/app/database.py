@@ -8,11 +8,23 @@ load_dotenv()
 _local = threading.local()
 _user_db_lock = threading.RLock()
 
+def user_db_path():
+    """Ruta del fichero users.duckdb.
+
+    Configurable via USER_DB_PATH para poder ubicarlo en un volumen PERSISTENTE
+    (disco del servidor) en vez del cwd efimero del contenedor. Por defecto
+    'users.duckdb' (cwd) -> comportamiento identico al de siempre. Con la ruta
+    en un mount persistente + DISABLE_GCS_SYNC=true, el fichero sobrevive a los
+    redeploys sin el ciclo de subida/descarga a GCS (que era lo que retenia el
+    lock y causaba el timeout de /strategies/).
+    """
+    return os.getenv("USER_DB_PATH", "users.duckdb")
+
 def get_user_db_connection(read_only=False):
     """Nueva conexion a users.duckdb por cada operacion.
     Forzamos read_only=False para evitar conflictos de configuracion de DuckDB en el mismo proceso.
     """
-    return duckdb.connect('users.duckdb', read_only=False)
+    return duckdb.connect(user_db_path(), read_only=False)
 
 def get_user_db_lock():
     return _user_db_lock
