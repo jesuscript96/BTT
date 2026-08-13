@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Response
 from typing import Optional
 import os
 import time
@@ -12,9 +12,24 @@ from app.database import get_db_connection
 from app.redis_client import get_redis
 from app.services import massive_service, edgar_service, finviz_service
 
+def _no_store(response: Response) -> None:
+    """Fija Cache-Control: no-store en TODAS las respuestas del router.
+
+    Precios y fundamentales deben reflejarse al INSTANTE tras un deploy o una
+    limpieza de caché. Sin este header no mandábamos ningún Cache-Control, así
+    que el navegador cacheaba de forma heurística y seguía pintando OHLC viejo:
+    es lo que hacía que el fix de reverse splits (SMX en millones) no se viera
+    en el cliente pese a estar bien en el servidor. El backend ya cachea
+    server-side (Redis + SWR en DuckDB), de modo que 'no-store' no añade carga
+    real —solo evita que el cliente sirva una copia rancia—. El endpoint /logo
+    lo sobreescribe con un cache largo por ser un asset inmutable y pesado."""
+    response.headers["Cache-Control"] = "no-store"
+
+
 router = APIRouter(
     prefix="/api/ticker-analysis",
-    tags=["ticker-analysis"]
+    tags=["ticker-analysis"],
+    dependencies=[Depends(_no_store)],
 )
 
 import threading
@@ -2224,13 +2239,20 @@ LOGO_CACHE_TTL = 86400  # 24h
 
 
 @router.get("/{ticker}/logo")
-def get_ticker_logo(ticker: str):
+def get_ticker_logo(ticker: str, response: Response):
     """
     Proxy logo from Massive API (branded SVG/PNG) with Google favicon
     fallback. 24h cache. Massive logo is base64-embedded so the API key
     is never exposed to the browser.
     """
     ticker = ticker.upper()
+
+    # El logo es un asset inmutable y pesado (imagen base64): sobreescribe el
+    # 'no-store' del router con un cache largo del lado del cliente. 'private'
+    # para que solo lo guarde el navegador del usuario, nunca una caché
+    # compartida (la respuesta puede ir autenticada). Coincide con el TTL de 24h
+    # del cache server-side.
+    response.headers["Cache-Control"] = "private, max-age=86400"
 
     # Redis cache lookup (primary, optional)
     r = get_redis()
