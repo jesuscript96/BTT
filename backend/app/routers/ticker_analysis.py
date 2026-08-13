@@ -70,6 +70,29 @@ _swr_inflight: set = set()
 _swr_inflight_lock = threading.Lock()
 
 
+# ── Versión de caché ─────────────────────────────────────────────────────────
+# Súbela ("v2" -> "v3" -> ...) cada vez que cambie el SIGNIFICADO de un payload
+# cacheado (p. ej. el fix de reverse splits: OHLC crudo en vez de ajustado). Al
+# subirla, las claves de Redis y las filas de ticker_analysis_cache pasan a un
+# namespace nuevo: las entradas viejas dejan de coincidir -> se tratan como MISS
+# y se recomputan con el código actual, en TODAS las capas (Redis + DB) y sin
+# purgas manuales. Evita que un fix de datos quede enmascarado por caché rancia
+# —y que reaparezca en cada deploy al re-descargarse users.duckdb desde GCS—.
+# Historial: v2 = fix reverse splits (precio crudo en Ticker Analysis).
+CACHE_VERSION = os.getenv("TICKER_CACHE_VERSION", "v2")
+
+
+def _rk(kind: str, ticker: str) -> str:
+    """Clave Redis namespaced por versión de caché (ticker:v2:chart:SMX)."""
+    return f"ticker:{CACHE_VERSION}:{kind}:{ticker}"
+
+
+def _cache_ep(endpoint: str) -> str:
+    """Endpoint namespaced por versión para la columna de ticker_analysis_cache
+    (chart -> chart@v2). Aísla los payloads nuevos de los de versiones previas."""
+    return f"{endpoint}@{CACHE_VERSION}"
+
+
 def _log_fetch(endpoint: str, ticker: str, t0: float, ok: bool, note: str = ""):
     """Una línea por fetch de fuente para poder medir p95 y huecos en prod."""
     ms = (time.time() - t0) * 1000
@@ -131,7 +154,7 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn,
                 return con.execute(
                     "SELECT payload, updated_at FROM ticker_analysis_cache "
                     "WHERE ticker = ? AND endpoint = ?",
-                    [ticker, endpoint],
+                    [ticker, _cache_ep(endpoint)],
                 ).fetchone()
             finally:
                 con.close()
@@ -145,7 +168,7 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn,
                     con.execute(
                         "INSERT OR REPLACE INTO ticker_analysis_cache "
                         "(ticker, endpoint, payload, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                        [ticker, endpoint, _json.dumps(payload)],
+                        [ticker, _cache_ep(endpoint), _json.dumps(payload)],
                     )
                 finally:
                     con.close()
@@ -161,7 +184,7 @@ def _swr_cache(ticker: str, endpoint: str, ttl: timedelta, fetch_fn,
                 try:
                     con.execute(
                         "DELETE FROM ticker_analysis_cache WHERE ticker = ? AND endpoint = ?",
-                        [ticker, endpoint],
+                        [ticker, _cache_ep(endpoint)],
                     )
                 finally:
                     con.close()
@@ -940,7 +963,7 @@ def _swr_db_read_payload(ticker: str, endpoint: str):
             try:
                 row = con.execute(
                     "SELECT payload FROM ticker_analysis_cache WHERE ticker = ? AND endpoint = ?",
-                    [ticker, endpoint],
+                    [ticker, _cache_ep(endpoint)],
                 ).fetchone()
             finally:
                 con.close()
@@ -961,7 +984,7 @@ def _swr_db_store_payload(ticker: str, endpoint: str, payload) -> None:
                 con.execute(
                     "INSERT OR REPLACE INTO ticker_analysis_cache "
                     "(ticker, endpoint, payload, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                    [ticker, endpoint, json.dumps(payload)],
+                    [ticker, _cache_ep(endpoint), json.dumps(payload)],
                 )
             finally:
                 con.close()
@@ -1085,7 +1108,7 @@ def _enrich_analysis_job(ticker: str) -> None:
             r = get_redis()
             if r:
                 try:
-                    r.setex(f"ticker:analysis:{ticker}", 900, json.dumps(merged))
+                    r.setex(_rk("analysis", ticker), 900, json.dumps(merged))
                 except Exception as e:
                     print(f"[REDIS] write failed for ticker:analysis:{ticker}: {e}")
             print(f"[ENRICH] merged {patch['_source']} extras into {ticker}/analysis "
@@ -1168,7 +1191,7 @@ def get_ticker_analysis(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:analysis:{ticker}")
+            cached = r.get(_rk("analysis", ticker))
             if cached:
                 print(f"[REDIS] cache hit -> ticker:analysis:{ticker}")
                 parsed = json.loads(cached)
@@ -1369,7 +1392,7 @@ def get_ticker_analysis(ticker: str):
                 _analysis_cache[ticker] = (res, now + ANALYSIS_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:analysis:{ticker}", 900, json.dumps(res))
+                    r.setex(_rk("analysis", ticker), 900, json.dumps(res))
                 except Exception as e:
                     print(f"[REDIS] write failed for ticker:analysis:{ticker}: {e}")
         _maybe_enrich_analysis(ticker, res)
@@ -1388,7 +1411,7 @@ def get_ticker_chart(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:chart:{ticker}")
+            cached = r.get(_rk("chart", ticker))
             if cached:
                 return json.loads(cached)
         except Exception as e:
@@ -1550,7 +1573,7 @@ def get_ticker_chart(ticker: str):
                 _chart_cache[ticker] = (res, now + CHART_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:chart:{ticker}", 3600, json.dumps(res))
+                    r.setex(_rk("chart", ticker), 3600, json.dumps(res))
                 except Exception as e:
                     print(f"[REDIS] write failed for ticker:chart:{ticker}: {e}")
         return res
@@ -1568,7 +1591,7 @@ def get_ticker_balance_sheet(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:balance_sheet:{ticker}")
+            cached = r.get(_rk("balance_sheet", ticker))
             if cached:
                 return json.loads(cached)
         except Exception as e:
@@ -1652,7 +1675,7 @@ def get_ticker_balance_sheet(ticker: str):
                 _balance_sheet_cache[ticker] = (res, now + BALANCE_SHEET_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:balance_sheet:{ticker}", 86400, json.dumps(res))
+                    r.setex(_rk("balance_sheet", ticker), 86400, json.dumps(res))
                 except Exception as e:
                     print(f"[REDIS] write failed for ticker:balance_sheet:{ticker}: {e}")
         return res
@@ -1708,7 +1731,7 @@ def get_ticker_gap_stats(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:gap_stats:{ticker}")
+            cached = r.get(_rk("gap_stats", ticker))
             if cached:
                 return json.loads(cached)
         except Exception as e:
@@ -1787,7 +1810,7 @@ def get_ticker_gap_stats(ticker: str):
             _gap_stats_cache[ticker] = (full, datetime.now() + GAP_STATS_CACHE_TTL)
         if r:
             try:
-                r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(full))
+                r.setex(_rk("gap_stats", ticker), 3600, json.dumps(full))
             except Exception:
                 pass
 
@@ -1826,7 +1849,7 @@ def get_ticker_gap_stats(ticker: str):
                 _gap_stats_cache[ticker] = (stored, now + GAP_STATS_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:gap_stats:{ticker}", 3600, json.dumps(stored))
+                    r.setex(_rk("gap_stats", ticker), 3600, json.dumps(stored))
                 except Exception:
                     pass
             return stored
@@ -1864,7 +1887,7 @@ def get_sec_filings(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:sec_filings:{ticker}")
+            cached = r.get(_rk("sec_filings", ticker))
             if cached:
                 return json.loads(cached)
         except Exception as e:
@@ -1935,7 +1958,7 @@ def get_sec_filings(ticker: str):
                 _filings_cache[ticker] = (res, now + FILINGS_CACHE_TTL)
             if r:
                 try:
-                    r.setex(f"ticker:sec_filings:{ticker}", 1800, json.dumps(res))
+                    r.setex(_rk("sec_filings", ticker), 1800, json.dumps(res))
                 except Exception as e:
                     print(f"[REDIS] write failed for ticker:sec_filings:{ticker}: {e}")
         return res
@@ -2133,7 +2156,7 @@ def insiders_endpoint(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:insiders:{ticker}")
+            cached = r.get(_rk("insiders", ticker))
             if cached:
                 return json.loads(cached)
         except Exception as e:
@@ -2141,7 +2164,7 @@ def insiders_endpoint(ticker: str):
     result = {"ticker": ticker, "insiders": get_insider_activity(ticker)}
     if r:
         try:
-            r.setex(f"ticker:insiders:{ticker}", 1800, json.dumps(result))
+            r.setex(_rk("insiders", ticker), 1800, json.dumps(result))
         except Exception as e:
             print(f"[REDIS] write failed for ticker:insiders:{ticker}: {e}")
     return result
@@ -2161,7 +2184,7 @@ def get_finviz_news(ticker: str):
     r = get_redis()
     if r:
         try:
-            cached = r.get(f"ticker:news:{ticker}")
+            cached = r.get(_rk("news", ticker))
             if cached:
                 return json.loads(cached)
         except Exception as e:
@@ -2225,7 +2248,7 @@ def get_finviz_news(ticker: str):
             _finviz_news_cache[ticker] = (result, now + FINVIZ_NEWS_CACHE_TTL)
         if r and isinstance(result, dict) and result.get("status") != "calculating":
             try:
-                r.setex(f"ticker:news:{ticker}", 900, json.dumps(result))
+                r.setex(_rk("news", ticker), 900, json.dumps(result))
             except Exception as e:
                 print(f"[REDIS] write failed for ticker:news:{ticker}: {e}")
         return result
@@ -2258,7 +2281,7 @@ def get_ticker_logo(ticker: str, response: Response):
     r = get_redis()
     if r:
         try:
-            cached_redis = r.get(f"ticker:logo:{ticker}")
+            cached_redis = r.get(_rk("logo", ticker))
             if cached_redis:
                 return json.loads(cached_redis)
         except Exception as e:
@@ -2302,7 +2325,7 @@ def get_ticker_logo(ticker: str, response: Response):
         _logo_cache[ticker] = {"data": result, "ts": time.time()}
         if r:
             try:
-                r.setex(f"ticker:logo:{ticker}", 86400, json.dumps(result))
+                r.setex(_rk("logo", ticker), 86400, json.dumps(result))
             except Exception as e:
                 print(f"[REDIS] write failed for ticker:logo:{ticker}: {e}")
         return result
