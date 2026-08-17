@@ -1,15 +1,15 @@
-# Git Branch Rules — Álvaro
+# Git Branch Rules — Sailor
 
-Aplica cuando el desarrollador es Álvaro.
+Aplica cuando el desarrollador es Sailor.
 
 ## Rama de trabajo — `staging` (conjunta Álvaro + Sailor)
 
 **Todos los commits van a `staging`.** Es el entorno de desarrollo compartido
-entre Álvaro y Sailor: así los dos están siempre en la misma versión sin tocar
+entre Sailor y Álvaro: así los dos están siempre en la misma versión sin tocar
 `main`. Desde `staging` se decide, cuando queramos, qué se promociona.
 
-> (Opcional) Para experimentar en aislado sin afectar a Sailor, usar la rama
-> personal `alvaro-rama-desarrollo` y luego mergearla a `staging`.
+> (Opcional) Para experimentar en aislado sin afectar a Álvaro, usar la rama
+> personal `sailor-rama-desarrollo` y luego mergearla a `staging`.
 
 ## Prohibido
 - Push / commit / merge a `main`
@@ -19,7 +19,7 @@ entre Álvaro y Sailor: así los dos están siempre en la misma versión sin toc
 1. `git branch --show-current` — verificar rama actual.
 2. Si no estás en `staging`: `git checkout staging`.
 3. **Antes de trabajar/commitear: `git pull origin staging`.** Es una rama
-   COMPARTIDA con Sailor — sincroniza siempre antes para no chocar en el push.
+   COMPARTIDA con Álvaro — sincroniza siempre antes para no chocar en el push.
 4. Hacer cambios y commit a `staging`.
 5. Antes de push, preguntar al usuario: "¿Confirmas push a staging?"
 6. Solo tras confirmación explícita: `git push origin staging`.

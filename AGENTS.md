@@ -59,7 +59,8 @@ especificar: fijarlo explícito a `true` en cada backtest.
 
 Aplica el archivo que corresponda al usuario actual:
 
-- **Álvaro** → `.agent/ALVARO_DEV_BRANCH.md` (rama `alvaro-rama-desarrollo`)
+- **Álvaro** → `.agent/ALVARO_DEV_BRANCH.md` (rama conjunta `staging`)
+- **Sailor** → `.agent/SAILOR_DEV_BRANCH.md` (rama conjunta `staging`)
 - **Jaume** → `.agent/JAUME_DEV_BRANCH.md` (rama `jaumen-rama-desarrollo`)
 
 ## 📚 Contexto del proyecto (lee según necesites)
