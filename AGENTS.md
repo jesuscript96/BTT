@@ -59,9 +59,12 @@ especificar: fijarlo explícito a `true` en cada backtest.
 
 Aplica el archivo que corresponda al usuario actual:
 
-- **Álvaro** → `.agent/ALVARO_DEV_BRANCH.md` (rama conjunta `staging`)
-- **Sailor** → `.agent/SAILOR_DEV_BRANCH.md` (rama conjunta `staging`)
+- **Álvaro** → `.agent/ALVARO_DEV_BRANCH.md` (rama `alvaro-rama-desarrollo`, integra a `staging`)
+- **Sailor** → `.agent/SAILOR_DEV_BRANCH.md` (rama `sailor-rama-desarrollo`, integra a `staging`)
 - **Jaume** → `.agent/JAUME_DEV_BRANCH.md` (rama `jaumen-rama-desarrollo`)
+
+> Álvaro y Sailor comparten la rama de integración `staging`: cada uno trabaja en
+> SU rama personal y la mergea a `staging` para sincronizarse. `main` no se toca.
 
 ## 📚 Contexto del proyecto (lee según necesites)
 
