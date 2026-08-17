@@ -58,7 +58,7 @@ class SurfaceRequest(BaseModel):
     custom_start_time: str | None = None
     custom_end_time: str | None = None
     locates_cost: float = 0.0
-    look_ahead_prevention: bool = False
+    look_ahead_prevention: bool = True
     is_percent: float = 100.0
     task_id: str | None = None
 

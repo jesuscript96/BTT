@@ -47,7 +47,7 @@ class Execution(BaseModel):
     market_sessions: list[str] = Field(default_factory=lambda: ["RTH"])
     custom_start_time: Optional[str] = None
     custom_end_time: Optional[str] = None
-    look_ahead_prevention: bool = False
+    look_ahead_prevention: bool = True
 
 
 class BacktestCreate(BaseModel):

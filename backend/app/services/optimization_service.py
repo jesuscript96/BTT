@@ -525,7 +525,7 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
             custom_start_time=backtest_params.get("custom_start_time"),
             custom_end_time=backtest_params.get("custom_end_time"),
             locates_cost=backtest_params.get("locates_cost", 0),
-            look_ahead_prevention=backtest_params.get("look_ahead_prevention", False),
+            look_ahead_prevention=backtest_params.get("look_ahead_prevention", True),
             day_group_iter=iter(point_groups),
             n_groups_hint=len(point_groups),
             _signal_cache=signal_cache,
