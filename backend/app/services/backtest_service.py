@@ -81,7 +81,7 @@ def run_backtest(
     custom_end_time: str | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
-    look_ahead_prevention: bool = False,
+    look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
     monthly_expenses: float = 0.0,

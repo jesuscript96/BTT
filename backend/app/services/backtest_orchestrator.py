@@ -42,7 +42,7 @@ class BacktestRequest(BaseModel):
     # cuesta un locate). Antes "PERCENT" (% del riesgo) — semántica corregida
     # por decisión de producto (Jaume 2026-07-07). backtest_service ya default FLAT.
     locate_type: str = "FLAT"
-    look_ahead_prevention: bool = False
+    look_ahead_prevention: bool = True
 
 
 def generate_mock_candles(ticker: str, date: str) -> dict:
