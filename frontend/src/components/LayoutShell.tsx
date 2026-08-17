@@ -4,7 +4,6 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
-import WhatsNewModal from "@/components/WhatsNewModal";
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -37,7 +36,6 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
       {!isAuthRoute && (
         <>
           <FeedbackWidget open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-          <WhatsNewModal />
         </>
       )}
     </div>

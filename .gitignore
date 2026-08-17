@@ -36,6 +36,7 @@ pythonvenv*
 # DuckDB / Local Data
 *.duckdb
 *.duckdb.wal
+*.duckdb.*
 
 # Cache directories
 .cache/

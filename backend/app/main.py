@@ -266,6 +266,7 @@ from app.routers import optimization, users, edgie
 from app.routers import screener
 from app.routers import assistant
 from app.routers import feedback
+from app.routers import portfolio
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -301,6 +302,9 @@ from app.routers.entitlements import router as entitlements_router
 app.include_router(entitlements_router, prefix="/api/users", tags=["Entitlements"])
 # Feedback & feature-voting board (declares its own prefix="/api/feedback").
 app.include_router(feedback.router)
+# Portfolio de estrategias (PRD_portfolio_ANTIGRAVITY). Declares its own
+# prefix="/api/portfolio".
+app.include_router(portfolio.router)
 
 @app.get("/health")
 def read_health():

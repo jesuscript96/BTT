@@ -151,7 +151,10 @@ export interface IndicatorConfig {
     tri_lookback?: number;         // Bars to search for pivots
     slope_tolerance?: number;      // Max slope considered "flat"
     min_r_squared?: number;        // Min R² for trend line quality
-    min_pivots?: number;           // Min swing highs/lows required to fit lines
+    min_pivots?: number;           // Min swing highs required to fit lines
+
+    // "Elapsed time from last High": ancla del reloj
+    session_ref?: "full" | "pm" | "rth";
 }
 
 export interface ComparisonCondition {

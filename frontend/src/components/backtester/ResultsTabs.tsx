@@ -188,6 +188,7 @@ export default function ResultsTabs({
             trades={result.trades}
             isDarkMode={isDarkMode}
             monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+            onSelectTrade={handleSelectTrade}
           />
           )}
         </div>

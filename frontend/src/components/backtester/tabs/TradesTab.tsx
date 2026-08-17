@@ -11,7 +11,7 @@ interface TradesTabProps {
 type SortKey = keyof TradeRecord;
 type SortDir = "asc" | "desc";
 
-const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
+export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   SL:           { bg: "rgba(239,68,68,0.1)",  text: "#ef4444" },
   TP:           { bg: "rgba(16,185,129,0.1)", text: "#10b981" },
   "Partial TP": { bg: "rgba(20,184,166,0.1)", text: "#14b8a6" },

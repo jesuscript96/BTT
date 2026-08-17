@@ -346,6 +346,182 @@ export function getBacktestResults(
   );
 }
 
+// ─── Portfolio (combined strategies — PRD_portfolio_ANTIGRAVITY) ──
+export interface PortfolioMetrics {
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe: number;
+  /** null when degenerate (near-zero drawdown) — show "N/A" */
+  calmar: number | null;
+  profit_factor: number;
+  win_rate: number;
+  total_trades: number;
+  final_equity: number;
+  init_cash: number;
+  sortino?: number;
+  /** "few trades" when the Sharpe is unreliable (sparse series) */
+  sharpe_note?: string | null;
+}
+
+export interface PortfolioResult {
+  portfolio_id: string;
+  dataset_id: string;
+  date_from?: string | null;
+  date_to?: string | null;
+  equity_curve: { time: number; value: number }[];
+  aggregate_metrics: PortfolioMetrics;
+  per_strategy: Record<
+    string,
+    {
+      pct_equity: number;
+      trades: number;
+      return_contribution_pct: number;
+      return_contribution_dollars: number;
+      max_drawdown_pct: number;
+      win_rate: number;
+    }
+  >;
+  correlation: number[][];
+  strategy_order: string[];
+  standalone: Record<
+    string,
+    { equity_curve: { time: number; value: number }[]; aggregate_metrics: PortfolioMetrics }
+  >;
+  weights: Record<string, number>;
+  init_cash: number;
+  max_total_exposure_pct: number;
+  sizing_mode?: string;
+  /** Since 2026-08-14: portfolio = sum of per-strategy daily PnL curves (no joint backtest). */
+  combination_mode?: 'sum_of_daily_pnl_curves';
+  /** Total daily PnL$ (sum across strategies), keyed by date. */
+  daily_pnl_total?: Record<string, number>;
+  /** 'saved' = built from the strategies' saved backtests (Baúl); 'rerun' = legacy re-run. */
+  source?: 'saved' | 'rerun';
+  /** When source='saved': the saved run each strategy's curve came from. */
+  saved_runs?: Record<
+    string,
+    {
+      backtest_id: string;
+      executed_at?: string;
+      date_from?: string | null;
+      date_to?: string | null;
+      n_trades?: number;
+      label?: string | null;
+    }
+  >;
+  sanity_warnings?: string[];
+  open_positions_leaked?: number;
+  skipped_by_cap?: number;
+  scaled_by_cap?: number;
+  trades_entrada_totales?: number;
+  trades_registrados?: number;
+  input_trades_per_strategy?: Record<string, number>;
+  /** R4: raw rows from the orchestrator, before partial-TP aggregation. */
+  input_rows_per_strategy?: Record<string, number>;
+  /** R4: positions after grouping partials by entry (ticker + entry_epoch). */
+  positions_per_strategy?: Record<string, number>;
+  /** R4: positions actually registered (= trades_registrados alias). */
+  positions_registradas?: number;
+  strategy_names?: Record<string, string>;
+  label?: string;
+  recombined?: boolean;
+}
+
+export interface PortfolioItem {
+  strategy_id?: string | null;
+  strategy_definition?: Record<string, unknown> | null;
+  /** Weight: percent of equity (5 = 5%), OR dollars when weight_unit='usd'. */
+  pct_equity: number;
+  /** 'pct' (default) | 'usd' (fixed $ allocation) | 'fraction'. */
+  weight_unit?: 'pct' | 'usd' | 'fraction';
+}
+
+export interface PortfolioRunRequest {
+  /** 'saved' (default) = sum the saved runs from the Baúl; 'rerun' = legacy re-run. */
+  source?: 'saved' | 'rerun';
+  dataset_id?: string | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  items: PortfolioItem[];
+  init_cash?: number;
+  max_total_exposure_pct?: number;
+  sizing_mode?: string;
+  fees?: number;
+  fee_type?: string;
+  slippage?: number;
+  locates_cost?: number;
+  locate_type?: string;
+}
+
+/** 202 async acceptance envelope */
+export interface PortfolioJobAccepted {
+  job_id: string;
+  portfolio_id: string;
+  dataset_id: string;
+  status: "running";
+}
+
+export interface PortfolioJobStatus {
+  job_id: string;
+  status: string;
+  percent: number;
+  current: number;
+  total: number;
+  error?: string | null;
+}
+
+/** POST /api/portfolio/run — sync (full result) or async (202 + job_id). */
+export function runPortfolio(
+  data: PortfolioRunRequest,
+): Promise<PortfolioResult | PortfolioJobAccepted> {
+  return apiRequest<PortfolioResult | PortfolioJobAccepted>("/portfolio/run", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** POST /api/portfolio/recombine — instant re-combine with cached trades (sliders). */
+export function recombinePortfolio(data: {
+  portfolio_id: string;
+  items: PortfolioItem[];
+  init_cash?: number | null;
+  max_total_exposure_pct?: number | null;
+  sizing_mode?: string | null;
+}): Promise<PortfolioResult> {
+  return apiRequest<PortfolioResult>("/portfolio/recombine", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** GET /api/portfolio/{job_id} — async job status. */
+export function getPortfolioStatus(jobId: string): Promise<PortfolioJobStatus> {
+  return apiRequest<PortfolioJobStatus>(
+    `/portfolio/${encodeURIComponent(jobId)}`,
+  );
+}
+
+/** GET /api/portfolio/{job_id}/result — combined result (or {status,percent} while running). */
+export function getPortfolioResult(
+  jobId: string,
+): Promise<PortfolioResult | { status: string; percent: number }> {
+  return apiRequest<PortfolioResult | { status: string; percent: number }>(
+    `/portfolio/${encodeURIComponent(jobId)}/result`,
+  );
+}
+
+/** POST /api/portfolio/save — persist into backtest_results (search_mode='portfolio'). */
+export function savePortfolio(data: {
+  portfolio_id: string;
+  result: Record<string, unknown>;
+  label?: string | null;
+}): Promise<{ status: string; id: string }> {
+  return apiRequest<{ status: string; id: string }>("/portfolio/save", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // ─── Ticker Analysis ────────────────────────────────────────
 // Todos aceptan un AbortSignal opcional: al cambiar de ticker, el componente
 // aborta las requests en vuelo en vez de dejarlas ocupando conexiones.

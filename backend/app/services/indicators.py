@@ -809,11 +809,12 @@ def compute_indicator(
     slope_tolerance: float | None = None,
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
+    session_ref: str | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -841,7 +842,8 @@ def compute_indicator(
         period, period2, period3, std_dev, multiplier,
         days_lookback, time_hour, time_minute, time_condition,
         band_line, orb_minutes, ap_session, daily_stats, df, range_minutes,
-        pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots
+        pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots,
+        session_ref
     )
 
     if offset and offset != 0:
@@ -1078,6 +1080,7 @@ def _compute_raw(
     slope_tolerance: float | None = None,
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
+    session_ref: str | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -1673,6 +1676,47 @@ def _compute_raw(
         return candle_range.abs()
 
     if name in ("Elapsed Time from Last High", "Elapsed time from last High"):
+        # session_ref — ancla del reloj:
+        #   "full" (default): máximo acumulado del día completo (comportamiento
+        #                     histórico, mezcla PM+RTH).
+        #   "pm":  máximo del premercado (04:00-09:30). El reloj se resetea con
+        #          cada nuevo PMH; tras las 09:30 el PMH queda congelado y el
+        #          reloj sigue creciendo desde la última actualización.
+        #   "rth": máximo de la sesión regular (09:30-16:00). Antes de las 09:30
+        #          el indicador NO existe (NaN → la condición nunca dispara);
+        #          se resetea con cada nuevo máximo RTH.
+        ref = (session_ref or "full").strip().lower()
+        n = len(high)
+        high_vals = np.asarray(high, dtype=np.float64)
+        if ref in ("pm", "rth") and df is not None and "timestamp" in df and n:
+            timestamps = pd.to_datetime(df["timestamp"])
+            minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+            if ref == "pm":
+                sess_mask = (minutes >= 240) & (minutes < 570)
+            else:
+                sess_mask = (minutes >= 570) & (minutes < 960)
+            elapsed = np.full(n, np.nan)
+            sess_idx = np.flatnonzero(sess_mask)
+            if len(sess_idx):
+                hv = high_vals[sess_idx]
+                # Nueva actualización del máximo: high estrictamente mayor que
+                # el acumulado (igual que el modo full: máximos iguales no resetean).
+                run_max = np.maximum.accumulate(hv)
+                is_new = np.concatenate(([True], hv[1:] > run_max[:-1]))
+                pos_last_new = np.maximum.accumulate(
+                    np.where(is_new, np.arange(len(sess_idx)), -1)
+                )
+                # Barras (de sesión) desde la última actualización
+                elapsed[sess_idx] = np.arange(len(sess_idx)) - pos_last_new
+                # Tras terminar la sesión de referencia el máximo queda congelado:
+                # el reloj sigue contando desde la barra que lo fijó.
+                last_new_global = sess_idx[pos_last_new]
+                after = np.flatnonzero(~sess_mask & (np.arange(n) > sess_idx[-1]))
+                if len(after):
+                    elapsed[after] = after - last_new_global[-1]
+            return pd.Series(elapsed, index=close.index)
+
+        # Modo "full" — comportamiento original: máximo acumulado del día.
         elapsed = pd.Series(0, index=close.index, dtype=float)
         last_high_idx = 0
         current_high = high.iloc[0] if len(high) > 0 else 0

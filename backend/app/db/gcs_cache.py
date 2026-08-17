@@ -399,6 +399,50 @@ def _select_intraday_glob_for_month(conn, year: int, month: int) -> str | None:
                 return _to_local_lake(
                     f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet")
 
+    # ── LOCAL-LAKE FALLBACK ───────────────────────────────────────────────────
+    # Reached ONLY when the GCS listing didn't yield a path for this month (e.g.
+    # local mode where GCS can't be listed → _available_*_paths empty). Reuses the
+    # SAME proven resolution as fetch_intraday_batch: build the gs:// glob, redirect
+    # via _to_local_lake, confirm with a local glob() count. Precedence optimized >
+    # raw is preserved; since optimized isn't mirrored locally it falls through to
+    # the clean raw lake. If GCS lists fine, the early returns above are hit and
+    # this block is never reached → identical behaviour in prod.
+    if LOCAL_LAKE_DIR:
+        for kind in ("intraday_1m_optimized", "intraday_1m"):
+            for pad in (f"{month:02d}", str(month)):
+                cand = _to_local_lake(
+                    f"gs://{GCS_BUCKET}/cold_storage/{kind}/year={year}/month={pad}/*.parquet")
+                if cand.startswith("gs://"):
+                    continue  # not mirrored locally (optimized typically) → skip
+                try:
+                    if conn.execute(f"SELECT count(*) FROM glob('{cand}')").fetchall()[0][0] > 0:
+                        logger.info(
+                            f"  [LAKE LOCAL FALLBACK] {year}-{pad} {kind}: resolved from disk "
+                            f"(GCS listing unavailable).")
+                        return cand
+                except Exception as e:
+                    logger.warning(
+                        f"  [LAKE LOCAL FALLBACK] {year}-{pad} {kind}: glob failed: {e}")
+
+        # Anti-silence guard: nothing resolved, but the month DOES exist on disk.
+        # Python os check is independent of DuckDB's glob → catches separator issues
+        # (PRD §5) so a backtest never silently gets 0 candles for a real month.
+        for pad in (f"{month:02d}", str(month)):
+            carpeta = os.path.dirname(_to_local_lake(
+                f"gs://{GCS_BUCKET}/cold_storage/intraday_1m/year={year}/month={pad}/*.parquet"))
+            if carpeta.startswith("gs://"):
+                continue
+            try:
+                if os.path.isdir(carpeta) and any(f.endswith(".parquet") for f in os.listdir(carpeta)):
+                    logger.error(
+                        f"[LAKE LOCAL FALLBACK] {year}-{pad}: month EXISTS on disk ({carpeta}) "
+                        f"but NO glob resolved → backtest would get 0 candles. "
+                        f"Revisa LOCAL_LAKE_DIR y los separadores de ruta."
+                    )
+                    break
+            except OSError:
+                pass
+
     return None
 
 

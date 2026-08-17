@@ -753,10 +753,10 @@ def run_backtest(
         else:
             risk_unit_dollar = risk_r
 
-        trades_records = _enrich_trades(
+        trades_records = _group_partial_exits(_enrich_trades(
             raw_trades, timestamps, ticker, date, strategy_def, risk_unit_dollar,
             gap_pct=daily_stats.get("gap_pct"),
-        )
+        ))
 
         equity = _extract_equity_from_values(eq_vals, timestamps)
 
@@ -966,6 +966,72 @@ def _enrich_trades(
             "stop_loss": t.get("stop_loss", 0.0),
         })
     return result
+
+
+def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
+    """
+    Fusiona en UN trade todas las ejecuciones de una misma posición.
+
+    El simulador emite un registro por ejecución: cada Partial TP es un registro
+    aparte que comparte entry_idx con el cierre final (SL/TP/Time/EOD) de la
+    misma posición. Contar registros infla total_trades y contamina win rate,
+    streaks, avg win/loss, expectancy, etc.
+
+    Agrupa ejecuciones CONSECUTIVAS con el mismo entry_idx (el simulador es
+    monoposición: los registros de una posición siempre salen consecutivos y no
+    puede re-entrar en la misma barra). Un trade agrupado conserva todos los
+    campos del registro; pnl/fees/size se suman, entry viene de la primera
+    ejecución, exit (hora/precio/razón) de la última, mae/mfe toman el máximo.
+    """
+    if len(trades_records) < 2:
+        return trades_records
+
+    grouped: list[dict] = []
+    run: list[dict] = []
+    run_entry_idx = None
+
+    def _flush():
+        if not run:
+            return
+        if len(run) == 1:
+            grouped.append(run[0])
+            return
+        first, last = run[0], run[-1]
+        pnl = round(sum(t["pnl"] for t in run), 4)
+        fees = round(sum(t.get("fees", 0.0) or 0.0 for t in run), 4)
+        size = round(sum(t["size"] for t in run), 6)
+        capital = first["entry_price"] * size
+        ret_pct = round((pnl / capital) * 100, 4) if capital > 0 else 0.0
+        r_values = [t.get("r_multiple") for t in run if t.get("r_multiple") is not None]
+        trade = dict(first)
+        trade.update({
+            "pnl": pnl,
+            "fees": fees,
+            "size": size,
+            "return_pct": ret_pct,
+            "exit_idx": last["exit_idx"],
+            "exit_time": last["exit_time"],
+            "exit_time_epoch": last["exit_time_epoch"],
+            "exit_price": last["exit_price"],
+            "exit_reason": last["exit_reason"],
+            "mae": max(t.get("mae", 0.0) or 0.0 for t in run),
+            "mfe": max(t.get("mfe", 0.0) or 0.0 for t in run),
+            "r_multiple": round(sum(r_values), 2) if r_values else None,
+            "n_executions": len(run),
+        })
+        grouped.append(trade)
+
+    for t in trades_records:
+        ei = t.get("entry_idx")
+        if run and ei == run_entry_idx:
+            run.append(t)
+        else:
+            _flush()
+            run = [t]
+            run_entry_idx = ei
+    _flush()
+
+    return grouped
 
 
 

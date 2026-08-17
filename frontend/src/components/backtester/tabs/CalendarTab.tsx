@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DayResult, TradeRecord } from "@/lib/api_backtester";
+import { EXIT_COLORS } from "@/components/backtester/tabs/TradesTab";
 
 interface CalendarTabProps {
   dayResults: DayResult[];
   trades: TradeRecord[];
   isDarkMode?: boolean;
   monthlyExpenses?: number;
+  onSelectTrade?: (ticker: string, date: string) => void;
 }
 
 function formatPnl(pnl: number, isGastos = false): string {
@@ -25,8 +27,30 @@ function formatPnl(pnl: number, isGastos = false): string {
   return `${sign} $${abs.toFixed(2)}`;
 }
 
-export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0 }: CalendarTabProps) {
+export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, onSelectTrade }: CalendarTabProps) {
   const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("profits");
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  // Cerrar el detalle de día con Escape
+  useEffect(() => {
+    if (!selectedDate) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelectedDate(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedDate]);
+
+  const tradesByDate = useMemo(() => {
+    const map = new Map<string, TradeRecord[]>();
+    for (const t of trades) {
+      if (!t.date) continue;
+      const cur = map.get(t.date);
+      if (cur) cur.push(t);
+      else map.set(t.date, [t]);
+    }
+    return map;
+  }, [trades]);
 
   const statsByDate = useMemo(() => {
     // 1. Group trade calculations first
@@ -276,7 +300,14 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0 }:
                         return (
                           <div
                             key={day.date}
-                            title={hasData ? `${day.date}: ${day.count} trades · Valor: $${day.pnl?.toFixed(2)}` : day.date}
+                            title={hasData ? `${day.date}: ${day.count} trades · Valor: $${day.pnl?.toFixed(2)} — click para ver los trades` : day.date}
+                            onClick={hasData ? () => setSelectedDate(day.date) : undefined}
+                            onMouseEnter={(e) => {
+                              if (hasData) e.currentTarget.style.filter = "brightness(1.3)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.filter = "";
+                            }}
                             style={{
                               position: "relative",
                               minHeight: 44,
@@ -293,8 +324,8 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0 }:
                               justifyContent: "center",
                               gap: 2,
                               padding: "3px 2px",
-                              cursor: "default",
-                              transition: "border-color 0.15s, background 0.15s",
+                              cursor: hasData ? "pointer" : "default",
+                              transition: "border-color 0.15s, background 0.15s, filter 0.15s",
                             }}
                           >
                             {/* Day number */}
@@ -388,6 +419,194 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0 }:
           );
         })}
       </div>
+
+      {/* ── Detalle de trades del día (modal) ── */}
+      {selectedDate && (() => {
+        const dayTrades = [...(tradesByDate.get(selectedDate) || [])].sort(
+          (a, b) => String(a.entry_time).localeCompare(String(b.entry_time))
+        );
+        const dayPnl = dayTrades.reduce((acc, t) => acc + t.pnl, 0);
+        const rValues = dayTrades.map((t) => t.r_multiple).filter((r): r is number => r !== null);
+        const avgR = rValues.length ? rValues.reduce((a, b) => a + b, 0) / rValues.length : null;
+        const dateLabel = new Date(`${selectedDate}T12:00:00`).toLocaleDateString("es-ES", {
+          weekday: "long", day: "numeric", month: "short", year: "numeric",
+        });
+
+        return (
+          <div
+            onClick={() => setSelectedDate(null)}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0, 0, 0, 0.65)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 100,
+              padding: 24,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "var(--color-ec-bg-surface, #1a1a1a)",
+                border: "0.5px solid var(--color-ec-border)",
+                borderRadius: 8,
+                width: "100%",
+                maxWidth: 980,
+                maxHeight: "85vh",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                boxShadow: "0 24px 64px rgba(0, 0, 0, 0.5)",
+              }}
+            >
+              {/* Header del modal */}
+              <div style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "14px 18px",
+                borderBottom: "0.5px solid var(--color-ec-border)",
+              }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                  <span style={{
+                    fontSize: 13, fontWeight: 700, textTransform: "capitalize",
+                    color: "var(--color-ec-text-high)",
+                  }}>
+                    {dateLabel}
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--font-sans)" }}>
+                    {dayTrades.length} {dayTrades.length === 1 ? "trade" : "trades"}
+                  </span>
+                  <span style={{
+                    fontSize: 12, fontWeight: 800, fontFamily: "monospace",
+                    color: dayPnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                  }}>
+                    {formatPnl(dayPnl)}
+                  </span>
+                  {avgR !== null && (
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, fontFamily: "monospace",
+                      color: avgR >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                    }}>
+                      avg {avgR.toFixed(2)}R
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedDate(null)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-ec-text-muted)",
+                    fontSize: 16,
+                    cursor: "pointer",
+                    padding: "4px 8px",
+                    lineHeight: 1,
+                  }}
+                  aria-label="Cerrar"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Tabla de trades del día (mismo formato que la pestaña Trades) */}
+              <div className="overflow-x-auto overflow-y-auto" style={{ flex: 1 }}>
+                <table className="w-full text-[11px] font-mono" style={{ borderCollapse: "collapse" }}>
+                  <thead className="sticky top-0" style={{ background: "var(--color-ec-bg-surface, #1a1a1a)", zIndex: 10 }}>
+                    <tr>
+                      {["Ticker", "Entrada", "Salida", "Entry $", "Exit $", "Size", "PnL", "R", "MAE%", "MFE%", "Exit"].map((h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-2 text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-wider"
+                          style={{ textAlign: h === "Ticker" || h === "Entrada" || h === "Salida" || h === "Exit" ? "left" : "right", borderBottom: "0.5px solid var(--color-ec-border)" }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dayTrades.map((t, i) => {
+                      const exitStyle = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                      return (
+                        <tr
+                          key={i}
+                          className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
+                          style={{ borderBottom: "1px solid color-mix(in srgb, var(--border) 30%, transparent)" }}
+                        >
+                          <td className="px-4 py-1.5 font-semibold">
+                            <span
+                              onClick={() => {
+                                setSelectedDate(null);
+                                onSelectTrade?.(t.ticker, t.date);
+                              }}
+                              className="hover:text-[var(--color-ec-copper-bright)] hover:underline transition-colors cursor-pointer"
+                              style={{ color: "var(--color-ec-text-high)" }}
+                            >
+                              {t.ticker}
+                            </span>
+                          </td>
+                          <td className="px-4 py-1.5" style={{ color: "var(--color-ec-text-primary)" }}>
+                            {t.entry_time.split(" ").pop()?.slice(0, 8)}
+                          </td>
+                          <td className="px-4 py-1.5" style={{ color: "var(--color-ec-text-primary)" }}>
+                            {t.exit_time.split(" ").pop()?.slice(0, 8)}
+                          </td>
+                          <td className="px-4 py-1.5" style={{ color: "var(--color-ec-text-primary)", textAlign: "right" }}>
+                            ${t.entry_price.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-1.5" style={{ color: "var(--color-ec-text-primary)", textAlign: "right" }}>
+                            ${t.exit_price.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-1.5" style={{ color: "var(--color-ec-text-primary)", textAlign: "right" }}>
+                            {t.size.toFixed(2)}
+                          </td>
+                          <td className={`px-4 py-1.5 font-semibold ${t.pnl >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`} style={{ textAlign: "right" }}>
+                            {t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(2)}
+                          </td>
+                          <td className={`px-4 py-1.5 ${(t.r_multiple || 0) >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`} style={{ textAlign: "right" }}>
+                            {t.r_multiple !== null ? `${t.r_multiple.toFixed(2)}R` : "—"}
+                          </td>
+                          <td className="px-4 py-1.5 text-[var(--danger)]" style={{ textAlign: "right" }}>
+                            {t.mae != null ? `${t.mae.toFixed(2)}%` : "—"}
+                          </td>
+                          <td className="px-4 py-1.5 text-[var(--success)]" style={{ textAlign: "right" }}>
+                            {t.mfe != null ? `${t.mfe.toFixed(2)}%` : "—"}
+                          </td>
+                          <td className="px-4 py-1.5">
+                            <span className="inline-flex items-center gap-1">
+                              {t.n_executions != null && t.n_executions > 1 && (
+                                <span
+                                  title={`${t.n_executions} ejecuciones agrupadas (parciales + cierre)`}
+                                  style={{
+                                    fontSize: 8, fontWeight: 700, color: "var(--color-ec-text-muted)",
+                                    border: "0.5px solid var(--color-ec-border)",
+                                    borderRadius: 3, padding: "0 3px", fontFamily: "var(--font-sans)",
+                                  }}
+                                >
+                                  ×{t.n_executions}
+                                </span>
+                              )}
+                              <span
+                                className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                                style={{ backgroundColor: exitStyle.bg, color: exitStyle.text }}
+                              >
+                                {t.exit_reason}
+                              </span>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -1,4 +1,8 @@
-@import "tailwindcss";
+/* Direct relative import: bare `@import "tailwindcss"` gets resolved from the
+   git repo root (edgecute_app/) by Tailwind's PostCSS pipeline on some setups,
+   logging "Can't resolve 'tailwindcss'" on every compile. The relative path
+   always resolves from this file. */
+@import "../../node_modules/tailwindcss/index.css";
 
 @theme inline {
   --color-ec-copper: #D87A3D;

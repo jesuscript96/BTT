@@ -114,6 +114,7 @@ export interface TradeRecord {
   entry_hour: number;
   entry_weekday: number;
   gap_pct?: number | null;
+  n_executions?: number;
 }
 
 export interface CandleData {

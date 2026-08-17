@@ -238,6 +238,9 @@ class IndicatorConfig(BaseModel):
     slope_tolerance: Optional[float] = None
     min_r_squared: Optional[float] = None
     min_pivots: Optional[int] = None
+    # "Elapsed time from last High": ancla del reloj — "full" (día completo,
+    # comportamiento histórico), "pm" (PMH del día) o "rth" (máximo RTH).
+    session_ref: Optional[Literal["full", "pm", "rth"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

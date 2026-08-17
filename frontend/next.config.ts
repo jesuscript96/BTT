@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  // Root inference fix: without this, Next/Tailwind resolve packages from the
+  // GIT root (edgecute_app/) instead of frontend/ — "Can't resolve 'tailwindcss'"
+  // retried in an infinite compile loop that pegs CPU/RAM.
+  outputFileTracingRoot: path.resolve(__dirname),
   turbopack: {
     root: path.resolve(__dirname),
   },

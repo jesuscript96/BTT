@@ -68,6 +68,16 @@ def _create_connection() -> duckdb.DuckDBPyConnection:
         logger.info(f"GCS DuckDB ready ({round(time.time()-t0, 2)}s)")
         return conn
 
+    elif DB_TYPE == "local":
+        # Lector LOCAL: DuckDB en memoria que lee parquet de disco (LOCAL_LAKE_DIR).
+        # NADA de MotherDuck (roto por versión) ni httpfs.
+        logger.info("Creating LOCAL in-memory DuckDB reader...")
+        conn = duckdb.connect(":memory:")
+        conn.execute(f"SET memory_limit='{DUCKDB_MEMORY_LIMIT}';")
+        _threads = min(8, max(2, (os.cpu_count() or 4)))
+        conn.execute(f"SET threads={_threads};")
+        logger.info(f"Local DuckDB ready ({round(time.time()-t0, 2)}s)")
+        return conn
 
     else:
         logger.info(f"Connecting to MotherDuck db={MOTHERDUCK_DB}...")

@@ -196,7 +196,8 @@ function getLeafConditions(
           const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
           value = `${opSymbol} ${c.target} mins`;
         } else if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
-          label = `${tfStr}Elapsed Time Last High:`;
+          const refLabel = c.source.session_ref === 'pm' ? ' (PMH del día)' : c.source.session_ref === 'rth' ? ' (Máx RTH)' : '';
+          label = `${tfStr}Elapsed Time Last High${refLabel}:`;
           const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
           value = `${opSymbol} ${c.target} mins`;
         } else {

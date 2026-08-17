@@ -1565,7 +1565,8 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
         if (c.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
             const mins = typeof c.target === 'number' ? c.target : 20;
             const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
-            return { source: `${tfStr}Elapsed Time Last High:`, target: `${opSymbol} ${mins} mins` };
+            const refLabel = c.source.session_ref === 'pm' ? ' (PMH del día)' : c.source.session_ref === 'rth' ? ' (Máx RTH)' : '';
+            return { source: `${tfStr}Elapsed Time Last High${refLabel}:`, target: `${opSymbol} ${mins} mins` };
         }
         if (c.source.name === IndicatorType.ELAPSED_TIME) {
             const mins = typeof c.target === 'number' ? c.target : 60;
@@ -1923,7 +1924,7 @@ export const GroupDisplay = ({
                                         if (name === IndicatorType.ELAPSED_TIME_LAST_HIGH) {
                                             setFormCondition({
                                                 type: 'indicator_comparison',
-                                                source: { name, offset: 0 },
+                                                source: { name, offset: 0, session_ref: 'full' },
                                                 comparator: Comparator.GTE,
                                                 target: 20,
                                                 timeframe
@@ -2281,6 +2282,35 @@ export const GroupDisplay = ({
                                             pointerEvents: 'none'
                                         }}>mins</span>
                                     </div>
+                                    {formCondition.source.name === IndicatorType.ELAPSED_TIME_LAST_HIGH && (
+                                        <>
+                                            <span style={{ ...labelStyle, marginTop: 8 }}>Máximo de referencia</span>
+                                            <select
+                                                value={(compCondition?.source as { session_ref?: 'full' | 'pm' | 'rth' })?.session_ref ?? 'full'}
+                                                onChange={(e) => {
+                                                    if (compCondition) {
+                                                        setFormCondition({
+                                                            ...compCondition,
+                                                            type: 'indicator_comparison',
+                                                            source: { ...compCondition.source as object, session_ref: e.target.value as 'full' | 'pm' | 'rth' }
+                                                        });
+                                                    }
+                                                }}
+                                                style={selectStyle}
+                                            >
+                                                <option value="full">Máximo del día completo (PM + RTH)</option>
+                                                <option value="pm">PMH del día (premercado)</option>
+                                                <option value="rth">Máximo de RTH</option>
+                                            </select>
+                                            <span style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', lineHeight: 1.4 }}>
+                                                {(compCondition?.source as { session_ref?: string })?.session_ref === 'pm'
+                                                    ? 'El reloj se resetea con cada nuevo máximo del premercado; desde las 09:30 el PMH queda congelado y el reloj sigue corriendo.'
+                                                    : (compCondition?.source as { session_ref?: string })?.session_ref === 'rth'
+                                                        ? 'Solo existe desde las 09:30: el reloj se resetea con cada nuevo máximo de RTH. En premercado la condición no dispara.'
+                                                        : 'El reloj se resetea cada vez que el precio hace un nuevo máximo acumulado del día (premercado y RTH mezclados).'}
+                                            </span>
+                                        </>
+                                    )}
                                 </div>
                             ) : formCondition.source.name?.toLowerCase() === 'range of time' ? (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

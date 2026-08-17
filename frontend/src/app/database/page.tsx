@@ -31,6 +31,7 @@ import {
   deleteBacktest,
 } from '@/lib/api'
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from '@/components/strategy-builder/ConditionBuilder'
+import PortfolioBuilder from '@/components/database/PortfolioBuilder'
 
 // Pre-seeded strategies realistic stats for display fallback
 const MOCK_STRATEGY_STATS: Record<string, { winRate: number; profitFactor: number; maxDd: number; sharpe: number; trades: number; period: string; avgRDay: number; equityCurve: number[]; isValidated: boolean }> = {
@@ -442,6 +443,9 @@ export default function TrunkPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Portfolio view toggle (PRD_portfolio_ANTIGRAVITY §5) — switches the Baúl
+  // workspace to the Portfolio constructor.
+  const [view, setView] = useState<'baul' | 'portfolio'>('baul')
   const [selectedStrategyIds, setSelectedStrategyIds] = useState<string[]>([])
   const [showCharts, setShowCharts] = useState<Record<string, boolean>>({})
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null)
@@ -1950,33 +1954,72 @@ export default function TrunkPage() {
           </p>
         </div>
 
-        <button
-          onClick={loadData}
-          style={{
-            background: 'transparent',
-            border: '0.5px solid var(--color-ec-border)',
-            borderRadius: 0, // Straight corners
-            color: 'var(--color-ec-text-secondary)',
-            padding: '6px 12px',
-            fontSize: 10,
-            fontWeight: 600,
-            cursor: 'pointer',
-            transition: 'all 150ms ease'
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)'
-            e.currentTarget.style.color = 'var(--color-ec-text-high)'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.borderColor = 'var(--color-ec-border)'
-            e.currentTarget.style.color = 'var(--color-ec-text-secondary)'
-          }}
-        >
-          Sync Repository
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* View toggle: Baúl / Portfolio */}
+          <div style={{ display: 'flex', border: '0.5px solid var(--color-ec-border)' }}>
+            <button
+              onClick={() => setView('baul')}
+              style={{
+                padding: '6px 12px',
+                fontSize: 10,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+                cursor: 'pointer',
+                border: 'none',
+                color: view === 'baul' ? 'var(--color-ec-bg-base)' : 'var(--color-ec-text-muted)',
+                backgroundColor: view === 'baul' ? 'var(--color-ec-copper)' : 'transparent',
+              }}
+            >
+              Baúl
+            </button>
+            <button
+              onClick={() => setView('portfolio')}
+              style={{
+                padding: '6px 12px',
+                fontSize: 10,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '1px',
+                cursor: 'pointer',
+                border: 'none',
+                color: view === 'portfolio' ? 'var(--color-ec-bg-base)' : 'var(--color-ec-text-muted)',
+                backgroundColor: view === 'portfolio' ? 'var(--color-ec-copper)' : 'transparent',
+              }}
+            >
+              Portfolio
+            </button>
+          </div>
+          <button
+            onClick={loadData}
+            style={{
+              background: 'transparent',
+              border: '0.5px solid var(--color-ec-border)',
+              borderRadius: 0, // Straight corners
+              color: 'var(--color-ec-text-secondary)',
+              padding: '6px 12px',
+              fontSize: 10,
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 150ms ease'
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'var(--color-ec-text-secondary)'
+              e.currentTarget.style.color = 'var(--color-ec-text-high)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--color-ec-border)'
+              e.currentTarget.style.color = 'var(--color-ec-text-secondary)'
+            }}
+          >
+            Sync Repository
+          </button>
+        </div>
       </div>
 
-      {loading ? (
+      {view === 'portfolio' ? (
+        <PortfolioBuilder strategies={strategies} />
+      ) : loading ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div
             style={{
