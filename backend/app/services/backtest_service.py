@@ -25,6 +25,10 @@ from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_c
 
 logger = logging.getLogger("backtester.engine")
 
+# Errores de translate_strategy ya logueados en la vida del proceso (ver el
+# except del stream loop: antes se tragaban en silencio → "0 trades" sin rastro).
+_translate_err_logged = 0
+
 # Pre-computed time boundaries for patch mask (avoid recreating per iteration)
 _PATCH_START = datetime.time(8, 0)
 _PATCH_END = datetime.time(8, 45)
@@ -551,7 +555,16 @@ def run_backtest(
         else:
             try:
                 signals = translate_strategy(mini_df, strategy_def, daily_stats, compiled=compiled_strategy)
-            except Exception:
+            except Exception as e:
+                # Nunca tragarse el error en silencio: un indicador roto aquí se
+                # ve como "0 trades" sin ningún log (bug cazado el 2026-08-18).
+                if _translate_err_logged < 3:
+                    logger.error(
+                        f"[SIGNALS] translate_strategy falló para {ticker} {date}: "
+                        f"{type(e).__name__}: {e}",
+                        exc_info=True,
+                    )
+                    _translate_err_logged += 1
                 del mini_df
                 continue
             if not signals["entries"].any():
