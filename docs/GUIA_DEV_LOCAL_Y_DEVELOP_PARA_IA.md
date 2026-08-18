@@ -165,6 +165,13 @@ El proveedor de datos en vivo (Massive/Polygon) admite **una sola conexión por 
 
 ## 6. Arrancar en local (paso a paso)
 
+> **Atajo (Windows):** `arrancar_local.bat` en la raíz del repo hace todo esto de un golpe:
+> valida los seguros de `backend/.env` (§5) y aborta si faltan, prepara venv/dependencias
+> si no existen, arranca backend (:8010) y frontend (:3000) en ventanas separadas —para ver
+> el log `DISABLE_GCS_SYNC=true`—, espera el `/health` y abre `http://localhost:3000`.
+> Si ya hay algo escuchando en esos puertos, lo detecta y no lo duplica.
+> Para pararlo todo: `parar_local.bat`.
+
 Necesitas **dos terminales**: una para el backend, otra para el frontend.
 
 ### 6.1 Backend (terminal 1)
