@@ -205,7 +205,7 @@ function getLeafConditions(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);

@@ -1156,6 +1156,17 @@ def _compute_raw(
             pm_high_val = ds.get("pm_high") if ds else None
             running = pd.Series(_safe_float(pm_high_val if pm_high_val is not None else np.nan), index=close.index)
         return (running - float(yest_close_val)) / float(yest_close_val) * 100.0
+    if name == "Current Gap (%)":
+        # Gap VIVO barra a barra: close de la barra actual vs cierre de ayer
+        # (misma cadena de fallback que "PM High Gap (%)"). A diferencia de
+        # aquel, mide dónde está el precio AHORA: sigue actualizándose durante
+        # el RTH y baja si el precio baja.
+        yest_close_val = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan))) if ds else np.nan
+        if yest_close_val is None or pd.isna(yest_close_val):
+            yest_close_val = df["close"].iloc[0] if len(df) > 0 else np.nan
+        if pd.isna(yest_close_val) or yest_close_val == 0:
+            return pd.Series(np.nan, index=close.index)
+        return (close - float(yest_close_val)) / float(yest_close_val) * 100.0
     if name in ("RTH Open", "rth_open"):
         # Causal: NaN antes de la primera barra RTH (antes devolvía la constante
         # del día → una condición premarket "veía" el open de las 09:30).

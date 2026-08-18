@@ -160,6 +160,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.VOLUME]: [IndicatorType.VOLUME],
     [IndicatorType.ATR]: [IndicatorType.ATR],
     [IndicatorType.PM_HIGH_GAP]: [],
+    [IndicatorType.CURRENT_GAP]: [],
 };
 
 const DISTANCE_ALLOWED_TARGETS = [

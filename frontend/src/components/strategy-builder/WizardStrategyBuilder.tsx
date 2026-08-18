@@ -446,7 +446,7 @@ function getConditionStrings(group: ConditionGroup, timeframe: string): string[]
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);
@@ -500,7 +500,7 @@ function getConditionTags(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);
@@ -3390,7 +3390,7 @@ export default function WizardStrategyBuilder({
                 }}
               >
                 {(wizardMode === "comparison"
-                  ? (wizardSource === IndicatorType.PM_HIGH_GAP
+                  ? ((wizardSource === IndicatorType.PM_HIGH_GAP || wizardSource === IndicatorType.CURRENT_GAP)
                      ? comparatorOptions.filter(opt => [Comparator.GT, Comparator.LT, Comparator.GTE, Comparator.LTE].includes(opt.value as Comparator))
                      : [
                          IndicatorType.BAR_CLOSE,
@@ -3500,7 +3500,7 @@ export default function WizardStrategyBuilder({
                           }}>M</span>
                         </div>
                       </div>
-                    ) : wizardSource === IndicatorType.PM_HIGH_GAP ? (
+                    ) : (wizardSource === IndicatorType.PM_HIGH_GAP || wizardSource === IndicatorType.CURRENT_GAP) ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
                         <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor (en %):</span>
                         <div style={{ position: "relative", width: "100%" }}>
