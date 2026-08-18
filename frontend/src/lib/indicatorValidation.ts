@@ -170,6 +170,8 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // Squeeze: es un PORCENTAJE, no un nivel de precio. Lista de destinos
     // vacia = solo se puede enfrentar a una cifra fija (isStandalone()).
     [IndicatorType.SQUEEZE]: [],
+    // Current Gap (%): porcentaje vivo vs cierre de ayer — solo cifra fija.
+    [IndicatorType.CURRENT_GAP]: [],
 };
 
 const DISTANCE_ALLOWED_TARGETS = [
