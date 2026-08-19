@@ -1033,6 +1033,9 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             "exit_time_epoch": last["exit_time_epoch"],
             "exit_price": last["exit_price"],
             "exit_reason": last["exit_reason"],
+            # Cadena completa de razones de las legs (el parcial es intermedia y
+            # exit_reason solo conserva la última — PRD reporte parciales fade).
+            "exit_reasons": [t.get("exit_reason") for t in run],
             "mae": max(t.get("mae", 0.0) or 0.0 for t in run),
             "mfe": max(t.get("mfe", 0.0) or 0.0 for t in run),
             "mae_prev_max": max(t.get("mae_prev_max", 0.0) or 0.0 for t in run),

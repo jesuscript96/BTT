@@ -53,6 +53,8 @@ REASON_SIGNAL = 4        # "Signal"
 REASON_TRAILING = 5      # "Trailing"
 REASON_PARTIAL = 6       # "Partial TP"
 REASON_PARTIAL_EOD = 7   # "Partial TP (EOD)"
+REASON_PARTIAL_FADE = 10     # "Partial TP (Fade)" — ganó el fade desde el máximo
+REASON_PARTIAL_ENTRADA = 11  # "Partial TP (Entrada)" — respaldo % desde entrada
 REASON_PARTIAL_TIME = 8  # "Partial TP (Time)"
 REASON_PARTIAL_HOUR = 9  # "Partial TP (Hour)"
 
@@ -442,7 +444,9 @@ def _core_simulate_jit(
                                 r_fees[k] = 0.0
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
-                                r_reason[k] = REASON_PARTIAL
+                                r_reason[k] = (REASON_PARTIAL_FADE if _fire_a
+                                               else (REASON_PARTIAL_ENTRADA if _fl == _fl
+                                             else REASON_PARTIAL))
                                 r_mae[k] = mae
                                 r_mfe[k] = mfe
                                 r_stop[k] = trade_sl_price
@@ -494,7 +498,9 @@ def _core_simulate_jit(
                                 r_fees[k] = 0.0
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
-                                r_reason[k] = REASON_PARTIAL
+                                r_reason[k] = (REASON_PARTIAL_FADE if _fire_a
+                                               else (REASON_PARTIAL_ENTRADA if _fl == _fl
+                                             else REASON_PARTIAL))
                                 r_mae[k] = mae
                                 r_mfe[k] = mfe
                                 r_stop[k] = trade_sl_price

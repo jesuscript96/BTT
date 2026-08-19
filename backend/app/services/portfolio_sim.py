@@ -496,7 +496,11 @@ def simulate(
                                     "direction": "Long" if is_long else "Short",
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
-                                    "exit_reason": "Partial TP",
+                                    "exit_reason": (
+                                        "Partial TP (Fade)" if _fire_a
+                                        else "Partial TP (Entrada)" if _fade_lvl is not None
+                                        else "Partial TP"
+                                    ),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -558,7 +562,11 @@ def simulate(
                                     "direction": "Long" if is_long else "Short",
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
-                                    "exit_reason": "Partial TP",
+                                    "exit_reason": (
+                                        "Partial TP (Fade)" if _fire_a
+                                        else "Partial TP (Entrada)" if _fade_lvl is not None
+                                        else "Partial TP"
+                                    ),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),

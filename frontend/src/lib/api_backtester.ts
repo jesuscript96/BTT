@@ -108,6 +108,8 @@ export interface TradeRecord {
   status: string;
   size: number;
   exit_reason: string;
+  // Cadena de razones de todas las legs de la posición (parcial + cierre final).
+  exit_reasons?: string[];
   mae: number;
   mfe?: number;
   // MAE/MFE medidos desde el máximo previo del día (fade del movimiento completo),

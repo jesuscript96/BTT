@@ -70,9 +70,11 @@ _REASON_STR = {
     7: "Partial TP (EOD)",
     8: "Partial TP (Time)",
     9: "Partial TP (Hour)",
+    10: "Partial TP (Fade)",
+    11: "Partial TP (Entrada)",
 }
 # partial reasons whose trade dict has NO "fees" key (matches original)
-_PARTIAL_REASONS = (6, 7, 8, 9)
+_PARTIAL_REASONS = (6, 7, 8, 9, 10, 11)
 
 
 def simulate_jit(

@@ -15,10 +15,19 @@ export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   SL:           { bg: "rgba(239,68,68,0.1)",  text: "#ef4444" },
   TP:           { bg: "rgba(16,185,129,0.1)", text: "#10b981" },
   "Partial TP": { bg: "rgba(20,184,166,0.1)", text: "#14b8a6" },
+  "Partial TP (Fade)":    { bg: "rgba(20,184,166,0.14)", text: "#2dd4bf" },
+  "Partial TP (Entrada)": { bg: "rgba(20,184,166,0.08)", text: "#14b8a6" },
+  "Partial TP (Hour)":    { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
+  "Partial TP (Time)":    { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
+  "Partial TP (EOD)":     { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
   Trailing:     { bg: "rgba(217,119,6,0.1)",  text: "#d97706" },
   Signal:       { bg: "rgba(59,130,246,0.1)", text: "#3b82f6" },
   EOD:          { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" },
 };
+
+// Forma corta para la cadena de salidas: "Partial TP (Fade)" → "Fade", etc.
+export const shortExitReason = (r: string): string =>
+  r.startsWith("Partial TP") ? r.replace(/^Partial TP \(|\)$/g, "") : r;
 
 interface SortHeaderProps {
   label: string;
@@ -73,7 +82,8 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
         (t) =>
           t.ticker.toLowerCase().includes(q) ||
           t.date.includes(q) ||
-          t.exit_reason.toLowerCase().includes(q)
+          t.exit_reason.toLowerCase().includes(q) ||
+          (t.exit_reasons ?? [t.exit_reason]).some((r) => (r ?? "").toLowerCase().includes(q))
       );
     }
     return [...result].sort((a, b) => {
@@ -246,16 +256,35 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
                 })()}
                 <td className="px-4 py-1.5">
                   {(() => {
-                    const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                    const fallbackStyle = { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
                     const skipped = t.partials_skipped ?? [];
+                    const chain = (t.exit_reasons && t.exit_reasons.length >= 2) ? t.exit_reasons : null;
+                    const chainTitle = chain ? chain.join(" → ") : t.exit_reason;
                     return (
-                      <span className="inline-flex items-center gap-1">
-                        <span
-                          className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                          style={{ backgroundColor: style.bg, color: style.text }}
-                        >
-                          {t.exit_reason}
-                        </span>
+                      <span className="inline-flex items-center gap-1" title={chainTitle}>
+                        {chain ? (
+                          chain.map((r, i) => {
+                            const style = EXIT_COLORS[r] || fallbackStyle;
+                            return (
+                              <span key={i} className="inline-flex items-center gap-1">
+                                {i > 0 && <span className="text-[9px] text-[var(--color-ec-text-muted)]">→</span>}
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                                  style={{ backgroundColor: style.bg, color: style.text }}
+                                >
+                                  {shortExitReason(r)}
+                                </span>
+                              </span>
+                            );
+                          })
+                        ) : (
+                          <span
+                            className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                            style={{ backgroundColor: (EXIT_COLORS[t.exit_reason] || fallbackStyle).bg, color: (EXIT_COLORS[t.exit_reason] || fallbackStyle).text }}
+                          >
+                            {t.exit_reason}
+                          </span>
+                        )}
                         {skipped.length > 0 && (
                           <span
                             className="inline-block px-1 py-0.5 rounded-sm text-[9px] font-bold"

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { DayResult, TradeRecord } from "@/lib/api_backtester";
-import { EXIT_COLORS } from "@/components/backtester/tabs/TradesTab";
+import { EXIT_COLORS, shortExitReason } from "@/components/backtester/tabs/TradesTab";
 
 interface CalendarTabProps {
   dayResults: DayResult[];
@@ -589,12 +589,31 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                   ×{t.n_executions}
                                 </span>
                               )}
-                              <span
-                                className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                                style={{ backgroundColor: exitStyle.bg, color: exitStyle.text }}
-                              >
-                                {t.exit_reason}
-                              </span>
+                              {(t.exit_reasons && t.exit_reasons.length >= 2) ? (
+                                <span className="inline-flex items-center gap-1" title={t.exit_reasons.join(" → ")}>
+                                  {t.exit_reasons.map((r, i) => {
+                                    const st = EXIT_COLORS[r] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                                    return (
+                                      <span key={i} className="inline-flex items-center gap-1">
+                                        {i > 0 && <span className="text-[9px] text-[var(--color-ec-text-muted)]">→</span>}
+                                        <span
+                                          className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                                          style={{ backgroundColor: st.bg, color: st.text }}
+                                        >
+                                          {shortExitReason(r)}
+                                        </span>
+                                      </span>
+                                    );
+                                  })}
+                                </span>
+                              ) : (
+                                <span
+                                  className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                                  style={{ backgroundColor: exitStyle.bg, color: exitStyle.text }}
+                                >
+                                  {t.exit_reason}
+                                </span>
+                              )}
                             </span>
                           </td>
                         </tr>

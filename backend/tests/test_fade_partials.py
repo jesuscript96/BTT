@@ -65,7 +65,7 @@ def test_ejemplo_nino_fade_50_desde_max_20():
     res = _simulate(False, close=close, open_=open_, high=high, low=low,
                     entries=entries, exits=exits, partial_take_profits=pts,
                     prev_highs=prev_highs, **BASE)
-    partials = [t for t in res["trades"] if t["exit_reason"] == "Partial TP"]
+    partials = [t for t in res["trades"] if t["exit_reason"] == "Partial TP (Fade)"]
     assert len(partials) == 1, "el fade debe ejecutar el parcial una sola vez"
     p = partials[0]
     assert p["entry_price"] == pytest.approx(16.0), "entry al close de la vela señal"
@@ -101,7 +101,7 @@ def test_nivel_ya_cruzado_al_entrar_se_salta():
     res = _simulate(False, close=close, open_=open_, high=high, low=low,
                     entries=entries, exits=exits, partial_take_profits=pts,
                     prev_highs=prev_highs, **BASE)
-    assert not any(t["exit_reason"] == "Partial TP" for t in res["trades"])
+    assert not any(str(t["exit_reason"]).startswith("Partial TP") for t in res["trades"])
     assert res["trades"][-1]["partials_skipped"] == [{"index": 0, "reason": "crossed"}]
 
 
@@ -121,8 +121,8 @@ def test_oco_misma_vela_la_prioridad_decide():
                         entries=entries, exits=exits, prev_highs=prev_highs,
                         partial_take_profits=[dict(base_pts, priority=1)], **BASE)
 
-    pf = [t for t in r_fade["trades"] if t["exit_reason"] == "Partial TP"]
-    pe = [t for t in r_entry["trades"] if t["exit_reason"] == "Partial TP"]
+    pf = [t for t in r_fade["trades"] if t["exit_reason"] == "Partial TP (Fade)"]
+    pe = [t for t in r_entry["trades"] if t["exit_reason"] == "Partial TP (Entrada)"]
     assert len(pf) == 1 and len(pe) == 1, "una sola ejecución por slot (OCO)"
     assert pf[0]["exit_price"] == pytest.approx(10.0), "priority=fade → nivel 10"
     assert pe[0]["exit_price"] == pytest.approx(15.2), "priority=entry → nivel 15.2"
@@ -205,7 +205,7 @@ def test_fila_condicional_parser_y_capital_por_disparo():
     res = _simulate(False, close=close, open_=open_, high=high, low=low,
                     entries=entries, exits=exits, partial_take_profits=pts,
                     prev_highs=prev_highs, **BASE)
-    p = [t for t in res["trades"] if t["exit_reason"] == "Partial TP"][0]
+    p = [t for t in res["trades"] if t["exit_reason"] == "Partial TP (Fade)"][0]
     total_size = res["trades"][-1]["size"] + p["size"]
     assert p["exit_price"] == pytest.approx(10.0), "gana el fade (misma vela, manda fade)"
     assert p["size"] == pytest.approx(total_size * 0.30), "vende el capital de la fila fade"
@@ -224,5 +224,5 @@ def test_paridad_legacy_jit_con_fade(use_jit):
     for t in res["trades"]:
         assert t["prev_max_ref"] == pytest.approx(18.2)
         assert "mae_prev_max" in t and "mfe_prev_max" in t and "fade_at_entry_pct" in t
-    partials = [t for t in res["trades"] if t["exit_reason"] == "Partial TP"]
-    assert len(partials) == 1
+    partials = [t for t in res["trades"] if t["exit_reason"] == "Partial TP (Entrada)"]
+    assert len(partials) == 1, "1B (15.2) se toca antes que el fade (9.1) -> gana Entrada"
