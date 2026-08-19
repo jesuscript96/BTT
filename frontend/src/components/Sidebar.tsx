@@ -10,11 +10,13 @@ import {
     MessageSquarePlus,
     Flame,
     BarChart3,
+    CreditCard,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser, useClerk } from "@clerk/nextjs";
 import { useEntitlements } from "@/lib/entitlements";
+import { BILLING_ENABLED } from "@/lib/billing";
 
 const ISOTIPO = (
     <svg width="24" height="24" viewBox="0 0 90 90" className="flex-shrink-0">
@@ -267,6 +269,21 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <KeyRound style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>API</span>
+                    </Link>
+                )}
+
+                {/* Facturación (suscripción). DORMANT: solo aparece con
+                    NEXT_PUBLIC_BILLING_ENABLED. Se activa en el cutover (2G). */}
+                {BILLING_ENABLED && (
+                    <Link
+                        href="/billing"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/billing"),
+                        }}
+                    >
+                        <CreditCard style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Facturación</span>
                     </Link>
                 )}
 
