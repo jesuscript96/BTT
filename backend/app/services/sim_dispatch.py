@@ -231,9 +231,20 @@ def simulate_jit(
     pt_cap_frac = np.zeros(_sz, dtype=np.float64)
     pt_hour = np.zeros(_sz, dtype=np.int64)
     pt_min = np.zeros(_sz, dtype=np.int64)
+    # 1A: fade desde el máximo previo (NaN = sin fade), ganancia mínima y prioridad.
+    pt_fade = np.full(_sz, np.nan, dtype=np.float64)
+    pt_min_gain = np.full(_sz, np.nan, dtype=np.float64)
+    pt_priority = np.zeros(_sz, dtype=np.int64)
     for idx, pt in enumerate(pt_list):
         dist = pt["distance_pct"]
         pt_cap_frac[idx] = pt["capital_pct"]
+        _fade = pt.get("fade_from_high_pct") if isinstance(pt, dict) else None
+        if _fade is not None:
+            pt_fade[idx] = float(_fade)
+        _mg = pt.get("min_gain_pct") if isinstance(pt, dict) else None
+        if _mg is not None:
+            pt_min_gain[idx] = float(_mg)
+        pt_priority[idx] = 1 if (isinstance(pt, dict) and pt.get("priority") == 1) else 0
         if dist == "EOD":
             pt_type[idx] = _pjit.PT_EOD
         elif isinstance(dist, str) and dist.startswith("TIME:"):
@@ -302,6 +313,7 @@ def simulate_jit(
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
+        pt_fade, pt_min_gain, pt_priority,
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---
@@ -339,6 +351,14 @@ def simulate_jit(
                 "mfe": rec["mfe"], "stop_loss": rec["stop_loss"],
             }
         trades.append(rec)
+
+    # Campos de referencia "máximo previo del día" (paridad con portfolio_sim).
+    from app.services.portfolio_sim import _attach_prev_max_metrics
+    _attach_prev_max_metrics(
+        trades, high, low,
+        prev_high_a if has_prev_high else None,
+        is_long, partial_take_profits,
+    )
 
     # --- Deduct Daily Locates Fee (verbatim from the original; runs once) ---
     if max_short_size_today > 0 and locates_cost > 0:

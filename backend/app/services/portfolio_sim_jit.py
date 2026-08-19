@@ -99,6 +99,7 @@ def _core_simulate_jit(
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
     n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
+    pt_fade, pt_min_gain, pt_priority,
 ):
     n = len(close)
 
@@ -134,6 +135,10 @@ def _core_simulate_jit(
     trail_activated = False
     original_size = 0.0
     partial_tp_hits = np.zeros(n_pt if n_pt > 0 else 1, dtype=np.bool_)
+    # Estado 1A por trade (paridad con portfolio_sim): nivel de fade y skip.
+    pt_fade_lvl = np.full(n_pt if n_pt > 0 else 1, np.nan)
+    pt_fade_skip = np.zeros(n_pt if n_pt > 0 else 1, dtype=np.bool_)
+    pt_ref_max = 0.0
 
     risk_amount = risk_r
     max_short_size_today = 0.0
@@ -395,10 +400,25 @@ def _core_simulate_jit(
 
                     elif is_long:
                         pt_level = entry_price * (1 + pt_value[pt_idx])
-                        if price_for_tp >= pt_level:
+                        # Dual 1A/1B (paridad con portfolio_sim): 1B % desde
+                        # entrada; 1A fade desde el máximo previo del día.
+                        # Prioridad decide el empate; OCO tras disparar.
+                        _fl = pt_fade_lvl[pt_idx]
+                        _hit_b = price_for_tp >= pt_level
+                        _hit_a = (_fl == _fl and (not pt_fade_skip[pt_idx])
+                                  and low[i] <= _fl)
+                        if pt_priority[pt_idx] == 0:
+                            _fire_a = _hit_a
+                        else:
+                            _fire_a = _hit_a and (not _hit_b)
+                        if _hit_b or _hit_a:
                             partial_tp_hits[pt_idx] = True
-                            pt_exit_price = max(pt_level, open_[i])
-                            pt_exit_price = min(pt_exit_price, high[i])
+                            if _fire_a:
+                                pt_exit_price = min(_fl, open_[i])
+                                pt_exit_price = max(pt_exit_price, low[i])
+                            else:
+                                pt_exit_price = max(pt_level, open_[i])
+                                pt_exit_price = min(pt_exit_price, high[i])
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
                             pt_size = original_size * cap_frac
@@ -433,10 +453,23 @@ def _core_simulate_jit(
                                     break
                     else:
                         pt_level = entry_price * (1 - pt_value[pt_idx])
-                        if price_for_tp <= pt_level:
+                        # Dual 1A/1B espejo del long (cover por caída al nivel).
+                        _fl = pt_fade_lvl[pt_idx]
+                        _hit_b = price_for_tp <= pt_level
+                        _hit_a = (_fl == _fl and (not pt_fade_skip[pt_idx])
+                                  and low[i] <= _fl)
+                        if pt_priority[pt_idx] == 0:
+                            _fire_a = _hit_a
+                        else:
+                            _fire_a = _hit_a and (not _hit_b)
+                        if _hit_b or _hit_a:
                             partial_tp_hits[pt_idx] = True
-                            pt_exit_price = min(pt_level, open_[i])
-                            pt_exit_price = max(pt_exit_price, low[i])
+                            if _fire_a:
+                                pt_exit_price = min(_fl, open_[i])
+                                pt_exit_price = max(pt_exit_price, low[i])
+                            else:
+                                pt_exit_price = min(pt_level, open_[i])
+                                pt_exit_price = max(pt_exit_price, low[i])
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
                             pt_size = original_size * cap_frac
@@ -663,6 +696,27 @@ def _core_simulate_jit(
                     original_size = size
                     for x in range(n_pt):
                         partial_tp_hits[x] = False
+                    # 1A (fade desde el máximo previo del día): nivel y skip se
+                    # calculan UNA vez con los precios de entrada (misma fórmula
+                    # que portfolio_sim — paridad exigida por los tests).
+                    pt_ref_max = entry_price
+                    if has_prev_high and entry_idx < n:
+                        _pv = prev_highs[entry_idx]
+                        if _pv == _pv and _pv > 0:
+                            pt_ref_max = _pv
+                    for x in range(n_pt):
+                        if pt_fade[x] == pt_fade[x] and pt_type[x] == PT_PCT:
+                            _lvl = pt_ref_max * (1.0 - pt_fade[x])
+                            _gain = (entry_price - _lvl) / entry_price
+                            _skip = entry_price <= _lvl
+                            if (not _skip) and pt_min_gain[x] == pt_min_gain[x]:
+                                if _gain < pt_min_gain[x]:
+                                    _skip = True
+                            pt_fade_lvl[x] = _lvl
+                            pt_fade_skip[x] = _skip
+                        else:
+                            pt_fade_lvl[x] = np.nan
+                            pt_fade_skip[x] = False
                     total_trades += 1
                 else:
                     equity[i] = available_cash

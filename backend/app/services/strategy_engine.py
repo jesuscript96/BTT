@@ -1166,7 +1166,21 @@ def _parse_partial_tps(risk: dict) -> list | None:
         is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
         is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
         if (is_eod_val or is_time_val or is_hour_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
-            partial_tps.append({"distance_pct": dist, "capital_pct": cap / 100.0})
+            fade = pt.get("fade_from_high_pct")
+            ming = pt.get("min_gain_pct")
+            partial_tps.append({
+                "distance_pct": dist,
+                "capital_pct": cap / 100.0,
+                # 1A: fade desde el máximo previo del día. Solo slots con % numérico
+                # (EOD/TIME/HOUR no llevan disparador dual). Fracciones (÷100).
+                "fade_from_high_pct": (float(fade) / 100.0)
+                    if isinstance(fade, (int, float)) and fade > 0 and isinstance(dist, (int, float)) else None,
+                # Ganancia mínima (fracción, desde la entrada) exigida a 1A para activarse.
+                "min_gain_pct": (float(ming) / 100.0)
+                    if isinstance(ming, (int, float)) and ming >= 0 else None,
+                # 0 = manda el fade (default), 1 = manda el % desde entrada (empate en vela).
+                "priority": 1 if pt.get("priority") == "entry" else 0,
+            })
 
     def _pt_sort_key(x):
         d = x["distance_pct"]

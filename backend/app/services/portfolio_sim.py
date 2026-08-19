@@ -11,6 +11,67 @@ from datetime import datetime, timezone
 
 
 
+def _attach_prev_max_metrics(trades, high, low, prev_highs, is_long, partial_take_profits):
+    """Añade a cada trade los campos de referencia "máximo previo del día":
+
+    - prev_max_ref: máximo acumulado del día hasta la vela anterior a la
+      entrada (fallback: precio de entrada).
+    - fade_at_entry_pct: fade que ya había al entrar, (ref − entrada)/ref × 100.
+    - mae_prev_max / mfe_prev_max: excursiones con la referencia cambiada
+      (long: MFE=(high−ref)/ref, MAE=(ref−low)/ref; short espejo).
+    - partials_skipped: slots fade descartados al entrar (nivel ya cruzado o
+      ganancia mínima no alcanzada) — determinista con los precios de entrada,
+      así que se recomputa aquí en lugar de pasar estado extra por el simulador.
+    """
+    for t in trades:
+        e = int(t.get("entry_idx", 0))
+        x = int(t.get("exit_idx", e))
+        ref = t["entry_price"]
+        if prev_highs is not None and e < len(prev_highs):
+            pv = prev_highs[e]
+            if pv == pv and pv > 0:  # no NaN y positivo
+                ref = float(pv)
+        t["prev_max_ref"] = round(ref, 6)
+        t["fade_at_entry_pct"] = round((ref - t["entry_price"]) / ref * 100.0, 4)
+
+        lo = float(np.min(low[e:x + 1])) if x >= e else t["entry_price"]
+        hi = float(np.max(high[e:x + 1])) if x >= e else t["entry_price"]
+        # Recorte en la vela de salida para SL/Trailing/TP (paridad con el
+        # mae/mfe del simulador). exit_price viene neto de slippage (redondeado).
+        r = t.get("exit_reason", "")
+        ep = t.get("exit_price", 0.0)
+        if r in ("SL", "Trailing"):
+            if is_long:
+                lo = max(lo, ep)
+            else:
+                hi = min(hi, ep)
+        elif r == "TP":
+            if is_long:
+                hi = min(hi, ep)
+            else:
+                lo = max(lo, ep)
+        if is_long:
+            t["mfe_prev_max"] = round((hi - ref) / ref * 100.0, 4)
+            t["mae_prev_max"] = round((ref - lo) / ref * 100.0, 4)
+        else:
+            t["mfe_prev_max"] = round((ref - lo) / ref * 100.0, 4)
+            t["mae_prev_max"] = round((hi - ref) / ref * 100.0, 4)
+
+        skipped = []
+        for j, pt in enumerate(partial_take_profits or []):
+            fade = pt.get("fade_from_high_pct") if isinstance(pt, dict) else None
+            if fade is None or not isinstance(pt.get("distance_pct"), (int, float)):
+                continue
+            lvl = ref * (1.0 - fade)
+            gain = (t["entry_price"] - lvl) / t["entry_price"]
+            mg = pt.get("min_gain_pct")
+            if t["entry_price"] <= lvl:
+                skipped.append({"index": j, "reason": "crossed"})
+            elif mg is not None and gain < mg:
+                skipped.append({"index": j, "reason": "min_gain"})
+        t["partials_skipped"] = skipped
+
+
 def simulate(
     close: np.ndarray,
     open_: np.ndarray,
@@ -72,6 +133,10 @@ def simulate(
     trail_activated = False
     original_size = 0.0  # Track original position size for partial TPs
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
+    # Estado 1A por trade (se recalcula en cada apertura):
+    pt_fade_levels: list = []   # nivel de fade (None = slot sin fade)
+    pt_fade_skipped: list = []  # fade descartado al entrar (cruzado o ganancia mínima)
+    pt_ref_max = 0.0            # máximo previo del día usado como referencia
 
     # Risk amount tracking for reporting
     risk_amount = risk_r
@@ -379,12 +444,31 @@ def simulate(
                     
                     elif is_long:
                         pt_level = entry_price * (1 + dist_frac)
-                        if price_for_tp >= pt_level:
+                        # Disparador dual: 1B (% desde entrada) y 1A (fade desde el
+                        # máximo previo del día, dispara cuando el precio CAE al nivel).
+                        # El que "manda" (priority) se evalúa primero; si dispara, el
+                        # otro queda cancelado (una sola ejecución por slot, nunca suman).
+                        _fade_lvl = pt_fade_levels[pt_idx] if pt_idx < len(pt_fade_levels) else None
+                        _hit_b = price_for_tp >= pt_level
+                        _hit_a = (_fade_lvl is not None
+                                  and not pt_fade_skipped[pt_idx]
+                                  and low[i] <= _fade_lvl)
+                        if pt.get("priority", 0) == 0:
+                            _fire_a = _hit_a
+                        else:
+                            _fire_a = _hit_a and not _hit_b
+                        if _hit_b or _hit_a:
                             # Partial exit
                             partial_tp_hits[pt_idx] = True
-                            # If it gapped above target at open, take the open, else the target
-                            pt_exit_price = max(pt_level, open_[i])
-                            pt_exit_price = min(pt_exit_price, high[i]) # Bound by high
+                            if _fire_a:
+                                # Venta por caída al nivel de fade; si abre por debajo
+                                # (gap), fill al open. Acotado al rango de la vela.
+                                pt_exit_price = min(_fade_lvl, open_[i])
+                                pt_exit_price = max(pt_exit_price, low[i])
+                            else:
+                                # If it gapped above target at open, take the open, else the target
+                                pt_exit_price = max(pt_level, open_[i])
+                                pt_exit_price = min(pt_exit_price, high[i]) # Bound by high
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
@@ -424,11 +508,29 @@ def simulate(
                                     break
                     else:
                         pt_level = entry_price * (1 - dist_frac)
-                        if price_for_tp <= pt_level:
+                        # Disparador dual (espejo del long): 1B % desde entrada,
+                        # 1A fade desde el máximo previo — cover cuando el precio
+                        # cae al nivel. Manda el de prioridad; OCO tras disparar.
+                        _fade_lvl = pt_fade_levels[pt_idx] if pt_idx < len(pt_fade_levels) else None
+                        _hit_b = price_for_tp <= pt_level
+                        _hit_a = (_fade_lvl is not None
+                                  and not pt_fade_skipped[pt_idx]
+                                  and low[i] <= _fade_lvl)
+                        if pt.get("priority", 0) == 0:
+                            _fire_a = _hit_a
+                        else:
+                            _fire_a = _hit_a and not _hit_b
+                        if _hit_b or _hit_a:
                             partial_tp_hits[pt_idx] = True
-                            # If it gapped below target at open, take the open, else the target
-                            pt_exit_price = min(pt_level, open_[i])
-                            pt_exit_price = max(pt_exit_price, low[i]) # Bound by low
+                            if _fire_a:
+                                # Cover por caída al nivel de fade; gap por debajo
+                                # al abrir → fill al open (mejor para la compra).
+                                pt_exit_price = min(_fade_lvl, open_[i])
+                                pt_exit_price = max(pt_exit_price, low[i])
+                            else:
+                                # If it gapped below target at open, take the open, else the target
+                                pt_exit_price = min(pt_level, open_[i])
+                                pt_exit_price = max(pt_exit_price, low[i]) # Bound by low
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
@@ -695,6 +797,28 @@ def simulate(
                     mfe = 0.0
                     original_size = size
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
+                    # 1A (fade desde el máximo previo del día): nivel y skip se
+                    # calculan UNA vez con los precios de entrada. ref = máximo
+                    # acumulado hasta la vela ANTERIOR a la entrada.
+                    pt_ref_max = entry_price
+                    if prev_highs is not None and entry_idx < len(prev_highs):
+                        _pv = prev_highs[entry_idx]
+                        if _pv == _pv and _pv > 0:
+                            pt_ref_max = float(_pv)
+                    pt_fade_levels = []
+                    pt_fade_skipped = []
+                    for _pt in (partial_take_profits or []):
+                        _fade = _pt.get("fade_from_high_pct") if isinstance(_pt, dict) else None
+                        if _fade is None or not isinstance(_pt.get("distance_pct"), (int, float)):
+                            pt_fade_levels.append(None)
+                            pt_fade_skipped.append(False)
+                            continue
+                        _lvl = pt_ref_max * (1.0 - _fade)
+                        _gain = (entry_price - _lvl) / entry_price
+                        _mg = _pt.get("min_gain_pct")
+                        _skip = entry_price <= _lvl or (_mg is not None and _gain < _mg)
+                        pt_fade_levels.append(_lvl)
+                        pt_fade_skipped.append(_skip)
                     total_trades += 1
                 else:
                     equity[i] = available_cash
@@ -746,6 +870,7 @@ def simulate(
     prev_signal = current_signal
 
     # Finalize result
+    _attach_prev_max_metrics(trades, high, low, prev_highs, is_long, partial_take_profits)
     results = {"equity": equity, "trades": trades}
     if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
