@@ -43,3 +43,19 @@ BILLING_DB_PATH = os.getenv(
 # source of the windows.
 BILLING_TRIAL_DAYS = _int("BILLING_TRIAL_DAYS", 7)
 BILLING_MIGRATION_TRIAL_DAYS = _int("BILLING_MIGRATION_TRIAL_DAYS", 7)
+
+# ── Stripe (Fase 2C) ──────────────────────────────────────────────────────────
+# All EMPTY by default so billing stays dormant: the router is only mounted when
+# BILLING_ENABLED (main.py), and the Stripe gateway is only constructed on
+# demand and raises cleanly without a key. Use Stripe TEST keys until go-live
+# (Fase 2G). Single monthly EUR Price by decision (#7).
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY", "")  # frontend (2F)
+STRIPE_PRICE_ID_MONTHLY_EUR = os.getenv("STRIPE_PRICE_ID_MONTHLY_EUR", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")    # verified in 2D
+
+# Return URLs for Checkout success/cancel and the Billing Portal. Filled per
+# environment; the request body may override them (frontend, 2F).
+BILLING_SUCCESS_URL = os.getenv("BILLING_SUCCESS_URL", "")
+BILLING_CANCEL_URL = os.getenv("BILLING_CANCEL_URL", "")
+BILLING_PORTAL_RETURN_URL = os.getenv("BILLING_PORTAL_RETURN_URL", "")

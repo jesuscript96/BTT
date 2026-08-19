@@ -1,0 +1,156 @@
+"""Tests for the billing service + router (Fase 2C).
+
+No Stripe SDK, no network: a FakeStripeGateway records calls and returns canned
+ids/urls. A temp store isolates each test. get_tier/Clerk are untouched.
+"""
+from __future__ import annotations
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.auth.clerk import get_current_user_id
+from app.billing import config
+from app.billing.service import BillingError, BillingService, normalize_email
+from app.billing.store import Store
+from app.billing.router import router as billing_router, get_billing_service
+
+
+class FakeStripeGateway:
+    """Records outbound calls; returns deterministic fake ids/urls."""
+
+    def __init__(self):
+        self.customers_created: list[dict] = []
+        self.checkout_calls: list[dict] = []
+        self.portal_calls: list[dict] = []
+
+    def create_customer(self, email, metadata):
+        cid = f"cus_fake_{len(self.customers_created) + 1}"
+        self.customers_created.append({"id": cid, "email": email, "metadata": metadata})
+        return cid
+
+    def create_checkout_session(self, *, customer_id, price_id, client_reference_id,
+                                success_url, cancel_url, trial_days):
+        self.checkout_calls.append(dict(
+            customer_id=customer_id, price_id=price_id, client_reference_id=client_reference_id,
+            success_url=success_url, cancel_url=cancel_url, trial_days=trial_days,
+        ))
+        return {"id": f"cs_fake_{len(self.checkout_calls)}", "url": "https://checkout.stripe.test/s"}
+
+    def create_billing_portal_session(self, customer_id, return_url):
+        self.portal_calls.append(dict(customer_id=customer_id, return_url=return_url))
+        return "https://portal.stripe.test/s"
+
+
+@pytest.fixture
+def store(tmp_path):
+    s = Store(str(tmp_path / "billing.sqlite"))
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def gw():
+    return FakeStripeGateway()
+
+
+@pytest.fixture
+def svc(store, gw):
+    return BillingService(store=store, gateway=gw)
+
+
+@pytest.fixture(autouse=True)
+def _cfg(monkeypatch):
+    """Configure Stripe env for the duration of a test (module-level attrs)."""
+    monkeypatch.setattr(config, "STRIPE_PRICE_ID_MONTHLY_EUR", "price_test_eur")
+    monkeypatch.setattr(config, "BILLING_SUCCESS_URL", "https://app.test/ok")
+    monkeypatch.setattr(config, "BILLING_CANCEL_URL", "https://app.test/cancel")
+    monkeypatch.setattr(config, "BILLING_PORTAL_RETURN_URL", "https://app.test/billing")
+    monkeypatch.setattr(config, "BILLING_TRIAL_DAYS", 7)
+    yield
+
+
+# ── Customer ─────────────────────────────────────────────────────────────────
+def test_get_or_create_customer_is_idempotent(svc, gw, store):
+    c1 = svc.get_or_create_customer("u1", "a@b.com")
+    c2 = svc.get_or_create_customer("u1", "a@b.com")
+    assert c1.stripe_customer_id == c2.stripe_customer_id
+    assert len(gw.customers_created) == 1               # created in Stripe once
+    assert gw.customers_created[0]["metadata"] == {"clerk_user_id": "u1"}
+    assert store.get_customer_by_user("u1") is not None
+
+
+# ── Checkout trial decision (anti-recycle by email) ──────────────────────────
+def test_first_checkout_gets_trial(svc, gw):
+    session = svc.start_subscription_checkout("u1", "a@b.com")
+    assert session["url"].startswith("https://")
+    call = gw.checkout_calls[-1]
+    assert call["trial_days"] == 7
+    assert call["client_reference_id"] == "u1"
+    assert call["price_id"] == "price_test_eur"
+
+
+def test_returning_email_gets_no_trial(svc, gw, store):
+    store.record_trial(normalize_email("A@B.com"), "email")   # already trialed
+    svc.start_subscription_checkout("u1", "a@b.com")           # different casing
+    assert gw.checkout_calls[-1]["trial_days"] is None          # immediate charge
+
+
+def test_checkout_uses_body_urls_over_config(svc, gw):
+    svc.start_subscription_checkout("u1", "a@b.com",
+                                    success_url="https://x/ok", cancel_url="https://x/no")
+    call = gw.checkout_calls[-1]
+    assert call["success_url"] == "https://x/ok" and call["cancel_url"] == "https://x/no"
+
+
+def test_checkout_missing_price_raises(svc, monkeypatch):
+    monkeypatch.setattr(config, "STRIPE_PRICE_ID_MONTHLY_EUR", "")
+    with pytest.raises(BillingError):
+        svc.start_subscription_checkout("u1", "a@b.com")
+
+
+# ── Billing Portal ───────────────────────────────────────────────────────────
+def test_portal_without_customer_raises(svc):
+    with pytest.raises(BillingError):
+        svc.open_billing_portal("ghost")
+
+
+def test_portal_with_customer_returns_url(svc, gw):
+    svc.get_or_create_customer("u1", "a@b.com")
+    url = svc.open_billing_portal("u1")
+    assert url.startswith("https://")
+    assert gw.portal_calls[-1]["customer_id"].startswith("cus_fake_")
+
+
+# ── Router (HTTP) ─────────────────────────────────────────────────────────────
+def _client(svc, user_id="u1"):
+    app = FastAPI()
+    app.include_router(billing_router, prefix="/api/billing")
+    app.dependency_overrides[get_current_user_id] = lambda: user_id
+    app.dependency_overrides[get_billing_service] = lambda: svc
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_checkout_endpoint_returns_url(svc, gw):
+    r = _client(svc).post("/api/billing/checkout", json={"email": "a@b.com"})
+    assert r.status_code == 200
+    assert r.json()["checkout_url"].startswith("https://")
+    assert r.json()["session_id"].startswith("cs_fake_")
+    assert gw.checkout_calls[-1]["trial_days"] == 7
+
+
+def test_checkout_endpoint_requires_auth(svc):
+    r = _client(svc, user_id=None).post("/api/billing/checkout", json={"email": "a@b.com"})
+    assert r.status_code == 401
+
+
+def test_portal_endpoint_no_customer_is_400(svc):
+    r = _client(svc).post("/api/billing/portal", json={})
+    assert r.status_code == 400
+
+
+def test_portal_endpoint_returns_url_for_existing_customer(svc):
+    svc.get_or_create_customer("u1", "a@b.com")
+    r = _client(svc).post("/api/billing/portal", json={})
+    assert r.status_code == 200
+    assert r.json()["portal_url"].startswith("https://")

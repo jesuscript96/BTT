@@ -22,3 +22,4 @@ pyarrow>=14.0.0
 redis[hiredis]>=5.0.0
 psutil>=5.9.0
 msgpack>=1.0.0
+stripe==12.5.1  # billing (Fase 2C); imported lazily, only used when BILLING_ENABLED

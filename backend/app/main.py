@@ -300,6 +300,13 @@ app.include_router(api_console.router)
 # GET /api/users/me/entitlements; policy lives in app.entitlements.policy.
 from app.routers.entitlements import router as entitlements_router
 app.include_router(entitlements_router, prefix="/api/users", tags=["Entitlements"])
+# Billing (Stripe subscriptions) — DORMANT. Mounted ONLY when BILLING_ENABLED, so
+# prod is unchanged and the Stripe SDK is not even imported until we opt in at
+# cutover (Fase 2G). Clerk-authed; declares POST /api/billing/checkout|portal.
+from app.billing import config as _billing_config
+if _billing_config.BILLING_ENABLED:
+    from app.billing.router import router as billing_router
+    app.include_router(billing_router, prefix="/api/billing", tags=["Billing"])
 # Feedback & feature-voting board (declares its own prefix="/api/feedback").
 app.include_router(feedback.router)
 
