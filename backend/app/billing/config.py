@@ -59,3 +59,12 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")    # verified in 
 BILLING_SUCCESS_URL = os.getenv("BILLING_SUCCESS_URL", "")
 BILLING_CANCEL_URL = os.getenv("BILLING_CANCEL_URL", "")
 BILLING_PORTAL_RETURN_URL = os.getenv("BILLING_PORTAL_RETURN_URL", "")
+
+# ── Plan display (Fase 2F) ────────────────────────────────────────────────────
+# Cosmetic fallback for the billing UI when there is no invoice yet (e.g. during
+# trial). The authoritative amount is always the Stripe invoice; this is only the
+# label/price shown up front. 29€/mes by decision (#7).
+BILLING_PLAN_LABEL = os.getenv("BILLING_PLAN_LABEL", "Pro")
+BILLING_PLAN_AMOUNT_CENTS = _int("BILLING_PLAN_AMOUNT_CENTS", 2900)
+BILLING_PLAN_CURRENCY = os.getenv("BILLING_PLAN_CURRENCY", "eur")
+BILLING_PLAN_INTERVAL = os.getenv("BILLING_PLAN_INTERVAL", "month")

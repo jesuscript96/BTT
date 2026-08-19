@@ -14,6 +14,7 @@ from app.billing import store as store_mod
 from app.billing.store import BillingCustomer, Store, Subscription
 from app.billing.stripe_client import StripeGateway
 from app.billing.stripe_objects import _id, parse_subscription
+from app.billing.tier_resolver import resolve_tier
 
 
 class BillingError(Exception):
@@ -141,3 +142,78 @@ class BillingService:
             if self.reconcile_user(customer.user_id) is not None:
                 count += 1
         return count
+
+    # ── Billing summary for the UI (GET /api/billing/me) ─────────────────────
+    def get_billing_summary(self, user_id: str) -> dict:
+        """Read-only snapshot for the billing section (no Stripe call): resolved
+        tier + subscription + default payment method + invoices + the trial
+        countdown source (subscription.trial_end or a migration grant)."""
+        tier = resolve_tier(user_id, store=self._store)
+        sub = self._store.get_latest_subscription_for_user(user_id)
+        pm = self._store.get_default_payment_method(user_id)
+        grant = self._store.get_grant(user_id)
+        invoices = self._store.list_invoices(user_id)
+        return {
+            "tier": tier,
+            "access": tier != "Locked",
+            "plan": {
+                "label": config.BILLING_PLAN_LABEL,
+                "amount_cents": config.BILLING_PLAN_AMOUNT_CENTS,
+                "currency": config.BILLING_PLAN_CURRENCY,
+                "interval": config.BILLING_PLAN_INTERVAL,
+            },
+            "subscription": _subscription_dict(sub),
+            "grant": _grant_dict(grant),
+            "payment_method": _payment_method_dict(pm),
+            "invoices": [_invoice_dict(i) for i in invoices],
+        }
+
+
+# ── Serializers (dataclass -> plain JSON dict for the API) ────────────────────
+def _subscription_dict(sub) -> Optional[dict]:
+    if sub is None:
+        return None
+    return {
+        "status": sub.status,
+        "price_id": sub.price_id,
+        "currency": sub.currency,
+        "trial_end": sub.trial_end,
+        "current_period_end": sub.current_period_end,
+        "cancel_at_period_end": sub.cancel_at_period_end,
+        "canceled_at": sub.canceled_at,
+    }
+
+
+def _grant_dict(grant) -> Optional[dict]:
+    if grant is None:
+        return None
+    return {
+        "grant_tier": grant.grant_tier,
+        "reason": grant.reason,
+        "expires_at": grant.expires_at,
+    }
+
+
+def _payment_method_dict(pm) -> Optional[dict]:
+    if pm is None:
+        return None
+    return {
+        "brand": pm.brand,
+        "last4": pm.last4,
+        "exp_month": pm.exp_month,
+        "exp_year": pm.exp_year,
+    }
+
+
+def _invoice_dict(inv) -> dict:
+    return {
+        "status": inv.status,
+        "amount_due": inv.amount_due,
+        "amount_paid": inv.amount_paid,
+        "currency": inv.currency,
+        "hosted_invoice_url": inv.hosted_invoice_url,
+        "invoice_pdf": inv.invoice_pdf,
+        "period_start": inv.period_start,
+        "period_end": inv.period_end,
+        "created_at": inv.created_at,
+    }

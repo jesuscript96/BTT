@@ -154,3 +154,39 @@ def test_portal_endpoint_returns_url_for_existing_customer(svc):
     r = _client(svc).post("/api/billing/portal", json={})
     assert r.status_code == 200
     assert r.json()["portal_url"].startswith("https://")
+
+
+# ── Billing summary (GET /me) ─────────────────────────────────────────────────
+def test_billing_summary_locked_when_empty(svc):
+    s = svc.get_billing_summary("ghost")
+    assert s["tier"] == "Locked" and s["access"] is False
+    assert s["subscription"] is None and s["invoices"] == []
+    assert s["plan"]["amount_cents"] == 2900 and s["plan"]["currency"] == "eur"
+
+
+def test_billing_summary_reflects_active_subscription(svc, store):
+    store.upsert_customer("u1", "cus_1")
+    store.upsert_subscription("sub_1", "u1", "cus_1", status="active", current_period_end=222)
+    store.upsert_payment_method("pm_1", "u1", brand="visa", last4="4242", is_default=True)
+    store.upsert_invoice("in_1", "u1", status="paid", amount_paid=2900, currency="eur")
+    s = svc.get_billing_summary("u1")
+    assert s["tier"] == "Pro" and s["access"] is True
+    assert s["subscription"]["status"] == "active"
+    assert s["subscription"]["current_period_end"] == 222
+    assert s["payment_method"]["last4"] == "4242"
+    assert len(s["invoices"]) == 1 and s["invoices"][0]["status"] == "paid"
+
+
+def test_billing_me_endpoint_exposes_grant_countdown(svc, store):
+    store.upsert_grant("u1", "Pro", reason="migration-trial", expires_at=9_999_999_999.0)
+    r = _client(svc).get("/api/billing/me")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tier"] == "Pro" and body["access"] is True
+    assert body["grant"]["reason"] == "migration-trial"
+    assert body["grant"]["expires_at"] == 9_999_999_999.0
+
+
+def test_billing_me_requires_auth(svc):
+    r = _client(svc, user_id=None).get("/api/billing/me")
+    assert r.status_code == 401

@@ -46,6 +46,17 @@ class SyncRequest(BaseModel):
     session_id: str
 
 
+@router.get("/me")
+def billing_me(
+    user_id: Optional[str] = Depends(get_current_user_id),
+    svc: BillingService = Depends(get_billing_service),
+):
+    """Read-only billing summary for the current user (no Stripe call)."""
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return svc.get_billing_summary(user_id)
+
+
 @router.post("/checkout")
 def create_checkout(
     body: CheckoutRequest,
