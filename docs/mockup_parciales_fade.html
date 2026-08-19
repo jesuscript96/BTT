@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mock v2 (mínimo) — Parciales fade + MAE/MFE · Edgecute</title>
+<style>
+  :root {
+    --color-ec-copper: #D87A3D;
+    --color-ec-copper-bright: #F09A5C;
+    --color-ec-copper-text: #1B1005;
+    --color-ec-bg-base: #0E0F11;
+    --color-ec-bg-sidebar: #14161A;
+    --color-ec-bg-elevated: #1A1D22;
+    --color-ec-bg-surface: #20242B;
+    --color-ec-border: #2A2E36;
+    --color-ec-text-primary: #E8E6E1;
+    --color-ec-text-secondary: #B5B2AC;
+    --color-ec-text-muted: #7C7A75;
+    --color-ec-text-high: #F5F3EF;
+    --color-ec-profit: #4CAF7D;
+    --color-ec-loss: #E05252;
+    --color-ec-sans: 'General Sans', 'Segoe UI', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--color-ec-bg-base);
+    font-family: var(--color-ec-sans);
+    color: var(--color-ec-text-primary);
+    padding: 32px 40px;
+    font-size: 13px;
+  }
+  h1 { font-size: 15px; margin-bottom: 4px; color: var(--color-ec-text-high); }
+  .sub { color: var(--color-ec-text-muted); font-size: 11px; margin-bottom: 24px; }
+  .section-title {
+    font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;
+    color: var(--color-ec-text-muted); margin: 26px 0 10px 0;
+  }
+  .panel {
+    background: var(--color-ec-bg-elevated);
+    border: 0.5px solid var(--color-ec-border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    max-width: 640px;
+  }
+
+  /* ── Fila de parcial: IGUAL que la actual ────────────────── */
+  .partial-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0;
+    border-bottom: 0.5px dotted var(--color-ec-border);
+  }
+  .partial-tag {
+    font-size: 9px; font-weight: 800; color: var(--color-ec-profit);
+    text-transform: uppercase; letter-spacing: 0.05em; width: 65px; flex-shrink: 0;
+  }
+  .sel, .num {
+    background: var(--color-ec-bg-sidebar); border: 0.5px solid var(--color-ec-border);
+    border-radius: 4px; padding: 4px 6px; font-size: 10px; font-weight: 600;
+    color: var(--color-ec-text-primary); font-family: var(--color-ec-sans);
+    outline: none;
+  }
+  .num { width: 65px; font-size: 11px; font-weight: 700; text-align: center; }
+  .cap-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-ec-text-muted); }
+  .pct-sign { font-size: 11px; color: var(--color-ec-text-muted); }
+  .trash { margin-left: auto; color: var(--color-ec-text-muted); font-size: 13px; cursor: pointer; }
+
+  /* ── ÚNICO añadido: sub-línea compacta y plegable ────────── */
+  .fade-line {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 6px 0 8px 77px;
+  }
+  .fade-line .num { width: 46px; }
+  .fade-label { font-size: 9.5px; font-weight: 600; color: var(--color-ec-text-secondary); }
+  .seg-mini { display: flex; border: 0.5px solid var(--color-ec-copper); border-radius: 4px; overflow: hidden; }
+  .seg-mini button {
+    background: transparent; color: var(--color-ec-copper); border: none; cursor: pointer;
+    font-family: var(--color-ec-sans); font-size: 9px; font-weight: 700; padding: 3px 8px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .seg-mini button.on { background: var(--color-ec-copper); color: var(--color-ec-copper-text); }
+  .info-dot {
+    display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;
+    border-radius: 50%; border: 0.5px solid var(--color-ec-border); background: var(--color-ec-bg-elevated);
+    color: var(--color-ec-text-muted); font-size: 8.5px; font-weight: 700; cursor: help;
+  }
+  .add-fade {
+    padding: 4px 0 4px 77px; font-size: 10px; font-weight: 600;
+    color: var(--color-ec-copper); cursor: pointer; letter-spacing: 0.02em;
+  }
+
+  /* ── MAE/MFE: cabecera actual + mini toggle ──────────────── */
+  .mae-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  table.trades { border-collapse: collapse; max-width: 640px; }
+  table.trades th {
+    font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--color-ec-text-muted); text-align: right; padding: 6px 10px;
+    border-bottom: 0.5px solid var(--color-ec-border);
+  }
+  table.trades td {
+    font-size: 11px; padding: 6px 10px; text-align: right;
+    border-bottom: 0.5px solid var(--color-ec-border);
+    font-variant-numeric: tabular-nums;
+  }
+  td.pos { color: var(--color-ec-profit); }
+  td.neg { color: var(--color-ec-loss); }
+
+  .tooltip-demo {
+    margin-top: 12px; max-width: 350px; background: var(--color-ec-bg-sidebar);
+    border: 0.5px solid var(--color-ec-border); border-radius: 6px; padding: 10px 12px;
+    font-size: 10px; font-style: italic; line-height: 1.6;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  }
+  .tooltip-demo .tt-title { font-style: normal; font-weight: 700; font-size: 10px; color: var(--color-ec-copper); margin-bottom: 4px; letter-spacing: 0.05em; }
+  .note { font-size: 10px; color: var(--color-ec-text-muted); margin-top: 10px; max-width: 640px; line-height: 1.6; }
+  .note b { color: var(--color-ec-text-secondary); }
+</style>
+</head>
+<body>
+
+<h1>Mock v2 — mínimo invasivo</h1>
+<div class="sub">La fila del parcial es la actual, sin tocar. Lo único nuevo: una sub-línea plegable (off por defecto) y un mini-toggle en MAE/MFE.</div>
+
+<div class="section-title">Take Profit · Partial — fila actual + sub-línea nueva</div>
+<div class="panel">
+
+  <!-- Fila EXACTA de hoy -->
+  <div class="partial-row">
+    <span class="partial-tag">Parcial #1</span>
+    <select class="sel"><option>% Distancia</option><option>Tiempo (minutos)</option><option>Hora específica</option><option>Fin del Día (EOD)</option></select>
+    <input class="num" value="5">
+    <span class="cap-label">Capital</span>
+    <input class="num" value="50">
+    <span class="pct-sign">%</span>
+    <span class="trash">🗑</span>
+  </div>
+
+  <!-- Lo único añadido: plegable, activada aquí para el mock -->
+  <div class="fade-line">
+    <span class="fade-label">Fade desde máx.</span>
+    <input class="num" value="50"><span class="pct-sign">%</span>
+    <span class="fade-label">Ganancia mín.</span>
+    <input class="num" value="10"><span class="pct-sign">%</span>
+    <span class="fade-label">Manda</span>
+    <div class="seg-mini">
+      <button class="on">Fade</button>
+      <button>Entrada</button>
+    </div>
+    <span class="info-dot">?</span>
+  </div>
+  <div class="add-fade">+ Quitar fade desde el máximo</div>
+
+  <!-- Estado por defecto (sin tocar nada) -->
+  <div class="partial-row" style="border-bottom:none">
+    <span class="partial-tag">Parcial #2</span>
+    <select class="sel"><option>% Distancia</option></select>
+    <input class="num" value="10">
+    <span class="cap-label">Capital</span>
+    <input class="num" value="50">
+    <span class="pct-sign">%</span>
+    <span class="trash">🗑</span>
+  </div>
+  <div class="add-fade">+ Añadir fade desde el máximo</div>
+
+</div>
+
+<div class="note">
+  <b>Plegado por defecto.</b> Un parcial sin fade queda byte-idéntico a hoy.
+  El "Manda" solo decide el empate (misma vela toca los dos niveles); en velas
+  distintas dispara el que llegue antes. La ganancia mínima se comprueba una
+  vez, con los precios de tu entrada: si el nivel de fade te dejaría menos de
+  eso, ese disparador se salta y el trade queda marcado.
+</div>
+
+<div class="section-title">Trades — MAE/MFE con mini-toggle de referencia (columnas actuales, sin añadidos)</div>
+<div class="panel">
+  <div class="mae-bar">
+    <span class="cap-label" style="font-size:9px">Referencia</span>
+    <div class="seg-mini">
+      <button class="on">Entrada</button>
+      <button>Máx. previo</button>
+    </div>
+    <span class="info-dot">?</span>
+  </div>
+  <table class="trades">
+    <tr><th style="text-align:left">Ticker</th><th>Entrada</th><th>PnL</th><th>MAE% <span class="info-dot">?</span></th><th>MFE% <span class="info-dot">?</span></th></tr>
+    <tr><td style="text-align:left">ABC</td><td>16,00</td><td class="pos">+37,5%</td><td class="neg">4,2</td><td class="pos">2,1</td></tr>
+    <tr><td style="text-align:left">XYZ</td><td>9,40</td><td class="pos">+6,4%</td><td class="neg">3,1</td><td class="pos">0,0</td></tr>
+  </table>
+</div>
+
+<div class="tooltip-demo">
+  <div class="tt-title">MAE% — desde entrada</div>
+  Máxima excursión en contra medida desde tu precio de entrada:
+  <b>máx( (entrada − mínimo alcanzado) / entrada × 100 )</b>.
+  Cambia la referencia a "Máx. previo" para medir el fade desde el máximo del
+  día anterior a tu entrada — el tooltip te dirá el precio de referencia de
+  este trade (p. ej. 20$).
+</div>
+
+</body>
+</html>
