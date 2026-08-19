@@ -235,9 +235,12 @@ def simulate_jit(
     pt_fade = np.full(_sz, np.nan, dtype=np.float64)
     pt_min_gain = np.full(_sz, np.nan, dtype=np.float64)
     pt_priority = np.zeros(_sz, dtype=np.int64)
+    pt_cap_frac_a = np.zeros(_sz, dtype=np.float64)
     for idx, pt in enumerate(pt_list):
         dist = pt["distance_pct"]
         pt_cap_frac[idx] = pt["capital_pct"]
+        _cap_a = pt.get("capital_pct_a") if isinstance(pt, dict) else None
+        pt_cap_frac_a[idx] = float(_cap_a) if _cap_a is not None else pt["capital_pct"]
         _fade = pt.get("fade_from_high_pct") if isinstance(pt, dict) else None
         if _fade is not None:
             pt_fade[idx] = float(_fade)
@@ -313,7 +316,7 @@ def simulate_jit(
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
-        pt_fade, pt_min_gain, pt_priority,
+        pt_fade, pt_min_gain, pt_priority, pt_cap_frac_a,
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---

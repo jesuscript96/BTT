@@ -99,7 +99,7 @@ def _core_simulate_jit(
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
     n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
-    pt_fade, pt_min_gain, pt_priority,
+    pt_fade, pt_min_gain, pt_priority, pt_cap_frac_a,
 ):
     n = len(close)
 
@@ -421,7 +421,8 @@ def _core_simulate_jit(
                                 pt_exit_price = min(pt_exit_price, high[i])
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
-                            pt_size = original_size * cap_frac
+                            _cap = pt_cap_frac_a[pt_idx] if _fire_a else cap_frac
+                            pt_size = original_size * _cap
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
@@ -472,7 +473,8 @@ def _core_simulate_jit(
                                 pt_exit_price = max(pt_exit_price, low[i])
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
-                            pt_size = original_size * cap_frac
+                            _cap = pt_cap_frac_a[pt_idx] if _fire_a else cap_frac
+                            pt_size = original_size * _cap
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size

@@ -472,8 +472,9 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
-                            # Close cap_frac of original position
-                            pt_size = original_size * cap_frac
+                            # Capital de la fila ganadora (capital_pct_a si ganó el fade).
+                            _cap = (pt.get("capital_pct_a") or pt["capital_pct"]) if _fire_a else pt["capital_pct"]
+                            pt_size = original_size * _cap
                             pt_size = min(pt_size, size)  # Can't close more than remaining
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
@@ -534,7 +535,8 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
-                            pt_size = original_size * cap_frac
+                            _cap = (pt.get("capital_pct_a") or pt["capital_pct"]) if _fire_a else pt["capital_pct"]
+                            pt_size = original_size * _cap
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size

@@ -211,16 +211,17 @@ export interface RiskSettings {
 }
 
 export interface PartialTakeProfit {
-    distance_pct: number | 'EOD' | string;
+    // % desde entrada, 'EOD', 'TIME:min', 'HOUR:hh:mm' — o undefined si la fila
+    // es un condicional de fade (anidado bajo el parcial % anterior).
+    distance_pct?: number | 'EOD' | string;
     capital_pct: number;
-    // --- Disparador dual 1A (fade desde el máximo previo del día). Opcional y solo
-    // aplica a parciales de tipo % numérico; EOD/TIME/HOUR lo ignoran. ---
-    // 1A: % de caída desde el máximo previo al que se ejecuta el parcial (ej. 50).
+    // Fila condicional: % de caída desde el máximo previo del día que ejecuta
+    // este parcial (ej. 50 = al 50% del recorrido desde el máximo).
     fade_from_high_pct?: number;
-    // Ganancia mínima (%, desde tu entrada) exigida a 1A para activarse. Si al
-    // entrar el nivel dejaría menos (o ya está cruzado), 1A se salta y manda 1B.
+    // Ganancia mínima (%, desde tu entrada) exigida al fade. Si al entrar su
+    // nivel dejaría menos (o ya está cruzado), no se ejecuta y queda marcado.
     min_gain_pct?: number;
-    // Empate en la misma vela: 'fade' = manda 1A (default), 'entry' = manda 1B.
+    // Empate en la misma vela: 'fade' = manda el fade (default), 'entry' = el %.
     priority?: 'fade' | 'entry';
 }
 

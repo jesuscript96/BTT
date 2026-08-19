@@ -261,11 +261,11 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
                             className="inline-block px-1 py-0.5 rounded-sm text-[9px] font-bold"
                             style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#ef4444" }}
                             title={
-                              "Fade (1A) saltado en este trade: " +
+                              "Parcial de fade no ejecutado en este trade: " +
                               skipped
                                 .map((s) => (s.reason === "min_gain" ? "ganancia mínima no alcanzada al entrar" : "nivel ya cruzado al entrar"))
                                 .join("; ") +
-                              ". La toma de beneficio recayó en el % desde la entrada (1B)."
+                              ". La toma de beneficio recayó en el parcial por % desde la entrada."
                             }
                           >
                             ⚠ fade saltado

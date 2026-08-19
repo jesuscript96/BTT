@@ -160,6 +160,45 @@ def test_mae_mfe_desde_maximo_previo_short():
     assert t["mae_prev_max"] == pytest.approx((hi - 18.2) / 18.2 * 100, abs=1e-3)
 
 
+def test_fila_condicional_parser_y_capital_por_disparo():
+    """Formato UI nuevo: fila % + fila condicional fade (sin distance_pct).
+    El parser las empareja en UN slot; el disparo usa el capital de SU fila."""
+    from app.services.strategy_engine import _parse_partial_tps
+    risk = {"partial_take_profits": [
+        {"distance_pct": 5, "capital_pct": 50},
+        {"distance_pct": None, "fade_from_high_pct": 50, "min_gain_pct": None,
+         "priority": "fade", "capital_pct": 30},
+    ]}
+    pts = _parse_partial_tps(risk)
+    assert pts is not None and len(pts) == 1, "la fila fade se empareja con la % anterior"
+    slot = pts[0]
+    assert slot["distance_pct"] == pytest.approx(0.05)
+    assert slot["capital_pct"] == pytest.approx(0.5)
+    assert slot["capital_pct_a"] == pytest.approx(0.3), "capital de la fila fade"
+    assert slot["fade_from_high_pct"] == pytest.approx(0.5)
+
+    # Fade huérfano (sin fila % encima): slot fade puro con 1B inalcanzable.
+    risk2 = {"partial_take_profits": [
+        {"distance_pct": None, "fade_from_high_pct": 40, "capital_pct": 25},
+    ]}
+    pts2 = _parse_partial_tps(risk2)
+    assert len(pts2) == 1 and pts2[0]["fade_from_high_pct"] == pytest.approx(0.4)
+    assert pts2[0]["distance_pct"] == pytest.approx(0.99), "1B inalcanzable (±99%)"
+
+    # Simulación: gana el fade → vende el 30% (capital de la fila condicional).
+    closes = [10, 12, 14, 19.8, 16, 15.9, 15.8, 15.7, 15.6, 11, 11]
+    lows = [9.8, 11.8, 13.8, 19.6, 15.8, 15.7, 15.6, 15.5, 15.4, 9.5, 9.5]
+    close, open_, high, low, entries, exits = _day(closes, lows=lows)
+    prev_highs = _prev_highs_from(high)
+    res = _simulate(False, close=close, open_=open_, high=high, low=low,
+                    entries=entries, exits=exits, partial_take_profits=pts,
+                    prev_highs=prev_highs, **BASE)
+    p = [t for t in res["trades"] if t["exit_reason"] == "Partial TP"][0]
+    total_size = res["trades"][-1]["size"] + p["size"]
+    assert p["exit_price"] == pytest.approx(10.0), "gana el fade (misma vela, manda fade)"
+    assert p["size"] == pytest.approx(total_size * 0.30), "vende el capital de la fila fade"
+
+
 @pytest.mark.parametrize("use_jit", [False, True])
 def test_paridad_legacy_jit_con_fade(use_jit):
     closes = [10, 12, 14, 18, 16, 15.5, 14, 12, 10.5, 9.9, 9.9]

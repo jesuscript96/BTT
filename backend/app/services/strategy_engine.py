@@ -1159,27 +1159,59 @@ def _parse_partial_tps(risk: dict) -> list | None:
     para compartirlo con el path nativo — no toca df, es puro parsing de config)."""
     raw_pts = risk["partial_take_profits"]
     partial_tps = []
+    def _fade_of(pt):
+        fade = pt.get("fade_from_high_pct")
+        return (float(fade) / 100.0) if isinstance(fade, (int, float)) and fade > 0 else None
+
+    def _ming_of(pt):
+        ming = pt.get("min_gain_pct")
+        return (float(ming) / 100.0) if isinstance(ming, (int, float)) and ming >= 0 else None
+
     for pt in raw_pts:
         dist = pt.get("distance_pct", 0)
         cap = pt.get("capital_pct", 0)
+        fade = _fade_of(pt)
         is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
         is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
         is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
-        if (is_eod_val or is_time_val or is_hour_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
-            fade = pt.get("fade_from_high_pct")
-            ming = pt.get("min_gain_pct")
+        is_pct = isinstance(dist, (int, float)) and dist > 0
+
+        # Fila condicional pura (fade sin % desde entrada): se empareja con el
+        # último slot % emitido; si no hay, se emite como slot fade-huérfano con
+        # un 1B inalcanzable (999%). El capital de la fila fade es el que vende
+        # cuando gana el fade (capital_pct_a).
+        if fade is not None and not (is_eod_val or is_time_val or is_hour_val or is_pct):
+            if cap <= 0:
+                continue
+            last_pct = next((s for s in reversed(partial_tps)
+                             if isinstance(s["distance_pct"], (int, float))
+                             and s["distance_pct"] < 90.0  # % crudo: excluye huérfanos (99)
+                             and s.get("fade_from_high_pct") is None), None)
+            if last_pct is not None:
+                last_pct["fade_from_high_pct"] = fade
+                last_pct["min_gain_pct"] = _ming_of(pt)
+                last_pct["priority"] = 1 if pt.get("priority") == "entry" else 0
+                last_pct["capital_pct_a"] = cap / 100.0
+            else:
+                partial_tps.append({
+                    "distance_pct": 99,  # 1B inalcanzable de facto (±99% intraday): slot fade puro
+                    "capital_pct": cap / 100.0, "capital_pct_a": cap / 100.0,
+                    "fade_from_high_pct": fade, "min_gain_pct": _ming_of(pt),
+                    "priority": 1 if pt.get("priority") == "entry" else 0,
+                })
+            continue
+
+        if (is_eod_val or is_time_val or is_hour_val or is_pct) and cap > 0:
             partial_tps.append({
                 "distance_pct": dist,
                 "capital_pct": cap / 100.0,
-                # 1A: fade desde el máximo previo del día. Solo slots con % numérico
-                # (EOD/TIME/HOUR no llevan disparador dual). Fracciones (÷100).
-                "fade_from_high_pct": (float(fade) / 100.0)
-                    if isinstance(fade, (int, float)) and fade > 0 and isinstance(dist, (int, float)) else None,
-                # Ganancia mínima (fracción, desde la entrada) exigida a 1A para activarse.
-                "min_gain_pct": (float(ming) / 100.0)
-                    if isinstance(ming, (int, float)) and ming >= 0 else None,
+                # Fade declarado en la MISMA fila (formato inline original).
+                "fade_from_high_pct": fade if (fade is not None and is_pct) else None,
+                "min_gain_pct": _ming_of(pt),
                 # 0 = manda el fade (default), 1 = manda el % desde entrada (empate en vela).
                 "priority": 1 if pt.get("priority") == "entry" else 0,
+                # Capital del disparo por fade (inline: el mismo de la fila).
+                "capital_pct_a": (cap / 100.0) if fade is not None else None,
             })
 
     def _pt_sort_key(x):
