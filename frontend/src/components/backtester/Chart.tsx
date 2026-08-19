@@ -545,6 +545,64 @@ export default function Chart({
 
         markers.sort((a, b) => (a.time as number) - (b.time as number));
         createSeriesMarkers(candleSeries, markers);
+
+        // ── Líneas horizontales del trade: entrada, salida y cada parcial, al
+        // precio EXACTO de cada ejecución (legs viene del backend) ──────────
+        const legTitle = (r: string) =>
+          r.startsWith("Partial TP") ? r.replace("Partial TP", "Parcial").replace(/[()]/g, "") : r;
+        for (const tr of dayTrades) {
+          candleSeries.createPriceLine({
+            price: tr.entry_price,
+            color: "#D87A3D",
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: `Entrada ${fmtP(tr.entry_price)}`,
+          });
+          candleSeries.createPriceLine({
+            price: tr.exit_price,
+            color: tr.pnl >= 0 ? "#10b981" : "#ef4444",
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: `Salida ${fmtP(tr.exit_price)}`,
+          });
+        }
+
+        // Parciales: línea horizontal a SU precio + marcador 'P' en su vela.
+        const partialMarkers: SeriesMarker<Time>[] = [];
+        const legCandleTimes = deduped.map(c => c.time as number);
+        for (const tr of dayTrades) {
+          for (const leg of tr.legs ?? []) {
+            if (!leg || !leg.exit_reason?.startsWith("Partial TP")) continue;
+            if (leg.exit_price != null) {
+              candleSeries.createPriceLine({
+                price: leg.exit_price,
+                color: "#14b8a6",
+                lineWidth: 1,
+                lineStyle: 3,
+                axisLabelVisible: true,
+                title: legTitle(leg.exit_reason),
+              });
+            }
+            if (leg.exit_time_epoch != null) {
+              const mt = snapToCandle(leg.exit_time_epoch, legCandleTimes);
+              if (mt != null) {
+                partialMarkers.push({
+                  time: mt as unknown as Time,
+                  position: leg.exit_price != null && leg.exit_price < tr.entry_price ? "belowBar" : "aboveBar",
+                  color: "#14b8a6",
+                  shape: "square",
+                  text: "P",
+                });
+              }
+            }
+          }
+        }
+        if (partialMarkers.length > 0) {
+          partialMarkers.sort((a, b) => (a.time as number) - (b.time as number));
+          createSeriesMarkers(candleSeries, partialMarkers);
+        }
       }
 
       // ========== OVERLAY INDICATORS ==========

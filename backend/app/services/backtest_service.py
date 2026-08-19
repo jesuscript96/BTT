@@ -1013,7 +1013,18 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         if not run:
             return
         if len(run) == 1:
-            grouped.append(run[0])
+            rec = dict(run[0])
+            rec["legs"] = [
+                {
+                    "exit_time": rec.get("exit_time"),
+                    "exit_time_epoch": rec.get("exit_time_epoch"),
+                    "exit_price": rec.get("exit_price"),
+                    "exit_reason": rec.get("exit_reason"),
+                    "size": rec.get("size"),
+                    "pnl": rec.get("pnl"),
+                }
+            ]
+            grouped.append(rec)
             return
         first, last = run[0], run[-1]
         pnl = round(sum(t["pnl"] for t in run), 4)
@@ -1045,6 +1056,19 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             "partials_skipped": first.get("partials_skipped", []),
             "r_multiple": round(sum(r_values), 2) if r_values else None,
             "n_executions": len(run),
+            # Ejecuciones individuales de la posición (parciales + cierre) para
+            # poder señalar cada una en el chart a su precio exacto.
+            "legs": [
+                {
+                    "exit_time": t.get("exit_time"),
+                    "exit_time_epoch": t.get("exit_time_epoch"),
+                    "exit_price": t.get("exit_price"),
+                    "exit_reason": t.get("exit_reason"),
+                    "size": t.get("size"),
+                    "pnl": t.get("pnl"),
+                }
+                for t in run
+            ],
         })
         grouped.append(trade)
 
