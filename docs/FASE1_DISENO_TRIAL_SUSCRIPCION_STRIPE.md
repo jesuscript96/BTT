@@ -8,7 +8,14 @@ Estas 4 respuestas quedan como inputs fijos (resuelven las preguntas abiertas #1
 1. **Alcance del plan de 29 €/mes = tier `Pro` actual** (`policy.py:84-100`): incluye Market Analysis; excluye Market Sentiment, portal de API y preview. Se reutiliza tal cual, sin tocar entitlements.
 2. **Admin siempre a mano** (allowlist / `entitlement_grants.grant_tier='Admin'`), fuera de Stripe.
 3. **Cancelación = hasta fin de periodo** (`cancel_at_period_end=true`): conserva acceso hasta la fecha ya pagada, luego `Locked`. Sin reembolso/prorrateo.
-4. **Trial único por IDENTIDAD, no por `user_id`**: Stripe debe impedir reciclar el trial borrando/recreando cuenta → se deduplica por **email + fingerprint de la tarjeta** (Stripe `PaymentMethod.card.fingerprint`), no solo por Clerk `user_id`. **Los usuarios migrados NO reciben trial nuevo**: pasan directo a estado **`gracia`** con fecha de corte comunicada (ya usan el producto, no lo están probando).
+4. **Trial único por IDENTIDAD, no por `user_id`**: Stripe debe impedir reciclar el trial borrando/recreando cuenta → se deduplica por **email + fingerprint de la tarjeta** (Stripe `PaymentMethod.card.fingerprint`), no solo por Clerk `user_id`. **Los usuarios migrados NO reciben trial nuevo en Stripe**: se les concede una ventana local de 7 días (ver decisiones 2026-08-19), y al suscribirse van a **cobro directo sin trial** (ya usan el producto).
+
+## Decisiones confirmadas por Jesús (2026-08-19)
+Cierran las 3 preguntas que quedaban abiertas (#5 migración, #6 IVA, #7 precio) y fijan un default para #4:
+5. **Reinicio de usuarios actuales = trial de 7 días in-app al desplegar.** Al hacer el cutover, a cada usuario existente le arrancan **7 días de prueba** con evidencia **en la app** (contador/banner "te quedan X días"). **Se retira** la campaña de email + fecha de corte de calendario del §7. Mecanismo: **grant local de 7 días** (`entitlement_grants.grant_tier='Pro'`, `expires_at=deploy+7d`, `reason='migration-trial'`), NO un trial de Stripe → no requiere tarjeta para arrancar, es frictionless. Al expirar → `Locked` → Checkout con **cobro directo (sin `trial_period_days`)**. Empieza "cuando estemos preparados" (al deploy), no en una fecha fija.
+6. **IVA = sin Stripe Tax.** No se activa el plan de facturación automática de Stripe. Es configuración de la cuenta, no bloquea la implementación. Los 29€ se tratan como importe cobrado; **no** se recaban datos fiscales en el Checkout para el MVP. Se puede togglear después sin cambios de arquitectura.
+7. **Precio = solo mensual, 29€/mes.** Un **único** Stripe Price recurrente en EUR. Sin plan anual ni variantes en el MVP.
+4. **(default) Gracia en `past_due` = Smart Retries de Stripe.** No se preguntó explícitamente; se fija como default: mantenemos `Pro` mientras `subscription.status=past_due` (Stripe reintenta según dunning del dashboard); cuando Stripe pasa a `unpaid`/`canceled` → `Locked`. **Sin `grace_deadline` propio ni cron de fechas.**
 
 ## Contexto Fase 0 (resumen, ya verificado)
 - Auth = Clerk (RS256/JWKS, `auth/clerk.py`). El tier se resuelve **en cada request gateado** con un `httpx.get` síncrono a `api.clerk.com` leyendo `public_metadata.tier` (`entitlements/middleware.py:59-67`, timeout 5 s). Ningún código **escribe** metadata a Clerk.
@@ -150,7 +157,7 @@ Los tiers actuales (`Admin/Pro/Mid/Beta/Free`) se diseñaron para el alta manual
 |---|---|---|---|
 | `trialing` | Stripe | Sí | **`Pro`** |
 | `active` | Stripe | Sí | **`Pro`** |
-| `past_due` | Stripe (fallo de cobro, en dunning) | Sí, **durante ventana de gracia** | `Pro` hasta `grace_deadline`, luego `Locked` |
+| `past_due` | Stripe (fallo de cobro, en dunning) | Sí, mientras Stripe reintenta (Smart Retries) | `Pro` mientras `past_due`; `Locked` al pasar a `unpaid`/`canceled` (decisión #4) |
 | `canceled` / `unpaid` / `incomplete_expired` | Stripe | No | **`Locked`** |
 | `incomplete` (pago inicial pendiente) | Stripe | No | `Locked` |
 | `admin_grant` (gratis comped) | local `entitlement_grants.grant_tier='Pro'` | Sí | **`Pro`** |
@@ -159,7 +166,7 @@ Los tiers actuales (`Admin/Pro/Mid/Beta/Free`) se diseñaron para el alta manual
 
 ### Traducción a `policy.POLICY`
 - **`Admin`** → tier `Admin` existente (`policy.py:67-83`). Sin cambios.
-- **Usuario con acceso (trialing/active/gracia/comped)** → tier **`Pro`** existente (`policy.py:84-100`): es el tier no-admin más completo (`market.analysis.access=True`), solo cierra `api.portal.access`, `market.sentiment.access`, `admin.preview_features`. Reutiliza entitlements tal cual. *(Ver PREGUNTA ABIERTA #2: confirmar que el plan de 29€ = feature-set de `Pro`.)*
+- **Usuario con acceso (trialing/active/gracia/comped)** → tier **`Pro`** existente (`policy.py:84-100`): es el tier no-admin más completo (`market.analysis.access=True`), solo cierra `api.portal.access`, `market.sentiment.access`, `admin.preview_features`. Reutiliza entitlements tal cual. *(Confirmado #2/decisión Jesús 2026-08-19: el plan de 29€ = feature-set de `Pro`, incluye Screener/Backtester/Ticker/Baúl/Market Analysis, excluye Sentiment y portal de API.)*
 - **Sin acceso** → tier **`Locked`** (NUEVO en `POLICY`): todas las feature-keys de `FEATURE_TYPES` (`policy.py:35-52`) en `False`/`0`. No inventa features; solo es una fila de config todo-cerrada. Pasa a ser `DEFAULT_TIER`.
 
 ### Qué pasa con `Beta`, `Mid`, `Free`
@@ -188,7 +195,7 @@ Los tiers actuales (`Admin/Pro/Mid/Beta/Free`) se diseñaron para el alta manual
    - (b) **Webhook** `checkout.session.completed` + `customer.subscription.created` (idempotente) confirma/consolida lo mismo.
 6. **Fin del trial (día 7):** Stripe genera factura y cobra la tarjeta automáticamente:
    - Éxito → `invoice.paid` + `customer.subscription.updated status=active` → sigue `Pro`.
-   - **Tarjeta rechazada** → `invoice.payment_failed`; la Subscription pasa a `past_due`. Stripe aplica **Smart Retries / dunning** (según config del dashboard). Mantenemos acceso (`Pro`) durante la **ventana de gracia** (`grace_deadline`, configurable — PREGUNTA #4). Si tras los reintentos sigue impago → `subscription.updated status=unpaid`/`deleted` → tier `Locked` (paywall).
+   - **Tarjeta rechazada** → `invoice.payment_failed`; la Subscription pasa a `past_due`. Stripe aplica **Smart Retries / dunning** (según config del dashboard). Mantenemos acceso (`Pro`) mientras la Subscription siga en `past_due` (Smart Retries de Stripe, decisión #4). Si tras los reintentos sigue impago → `subscription.updated status=unpaid`/`deleted` → tier `Locked` (paywall).
 
 ### Trial único por identidad (anti-reciclaje) — decisión confirmada
 El trial de 7 días es **único por identidad**, no por `user_id` de Clerk (si fuera por `user_id`, bastaría borrar y recrear cuenta para repetirlo). Deduplicación:
@@ -245,11 +252,12 @@ Hoy: `sign-up` es un mensaje estático, Clerk en `restricted` (`sign-up/[[...sig
 
 Objetivo del cliente: que los usuarios actuales pasen por el nuevo flujo de trial.
 
-### Mecanismo propuesto (cutover suave, no duro)
-1. **Antes del cutover**: crear grants de **gracia** (no trial) para todos los usuarios actuales conocidos: `entitlement_grants (user_id, grant_tier='Pro', reason='migración', expires_at=<fecha de corte comunicada>)`. Durante la gracia siguen viendo el producto igual que hoy. **No reciben trial de 7 días** (decisión confirmada #4): ya usan el producto; al llegar la fecha de corte deben suscribirse (cobro directo, sin trial).
-2. **Cambiar `DEFAULT_TIER` de `Beta` a `Locked`** (`policy.py:26`) y activar los `require()` en los endpoints de producto. Sin el paso 1, esto **bloquearía a todos de golpe** (cutover duro) — por eso los grants con gracia.
-3. **Admins internos** (Jaume/Álvaro/Jesús/Adrián): grant `grant_tier='Admin'` sin `expires_at`, o allowlist por env. No pasan por Stripe (PREGUNTA #1).
-4. Durante la gracia, la app muestra banner "activa tu suscripción" que lleva al Checkout. Al **expirar el grant** (`expires_at`), `resolve_tier` cae a `Locked` → paywall. El usuario inicia trial/pago cuando quiera.
+### Mecanismo propuesto (cutover suave, no duro) — ACTUALIZADO 2026-08-19 (decisión Jesús #5)
+1. **En el cutover**: crear un **grant local de trial de 7 días** para todos los usuarios actuales conocidos: `entitlement_grants (user_id, grant_tier='Pro', reason='migration-trial', expires_at=<deploy>+7d)`. Se presenta en la app como **"tu prueba de 7 días"** (contador/banner). NO es un trial de Stripe → **no requiere tarjeta para arrancar**, es frictionless. Al expirar deben suscribirse con **cobro directo (sin `trial_period_days`)** — ya usaron el producto, no reciben un segundo trial en Stripe (decisión #4/#5).
+   - ⚠️ **Se retira** la campaña de email + fecha de corte de calendario: el trial arranca "cuando estemos preparados" (al deploy) y la evidencia es **in-app**, no un email con fecha fija.
+2. **Cambiar `DEFAULT_TIER` de `Beta` a `Locked`** (`policy.py:26`) y activar los `require()` en los endpoints de producto. Sin el paso 1, esto **bloquearía a todos de golpe** (cutover duro) — por eso los grants con trial.
+3. **Admins internos** (Jaume/Álvaro/Jesús/Adrián): grant `grant_tier='Admin'` sin `expires_at`, o allowlist por env. No pasan por Stripe (decisión #1).
+4. Durante el trial, la app muestra **contador "te quedan X días de prueba"** + botón que lleva al Checkout. Al **expirar el grant** (`expires_at`), `resolve_tier` cae a `Locked` → paywall. El usuario se suscribe cuando quiera (cobro directo).
 
 ### Datos guardados durante la transición
 - Estrategias, datasets, backtests están **keyed por `user_id`** en `users.duckdb` (`init_db.py` scoping) y **no se tocan** por un cambio de tier: bloquear solo restringe acceso a features, **no borra datos**. Al suscribirse, mismo `user_id` → datos intactos.
@@ -257,9 +265,9 @@ Objetivo del cliente: que los usuarios actuales pasen por el nuevo flujo de tria
 ### Riesgos
 - **Cutover duro accidental** si se cambia `DEFAULT_TIER`/`require()` sin sembrar los grants primero → todos bloqueados. Orden estricto: grants → luego endurecer.
 - **Frontend optimista** puede aparentar acceso tras expirar el grant hasta que carga el estado real → confirmar fail-closed (§6).
-- **Deliverability**: el aviso de "activa tu suscripción" depende de email; si no llega, el usuario ve el paywall sin contexto.
-- **Percepción**: beta-testers que hoy tienen todo gratis pueden vivir el paso a 29€ como degradación → mensaje y ventana de gracia importan (PREGUNTA #5).
-- **Trial repetido**: usuarios migrados que ya "probaron" el producto ¿tienen derecho a otro trial de 7 días? (PREGUNTA #8).
+- **Evidencia in-app del trial**: como NO hay email (decisión #5), el contador "te quedan X días" es el **único** aviso → tiene que ser visible e inequívoco (banner persistente + estado en la sección de billing), o el usuario llega al paywall del día 7 sin contexto.
+- **Percepción**: beta-testers que hoy tienen todo gratis pueden vivir el paso a 29€ como degradación → el framing "prueba de 7 días" + contador in-app mitiga (decisión #5).
+- **Trial repetido (resuelto #4/#5)**: el trial in-app de migrados es un grant local; al suscribirse el Checkout va **sin `trial_period_days`** (cobro directo). El anti-reciclaje por email+fingerprint solo aplica a **altas nuevas** por Checkout, no a migrados.
 
 ---
 
@@ -280,7 +288,9 @@ Base: el placeholder `BillingTab` (`ApiConsole.tsx:305-341`) y la interfaz `Bill
 **Recomendación:** apoyarse en el **Stripe Billing Portal** para todas las acciones de gestión; nuestra página solo muestra el resumen (estado + próxima factura + método de pago + historial) y un botón "Gestionar facturación". Es lo más barato de construir y lo más seguro (Stripe gestiona el PCI y los flujos).
 
 ### Env vars nuevas necesarias (para Fase 2)
-`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY_EUR`, `STRIPE_PUBLISHABLE_KEY` (frontend), `EDGECUTE_BILLING_DB_PATH`, `BILLING_TRIAL_DAYS` (=7), `BILLING_GRACE_DAYS`, URLs de retorno del Checkout/Portal, y rellenar `UPGRADE_URL` (`config.py:58`).
+`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID_MONTHLY_EUR` (único Price, decisión #7), `STRIPE_PUBLISHABLE_KEY` (frontend), `EDGECUTE_BILLING_DB_PATH`, `BILLING_TRIAL_DAYS` (=7, altas nuevas), `BILLING_MIGRATION_TRIAL_DAYS` (=7, grant in-app de migrados), URLs de retorno del Checkout/Portal, y rellenar `UPGRADE_URL` (`config.py:58`).
+- **NO** se necesita `BILLING_GRACE_DAYS`: la gracia en `past_due` la gestiona el dunning/Smart Retries de Stripe (decisión #4), no un deadline propio.
+- **NO** se activa Stripe Tax (decisión #6): sin recolección de datos fiscales ni cálculo de IVA en código; es config de cuenta togglable después.
 
 ---
 
@@ -290,10 +300,12 @@ Base: el placeholder `BillingTab` (`ApiConsole.tsx:305-341`) y la interfaz `Bill
 - **#1 Admin** → siempre a mano (allowlist / `grant_tier='Admin'`), fuera de Stripe.
 - **#2 Alcance del plan de 29 €** → = tier `Pro` (`policy.py:84-100`): incluye Market Analysis; excluye Market Sentiment, portal de API, preview.
 - **#3 Cancelación** → hasta fin de periodo (`cancel_at_period_end=true`), sin reembolso/prorrateo.
-- **#8 Trial** → único por identidad (email + card fingerprint, no `user_id`); migrados sin trial nuevo → estado `gracia` con fecha de corte.
+- **#8 Trial** → único por identidad (email + card fingerprint, no `user_id`) para **altas nuevas**; migrados con trial in-app de 7 días (grant local), al suscribirse cobro directo sin trial de Stripe.
 
-### ⏳ Pendientes de decisión
-4. **Ventana de gracia en `past_due`**: ¿cuántos días se mantiene el acceso tras un cobro fallido antes de cortar? ¿Usamos el dunning/Smart Retries de Stripe o un `grace_deadline` propio?
-5. **Comunicación del "reset" a usuarios actuales**: ¿qué mensaje y qué fecha de corte (`expires_at`) les damos? ¿Email + banner in-app?
-6. **Fiscalidad (IVA / facturación española-UE)**: ¿activamos **Stripe Tax**? ¿Recabamos datos fiscales (autónomo/empresa, NIF) para las facturas? Afecta al contenido de `invoices` y al Checkout.
-7. **¿Un único plan (29 €/mes) o habrá anual/variantes?** Define cuántos Prices creamos en Stripe.
+### ✅ Resueltas (2026-08-19 · Jesús)
+- **#4 Gracia `past_due`** → **Smart Retries de Stripe**; `Pro` mientras `past_due`, `Locked` al pasar a `unpaid`/`canceled`. Sin `grace_deadline` propio.
+- **#5 Reinicio de usuarios actuales** → **trial in-app de 7 días al desplegar** (grant local, contador visible en app). Se retira la campaña de email + fecha de corte fija. Al expirar → `Locked` → Checkout con cobro directo.
+- **#6 IVA** → **sin Stripe Tax**; es config de cuenta, no bloquea; sin recolección de datos fiscales en el MVP.
+- **#7 Precio** → **solo mensual, 29 €/mes** = un único Stripe Price en EUR.
+
+**→ TODAS las preguntas abiertas están resueltas. El diseño (Fase 1) queda CERRADO y listo para Fase 2 (implementación).**
