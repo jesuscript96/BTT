@@ -110,6 +110,13 @@ export interface TradeRecord {
   exit_reason: string;
   mae: number;
   mfe?: number;
+  // MAE/MFE medidos desde el máximo previo del día (fade del movimiento completo),
+  // referencia alternativa a la de "desde tu entrada" (mae/mfe de arriba).
+  mae_prev_max?: number;
+  mfe_prev_max?: number;
+  prev_max_ref?: number | null;      // precio del máximo previo usado como referencia
+  fade_at_entry_pct?: number | null; // % de fade ya recorrido en el momento de tu entrada
+  partials_skipped?: { index: number; reason: 'min_gain' | 'crossed' }[];
   r_multiple: number | null;
   entry_hour: number;
   entry_weekday: number;

@@ -213,6 +213,15 @@ export interface RiskSettings {
 export interface PartialTakeProfit {
     distance_pct: number | 'EOD' | string;
     capital_pct: number;
+    // --- Disparador dual 1A (fade desde el máximo previo del día). Opcional y solo
+    // aplica a parciales de tipo % numérico; EOD/TIME/HOUR lo ignoran. ---
+    // 1A: % de caída desde el máximo previo al que se ejecuta el parcial (ej. 50).
+    fade_from_high_pct?: number;
+    // Ganancia mínima (%, desde tu entrada) exigida a 1A para activarse. Si al
+    // entrar el nivel dejaría menos (o ya está cruzado), 1A se salta y manda 1B.
+    min_gain_pct?: number;
+    // Empate en la misma vela: 'fade' = manda 1A (default), 'entry' = manda 1B.
+    priority?: 'fade' | 'entry';
 }
 
 export interface TrailingStopSettings {

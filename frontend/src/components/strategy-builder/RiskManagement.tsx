@@ -57,6 +57,16 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
         });
     };
 
+    // Actualiza varios campos de un parcial en un solo onChange (add/clear del fade 1A).
+    const updatePartialFields = (index: number, fields: Partial<PartialTakeProfit>) => {
+        onChange({
+            ...risk,
+            partial_take_profits: (risk.partial_take_profits || []).map((p, i) =>
+                i === index ? { ...p, ...fields } : p
+            )
+        });
+    };
+
     const totalPartialCapital = (risk.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
 
 
@@ -666,10 +676,10 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <div className="space-y-2">
                                     {(risk.partial_take_profits || []).map((partial, idx) => (
-                                        <div key={idx} className="group relative"
+                                        <div key={idx} className="group relative" style={{ borderBottom: '0.5px dotted var(--color-ec-border)' }}>
+                                        <div
                                             style={{
                                                 backgroundColor: 'transparent',
-                                                borderBottom: '0.5px dotted var(--color-ec-border)',
                                                 padding: '8px 0',
                                                 display: 'flex',
                                                 alignItems: 'center',
@@ -862,6 +872,151 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                     <Trash2 className="w-3.5 h-3.5" />
                                                 </button>
                                             )}
+                                        </div>
+
+                                        {/* --- 1A: fade desde el máximo previo del día. Solo parciales de % numérico
+                                            (EOD/TIME/HOUR no llevan disparador dual). Plegado hasta que se añade. --- */}
+                                        {typeof partial.distance_pct === 'number' && (
+                                            partial.fade_from_high_pct == null ? (
+                                                <button
+                                                    onClick={() => updatePartialFields(idx, { fade_from_high_pct: 50, priority: 'fade' })}
+                                                    style={{
+                                                        marginLeft: 65,
+                                                        marginBottom: 8,
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        fontSize: 9,
+                                                        fontWeight: 700,
+                                                        letterSpacing: '0.03em',
+                                                        color: 'var(--color-ec-text-muted)',
+                                                        padding: '2px 0',
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                        transition: 'color 150ms ease',
+                                                    }}
+                                                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-ec-copper)'; }}
+                                                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-ec-text-muted)'; }}
+                                                >
+                                                    + Añadir fade desde el máximo (1A)
+                                                </button>
+                                            ) : (
+                                                <div style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: 10,
+                                                    flexWrap: 'wrap',
+                                                    marginLeft: 65,
+                                                    marginBottom: 8,
+                                                    padding: '2px 0',
+                                                }}>
+                                                    <span style={{
+                                                        fontSize: 9, fontWeight: 800,
+                                                        color: 'var(--color-ec-copper)',
+                                                        textTransform: 'uppercase', letterSpacing: '0.05em',
+                                                    }}>
+                                                        Fade 1A
+                                                    </span>
+
+                                                    {/* Fade desde el máximo (%) */}
+                                                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>
+                                                        Desde máx.
+                                                        <div className="relative" style={{ width: 58 }}>
+                                                            <input
+                                                                type="number"
+                                                                step="0.5"
+                                                                min="0"
+                                                                value={partial.fade_from_high_pct ?? ''}
+                                                                onChange={(e) => updatePartial(idx, 'fade_from_high_pct', e.target.value === '' ? 0 : Number(e.target.value))}
+                                                                onFocus={(e) => e.target.select()}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                    border: '0.5px solid var(--color-ec-border)',
+                                                                    borderRadius: 4,
+                                                                    padding: '4px 16px 4px 6px',
+                                                                    fontSize: 11, fontWeight: 700,
+                                                                    color: 'var(--color-ec-text-primary)',
+                                                                    outline: 'none', textAlign: 'right',
+                                                                }}
+                                                            />
+                                                            <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">%</span>
+                                                        </div>
+                                                    </label>
+
+                                                    {/* Ganancia mínima (%) — vacío = sin mínimo */}
+                                                    <label
+                                                        style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}
+                                                        title="Ganancia mínima (desde tu entrada) exigida a 1A para activarse. Si al entrar el nivel dejaría menos, o ya está cruzado, 1A se salta y toma el relevo el % desde entrada (1B). Vacío = sin mínimo."
+                                                    >
+                                                        Ganancia mín.
+                                                        <div className="relative" style={{ width: 58 }}>
+                                                            <input
+                                                                type="number"
+                                                                step="0.5"
+                                                                min="0"
+                                                                placeholder="—"
+                                                                value={partial.min_gain_pct ?? ''}
+                                                                onChange={(e) => updatePartial(idx, 'min_gain_pct', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                                onFocus={(e) => e.target.select()}
+                                                                style={{
+                                                                    width: '100%',
+                                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                                    border: '0.5px solid var(--color-ec-border)',
+                                                                    borderRadius: 4,
+                                                                    padding: '4px 16px 4px 6px',
+                                                                    fontSize: 11, fontWeight: 700,
+                                                                    color: 'var(--color-ec-text-primary)',
+                                                                    outline: 'none', textAlign: 'right',
+                                                                }}
+                                                            />
+                                                            <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">%</span>
+                                                        </div>
+                                                    </label>
+
+                                                    {/* Prioridad en empate de vela (OCO): quién manda */}
+                                                    <div
+                                                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                                                        title="Si en una misma vela el precio toca los dos niveles a la vez, manda el elegido y el otro se cancela (una sola ejecución). En velas distintas gana siempre el primero en el tiempo."
+                                                    >
+                                                        <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Manda:</span>
+                                                        <div style={{ display: 'inline-flex', border: '0.5px solid var(--color-ec-border)', borderRadius: 4, overflow: 'hidden' }}>
+                                                            {(['fade', 'entry'] as const).map((opt) => {
+                                                                const active = (partial.priority ?? 'fade') === opt;
+                                                                return (
+                                                                    <button
+                                                                        key={opt}
+                                                                        onClick={() => updatePartial(idx, 'priority', opt)}
+                                                                        style={{
+                                                                            padding: '4px 8px',
+                                                                            fontSize: 9,
+                                                                            fontWeight: 700,
+                                                                            cursor: 'pointer',
+                                                                            border: 'none',
+                                                                            fontFamily: 'var(--color-ec-sans)',
+                                                                            backgroundColor: active ? 'var(--color-ec-copper)' : 'transparent',
+                                                                            color: active ? '#fff' : 'var(--color-ec-text-muted)',
+                                                                            transition: 'background-color 120ms ease, color 120ms ease',
+                                                                        }}
+                                                                    >
+                                                                        {opt === 'fade' ? 'Fade' : 'Entrada'}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Quitar el fade 1A */}
+                                                    <button
+                                                        onClick={() => updatePartialFields(idx, { fade_from_high_pct: undefined, min_gain_pct: undefined, priority: undefined })}
+                                                        title="Quitar el disparador de fade (1A). El parcial vuelve a funcionar solo por % desde la entrada."
+                                                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 2, color: 'var(--color-ec-text-muted)' }}
+                                                        className="hover:text-ec-loss transition-colors"
+                                                    >
+                                                        <Trash2 className="w-3 h-3" />
+                                                    </button>
+                                                </div>
+                                            )
+                                        )}
                                         </div>
                                     ))}
                                 </div>

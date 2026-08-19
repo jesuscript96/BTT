@@ -50,6 +50,11 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
   // Render en ventana: cap inicial de filas para no meter 60k <tr> en el DOM de
   // golpe (con search/sort operando sobre TODAS). "Mostrar más" agranda la ventana.
   const [visibleCount, setVisibleCount] = useState(500);
+  // Referencia de MAE%/MFE%: "entry" = desde tu entrada (histórico), "prev_max" =
+  // desde el máximo previo del día (fade del movimiento completo).
+  const [maeRef, setMaeRef] = useState<"entry" | "prev_max">("entry");
+  const maeField: SortKey = maeRef === "prev_max" ? "mae_prev_max" : "mae";
+  const mfeField: SortKey = maeRef === "prev_max" ? "mfe_prev_max" : "mfe";
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -121,7 +126,34 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
           className="px-2.5 py-1.5 text-[11px] font-mono border-none bg-transparent text-[var(--foreground)] focus:outline-none w-56"
           style={{ borderBottom: '1px solid var(--color-ec-border)' }}
         />
-        <div className="flex gap-5 text-[10px] text-[var(--color-ec-text-secondary)] font-mono">
+        <div className="flex items-center gap-5 text-[10px] text-[var(--color-ec-text-secondary)] font-mono">
+          {/* Referencia MAE/MFE: desde la entrada (histórico) o desde el máximo previo del día */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] uppercase tracking-wider opacity-70">MAE/MFE:</span>
+            <div style={{ display: 'inline-flex', border: '0.5px solid var(--color-ec-border)', borderRadius: 4, overflow: 'hidden' }}>
+              {([["entry", "Entrada"], ["prev_max", "Máx. previo"]] as const).map(([opt, label]) => {
+                const active = maeRef === opt;
+                return (
+                  <button
+                    key={opt}
+                    onClick={() => setMaeRef(opt)}
+                    style={{
+                      padding: '2px 7px',
+                      fontSize: 9,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      border: 'none',
+                      backgroundColor: active ? 'var(--color-ec-copper)' : 'transparent',
+                      color: active ? '#fff' : 'var(--color-ec-text-muted)',
+                      transition: 'background-color 120ms ease, color 120ms ease',
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <span>
             total: <strong style={{ color: 'var(--color-ec-text-high)' }}>{summary.total}</strong>
           </span>
@@ -155,8 +187,8 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
               <SortHeader label="Size" field="size" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="PnL" field="pnl" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="R" field="r_multiple" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="MAE%" field="mae" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="MFE%" field="mfe" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label={maeRef === "prev_max" ? "MAE%ᴹ" : "MAE%"} field={maeField} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label={maeRef === "prev_max" ? "MFE%ᴹ" : "MFE%"} field={mfeField} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Exit" field="exit_reason" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
@@ -198,21 +230,47 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
                 <td className={`px-4 py-1.5 ${(t.r_multiple || 0) >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
                   {t.r_multiple !== null ? `${t.r_multiple.toFixed(2)}R` : "—"}
                 </td>
-                <td className="px-4 py-1.5 text-[var(--danger)]">
-                  {t.mae != null ? `${t.mae.toFixed(2)}%` : "—"}
-                </td>
-                <td className="px-4 py-1.5 text-[var(--success)]">
-                  {t.mfe != null ? `${t.mfe.toFixed(2)}%` : "—"}
-                </td>
+                {(() => {
+                  const maeVal = maeRef === "prev_max" ? t.mae_prev_max : t.mae;
+                  const mfeVal = maeRef === "prev_max" ? t.mfe_prev_max : t.mfe;
+                  return (
+                    <>
+                      <td className="px-4 py-1.5 text-[var(--danger)]">
+                        {maeVal != null ? `${maeVal.toFixed(2)}%` : "—"}
+                      </td>
+                      <td className="px-4 py-1.5 text-[var(--success)]">
+                        {mfeVal != null ? `${mfeVal.toFixed(2)}%` : "—"}
+                      </td>
+                    </>
+                  );
+                })()}
                 <td className="px-4 py-1.5">
                   {(() => {
                     const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                    const skipped = t.partials_skipped ?? [];
                     return (
-                      <span
-                        className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                        style={{ backgroundColor: style.bg, color: style.text }}
-                      >
-                        {t.exit_reason}
+                      <span className="inline-flex items-center gap-1">
+                        <span
+                          className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                          style={{ backgroundColor: style.bg, color: style.text }}
+                        >
+                          {t.exit_reason}
+                        </span>
+                        {skipped.length > 0 && (
+                          <span
+                            className="inline-block px-1 py-0.5 rounded-sm text-[9px] font-bold"
+                            style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#ef4444" }}
+                            title={
+                              "Fade (1A) saltado en este trade: " +
+                              skipped
+                                .map((s) => (s.reason === "min_gain" ? "ganancia mínima no alcanzada al entrar" : "nivel ya cruzado al entrar"))
+                                .join("; ") +
+                              ". La toma de beneficio recayó en el % desde la entrada (1B)."
+                            }
+                          >
+                            ⚠ fade saltado
+                          </span>
+                        )}
                       </span>
                     );
                   })()}
