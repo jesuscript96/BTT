@@ -185,6 +185,18 @@ def test_fila_condicional_parser_y_capital_por_disparo():
     assert len(pts2) == 1 and pts2[0]["fade_from_high_pct"] == pytest.approx(0.4)
     assert pts2[0]["distance_pct"] == pytest.approx(0.99), "1B inalcanzable (±99%)"
 
+    # Formato de fila autocontenida (UI nueva): fade + fallback % de entrada.
+    risk3 = {"partial_take_profits": [
+        {"distance_pct": None, "fade_from_high_pct": 50, "fallback_entry_pct": 5,
+         "min_gain_pct": 10, "priority": "fade", "capital_pct": 40},
+    ]}
+    pts3 = _parse_partial_tps(risk3)
+    assert len(pts3) == 1
+    assert pts3[0]["distance_pct"] == pytest.approx(0.05), "respaldo % desde entrada"
+    assert pts3[0]["fade_from_high_pct"] == pytest.approx(0.5)
+    assert pts3[0]["capital_pct"] == pytest.approx(0.4)
+    assert pts3[0]["capital_pct_a"] == pytest.approx(0.4), "un solo capital para ambos disparos"
+
     # Simulación: gana el fade → vende el 30% (capital de la fila condicional).
     closes = [10, 12, 14, 19.8, 16, 15.9, 15.8, 15.7, 15.6, 11, 11]
     lows = [9.8, 11.8, 13.8, 19.6, 15.8, 15.7, 15.6, 15.5, 15.4, 9.5, 9.5]

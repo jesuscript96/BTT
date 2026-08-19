@@ -218,6 +218,9 @@ export interface PartialTakeProfit {
     // Fila condicional: % de caída desde el máximo previo del día que ejecuta
     // este parcial (ej. 50 = al 50% del recorrido desde el máximo).
     fade_from_high_pct?: number;
+    // Respaldo del fade: % desde tu entrada por el que se ejecuta este parcial
+    // cuando al entrar el nivel de fade está muy cerca (o ya cruzado).
+    fallback_entry_pct?: number;
     // Ganancia mínima (%, desde tu entrada) exigida al fade. Si al entrar su
     // nivel dejaría menos (o ya está cruzado), no se ejecuta y queda marcado.
     min_gain_pct?: number;

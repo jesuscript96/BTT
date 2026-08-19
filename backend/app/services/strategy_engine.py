@@ -1176,12 +1176,23 @@ def _parse_partial_tps(risk: dict) -> list | None:
         is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
         is_pct = isinstance(dist, (int, float)) and dist > 0
 
-        # Fila condicional pura (fade sin % desde entrada): se empareja con el
-        # último slot % emitido; si no hay, se emite como slot fade-huérfano con
-        # un 1B inalcanzable (999%). El capital de la fila fade es el que vende
-        # cuando gana el fade (capital_pct_a).
+        # Fila de fade (sin % de entrada propio). Con fallback_entry_pct es un
+        # slot AUTOCONTENIDO: fade + su % de respaldo, un solo capital (el de
+        # esta fila) para cualquiera de los dos disparos. Sin fallback, se
+        # empareja con el último slot % previo (formato de dos filas) o queda
+        # como slot fade puro (1B inalcanzable, 99%).
         if fade is not None and not (is_eod_val or is_time_val or is_hour_val or is_pct):
             if cap <= 0:
+                continue
+            fb = pt.get("fallback_entry_pct")
+            prio = 1 if pt.get("priority") == "entry" else 0
+            if isinstance(fb, (int, float)) and fb > 0:
+                partial_tps.append({
+                    "distance_pct": fb,
+                    "capital_pct": cap / 100.0, "capital_pct_a": cap / 100.0,
+                    "fade_from_high_pct": fade, "min_gain_pct": _ming_of(pt),
+                    "priority": prio,
+                })
                 continue
             last_pct = next((s for s in reversed(partial_tps)
                              if isinstance(s["distance_pct"], (int, float))
@@ -1190,14 +1201,14 @@ def _parse_partial_tps(risk: dict) -> list | None:
             if last_pct is not None:
                 last_pct["fade_from_high_pct"] = fade
                 last_pct["min_gain_pct"] = _ming_of(pt)
-                last_pct["priority"] = 1 if pt.get("priority") == "entry" else 0
+                last_pct["priority"] = prio
                 last_pct["capital_pct_a"] = cap / 100.0
             else:
                 partial_tps.append({
                     "distance_pct": 99,  # 1B inalcanzable de facto (±99% intraday): slot fade puro
                     "capital_pct": cap / 100.0, "capital_pct_a": cap / 100.0,
                     "fade_from_high_pct": fade, "min_gain_pct": _ming_of(pt),
-                    "priority": 1 if pt.get("priority") == "entry" else 0,
+                    "priority": prio,
                 })
             continue
 
