@@ -44,6 +44,11 @@ FEATURE_TYPES: Dict[str, str] = {
     "api.access": "boolean",
     "api.runs_per_month": "limit",
     "screener.access": "boolean",
+    # Ticker Analysis (core: charts/gap-stats/filings). Added 2026-08 for the
+    # subscription gate (2E). Only "Locked" sets it False; every other tier omits
+    # it, so can() defaults it to True (fail-open) — correct, since the three
+    # tiers the gate can resolve (Admin/Pro/Locked) then behave right.
+    "ticker.access": "boolean",
     "api.portal.access": "boolean",
     "market.sentiment.access": "boolean",
     "market.analysis.access": "boolean",
@@ -171,6 +176,7 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "api.access": False,
         "api.runs_per_month": 0,
         "screener.access": False,
+        "ticker.access": False,
         "api.portal.access": False,
         "market.sentiment.access": False,
         "market.analysis.access": False,

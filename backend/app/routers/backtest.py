@@ -8,8 +8,10 @@ try:
 except ImportError:  # optional dep — the memory guard degrades to a no-op if absent
     psutil = None
 
-from fastapi import APIRouter, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel
+
+from app.billing.gate import subscription_gate
 
 from app.services.data_service import fetch_day_candles
 from app.services.backtest_orchestrator import (
@@ -118,6 +120,7 @@ def run_backtest_endpoint(
     req: BacktestRequest,
     response: Response,
     x_backtest_sync: str | None = Header(default=None),
+    _gate: bool = Depends(subscription_gate("backtester.run")),
 ):
     # Memory guard: refuse to start when the host is already critically low on
     # RAM (e.g. another heavy run in flight, or the RAM-cache reload after a
@@ -385,7 +388,10 @@ def get_multi_candles(
 
 
 @router.post("/montecarlo")
-def run_montecarlo_endpoint(req: MonteCarloRequest):
+def run_montecarlo_endpoint(
+    req: MonteCarloRequest,
+    _gate: bool = Depends(subscription_gate("backtester.run")),
+):
     if not req.pnls:
         raise HTTPException(status_code=400, detail="No trades provided")
     if req.simulations < 100 or req.simulations > 10000:
@@ -401,7 +407,10 @@ def run_montecarlo_endpoint(req: MonteCarloRequest):
 
 
 @router.post("/what-if")
-def run_what_if_endpoint(req: WhatIfRequest):
+def run_what_if_endpoint(
+    req: WhatIfRequest,
+    _gate: bool = Depends(subscription_gate("backtester.run")),
+):
     if not req.trades:
         raise HTTPException(status_code=400, detail="No trades provided for simulation")
     try:

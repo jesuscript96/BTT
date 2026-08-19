@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from app.database import get_db_connection
+from app.billing.gate import subscription_gate
 import asyncio
 import logging
 import math
@@ -38,7 +39,10 @@ SCREENER_CACHE_TTL = timedelta(minutes=5)
 
 
 @router.get("/daily")
-def get_screener_daily(limit: int = 100):
+def get_screener_daily(
+    limit: int = 100,
+    _gate: bool = Depends(subscription_gate("screener.access")),
+):
     """
     Return top gainers and top losers from the latest available trading day
     in daily_metrics.  Premarket and aftermarket tabs are reserved for future

@@ -10,6 +10,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from app.database import get_db_connection
 from app.redis_client import get_redis
+from app.billing.gate import subscription_gate
 from app.services import massive_service, edgar_service, finviz_service
 
 def _no_store(response: Response) -> None:
@@ -1183,7 +1184,7 @@ def _fetch_db_profile(ticker: str) -> dict:
 
 
 @router.get("/{ticker}")
-def get_ticker_analysis(ticker: str):
+def get_ticker_analysis(ticker: str, _gate: bool = Depends(subscription_gate("ticker.access"))):
     ticker = ticker.upper()
     now = datetime.now()
 
@@ -1403,7 +1404,7 @@ def get_ticker_analysis(ticker: str):
 
 
 @router.get("/{ticker}/chart")
-def get_ticker_chart(ticker: str):
+def get_ticker_chart(ticker: str, _gate: bool = Depends(subscription_gate("ticker.access"))):
     ticker = ticker.upper()
     now = datetime.now()
     
@@ -1583,7 +1584,7 @@ def get_ticker_chart(ticker: str):
 
 
 @router.get("/{ticker}/balance-sheet")
-def get_ticker_balance_sheet(ticker: str):
+def get_ticker_balance_sheet(ticker: str, _gate: bool = Depends(subscription_gate("ticker.access"))):
     ticker = ticker.upper()
     now = datetime.now()
 
@@ -1721,7 +1722,7 @@ def _validate_gap_stats(p: dict) -> bool:
 
 
 @router.get("/{ticker}/gap-stats")
-def get_ticker_gap_stats(ticker: str):
+def get_ticker_gap_stats(ticker: str, _gate: bool = Depends(subscription_gate("ticker.access"))):
     ticker = ticker.upper()
     now = datetime.now()
 
@@ -1874,7 +1875,7 @@ def get_ticker_gap_stats(ticker: str):
 
 
 @router.get("/{ticker}/sec-filings")
-def get_sec_filings(ticker: str):
+def get_sec_filings(ticker: str, _gate: bool = Depends(subscription_gate("ticker.access"))):
     """Filings recientes desde data.sec.gov/submissions (JSON estructurado).
 
     Sustituye al feed ATOM legacy de cgi-bin: una request cacheable que además

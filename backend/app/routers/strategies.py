@@ -6,12 +6,13 @@ from datetime import datetime
 
 from app.database import get_user_db_connection, get_user_db_lock
 from app.auth import get_current_user_id, scope_clause
+from app.billing.gate import subscription_gate
 from app.schemas.strategy import Strategy, StrategyCreate
 
 router = APIRouter()
 
 @router.post("/", response_model=Strategy)
-def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
+def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id), _gate: bool = Depends(subscription_gate("vault.access"))):
     lock = get_user_db_lock()
     with lock:
         con = get_user_db_connection()
@@ -68,7 +69,7 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
     return full_strategy
 
 @router.put("/{strategy_id}", response_model=Strategy)
-def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
+def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id), _gate: bool = Depends(subscription_gate("vault.access"))):
     lock = get_user_db_lock()
     scope_sql, scope_params = scope_clause(user_id)
     with lock:
@@ -133,7 +134,7 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
     )
 
 @router.get("/")
-def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
+def list_strategies(user_id: Optional[str] = Depends(get_current_user_id), _gate: bool = Depends(subscription_gate("vault.access"))):
     con = get_user_db_connection(read_only=True)
     scope_sql, scope_params = scope_clause(user_id)
     try:
@@ -178,7 +179,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
     return [s.model_dump() if hasattr(s, "model_dump") else s for s in strategies]
 
 @router.get("/{strategy_id}")
-def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id), _gate: bool = Depends(subscription_gate("vault.access"))):
     con = get_user_db_connection(read_only=True)
     scope_sql, scope_params = scope_clause(user_id)
     try:
@@ -203,7 +204,7 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
     raise HTTPException(status_code=404, detail="Strategy not found")
 
 @router.delete("/{strategy_id}")
-def delete_strategy(strategy_id: str, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id)):
+def delete_strategy(strategy_id: str, background_tasks: BackgroundTasks, user_id: Optional[str] = Depends(get_current_user_id), _gate: bool = Depends(subscription_gate("vault.access"))):
     # NOTE: DELETE only works for local strategies.
     # Strategies that only exist in GCS parquet cannot be deleted from here.
     # GCS parquet is read-only from the backend.
