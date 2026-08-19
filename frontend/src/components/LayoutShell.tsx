@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import WhatsNewModal from "@/components/WhatsNewModal";
+import { BillingGuard } from "@/components/billing/BillingGuard";
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -21,6 +22,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         overflow: "hidden",
       }}
     >
+      {!isAuthRoute && <BillingGuard />}
       {!isAuthRoute && <Sidebar onOpenFeedback={() => setFeedbackOpen(true)} />}
       <main
         style={{
