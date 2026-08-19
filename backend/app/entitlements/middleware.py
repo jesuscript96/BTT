@@ -24,11 +24,20 @@ import httpx
 from fastapi import Depends, HTTPException
 
 from app.auth.clerk import get_current_user_id
+from app.billing import config as billing_config
+from app.billing.tier_resolver import resolve_tier
 from app.entitlements import policy, usage
 from app.entitlements.checker import EntitlementError, check_can, check_limit
 
 CLERK_API_BASE = "https://api.clerk.com/v1"
 _CLERK_TIMEOUT = 5.0
+
+
+def _billing_admin_ids() -> frozenset[str]:
+    """Admin allowlist for the billing world (comma-separated Clerk user_ids in
+    BILLING_ADMIN_USER_IDS). Internal team bypasses Stripe (decision #1)."""
+    raw = os.getenv("BILLING_ADMIN_USER_IDS", "")
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
 def get_tier(user_id: Optional[str]) -> str:
@@ -48,6 +57,16 @@ def get_tier(user_id: Optional[str]) -> str:
     dev_tier = os.getenv("DEV_TIER", "").strip()
     if dev_tier in policy.POLICY:
         return dev_tier
+
+    # Billing cutover (Fase 2G): when enabled, the tier is derived from the local
+    # subscription store (resolve_tier) instead of a per-request Clerk call. This
+    # is the single switch that makes the whole billing system live. Off by
+    # default -> the unchanged Clerk-backed path below runs, so prod is identical
+    # until we flip BILLING_ENABLED at cutover.
+    if billing_config.BILLING_ENABLED:
+        if user_id and user_id in _billing_admin_ids():
+            return "Admin"
+        return resolve_tier(user_id)
 
     if not user_id:
         return policy.DEFAULT_TIER

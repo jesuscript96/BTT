@@ -19,11 +19,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Header, HTTPException
 
 from app.auth.clerk import get_optional_user_id
 from app.billing import config
-from app.billing.tier_resolver import resolve_tier
 from app.entitlements.checker import EntitlementError, check_can
 
 
@@ -34,8 +33,14 @@ def subscription_gate(feature: str):
     def _dependency(authorization: Optional[str] = Header(default=None)) -> bool:
         if not config.BILLING_ENABLED:
             return True  # dormant: do not even parse the token
+        # Import here to avoid a load-time cycle (middleware imports billing).
+        from app.entitlements.middleware import get_tier
+
         user_id = get_optional_user_id(authorization)  # never raises; None if anon
-        tier = resolve_tier(user_id)                    # local store; anon -> Locked
+        # get_tier under BILLING_ENABLED = admin allowlist + resolve_tier(local
+        # store); anon -> Locked. Same resolution as require(), so admins granted
+        # via the env allowlist are not wrongly blocked here.
+        tier = get_tier(user_id)
         try:
             check_can(tier, feature)
         except EntitlementError as exc:
