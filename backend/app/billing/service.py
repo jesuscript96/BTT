@@ -11,8 +11,9 @@ from typing import Optional
 
 from app.billing import config
 from app.billing import store as store_mod
-from app.billing.store import BillingCustomer, Store
+from app.billing.store import BillingCustomer, Store, Subscription
 from app.billing.stripe_client import StripeGateway
+from app.billing.stripe_objects import _id, parse_subscription
 
 
 class BillingError(Exception):
@@ -93,3 +94,50 @@ class BillingService:
         if not ret:
             raise BillingError("BILLING_PORTAL_RETURN_URL not configured")
         return self._gateway.create_billing_portal_session(customer.stripe_customer_id, ret)
+
+    # ── Synchronous checkout confirmation (§4 step 5a) ───────────────────────
+    def sync_checkout_return(self, session_id: str) -> Optional[Subscription]:
+        """Called on the success_url: retrieve the Checkout Session (subscription
+        expanded) and upsert the subscription NOW, so access does not wait on the
+        webhook. Idempotent with the webhook path (same parser, same upsert)."""
+        session = self._gateway.retrieve_checkout_session(session_id)
+        sub_obj = session.get("subscription")
+        if not sub_obj or isinstance(sub_obj, str):
+            # No expanded subscription (e.g. not completed yet) — nothing to sync.
+            return None
+        fields = parse_subscription(sub_obj)
+        user_id = session.get("client_reference_id")
+        if not user_id:
+            customer = self._store.get_customer_by_stripe_id(fields["stripe_customer_id"])
+            user_id = customer.user_id if customer else None
+        if not user_id:
+            return None
+        # Ensure the customer link exists (webhook may not have arrived yet).
+        if self._store.get_customer_by_user(user_id) is None:
+            store_customer_id = fields["stripe_customer_id"] or _id(session.get("customer"))
+            if store_customer_id:
+                self._store.upsert_customer(user_id, store_customer_id)
+        return self._store.upsert_subscription(user_id=user_id, **fields)
+
+    # ── Reconciliation (heal missed webhooks) ────────────────────────────────
+    def reconcile_user(self, user_id: str) -> Optional[Subscription]:
+        """Re-pull the user's subscriptions from Stripe and upsert the latest.
+        Stripe is the source of truth; this repairs local drift."""
+        customer = self._store.get_customer_by_user(user_id)
+        if customer is None:
+            return None
+        subs = self._gateway.list_subscriptions(customer.stripe_customer_id)
+        latest: Optional[Subscription] = None
+        for sub_obj in subs:
+            fields = parse_subscription(sub_obj)
+            latest = self._store.upsert_subscription(user_id=user_id, **fields)
+        return latest
+
+    def reconcile_all(self) -> int:
+        """Reconcile every known customer. Returns the count reconciled. Meant to
+        run from a nightly job (host cron / scheduler), not a request path."""
+        count = 0
+        for customer in self._store.list_customers():
+            if self.reconcile_user(customer.user_id) is not None:
+                count += 1
+        return count

@@ -84,3 +84,23 @@ class StripeGateway:
         except Exception as exc:
             raise StripeError(f"create_billing_portal_session failed: {exc}") from exc
         return s["url"]
+
+    # ── Reads (Fase 2D: sync return + reconciliation) ─────────────────────────
+    def retrieve_checkout_session(self, session_id: str) -> dict:
+        """Retrieve a Checkout Session with its subscription expanded, for the
+        synchronous access confirmation on the success_url (§4 step 5a)."""
+        try:
+            s = self._stripe.checkout.Session.retrieve(
+                session_id, expand=["subscription"]
+            )
+        except Exception as exc:
+            raise StripeError(f"retrieve_checkout_session failed: {exc}") from exc
+        return dict(s)
+
+    def list_subscriptions(self, customer_id: str) -> list[dict]:
+        """List a customer's subscriptions (all statuses) for reconciliation."""
+        try:
+            resp = self._stripe.Subscription.list(customer=customer_id, status="all")
+        except Exception as exc:
+            raise StripeError(f"list_subscriptions failed: {exc}") from exc
+        return [dict(s) for s in (resp.get("data") or [])]

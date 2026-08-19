@@ -219,6 +219,14 @@ class Store:
             ).fetchone()
         return _to_customer(r) if r else None
 
+    def list_customers(self) -> list[BillingCustomer]:
+        """All customers (for the reconciliation job)."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT * FROM billing_customers ORDER BY created_at ASC"
+            ).fetchall()
+        return [_to_customer(r) for r in rows]
+
     # ── Subscriptions ────────────────────────────────────────────────────────
     def upsert_subscription(
         self,
