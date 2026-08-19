@@ -152,6 +152,30 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "market.analysis.access": True,
         "admin.preview_features": False,
     },
+    # Paywall (billing, 2026-08): TODO cerrado. Es el estado "sin suscripción
+    # activa ni grant" al que resolve_tier (app/billing) mapea a quien no ha
+    # pagado / no está en trial. Se añade AHORA pero está inerte: nadie resuelve
+    # a "Locked" hasta que get_tier pase a leer el store local (cutover, Fase 2G).
+    # ⚠️ NO reutilizamos "Free" como bloqueado porque Free está casi todo abierto.
+    # Cuando sea el DEFAULT_TIER, endurece el fail-closed: sin saber quién eres,
+    # no ves nada. Ver docs/FASE1_DISENO_TRIAL_SUSCRIPCION_STRIPE.md §3.
+    "Locked": {
+        "backtester.run": False,
+        "backtester.surface_3d": False,
+        "backtester.runs_per_day": 0,
+        "backtester.date_range_years": 0,
+        "ticker.edgie_assessment": False,
+        "ticker.edgie_messages_per_day": 0,
+        "vault.access": False,
+        "vault.max_strategies": 0,
+        "api.access": False,
+        "api.runs_per_month": 0,
+        "screener.access": False,
+        "api.portal.access": False,
+        "market.sentiment.access": False,
+        "market.analysis.access": False,
+        "admin.preview_features": False,
+    },
 }
 
 
