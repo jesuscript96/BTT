@@ -125,6 +125,9 @@ export interface TradeRecord {
   // referencia alternativa a la de "desde tu entrada" (mae/mfe de arriba).
   mae_prev_max?: number;
   mfe_prev_max?: number;
+  // Precio del stop activo al cerrar (incluye trailing actualizado). Llega en el
+  // JSON del backend aunque antes no estuviera declarado aquí.
+  stop_loss?: number | null;
   prev_max_ref?: number | null;      // precio del máximo previo usado como referencia
   fade_at_entry_pct?: number | null; // % de fade ya recorrido en el momento de tu entrada
   partials_skipped?: { index: number; reason: 'min_gain' | 'crossed' }[];

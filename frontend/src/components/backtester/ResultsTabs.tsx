@@ -22,6 +22,9 @@ type TabId = (typeof TABS)[number]["id"];
 
 interface ResultsTabsProps {
   result: BacktestResult;
+  // Trades del resultado COMPLETO (sin filtro IS/OOS) para la exportación CSV
+  // del tab Trades; si no llega, ese tab exporta los mismos `result.trades`.
+  fullTrades?: TradeRecord[];
   initCash: number;
   riskR: number;
   dayCandles: DayCandles | null;
@@ -41,6 +44,7 @@ interface ResultsTabsProps {
 
 export default function ResultsTabs({
   result,
+  fullTrades,
   initCash,
   riskR,
   dayCandles,
@@ -194,7 +198,7 @@ export default function ResultsTabs({
         </div>
         <div style={{ display: activeTab === "trades" ? "block" : "none" }}>
           {mountedTabs.has("trades") && (
-          <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade} />
+          <TradesTab trades={result.trades} exportTrades={fullTrades ?? result.trades} onSelectTrade={handleSelectTrade} />
           )}
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>

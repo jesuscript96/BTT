@@ -1,10 +1,15 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { Download } from "lucide-react";
 import type { TradeRecord } from "@/lib/api_backtester";
+import { buildTradesCsv } from "@/lib/tradesCsv";
 
 interface TradesTabProps {
   trades: TradeRecord[];
+  // Set completo sin recortes (p.ej. sin filtro IS/OOS) para la exportación CSV.
+  // Si no llega, se exporta el mismo array `trades`.
+  exportTrades?: TradeRecord[];
   onSelectTrade?: (ticker: string, date: string) => void;
 }
 
@@ -52,7 +57,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
+export default function TradesTab({ trades, exportTrades, onSelectTrade }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -115,6 +120,21 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
   }, [trades]);
 
   const shown = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
+
+  // Exporta TODOS los trades del set completo (o del recibido si no hay otro):
+  // ignora el buscador, la ordenación y la ventana de render.
+  const handleExportCsv = () => {
+    const source = exportTrades ?? trades;
+    if (!source.length) return;
+    const { csv, filename } = buildTradesCsv(source);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
 
   // Reinicia la ventana al filtrar/reordenar (no arrastrar un count enorme).
   useEffect(() => {
@@ -181,6 +201,15 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
               {summary.totalPnl >= 0 ? "+" : ""}${summary.totalPnl.toFixed(2)}
             </strong>
           </span>
+          <button
+            onClick={handleExportCsv}
+            title="Descargar CSV con todos los trades del backtest (entrada, salida, triggers y resto de datos)"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--color-ec-text-high)]"
+            style={{ border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-secondary)', background: 'transparent', borderRadius: 4 }}
+          >
+            <Download className="w-3 h-3" />
+            Export CSV
+          </button>
         </div>
       </div>
 

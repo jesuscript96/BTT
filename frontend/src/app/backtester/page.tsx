@@ -1510,6 +1510,7 @@ export default function Home() {
 
               <ResultsTabs
                 result={isFilteredResult!}
+                fullTrades={result.trades}
                 initCash={initCashRef.current}
                 riskR={riskRRef.current}
                 dayCandles={dayCandles}
