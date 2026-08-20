@@ -18,6 +18,7 @@
 11. [Mapa de fases](#11-mapa-de-fases)
 12. [Seguridad, persistencia y datos sensibles](#12-seguridad-persistencia-y-datos-sensibles)
 13. [Trial granular por cliente (Path B / B1) — IMPLEMENTADO](#13-trial-granular-por-cliente-path-b--b1--implementado)
+14. [Mejoras futuras (no bloqueantes)](#14-mejoras-futuras-no-bloqueantes)
 
 ---
 
@@ -364,3 +365,18 @@ El store **debe** vivir en un **volumen/bind mount persistente**, o se pierde en
 ```
 
 **Tests:** `test_store.py` (roundtrip + bounds + one-shot + re-arm/delete/list) y `test_service.py` (override gana al default, one-shot con fallback a 7, gana a `used_trial`, re-arme si Stripe falla). Suite billing completa: **88 pasando**.
+
+---
+
+## 14. Mejoras futuras (no bloqueantes)
+
+Backlog de retoques detectados durante el e2e de staging. Ninguno bloquea el go-live.
+
+### 14.1 Panel de facturación del ADMIN muestra el paywall (cosmético)
+**Síntoma (staging, 2026-08-20):** un usuario de `BILLING_ADMIN_USER_IDS` ve en `/billing` el CTA *"Empieza tu prueba de 7 días"* (estado `Locked`), pese a tener acceso total al producto.
+
+**Causa (no es bug):** el resumen del panel (`GET /api/billing/me` → `get_billing_summary`) calcula el tier con `resolve_tier`, que **solo** mira `entitlement_grants` + `subscriptions` (`tier_resolver.py:69-84`) — **no** la allowlist `BILLING_ADMIN_USER_IDS`. Como el seed **salta a los admins** (no les crea grant), el admin no tiene grant ni suscripción → `Locked` → paywall. El **acceso a features** es correcto porque el gating usa `get_tier`, que **sí** mira la allowlist → `Admin` → acceso total. Solo la **vista** de billing queda desalineada.
+
+**Fix propuesto (pequeño):** que `get_billing_summary` (o `resolve_tier`) consulte también la allowlist de admins y devuelva `tier="Admin"` con un estado dedicado en el panel (p. ej. *"Admin · acceso completo"*, sin CTA de pago). Alternativa: sembrar a los admins un grant `Admin` perpetuo en vez de saltarlos.
+
+**Prioridad:** baja (4 admins internos, saben que tienen acceso). No frenar el e2e por esto.
