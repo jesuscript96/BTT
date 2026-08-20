@@ -78,6 +78,9 @@ def simulate(
 
     # Locates tracking (daily maximum short size)
     max_short_size_today = 0.0
+    # PRD fix-locates-attribution §4.3: barra donde se paga el borrow (primera
+    # entrada corta del día); -1 = sin shorts todavía.
+    first_short_entry_idx = -1
 
     total_trades = 0
     prev_signal = False
@@ -683,6 +686,9 @@ def simulate(
                 if size > 0:
                     # Track Max Short Size for Locates
                     if not is_long:
+                        if first_short_entry_idx < 0:
+                            # PRD fix-locates-attribution §4.3
+                            first_short_entry_idx = eff_entry_idx
                         max_short_size_today = max(max_short_size_today, size)
 
                     in_position = True
@@ -727,19 +733,39 @@ def simulate(
 
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
         daily_locates_fee = blocks_of_100 * cost_per_100
-        
-        # We subtract it from the final equity tally
-        # To ensure trade sum = equity curve change, we assign the deduction to the first short trade
-        for t in trades:
-            if t["direction"] == "Short":
-                t["pnl"] = round(t["pnl"] - daily_locates_fee, 4)
-                t["fees"] = round(t.get("fees", 0.0) + daily_locates_fee, 4)
-                break
-                
-        # Update equity curve retroactively downwards so it reflects the end of day state
-        # In a perfect world we would apply it exactly when the short is taken, 
-        # but applying at EOF/assigning to trade PnL keeps accounting perfectly aligned
-        for i in range(len(equity)):
+
+        # PRD fix-locates-attribution §4.2: repartir el fee del día entre TODOS
+        # los shorts, proporcional al size de cada registro (los parciales aún
+        # no están agrupados; _group_partial_exits suma los pnl después, así
+        # que cada posición acaba con su fracción). El TOTAL no cambia: una
+        # sola compra por ticker-día sobre max_short_size_today.
+        short_trades = [t for t in trades if t["direction"] == "Short"]
+        S = sum(t["size"] for t in short_trades)
+        if short_trades and S > 0:
+            shares = [daily_locates_fee * (t["size"] / S) for t in short_trades]
+        elif short_trades:
+            # Fallback S == 0 (no debería ocurrir con shorts reales): equitativo.
+            shares = [daily_locates_fee / len(short_trades)] * len(short_trades)
+        else:
+            shares = []
+        if shares:
+            shares = [round(s, 4) for s in shares]
+            # Cuadre de redondeo: el residuo va al short de mayor size para que
+            # la suma cierre exacta (invariante contable Σ share == fee).
+            residual = round(daily_locates_fee - sum(shares), 4)
+            if residual != 0.0:
+                biggest = max(range(len(short_trades)), key=lambda k: short_trades[k]["size"])
+                shares[biggest] = round(shares[biggest] + residual, 4)
+            for t, share in zip(short_trades, shares):
+                t["pnl"] = round(t["pnl"] - share, 4)
+                t["fees"] = round(t.get("fees", 0.0) + share, 4)
+        # Si no hay ningún short en trades, no se imputa a pnl (solo curva).
+
+        # PRD fix-locates-attribution §4.3: la curva solo baja desde la barra
+        # de la primera entrada corta (antes bajaba desde la barra 0, lo que
+        # inflaba el drawdown intradía del ticker-día).
+        start_idx = first_short_entry_idx if first_short_entry_idx >= 0 else 0
+        for i in range(start_idx, len(equity)):
             equity[i] -= daily_locates_fee
 
     # Always update signal state for next bar's edge detection
