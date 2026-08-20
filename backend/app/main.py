@@ -267,6 +267,7 @@ from app.routers import screener
 from app.routers import assistant
 from app.routers import feedback
 from app.routers import portfolio
+from app.routers import lake_update
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -305,6 +306,9 @@ app.include_router(feedback.router)
 # Portfolio de estrategias (PRD_portfolio_ANTIGRAVITY). Declares its own
 # prefix="/api/portfolio".
 app.include_router(portfolio.router)
+# Actualizacion del lago local desde la UI. Gated por LAKE_UPDATE_ENABLED
+# (default OFF): en prod no hay lago local y el endpoint responde 503.
+app.include_router(lake_update.router, prefix="/api", tags=["Lake"])
 
 @app.get("/health")
 def read_health():
