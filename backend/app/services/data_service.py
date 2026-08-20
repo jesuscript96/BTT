@@ -8,6 +8,7 @@ Data access layer for the backtester.
 
 import base64
 import gc
+import glob
 import hashlib
 import io
 import json
@@ -599,6 +600,55 @@ def _deserialize_qualifying_df(payload: str) -> pd.DataFrame:
     return pd.read_feather(io.BytesIO(base64.b64decode(payload)))
 
 
+# FIX A (PRD bygap): guardián de frescura del materializado bygap.
+# El lado Parquet se memoiza por mtime de los ficheros del glob: si no
+# cambiaron desde la última comprobación, no se relee el metadata.
+_BYGAP_FRESHNESS_MEMO = {"glob_key": None, "bygap_max": None}
+
+
+class _BygapStaleStrictError(RuntimeError):
+    """QUALIFYING_WINDOWED_STRICT=true y el bygap está desfasado: hay que
+    fallar (propagar), no degradar — por eso se re-lanza en el except del
+    branch local, que de otro modo caería al fallback hot-cache."""
+
+
+def _bygap_is_fresh(con, win_glob: str) -> bool:
+    """True si el bygap está tan fresco como daily_metrics.
+
+    Compara el max("timestamp") ESTADÍSTICO del Parquet (parquet_metadata lee
+    solo los footers de los row groups, no los datos: mucho más barato que un
+    max(timestamp) sobre read_parquet) con el de la tabla. stats_max llega como
+    VARCHAR → CAST a TIMESTAMP. Cualquier fallo degrada a la vía original.
+    """
+    try:
+        files = sorted(glob.glob(win_glob))
+        glob_key = tuple((f, os.path.getmtime(f)) for f in files)
+        if glob_key != _BYGAP_FRESHNESS_MEMO["glob_key"]:
+            row = con.execute(
+                # path_in_schema: nombre de columna en DuckDB 1.1.x (en versiones
+                # posteriores se llama stats_column_name)
+                f"SELECT max(CAST(stats_max AS TIMESTAMP)) FROM parquet_metadata('{win_glob}') "
+                f"WHERE path_in_schema = 'timestamp'"
+            ).fetchone()
+            _BYGAP_FRESHNESS_MEMO["glob_key"] = glob_key
+            _BYGAP_FRESHNESS_MEMO["bygap_max"] = row[0] if row else None
+        bygap_max = _BYGAP_FRESHNESS_MEMO["bygap_max"]
+        if bygap_max is None:
+            logger.warning("[QUALIFYING] bygap sin estadísticas de timestamp -> vía original")
+            return False
+        table_max = con.execute('SELECT max("timestamp") FROM daily_metrics').fetchone()[0]
+        if table_max is not None and bygap_max < table_max:
+            logger.warning(
+                f"[QUALIFYING] bygap desfasado respecto a daily_metrics "
+                f"(bygap {bygap_max} < tabla {table_max}) -> vía original"
+            )
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"[QUALIFYING] guardián de frescura falló ({e}) -> vía original")
+        return False
+
+
 def fetch_qualifying_data(
     dataset_id: str,
     req_start_date: str | None = None,
@@ -720,87 +770,115 @@ def _fetch_qualifying_data_uncached(
                     if p.get("metric") == "close_vs_sma" and p.get("sma_period"):
                         sma_periods.add(int(p.get("sma_period")))
 
-            stage_1_smas = []
-            for P in sorted(sma_periods):
-                stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
+            # ─── Vía rápida bygap (opt-in: QUALIFYING_WINDOWED_PARQUET) ───
+            # El bygap materializa Stage1+Stage2 (misma fuente, mismas ventanas)
+            # ordenado por pmh_gap_pct DESC. Sustituye SOLO la lectura: todo lo
+            # que sigue (normalizar date, preconditions, remap de trading day)
+            # es común a ambas vías. Requiere sin SMAs (no viajan en el bygap)
+            # y bygap fresco (FIX A: el guardián degrada a la vía original).
+            _win = os.getenv("QUALIFYING_WINDOWED_PARQUET", "").strip()
+            _use_fast = False
+            if _win and not sma_periods:
+                if glob.glob(_win):
+                    _use_fast = _bygap_is_fresh(con, _win)
+                    if not _use_fast and os.getenv("QUALIFYING_WINDOWED_STRICT", "").lower() in ("true", "1"):
+                        raise _BygapStaleStrictError(
+                            "[QUALIFYING] bygap desfasado respecto a daily_metrics "
+                            "(QUALIFYING_WINDOWED_STRICT=true)"
+                        )
+                else:
+                    logger.warning(
+                        f"[QUALIFYING] QUALIFYING_WINDOWED_PARQUET no resuelve a ningún "
+                        f"fichero ({_win}) -> vía original"
+                    )
 
-            stage_1_sql_cols = "*"
-            if stage_1_smas:
-                stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
+            if _use_fast:
+                df = con.execute(
+                    f'SELECT *, CAST("timestamp" AS DATE) AS date '
+                    f'FROM read_parquet(\'{_win}\') WHERE {where_clause}'
+                ).fetchdf()
+            else:
+                stage_1_smas = []
+                for P in sorted(sma_periods):
+                    stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
 
-            # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
-            stage_2_cols = [
-                "*",
-                # LAG 1
-                'LAG(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_1',
-                'LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1',
-                'LAG(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_1',
-                'LAG(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_1',
-                'LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1',
-                'LAG(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_1',
+                stage_1_sql_cols = "*"
+                if stage_1_smas:
+                    stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
 
-                # LAG 2
-                'LAG(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_2',
-                'LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2',
-                'LAG(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_2',
-                'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
-                'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
-                'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
+                # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
+                stage_2_cols = [
+                    "*",
+                    # LAG 1
+                    'LAG(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_1',
+                    'LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1',
+                    'LAG(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_1',
+                    'LAG(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_1',
+                    'LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1',
+                    'LAG(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_1',
 
-                # LEAD 1
-                'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
-                'LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1',
-                'LEAD(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_1',
-                'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
-                'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
-                'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
-                'LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_1',
+                    # LAG 2
+                    'LAG(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_2',
+                    'LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2',
+                    'LAG(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_2',
+                    'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
+                    'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
+                    'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
 
-                # LEAD 2
-                'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
-                'LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2',
-                'LEAD(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_2',
-                'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
-                'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
-                'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
-                'LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_2',
+                    # LEAD 1
+                    'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
+                    'LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1',
+                    'LEAD(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_1',
+                    'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
+                    'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
+                    'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
+                    'LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_1',
 
-                # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
-                'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',
-                'LEAD(pm_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_2',
-                'LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1',
-                'LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2',
-                'LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1',
-                'LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2',
+                    # LEAD 2
+                    'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
+                    'LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2',
+                    'LEAD(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_2',
+                    'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
+                    'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
+                    'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
+                    'LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_2',
 
-                # Timestamp LEADs for shifting
-                'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
-                'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
-            ]
-            for P in sorted(sma_periods):
-                stage_2_cols.append(f'LAG(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_1')
-                stage_2_cols.append(f'LAG(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_2')
-                stage_2_cols.append(f'LEAD(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_1')
-                stage_2_cols.append(f'LEAD(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_2')
+                    # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
+                    'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',
+                    'LEAD(pm_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_2',
+                    'LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1',
+                    'LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2',
+                    'LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1',
+                    'LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2',
 
-            stage_2_sql_cols = ", ".join(stage_2_cols)
+                    # Timestamp LEADs for shifting
+                    'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
+                    'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
+                ]
+                for P in sorted(sma_periods):
+                    stage_2_cols.append(f'LAG(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_1')
+                    stage_2_cols.append(f'LAG(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_2')
+                    stage_2_cols.append(f'LEAD(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_1')
+                    stage_2_cols.append(f'LEAD(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_2')
 
-            subquery = f"""
-            (
-                WITH raw_daily AS (
-                    SELECT {stage_1_sql_cols}
-                    FROM daily_metrics
-                )
-                SELECT {stage_2_sql_cols}
-                FROM raw_daily
-            ) i
-            """
-            sql = f"""
-            SELECT *, CAST("timestamp" AS DATE) AS date
-            FROM {subquery}
-            WHERE {where_clause}
-            """
-            df = con.execute(sql).fetchdf()
+                stage_2_sql_cols = ", ".join(stage_2_cols)
+
+                subquery = f"""
+                (
+                    WITH raw_daily AS (
+                        SELECT {stage_1_sql_cols}
+                        FROM daily_metrics
+                    )
+                    SELECT {stage_2_sql_cols}
+                    FROM raw_daily
+                ) i
+                """
+                sql = f"""
+                SELECT *, CAST("timestamp" AS DATE) AS date
+                FROM {subquery}
+                WHERE {where_clause}
+                """
+                df = con.execute(sql).fetchdf()
             if not df.empty:
                 df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
@@ -858,6 +936,10 @@ def _fetch_qualifying_data_uncached(
             return df
         except Exception as e:
             print(f"[ERROR] local fetch_qualifying_data failed: {e}")
+            # STRICT: el desfase del bygap debe FALLAR, no caer al fallback
+            # hot-cache (que devolvería un resultado distinto en silencio).
+            if isinstance(e, _BygapStaleStrictError):
+                raise
 
     # Use RAM cache if applicable
     if use_hot_cache:
