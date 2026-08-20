@@ -103,6 +103,10 @@ export interface TradeRecord {
   exit_price: number;
   pnl: number;
   fees?: number;
+  /** Solo para reconstrucción de Monte Carlo/WFO (robustness_service.py) —
+   * incluye el coste de locates del día; `pnl` se mantiene limpio a propósito
+   * para no distorsionar el win rate. No usar para mostrar/clasificar trades. */
+  pnl_with_locates?: number;
   return_pct: number;
   direction: string;
   status: string;
@@ -160,6 +164,10 @@ export interface DayResult {
   init_value: number | null;
   end_value: number | null;
   gap_pct?: number | null;
+  /** Coste de locates de ese ticker ese día. No está incluido en el pnl de
+   * ningún trade individual (ver backend/app/services/portfolio_sim.py) —
+   * consumidores que sumen trade.pnl para totales en $ deben restarlo aparte. */
+  locates_fee?: number | null;
 }
 
 export interface AggregateMetrics {

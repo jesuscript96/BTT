@@ -1054,7 +1054,13 @@ export default function Home() {
       return dateEpoch <= cutoffTime;
     });
 
-    // Recompute aggregate metrics from IS trades
+    // Recompute aggregate metrics from IS trades.
+    // trade.pnl is the trade's own gross pnl — no ticker's locates fee is baked
+    // into any single trade (see backend/app/services/portfolio_sim.py), so
+    // win/loss classification below is already correct. The locates fee is a
+    // ticker-day cost tracked separately on day_results; it must be added back
+    // only into the $ TOTALS (totalPnl/totalReturnPct/dailyPnls), not into
+    // wins/losses/profitFactor, or it would reintroduce the same distortion.
     const totalTrades = isTrades.length;
     const wins = isTrades.filter(t => t.pnl > 0);
     const losses = isTrades.filter(t => t.pnl < 0);
@@ -1062,14 +1068,22 @@ export default function Home() {
     const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
     const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
-    const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0);
+    const isLocatesFee = isDayResults.reduce((s, d) => s + (d.locates_fee || 0), 0);
+    const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0) - isLocatesFee;
     const initCash = initCashRef.current;
     const totalReturnPct = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
 
     // Daily returns for Sharpe/Sortino
+    const dailyLocatesFee = new Map<string, number>();
+    isDayResults.forEach(d => {
+      if (d.locates_fee) dailyLocatesFee.set(d.date, (dailyLocatesFee.get(d.date) || 0) + d.locates_fee);
+    });
     const dailyPnls = new Map<string, number>();
     isTrades.forEach(t => {
       dailyPnls.set(t.date, (dailyPnls.get(t.date) || 0) + t.pnl);
+    });
+    dailyLocatesFee.forEach((fee, date) => {
+      dailyPnls.set(date, (dailyPnls.get(date) || 0) - fee);
     });
     const dailyReturns = Array.from(dailyPnls.values()).map(p => p / initCash);
     const meanRet = dailyReturns.length > 0 ? dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length : 0;

@@ -341,6 +341,7 @@ def simulate_jit(
         trades.append(rec)
 
     # --- Deduct Daily Locates Fee (verbatim from the original; runs once) ---
+    daily_locates_fee = 0.0
     if max_short_size_today > 0 and locates_cost > 0:
         if locate_type == "PERCENT":
             if risk_type == "PERCENT":
@@ -354,11 +355,18 @@ def simulate_jit(
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
         daily_locates_fee = blocks_of_100 * cost_per_100
 
-        # assign the deduction to the first short trade
+        # NOT assigned to any single trade (see portfolio_sim.py for why) —
+        # returned separately as `locates_fee` for the caller to net into
+        # day/portfolio totals without skewing any one trade's win/loss.
+        #
+        # `pnl_with_locates`: cost-inclusive field for robustness reconstruction
+        # only (Monte Carlo / WFO rebuild the curve from R-multiples, not from
+        # the real equity array — see portfolio_sim.py for the full rationale).
+        for t in trades:
+            t["pnl_with_locates"] = t["pnl"]
         for t in trades:
             if t["direction"] == "Short":
-                t["pnl"] = round(t["pnl"] - daily_locates_fee, 4)
-                t["fees"] = round(t.get("fees", 0.0) + daily_locates_fee, 4)
+                t["pnl_with_locates"] = round(t["pnl"] - daily_locates_fee, 4)
                 break
 
         # reflect it on the equity curve
@@ -366,7 +374,7 @@ def simulate_jit(
             equity[i] -= daily_locates_fee
 
     # --- finalize ---
-    results = {"equity": equity, "trades": trades}
+    results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}
     if risk_type == "PERCENT":
         results["last_risk_amount"] = last_risk_amount
     else:

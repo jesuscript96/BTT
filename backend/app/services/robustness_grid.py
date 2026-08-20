@@ -290,10 +290,13 @@ def run_locates_curves(
         trades = res.get("trades", []) or []
 
         # Curva por trade: PnL acumulado en el orden en que se cerraron.
+        # pnl_with_locates (no pnl): esta curva se reconstruye trade a trade, no
+        # sale de global_equity, asi que necesita el coste de locates incluido
+        # o la reja locates x slippage saldria plana para el eje de locates.
         by_trade = [round(init_cash, 2)]
         acc = init_cash
         for t in sorted(trades, key=lambda x: x.get("exit_time") or ""):
-            acc += float(t.get("pnl") or 0.0)
+            acc += float(t.get("pnl_with_locates", t.get("pnl")) or 0.0)
             by_trade.append(round(acc, 2))
 
         out.append({

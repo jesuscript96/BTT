@@ -860,6 +860,7 @@ def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_do
             "exit_price": t["exit_price"],
             "pnl": pnl,
             "fees": t.get("fees", 0.0),
+            "pnl_with_locates": t.get("pnl_with_locates", pnl),
             "return_pct": t["return_pct"],
             "direction": t["direction"],
             "status": t["status"],
@@ -899,11 +900,16 @@ def _extract_equity_arr(eq_vals, ts_epoch):
 
 def simulate_and_accumulate(signals_sorted, params):
     """Procesa las señales en orden de (date, ticker) ejecutando simulate +
-    acumulación con compounding. Devuelve (all_trades, all_equity, day_results).
+    acumulación con compounding. Devuelve
+    (all_trades, all_equity, day_results, locates_fee_by_date).
 
     `params` es un dict con: init_cash, risk_r, risk_type, fixed_ratio_delta,
     size_by_sl, fees, fee_type, slippage, locates_cost, locate_type,
     look_ahead_prevention, strategy_def, elapsed_limit, elapsed_operator.
+
+    `locates_fee_by_date` suma, por fecha de calendario, la cuota diaria de
+    locates de cada ticker-día (ya no viene metida en el pnl de ningún trade,
+    ver portfolio_sim.py) — el caller la neta en los totales agregados.
     """
     from app.services.backtest_service import (
         simulate, _extract_day_stats_from_values,
@@ -927,6 +933,7 @@ def simulate_and_accumulate(signals_sorted, params):
     all_trades: list[dict] = []
     all_equity: list[dict] = []
     day_results: list[dict] = []
+    locates_fee_by_date: dict[str, float] = {}
 
     global_realized_pnl = 0.0
     current_date = None
@@ -1018,13 +1025,20 @@ def simulate_and_accumulate(signals_sorted, params):
 
         eq_vals = sim_result["equity"]
         raw_trades = sim_result["trades"]
+        ticker_locates_fee = float(sim_result.get("locates_fee", 0.0) or 0.0)
 
         if not raw_trades:
             continue
 
-        # Track today's PnL to roll over into tomorrow's compounding base (627-629)
+        # Track today's PnL to roll over into tomorrow's compounding base (627-629).
+        # The day's locates fee is real cash spent but isn't attached to any single
+        # trade's pnl (see portfolio_sim.py) — subtract it here so compounding_cash
+        # for the next day stays exactly what it was before that change.
         for t in raw_trades:
             daily_pnl += t["pnl"]
+        if ticker_locates_fee > 0:
+            daily_pnl -= ticker_locates_fee
+            locates_fee_by_date[date] = locates_fee_by_date.get(date, 0.0) + ticker_locates_fee
 
         # Avoid pd.to_datetime parsing if array is already datetime kind natively (631-638)
         # (sin pd.Series por par: ndarrays directos — mismos valores, mismos dicts)
@@ -1049,7 +1063,9 @@ def simulate_and_accumulate(signals_sorted, params):
 
         equity = _extract_equity_arr(eq_vals, ts_epoch)
 
-        stats = _extract_day_stats_from_values(eq_vals, ticker, date, trades_records, gap_pct)
+        stats = _extract_day_stats_from_values(
+            eq_vals, ticker, date, trades_records, gap_pct, ticker_locates_fee
+        )
 
         all_equity.append({"ticker": ticker, "date": date, "equity": equity})
         all_trades.extend(trades_records)
@@ -1058,4 +1074,4 @@ def simulate_and_accumulate(signals_sorted, params):
     # Final sweep of daily_pnl if the last day generated trades (671-672)
     global_realized_pnl += daily_pnl
 
-    return all_trades, all_equity, day_results
+    return all_trades, all_equity, day_results, locates_fee_by_date

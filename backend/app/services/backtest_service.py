@@ -293,6 +293,11 @@ def run_backtest(
     global_realized_pnl = 0.0
     current_date = None
     daily_pnl = 0.0
+    # Locates fee per calendar date, summed across tickers. Not attached to any
+    # single trade's pnl (see portfolio_sim.py) — netted into the aggregate
+    # totals in _compute_global_equity_and_drawdown / _aggregate_metrics so
+    # dollar totals stay unchanged while no trade's win/loss is skewed by it.
+    locates_fee_by_date: dict[str, float] = {}
 
     # ── Fase 1-slab: stream desde slabs locales (refs mmap) + señales ───────
     # Sustituye fetch+ensamblado pandas por slices numpy del slab store. Los meses
@@ -330,8 +335,10 @@ def run_backtest(
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
         }
         with PhaseTimer("simulate", mode="slab") as _pt_sim:
-            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            all_trades, all_equity, day_results, _locates_by_date = _bsig.simulate_and_accumulate(signals_sorted, _params)
             _pt_sim.pairs = len(signals_sorted)
+        for _d, _fee in _locates_by_date.items():
+            locates_fee_by_date[_d] = locates_fee_by_date.get(_d, 0.0) + _fee
         days_with_entries = len(day_results)
         scanned = len(signals_sorted)
         logger.info(
@@ -378,8 +385,10 @@ def run_backtest(
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
         }
         with PhaseTimer("simulate") as _pt_sim:
-            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            all_trades, all_equity, day_results, _locates_by_date = _bsig.simulate_and_accumulate(signals_sorted, _params)
             _pt_sim.pairs = len(signals_sorted)
+        for _d, _fee in _locates_by_date.items():
+            locates_fee_by_date[_d] = locates_fee_by_date.get(_d, 0.0) + _fee
         days_with_entries = len(day_results)
         logger.info(
             f"[PARALLEL] pipeline done: {len(signals_sorted)} con señales, "
@@ -727,14 +736,21 @@ def run_backtest(
 
         eq_vals = sim_result["equity"]
         raw_trades = sim_result["trades"]
+        ticker_locates_fee = float(sim_result.get("locates_fee", 0.0) or 0.0)
 
         if not raw_trades:
             del sim_result
             continue
 
-        # Track today's PnL to roll over into tomorrow's compounding base
+        # Track today's PnL to roll over into tomorrow's compounding base.
+        # The day's locates fee is real cash spent but isn't attached to any single
+        # trade's pnl (see portfolio_sim.py) — subtract it here so compounding_cash
+        # for the next day stays exactly what it was before that change.
         for t in raw_trades:
             daily_pnl += t["pnl"]
+        if ticker_locates_fee > 0:
+            daily_pnl -= ticker_locates_fee
+            locates_fee_by_date[date] = locates_fee_by_date.get(date, 0.0) + ticker_locates_fee
 
         # Avoid pd.to_datetime parsing if array is already datetime kind natively
         ts_arr = arrays["timestamp"]
@@ -760,7 +776,9 @@ def run_backtest(
 
         equity = _extract_equity_from_values(eq_vals, timestamps)
 
-        stats = _extract_day_stats_from_values(eq_vals, ticker, date, trades_records, daily_stats.get("gap_pct"))
+        stats = _extract_day_stats_from_values(
+            eq_vals, ticker, date, trades_records, daily_stats.get("gap_pct"), ticker_locates_fee
+        )
 
         all_equity.append({"ticker": ticker, "date": date, "equity": equity})
         all_trades.extend(trades_records)
@@ -798,10 +816,11 @@ def run_backtest(
     t4 = time.time()
     # Logic: global_eq is pure trades, global_eq_exp is trades - monthly_expenses
     global_eq, global_dd, global_eq_exp = _compute_global_equity_and_drawdown(
-        all_trades, init_cash, monthly_expenses
+        all_trades, init_cash, monthly_expenses, locates_fee_by_date
     )
     aggregate = _aggregate_metrics(
-        day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses
+        day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses,
+        locates_fee_by_date,
     )
     logger.info(f"[AGG] aggregate+equity done ({round(time.time()-t4, 2)}s)")
     _log_phase("aggregate", (time.time() - t4) * 1000, pairs=len(day_results),
@@ -952,6 +971,9 @@ def _enrich_trades(
             "exit_price": t["exit_price"],
             "pnl": t["pnl"],
             "fees": t.get("fees", 0.0),
+            # Robustness-only (Monte Carlo / WFO curve reconstruction) — see
+            # portfolio_sim.py. Not used for display, win rate, or r_multiple.
+            "pnl_with_locates": t.get("pnl_with_locates", t["pnl"]),
             "return_pct": t["return_pct"],
             "direction": t["direction"],
             "status": t["status"],
@@ -999,6 +1021,7 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         first, last = run[0], run[-1]
         pnl = round(sum(t["pnl"] for t in run), 4)
         fees = round(sum(t.get("fees", 0.0) or 0.0 for t in run), 4)
+        pnl_with_locates = round(sum(t.get("pnl_with_locates", t["pnl"]) for t in run), 4)
         size = round(sum(t["size"] for t in run), 6)
         capital = first["entry_price"] * size
         ret_pct = round((pnl / capital) * 100, 4) if capital > 0 else 0.0
@@ -1007,6 +1030,7 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         trade.update({
             "pnl": pnl,
             "fees": fees,
+            "pnl_with_locates": pnl_with_locates,
             "size": size,
             "return_pct": ret_pct,
             "exit_idx": last["exit_idx"],
@@ -1075,12 +1099,17 @@ def _extract_equity_from_values(eq_vals: np.ndarray, timestamps: pd.Series) -> l
 def _compute_global_equity_and_drawdown(
     all_trades: list[dict],
     init_cash: float,
-    monthly_expenses: float = 0.0
+    monthly_expenses: float = 0.0,
+    locates_fee_by_date: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Build equity curve as cumulative P&L per calendar day.
 
     Logic: start at init_cash, group trades by date, sum daily P&L,
     accumulate.  equity[day] = equity[prev_day] + sum(pnl of trades on day).
+
+    `locates_fee_by_date` (optional) nets in the per-date locates cost, which
+    is no longer baked into any single trade's pnl (see portfolio_sim.py) —
+    without it the curve would be short by exactly that amount.
     """
     if not all_trades:
         return [], [], []
@@ -1092,6 +1121,11 @@ def _compute_global_equity_and_drawdown(
         if not date_str:
             continue
         daily_pnl[date_str] = daily_pnl.get(date_str, 0.0) + trade.get("pnl", 0.0)
+
+    if locates_fee_by_date:
+        for date_str, fee in locates_fee_by_date.items():
+            if date_str in daily_pnl:
+                daily_pnl[date_str] -= fee
 
     if not daily_pnl:
         return [], [], []
@@ -1158,7 +1192,8 @@ def _extract_day_stats_from_values(
     ticker: str,
     date: str,
     trades_records: list[dict],
-    gap_pct: float | None = None
+    gap_pct: float | None = None,
+    locates_fee: float = 0.0,
 ) -> dict:
     empty = {
         "ticker": ticker, "date": date,
@@ -1167,6 +1202,7 @@ def _extract_day_stats_from_values(
         "sortino_ratio": 0, "expectancy": 0, "best_trade_pct": 0,
         "worst_trade_pct": 0, "init_value": 0, "end_value": 0,
         "gap_pct": float(gap_pct) if gap_pct is not None else None,
+        "locates_fee": _safe_float(locates_fee),
     }
     try:
         eq_arr = np.asarray(eq_vals, dtype=np.float64)
@@ -1223,6 +1259,7 @@ def _extract_day_stats_from_values(
         "init_value": _safe_float(start_val),
         "end_value": _safe_float(end_val),
         "gap_pct": float(gap_pct) if gap_pct is not None else None,
+        "locates_fee": _safe_float(locates_fee),
     }
 
 
@@ -1237,7 +1274,8 @@ def _aggregate_metrics(
     global_dd: list[dict],
     init_cash: float,
     risk_r: float = 100,
-    monthly_expenses: float = 0.0
+    monthly_expenses: float = 0.0,
+    locates_fee_by_date: dict[str, float] | None = None,
 ) -> dict:
     empty = {
         "total_days": 0, "total_trades": 0, "win_rate_pct": 0,
@@ -1266,9 +1304,17 @@ def _aggregate_metrics(
     # We find number of unique months in trades
     all_months = sorted(list(set(t.get("date", "")[:7] for t in trades if t.get("date"))))
     total_expenses = len(all_months) * monthly_expenses
-    
+
+    # Locates fee, netted separately: it's a ticker-day cost, not attached to
+    # any single trade's pnl (see portfolio_sim.py), so `pnls` below is already
+    # the clean/gross per-trade figure — win rate, profit factor, avg win/loss
+    # etc. are computed on it untouched. Only the dollar TOTALS need this added
+    # back so they match what they were before that change.
+    total_locates = float(sum(locates_fee_by_date.values())) if locates_fee_by_date else 0.0
+
     pnls = np.array([t.get("pnl", 0) for t in trades]) if trades else np.array([])
     total_pnl_trades = float(pnls.sum()) if len(pnls) else 0.0
+    total_pnl_trades -= total_locates
     total_pnl_net = total_pnl_trades - total_expenses
     winning_trades = int((pnls > 0).sum()) if len(pnls) else 0
     total_closed = len(pnls)
@@ -1276,8 +1322,7 @@ def _aggregate_metrics(
 
     # Calculate Total Return against Initial Cash
     # PnL / Init Cash gives the actual Return % for the period on the account size
-    # PnL / Init Cash gives the actual Return % for the period on the account size
-    total_pnl = float(pnls.sum()) if len(pnls) else 0.0
+    total_pnl = total_pnl_trades
     total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
 
     # Build a continuous daily equity curve for accurate annualized volatility
@@ -1293,7 +1338,11 @@ def _aggregate_metrics(
                 d = t.get("date", "")
                 if d:
                     daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
-            
+            if locates_fee_by_date:
+                for d, fee in locates_fee_by_date.items():
+                    if d in daily_pnls:
+                        daily_pnls[d] -= fee
+
             sorted_dates = sorted(daily_pnls.keys())
             first_date = pd.to_datetime(sorted_dates[0])
             last_date = pd.to_datetime(sorted_dates[-1])
@@ -1418,7 +1467,7 @@ def _aggregate_metrics(
         "max_drawdown_pct": round(final_max_dd, 4),
         "avg_profit_factor": round(avg_pf, 4),
         "avg_pnl": round(avg_pnl, 2),
-        "total_pnl": round(float(pnls.sum()), 2) if len(pnls) else 0,
+        "total_pnl": round(total_pnl, 2) if len(pnls) else 0,
         "sortino_ratio": round(sortino_ratio, 4),
         "calmar_ratio": round(calmar_ratio, 4),
         "dd_return_ratio": round(dd_return_ratio, 4),

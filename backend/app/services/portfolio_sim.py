@@ -715,6 +715,7 @@ def simulate(
 
     # Deduct Daily Locates Fee
     import math
+    daily_locates_fee = 0.0
     if max_short_size_today > 0 and locates_cost > 0:
         if locate_type == "PERCENT":
             if risk_type == "PERCENT":
@@ -727,18 +728,32 @@ def simulate(
 
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
         daily_locates_fee = blocks_of_100 * cost_per_100
-        
-        # We subtract it from the final equity tally
-        # To ensure trade sum = equity curve change, we assign the deduction to the first short trade
+
+        # Deliberately NOT attributed to any single trade's pnl/fees: it is a
+        # cost of the ticker's day as a whole (one locate covers every short of
+        # that ticker that day), not of whichever trade happened to go first.
+        # Attaching it to one trade's pnl used to flip that trade's win/loss and
+        # skew win rate / profit factor / avg win-loss for the ticker. The caller
+        # nets `daily_locates_fee` into the day/portfolio totals instead (see
+        # backend/app/services/backtest_service.py and backtest_signals.py).
+        #
+        # `pnl_with_locates` is a SEPARATE, cost-inclusive field kept only for
+        # robustness reconstruction (Monte Carlo / WFO / stress rebuild the
+        # equity curve from per-trade R-multiples, not from the real equity
+        # array, so they need a cost-inclusive value or they'd silently ignore
+        # locates). It intentionally keeps the old first-short-trade attribution
+        # — fine for a statistical reconstruction, but never used for display,
+        # win rate, or any other per-trade classification.
+        for t in trades:
+            t["pnl_with_locates"] = t["pnl"]
         for t in trades:
             if t["direction"] == "Short":
-                t["pnl"] = round(t["pnl"] - daily_locates_fee, 4)
-                t["fees"] = round(t.get("fees", 0.0) + daily_locates_fee, 4)
+                t["pnl_with_locates"] = round(t["pnl"] - daily_locates_fee, 4)
                 break
-                
-        # Update equity curve retroactively downwards so it reflects the end of day state
-        # In a perfect world we would apply it exactly when the short is taken, 
-        # but applying at EOF/assigning to trade PnL keeps accounting perfectly aligned
+
+        # Update equity curve retroactively downwards so it reflects the end of day state.
+        # In a perfect world we would apply it exactly when the short is taken,
+        # but applying at EOF keeps accounting perfectly aligned with the total.
         for i in range(len(equity)):
             equity[i] -= daily_locates_fee
 
@@ -746,7 +761,7 @@ def simulate(
     prev_signal = current_signal
 
     # Finalize result
-    results = {"equity": equity, "trades": trades}
+    results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}
     if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:
