@@ -27,6 +27,13 @@ def _now() -> float:
     return time.time()
 
 
+# Trial-override bounds (Path B): admins may grant a per-user PREFERENTIAL trial
+# of 1..30 days (decision Adrian #4). Enforced in set_trial_override + the CLI so
+# a bad value never reaches Stripe's trial_period_days.
+MIN_TRIAL_OVERRIDE_DAYS = 1
+MAX_TRIAL_OVERRIDE_DAYS = 30
+
+
 # ── Row types ─────────────────────────────────────────────────────────────────
 @dataclass
 class BillingCustomer:
@@ -90,6 +97,19 @@ class EntitlementGrant:
     granted_by: Optional[str]
     expires_at: Optional[float]  # NULL = perpetual
     created_at: float
+
+
+@dataclass
+class TrialOverride:
+    """A per-user preferential trial length (Path B / B1). Set by an admin
+    (CLI only, no public endpoint), consumed ONE-SHOT at the next Checkout so it
+    cannot be recycled: consumed_at != NULL means it was already handed out."""
+    user_id: str
+    days: int              # 1..30 (validated on write)
+    reason: Optional[str]
+    granted_by: Optional[str]
+    created_at: float
+    consumed_at: Optional[float]  # NULL = still pending; set once when used
 
 
 class Store:
@@ -181,6 +201,18 @@ class Store:
                     identity_key   TEXT PRIMARY KEY,
                     kind           TEXT NOT NULL,   -- 'email' | 'card_fingerprint'
                     first_trial_at REAL NOT NULL
+                );
+
+                -- Per-user preferential trial length (Path B / B1, decision
+                -- Adrian #4). Admin-granted via CLI; consumed ONE-SHOT at the
+                -- next Checkout (consumed_at). Keyed by Clerk user_id.
+                CREATE TABLE IF NOT EXISTS trial_overrides (
+                    user_id      TEXT PRIMARY KEY,
+                    days         INTEGER NOT NULL,   -- 1..30 (validated on write)
+                    reason       TEXT,
+                    granted_by   TEXT,
+                    created_at   REAL NOT NULL,
+                    consumed_at  REAL                -- NULL = pending; set when used
                 );
                 """
             )
@@ -506,6 +538,89 @@ class Store:
             ).fetchone()
         return r is not None
 
+    # ── Trial overrides (Path B: per-user preferential trial length) ──────────
+    def set_trial_override(
+        self,
+        user_id: str,
+        days: int,
+        reason: Optional[str] = None,
+        granted_by: Optional[str] = None,
+    ) -> TrialOverride:
+        """Grant/replace a user's preferential trial. Re-setting RE-ARMS it
+        (consumed_at back to NULL) — a deliberate admin re-grant. Raises
+        ValueError if days is outside 1..30 so a bad value never reaches Stripe."""
+        days = int(days)
+        if not (MIN_TRIAL_OVERRIDE_DAYS <= days <= MAX_TRIAL_OVERRIDE_DAYS):
+            raise ValueError(
+                f"days must be {MIN_TRIAL_OVERRIDE_DAYS}..{MAX_TRIAL_OVERRIDE_DAYS}, got {days}"
+            )
+        now = _now()
+        with self._lock:
+            self._con.execute(
+                "INSERT INTO trial_overrides (user_id, days, reason, granted_by, created_at, consumed_at)"
+                " VALUES (?,?,?,?,?,NULL)"
+                " ON CONFLICT(user_id) DO UPDATE SET"
+                "   days=excluded.days,"
+                "   reason=excluded.reason,"
+                "   granted_by=excluded.granted_by,"
+                "   created_at=excluded.created_at,"
+                "   consumed_at=NULL",  # re-set re-arms the one-shot
+                (user_id, days, reason, granted_by, now),
+            )
+            self._con.commit()
+        return self.get_trial_override(user_id)  # type: ignore[return-value]
+
+    def get_trial_override(self, user_id: str) -> Optional[TrialOverride]:
+        with self._lock:
+            r = self._con.execute(
+                "SELECT * FROM trial_overrides WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return _to_trial_override(r) if r else None
+
+    def consume_trial_override(self, user_id: str) -> Optional[int]:
+        """Atomically claim the user's PENDING override and return its days, or
+        None if there is no override or it was already consumed. The
+        `consumed_at IS NULL` guard makes the one-shot race-free (at most one
+        caller ever gets the days)."""
+        now = _now()
+        with self._lock:
+            cur = self._con.execute(
+                "UPDATE trial_overrides SET consumed_at = ?"
+                " WHERE user_id = ? AND consumed_at IS NULL",
+                (now, user_id),
+            )
+            self._con.commit()
+            if cur.rowcount == 0:
+                return None
+            r = self._con.execute(
+                "SELECT days FROM trial_overrides WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return int(r["days"]) if r else None
+
+    def rearm_trial_override(self, user_id: str) -> None:
+        """Give a consumed override back (consumed_at -> NULL). Used to undo a
+        claim when the Checkout call that consumed it failed before a session
+        was created, so a transient Stripe error never burns the grant."""
+        with self._lock:
+            self._con.execute(
+                "UPDATE trial_overrides SET consumed_at = NULL WHERE user_id = ?",
+                (user_id,),
+            )
+            self._con.commit()
+
+    def delete_trial_override(self, user_id: str) -> None:
+        with self._lock:
+            self._con.execute("DELETE FROM trial_overrides WHERE user_id = ?", (user_id,))
+            self._con.commit()
+
+    def list_trial_overrides(self) -> list[TrialOverride]:
+        """All overrides (for the admin CLI --list / audit)."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT * FROM trial_overrides ORDER BY created_at DESC"
+            ).fetchall()
+        return [_to_trial_override(r) for r in rows]
+
     def close(self) -> None:
         with self._lock:
             self._con.close()
@@ -551,6 +666,13 @@ def _to_grant(r: sqlite3.Row) -> EntitlementGrant:
     return EntitlementGrant(
         user_id=r["user_id"], grant_tier=r["grant_tier"], reason=r["reason"],
         granted_by=r["granted_by"], expires_at=r["expires_at"], created_at=r["created_at"],
+    )
+
+
+def _to_trial_override(r: sqlite3.Row) -> TrialOverride:
+    return TrialOverride(
+        user_id=r["user_id"], days=r["days"], reason=r["reason"],
+        granted_by=r["granted_by"], created_at=r["created_at"], consumed_at=r["consumed_at"],
     )
 
 

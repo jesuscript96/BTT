@@ -74,16 +74,34 @@ class BillingService:
         used_trial = False
         if email:
             used_trial = self._store.has_used_trial(normalize_email(email))
-        trial_days = None if used_trial else config.BILLING_TRIAL_DAYS
 
-        return self._gateway.create_checkout_session(
-            customer_id=customer.stripe_customer_id,
-            price_id=config.STRIPE_PRICE_ID_MONTHLY_EUR,
-            client_reference_id=user_id,
-            success_url=success,
-            cancel_url=cancel,
-            trial_days=trial_days,
-        )
+        # Path B (B1): an admin may grant this user a PREFERENTIAL trial length
+        # keyed by user_id. It is claimed one-shot (consume_trial_override is
+        # atomic on consumed_at) and deliberately overrides BOTH the default
+        # window AND the anti-recycle default — an admin granting days is an
+        # authorized exception. Card is still ALWAYS collected (B1), so the
+        # anti-abuse fingerprint is unchanged; only the day count moves.
+        override_days = self._store.consume_trial_override(user_id)
+        if override_days is not None:
+            trial_days = override_days
+        else:
+            trial_days = None if used_trial else config.BILLING_TRIAL_DAYS
+
+        try:
+            return self._gateway.create_checkout_session(
+                customer_id=customer.stripe_customer_id,
+                price_id=config.STRIPE_PRICE_ID_MONTHLY_EUR,
+                client_reference_id=user_id,
+                success_url=success,
+                cancel_url=cancel,
+                trial_days=trial_days,
+            )
+        except Exception:
+            # The Checkout call failed AFTER we claimed the override — give it
+            # back so a transient Stripe error never burns the admin's grant.
+            if override_days is not None:
+                self._store.rearm_trial_override(user_id)
+            raise
 
     # ── Billing Portal ───────────────────────────────────────────────────────
     def open_billing_portal(self, user_id: str, return_url: Optional[str] = None) -> str:

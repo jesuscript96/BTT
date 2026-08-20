@@ -96,6 +96,45 @@ def test_returning_email_gets_no_trial(svc, gw, store):
     assert gw.checkout_calls[-1]["trial_days"] is None          # immediate charge
 
 
+# ── Trial override (Path B: preferential per-user trial days) ────────────────
+def test_checkout_uses_trial_override_days(svc, gw, store):
+    store.set_trial_override("u1", 14, reason="socio Al", granted_by="adrian")
+    svc.start_subscription_checkout("u1", "a@b.com")
+    assert gw.checkout_calls[-1]["trial_days"] == 14           # override wins over default 7
+    assert store.get_trial_override("u1").consumed_at is not None  # consumed one-shot
+
+
+def test_trial_override_is_one_shot_then_falls_back(svc, gw, store):
+    store.set_trial_override("u1", 21)
+    svc.start_subscription_checkout("u1", "a@b.com")
+    assert gw.checkout_calls[-1]["trial_days"] == 21
+    # A second checkout for the same user no longer sees the override.
+    svc.start_subscription_checkout("u1", "a@b.com")
+    assert gw.checkout_calls[-1]["trial_days"] == 7            # back to default
+
+
+def test_trial_override_beats_used_trial(svc, gw, store):
+    # Even a returning email (would normally get NO trial) gets the admin grant.
+    store.record_trial(normalize_email("a@b.com"), "email")
+    store.set_trial_override("u1", 30)
+    svc.start_subscription_checkout("u1", "a@b.com")
+    assert gw.checkout_calls[-1]["trial_days"] == 30
+
+
+def test_trial_override_rearmed_when_stripe_fails(svc, gw, store, monkeypatch):
+    store.set_trial_override("u1", 14)
+
+    def boom(**kwargs):
+        raise RuntimeError("stripe down")
+
+    monkeypatch.setattr(gw, "create_checkout_session", boom)
+    with pytest.raises(RuntimeError):
+        svc.start_subscription_checkout("u1", "a@b.com")
+    # The failed Checkout must NOT burn the grant — it stays pending.
+    assert store.get_trial_override("u1").consumed_at is None
+    assert store.consume_trial_override("u1") == 14
+
+
 def test_checkout_uses_body_urls_over_config(svc, gw):
     svc.start_subscription_checkout("u1", "a@b.com",
                                     success_url="https://x/ok", cancel_url="https://x/no")

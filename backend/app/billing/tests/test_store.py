@@ -8,7 +8,11 @@ import time
 
 import pytest
 
-from app.billing.store import Store
+from app.billing.store import (
+    MAX_TRIAL_OVERRIDE_DAYS,
+    MIN_TRIAL_OVERRIDE_DAYS,
+    Store,
+)
 
 
 @pytest.fixture
@@ -127,6 +131,49 @@ def test_trial_ledger_blocks_reuse(store):
     # A different identity (different card fingerprint) is free to trial.
     assert store.record_trial("fp_xyz", "card_fingerprint") is True
     assert store.has_used_trial("fp_other") is False
+
+
+# ── Trial overrides (Path B: per-user preferential trial length) ──────────────
+def test_trial_override_roundtrip_and_bounds(store):
+    o = store.set_trial_override("user_1", 14, reason="socio", granted_by="adrian")
+    assert o.days == 14 and o.consumed_at is None and o.granted_by == "adrian"
+    assert store.get_trial_override("user_1").reason == "socio"
+    assert store.get_trial_override("nobody") is None
+    # Out-of-range days are rejected before they can reach Stripe.
+    with pytest.raises(ValueError):
+        store.set_trial_override("user_2", MAX_TRIAL_OVERRIDE_DAYS + 1)
+    with pytest.raises(ValueError):
+        store.set_trial_override("user_2", MIN_TRIAL_OVERRIDE_DAYS - 1)
+
+
+def test_trial_override_consume_is_one_shot(store):
+    store.set_trial_override("user_1", 21)
+    assert store.consume_trial_override("user_1") == 21   # first claim gets the days
+    assert store.consume_trial_override("user_1") is None  # already consumed
+    assert store.get_trial_override("user_1").consumed_at is not None
+    assert store.consume_trial_override("nobody") is None  # no override at all
+
+
+def test_trial_override_reset_rearms(store):
+    store.set_trial_override("user_1", 7)
+    assert store.consume_trial_override("user_1") == 7
+    # A deliberate admin re-grant re-arms the one-shot (consumed_at -> NULL).
+    store.set_trial_override("user_1", 30)
+    assert store.get_trial_override("user_1").consumed_at is None
+    assert store.consume_trial_override("user_1") == 30
+
+
+def test_trial_override_rearm_delete_and_list(store):
+    store.set_trial_override("user_1", 10)
+    store.set_trial_override("user_2", 14)
+    store.consume_trial_override("user_1")
+    # rearm undoes a claim (e.g. Checkout failed after consuming).
+    store.rearm_trial_override("user_1")
+    assert store.consume_trial_override("user_1") == 10
+    assert len(store.list_trial_overrides()) == 2
+    store.delete_trial_override("user_1")
+    assert store.get_trial_override("user_1") is None
+    assert len(store.list_trial_overrides()) == 1
 
 
 # ── Persistence across connections (durability of the file) ───────────────────

@@ -203,22 +203,24 @@ El trial de 7 días es **único por identidad**, no por `user_id` de Clerk (si f
 - Antes de conceder `trial_period_days=7`, el backend comprueba si ese email o fingerprint ya consumió un trial (tabla local `trial_ledger` o consulta a Stripe). Si ya lo usó → Checkout **sin trial** (cobro inmediato de 29 €).
 - Requiere una tabla auxiliar mínima `trial_ledger(identity_key TEXT PRIMARY KEY, kind TEXT, first_trial_at REAL)` donde `identity_key` = email normalizado y/o card fingerprint.
 
-### Trial granular por cliente (Path B) — EXTENSIÓN PLANIFICADA (pedido Al/Jesús 2026-08-19, NO construida aún)
-Petición: dar **distintos días de prueba a distintos clientes** ("trato especial" a colegas). **Decisión (Adrian): Path B = trial NATIVO de Stripe dinámico** (no un grant local), porque el trial vive en Stripe, cuenta los días y **auto-convierte a pago** (más estable que un grant que caduca contra el paywall). **Keyed por `user_id`** de Clerk.
+### Trial granular por cliente (Path B / B1) — IMPLEMENTADO 2026-08-20 (pedido Al/Jesús 2026-08-19)
+Petición: dar **distintos días de prueba a distintos clientes** ("trato especial" a colegas). **Decisión (Adrian): Path B = trial NATIVO de Stripe dinámico** (no un grant local), porque el trial vive en Stripe, cuenta los días y **auto-convierte a pago** (más estable que un grant que caduca contra el paywall). **Keyed por `user_id`** de Clerk. **Decisión #1 CERRADA → B1** (Adrian + Jesús 2026-08-20).
 
-Diseño (aditivo, detrás del flag, sin tocar lo vivo):
-- **Tabla nueva `trial_overrides`** en el store: `user_id` (PK) · `days` (1–30) · `reason` · `granted_by` · `created_at` · `consumed_at`.
-- **Wire en el checkout** (`service.py`, donde hoy `trial_days = None if used_trial else BILLING_TRIAL_DAYS`): pasa a `trial_days = override.days if override else (0 if used_trial else BILLING_TRIAL_DAYS)`; el valor ya se inyecta como `subscription_data.trial_period_days` en `stripe_client.py`.
-- **CLI admin** `set_trial_override.py --user-id … --days … --reason …` (y `--remove`), **solo servidor** — sin endpoint público.
+Implementación real (aditiva, detrás del flag `BILLING_ENABLED`, sin tocar lo vivo):
+- **Tabla `trial_overrides`** (`store.py`): `user_id` (PK) · `days` (1–30) · `reason` · `granted_by` · `created_at` · `consumed_at`.
+- **Métodos del store**: `set_trial_override` (valida 1–30 → `ValueError`; **re-set re-arma** poniendo `consumed_at=NULL`) · `consume_trial_override` (**claim atómico one-shot** con `WHERE consumed_at IS NULL`, devuelve `days`) · `rearm_trial_override` (deshace un claim) · `get`/`delete`/`list_trial_overrides`.
+- **Wire en el checkout** (`service.py`, `start_subscription_checkout`): `override_days = consume_trial_override(user_id)`; si hay → `trial_days = override_days`, si no → `None if used_trial else BILLING_TRIAL_DAYS`. Si la llamada a Stripe falla **después** del claim → `rearm_trial_override` (un fallo transitorio no quema el grant). El valor viaja como `subscription_data.trial_period_days` en `stripe_client.py` — **sin cambios** ahí porque B1 mantiene `payment_method_collection="always"`.
+- **CLI admin** `scripts/set_trial_override.py`, **solo servidor** — sin endpoint público: `--user-ids u1,u2 --days N --reason … --granted-by …`, más `--list`, `--revoke`, `--dry-run`.
 
-**Anti-abuso (requisito de Al, "bien blindado"):**
-1. Override **solo por CLI de admin** en el servidor → un usuario no puede auto-asignarse días.
-2. **Un solo uso por `user_id`**: al cuajar el checkout se marca `consumed_at` → no se recicla cancelando y re-suscribiéndose. El `trial_ledger` (email + card fingerprint) **sigue vivo** para las altas normales.
-3. **Stripe es dueño del trial** (`trial_period_days` una vez por suscripción) + `consumed_at` local → sin loop.
-4. **Auditoría**: `granted_by` + `reason` + `created_at`.
-5. Rango **1–30** validado en el CLI.
+**Anti-abuso (requisito de Al, "bien blindado") — cómo quedó:**
+1. Override **solo por CLI de admin** en el servidor → un usuario no puede auto-asignarse días (sin superficie pública).
+2. **Un solo uso por `user_id`**: `consume_trial_override` es atómico sobre `consumed_at IS NULL` → no se recicla cancelando y re-suscribiéndose. El `trial_ledger` (email + card fingerprint) **sigue vivo** para las altas normales.
+3. **B1 = tarjeta siempre colectada** → el fingerprint anti-abuso queda intacto; solo cambia el número de días.
+4. **Stripe es dueño del trial** (`trial_period_days` una vez por suscripción) + `consumed_at` local → sin loop.
+5. **Auditoría**: `granted_by` + `reason` + `created_at`.
+6. Rango **1–30** validado en **store y CLI** (fuera de rango → `ValueError` / exit 1).
 
-**Decisión #1 PENDIENTE (Adrian):** **B1** = con tarjeta upfront (`payment_method_collection="always"` actual; recomendado, anti-abuso fuerte con fingerprint) · **B2** = sin tarjeta (`payment_method_collection="if_required"`; debilita el anti-abuso y baja conversión). Menú de días concreto por cliente = pendiente (escala abierta 1–30). Estimación ~4-5h. **NO arrancar hasta cerrar el e2e y la decisión #1.**
+**Tests:** `test_store.py` (roundtrip + bounds + one-shot + re-arm/delete/list) y `test_service.py` (override gana al default, one-shot con fallback a 7, gana a `used_trial`, re-arme si Stripe falla). Suite billing completa: **88 pasando**.
 
 ### Nota SCA/Europa
 Cliente europeo → 3DS frecuente. Con Checkout + trial, el primer cobro real es en el día 7; Stripe puede requerir autenticación off-session que a veces falla. El flujo `past_due`→gracia→dunning cubre ese caso.
