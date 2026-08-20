@@ -30,6 +30,61 @@
 
 ---
 
+## 2026-08-20 (tarde) — Diagnóstico inconsistencias de P&L + PRD fix de locates
+
+**Qué hicimos**
+- Diagnóstico de por qué los números del backtester **no cuadran entre paneles**
+  (Álvaro veía cifras contradictorias en varias estrategias). Solo diagnóstico +
+  un PRD: **no se tocó código esta sesión**.
+- Revisión concreta del **cálculo de locates** (sospecha de Álvaro).
+
+**Hallazgos (anclados en código)**
+- **PnL% del grid mensual COMPONE los retornos diarios** (`PerformanceTab.tsx:148`,
+  `∏(1+r/100)−1`) mientras el RETURN del backend es simple `Σpnl/init_cash`
+  (`backtest_service.py:1336`). Por eso YTD salía +3133% con RETURN +27.67%. Bug real.
+- **Capital por defecto $10.000 hardcodeado** en 4 sitios (`BacktestPanel.tsx:417`,
+  `page.tsx:259/465/470/506`). Las métricas en $ del header de la curva usan
+  `initCashRef.current` (`EquityCurveTab.tsx:663/682`), que se desincroniza del
+  `init_cash` real → firma del $10k en `MAX DD` (−4941/−49.41%) con capital 2.500.
+- **3–4 pipelines de P&L en paralelo sin fuente única**: backend agregado
+  (`Σpnl/init_cash`), curva backend (`init_cash+cumsum`), calendario (suma cruda
+  de `t.pnl`, `CalendarTab.tsx:68-75`), PnL% compuesto, y `page.tsx:1087` recalcula
+  el return por su cuenta. Cada uno da un número distinto.
+- **Calendario "verde pero plano"**: en modo neto no resta los `$150/mes` (solo en
+  modo "gastos", `CalendarTab.tsx:87-89`); el neto real es `total_pnl−total_expenses`
+  (`backtest_service.py:1327`).
+- **Locates — el total es correcto, el reparto está mal**:
+  - Todo el locate del día se imputa al **primer short** (`break`) en
+    `portfolio_sim.py:878-882` y **duplicado verbatim** en `sim_dispatch.py:372-395`
+    (path JIT). → falsea R por trade y win rate.
+  - Se resta de **toda la curva de equity** desde la barra 0 (`equity[i]` para todo
+    `i`), incluidas barras premarket sin posición → infla el DD intradía.
+  - Evidencia (misma "Definitiva 2.3", 867 trades): locate 0 → 3 pasa RETURN de
+    **+9876.73% a −71.73%** y **WIN RATE de 64.1% a 56.2%** (huella del mal reparto).
+
+**Decisiones**
+- Modelo de locate **"una sola compra por ticker-día"** confirmado por Álvaro:
+  **no** se cobra por reentrada (el `max_short_size_today` + una imputación es
+  correcto y se preserva).
+- **Reparto FIJADO: proporcional al `size` de cada short**, preservando el total
+  exacto (elimina la distorsión de win rate con reentradas).
+
+**Entregable**
+- **`docs/fix-locates-attribution/PRD.md`** — PRD ejecutable condensado (formato
+  casa, anclado a `fichero:línea`, plan atómico T1–T5, DoD, ejemplo numérico).
+  **Pensado para que lo ejecute GLM** en `alvaro-rama-desarrollo`. El fix va en los
+  **dos** paths (`portfolio_sim.py` + `sim_dispatch.py`) y debe dejar verde
+  `test_locates.py`, `test_locates_flat_semantics.py` y `test_sim_jit_equivalence.py`.
+
+**Abierto (deferred)**
+1. **El bug PnL%/initCash NO tiene PRD todavía** — solo diagnóstico. Decidir si se
+   unifica todo a una sola curva de equity (fuente única de verdad) y quién lo hace.
+2. **Trabajo en paralelo sobre los MISMOS ficheros**: `PerformanceTab.tsx`,
+   `EquityCurveTab.tsx`, `page.tsx`, `CalendarTab.tsx` se editaron a las 19:54–19:57
+   (otro agente/sesión). Cuidado con pisar al tocar el fix del P&L.
+
+---
+
 ## 2026-08-20 — Vía rápida de qualifying (bygap ordenado por gap)
 
 **Qué hicimos**
