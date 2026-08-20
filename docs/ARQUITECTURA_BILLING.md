@@ -16,6 +16,7 @@
 9. [Variables de entorno](#9-variables-de-entorno)
 10. [Tests](#10-tests)
 11. [Mapa de fases](#11-mapa-de-fases)
+12. [Seguridad, persistencia y datos sensibles](#12-seguridad-persistencia-y-datos-sensibles)
 
 ---
 
@@ -280,3 +281,54 @@ El **backend es el gate real**. El `BillingGuard` del frontend solo mejora UX (r
 | **2G** | Switch `get_tier` + seed migración + `BillingGuard` + runbook | No (tras flag) |
 
 **Decisiones de producto** (montos, alcance del plan, trial, IVA, cancelación): ver `docs/FASE1_DISENO_TRIAL_SUSCRIPCION_STRIPE.md`. **Go-live:** `docs/RUNBOOK_CUTOVER_BILLING_STAGING.md`.
+
+---
+
+## 12. Seguridad, persistencia y datos sensibles
+
+> Esta sección describe el **estado real** del almacenamiento del store de billing (no un ideal), qué contiene y qué **no**, y la checklist de blindaje para prod. Escrita tras verificar `store.py` y los mounts reales del host (2026-08-19).
+
+### 12.1 Qué guarda el store (y qué NO)
+
+El SQLite de billing es un **espejo materializado de Stripe**, no una base de datos de pagos primaria. Verificado en `store.py`:
+
+| Dato almacenado | Sensibilidad | Nota |
+|---|---|---|
+| `email` (`billing_customers`) | **PII** | El dato más sensible del store |
+| `user_id` Clerk ↔ `stripe_customer_id` (`cus_…`) | Correlación | Vincula identidad con cliente de Stripe |
+| `brand` + `last4` + `exp_month/exp_year` (`payment_methods`) | **NO es dato PCI** | last4/marca son almacenables por diseño; no reconstruyen la tarjeta |
+| IDs de Stripe (`sub_…`, `pm_…`, `in_…`), estados, importes, timestamps, `hosted_invoice_url`/`invoice_pdf` | Metadatos | Enlaces a Stripe, no contenido |
+
+**Lo que NO toca nunca el servidor:** número de tarjeta (PAN), CVV, ni datos de autenticación de la tarjeta. Stripe los custodia íntegramente (Checkout/Portal son de Stripe) → **el peso de cumplimiento PCI-DSS recae en Stripe, no en Edgecute**. El store es **reconstruible desde Stripe** (`reconcile_all`), así que su pérdida no destruye la verdad del cobro; una fuga, sin embargo, **sí sería un incidente de PII** (emails + `cus_` + last4).
+
+### 12.2 Persistencia (obligatoria) — la trampa del `/data`
+
+El store **debe** vivir en un **volumen/bind mount persistente**, o se pierde en cada redeploy del contenedor (reconstruible, pero indeseable).
+
+⚠️ **Trampa verificada en staging (2026-08-19):** el default `EDGECUTE_BILLING_DB_PATH` cae en el **CWD del contenedor** (capa efímera). En el contenedor de staging **no hay ningún mount montado en una ruta `/data/…` interna** — los binds del host (`/data/btt_lake`, `/data/btt_staging_cache`, `/data/btt_staging/users.duckdb`) se montan en `/lake`, `/tmp/btt_intraday_cache` y `/app/users.duckdb`. Es decir, una ruta `/data/x.sqlite` **dentro** del contenedor NO es persistente por sí sola.
+
+**Solución aplicada:** añadir un bind mount dedicado y apuntar la env dentro de él:
+- **Staging:** host `/data/btt_staging_billing` → contenedor `/data/btt_staging_billing`; `EDGECUTE_BILLING_DB_PATH=/data/btt_staging_billing/edgecute_billing.sqlite`.
+- **Prod (futuro cutover):** carpeta **distinta y dedicada** (p. ej. `/data/btt_prod_billing`), **nunca** la de staging (aislamiento test/real). Env prod apuntando dentro de ese mount.
+
+### 12.3 Control de acceso y "blindaje" — estado real
+
+- **No expuesto por red.** El fichero no está en el webroot ni se sirve por HTTP; solo lo abre el proceso del backend y root del host. La superficie de ataque real es el **acceso SSH al host** y el acceso al contenedor.
+- **Aislamiento test/prod.** Staging y prod son **contenedores co-ubicados en el mismo host**; el aislamiento lo dan carpetas separadas. El store de staging (datos de prueba: tarjetas `4242`, subs test, grants sembrados) **nunca** debe compartir carpeta con el de prod.
+- **Permisos de fichero.** Recomendado `chmod 600` en el `.sqlite` y `700`/`750` en la carpeta, propiedad del usuario del proceso. **Aviso verificado:** `/data/btt_staging_cache` en el host está en `drwxrwxrwx` (**777, world-writable**) — la carpeta de billing **no** debe heredar ese permiso; créala restrictiva.
+- **Secretos fuera del store.** Las claves de Stripe (`sk_…`, `whsec_…`) viven en **env** (Coolify), **no** en este fichero ni en el repo. El webhook se valida por **firma HMAC** (`STRIPE_WEBHOOK_SECRET`), no por confianza en el origen.
+
+### 12.4 Cifrado en reposo — honestidad
+
+- **Hoy NO hay cifrado a nivel de aplicación** del SQLite (no se usa SQLCipher ni equivalente).
+- **Disco:** el dedicado Hetzner **no** va cifrado (LUKS) salvo que se configure explícitamente; asúmase **sin cifrado en reposo** por defecto.
+- **Valoración:** dado que el store es un **mirror sin datos PCI** (no PAN/CVV) y reconstruible desde Stripe, el cifrado en reposo es un **hardening deseable, no un bloqueante** para el go-live. Si el modelo de amenaza lo exige (p. ej. requisito de cliente/compliance sobre la PII de emails), las opciones son: (a) SQLCipher para el fichero, (b) cifrado de disco/volumen (LUKS) en el host, (c) minimizar PII (no persistir `email`, resolverlo desde Stripe on-demand). Ninguna está implementada hoy — **queda como decisión consciente del cutover de prod**.
+
+### 12.5 Checklist de blindaje para el cutover de PROD
+
+- [ ] `EDGECUTE_BILLING_DB_PATH` en un **bind mount/volumen persistente dedicado de prod** (no el de staging, no el CWD).
+- [ ] Carpeta creada con permisos restrictivos (`700`/`750`, no `777`); fichero `600`.
+- [ ] Claves **Stripe LIVE** (`sk_live_`, `whsec_` del endpoint de prod) en env de Coolify, **nunca** en el repo.
+- [ ] Backup/DR: confiar en `reconcile_all` como recuperación primaria; opcionalmente snapshot periódico del fichero.
+- [ ] Decidir explícitamente el cifrado en reposo (§12.4) según el requisito de compliance del cliente.
+- [ ] Verificar que el store de prod **no** comparte carpeta ni fichero con el de staging.

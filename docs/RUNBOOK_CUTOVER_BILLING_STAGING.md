@@ -35,9 +35,22 @@ BILLING_SUCCESS_URL=https://<STAGING_FRONTEND>/billing?session_id={CHECKOUT_SESS
 BILLING_CANCEL_URL=https://<STAGING_FRONTEND>/billing?checkout=cancel
 BILLING_PORTAL_RETURN_URL=https://<STAGING_FRONTEND>/billing
 BILLING_ADMIN_USER_IDS=<clerk_id_jaume>,<clerk_id_alvaro>,<clerk_id_jesus>,<clerk_id_adrian>
-EDGECUTE_BILLING_DB_PATH=/data/edgecute_billing.sqlite   # ¡en un volumen PERSISTENTE!
+EDGECUTE_BILLING_DB_PATH=/data/btt_staging_billing/edgecute_billing.sqlite   # dentro del mount del Paso 2b
 ```
-- ⚠️ `EDGECUTE_BILLING_DB_PATH` **debe** apuntar a un mount persistente (si no, se pierde en cada deploy; es reconstruible desde Stripe con la reconciliación, pero mejor persistir).
+- ⚠️ **Las 3 URLs de retorno (`BILLING_SUCCESS_URL`/`CANCEL`/`PORTAL_RETURN_URL`) son OPCIONALES**: el frontend las envía en el body derivadas de `window.location.origin` (`SubscriptionPanel.tsx`), y el backend usa `body or env` (`service.py`). Ponlas solo como fallback si alguna vez se llama la API sin frontend.
+
+### Paso 2b — Mount persistente para el store de billing (IMPRESCINDIBLE)
+> **Verificado (2026-08-19):** el default cae en el CWD efímero, y en el contenedor de staging **no hay mount en ninguna ruta `/data/…` interna** (los binds del host van a `/lake`, `/tmp/btt_intraday_cache`, `/app/users.duckdb`). Sin este paso, el store se borra en cada redeploy.
+
+En Coolify → app `develop` → **Storages** → Add (Bind mount / Directory):
+- **Source (host):** `/data/btt_staging_billing`
+- **Destination (contenedor):** `/data/btt_staging_billing`
+
+Crea la carpeta del host con permisos restrictivos (no heredar el `777` de la caché):
+```bash
+mkdir -p /data/btt_staging_billing && chmod 750 /data/btt_staging_billing
+```
+- ⚠️ `EDGECUTE_BILLING_DB_PATH` **debe** apuntar **dentro** de ese mount. Es reconstruible desde Stripe (`reconcile_all`), pero mejor persistir. Detalle de seguridad/persistencia: `docs/ARQUITECTURA_BILLING.md` §12.
 - ⚠️ No pongas aún `BILLING_ENABLED=true` si no has hecho el Paso 3 (sembrar grants), o los usuarios existentes de staging caerán a `Locked` de golpe. En staging con pocos usuarios da igual, pero mantén el orden por costumbre.
 
 ### Paso 3 — Sembrar grants de trial (ANTES de encender el flag en prod; en staging opcional)
@@ -85,3 +98,5 @@ Poner `BILLING_ENABLED=false` (backend) y `NEXT_PUBLIC_BILLING_ENABLED=false` (f
 
 ## Promoción a prod (cuando staging esté validado) — FUERA DE ESTE RUNBOOK
 Merge `develop`→`main`, repetir Pasos 1–5 con Stripe en **modo LIVE** (claves `sk_live_`/`pk_live_`, webhook a la URL de prod), sembrar grants en prod, y encender flags en prod. Orden estricto: **sembrar grants → encender `BILLING_ENABLED`**. Se hará como acción separada y consciente.
+
+⚠️ **Blindaje del store en prod:** usar una carpeta **dedicada y distinta de la de staging** (p. ej. `/data/btt_prod_billing`, permisos `750`), claves LIVE solo en env, y decidir explícitamente el cifrado en reposo. Checklist completa en `docs/ARQUITECTURA_BILLING.md` §12.5. El store de prod **nunca** comparte carpeta ni fichero con el de staging (aislamiento datos test/reales).
