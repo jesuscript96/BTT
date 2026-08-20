@@ -17,6 +17,7 @@
 10. [Tests](#10-tests)
 11. [Mapa de fases](#11-mapa-de-fases)
 12. [Seguridad, persistencia y datos sensibles](#12-seguridad-persistencia-y-datos-sensibles)
+13. [Extensión planificada: trial granular por cliente](#13-extensión-planificada-trial-granular-por-cliente)
 
 ---
 
@@ -332,3 +333,23 @@ El store **debe** vivir en un **volumen/bind mount persistente**, o se pierde en
 - [ ] Backup/DR: confiar en `reconcile_all` como recuperación primaria; opcionalmente snapshot periódico del fichero.
 - [ ] Decidir explícitamente el cifrado en reposo (§12.4) según el requisito de compliance del cliente.
 - [ ] Verificar que el store de prod **no** comparte carpeta ni fichero con el de staging.
+
+---
+
+## 13. Extensión planificada: trial granular por cliente
+
+> ⚠️ **NO CONSTRUIDA AÚN** — diseño aprobado, pendiente de implementar tras el e2e (pedido Al/Jesús 2026-08-19). Documentado aquí para que quede en la arquitectura; nada de esto está vivo todavía. Diseño detallado en `docs/FASE1_DISENO_TRIAL_SUSCRIPCION_STRIPE.md` §4.
+
+**Necesidad:** dar **distintos días de prueba a distintos clientes** (trato especial a colegas): a unos 5, a otros 14, a otros 21… (escala 1–30).
+
+**Decisión (Adrian): Path B — trial NATIVO de Stripe dinámico, keyed por `user_id`.** Frente a la alternativa de un grant local (Path A, que caduca contra el paywall), el Path B deja que **el trial viva en Stripe**: Stripe cuenta los días y **auto-convierte a pago** → más estable. Hoy el trial es un único valor global (`BILLING_TRIAL_DAYS=7`); esta extensión lo hace **por usuario**.
+
+| Pieza | Cambio |
+|---|---|
+| **Tabla `trial_overrides`** (nueva, en el store) | `user_id` PK · `days` (1–30) · `reason` · `granted_by` · `created_at` · `consumed_at` |
+| **`service.py` (checkout)** | `trial_days = override.days if override else (0 if used_trial else BILLING_TRIAL_DAYS)` → se inyecta en `stripe_client.py` como `trial_period_days` |
+| **CLI `set_trial_override.py`** | admin, **solo servidor** (sin endpoint público); `--user-id`, `--days`, `--reason`, `--remove` |
+
+**Anti-abuso (requisito explícito, "bien blindado"):** override solo por CLI admin · **un solo uso por `user_id`** (`consumed_at` al cuajar el checkout) · el `trial_ledger` (email + card fingerprint) sigue vivo para altas normales · Stripe dueño del trial (una vez por suscripción) · auditoría `granted_by`/`reason` · rango 1–30 validado.
+
+**Decisión #1 pendiente (Adrian):** **B1** con tarjeta upfront (`payment_method_collection="always"`, recomendado, anti-abuso fuerte) vs **B2** sin tarjeta (`if_required`, más débil). Estimación ~4-5h. Aditivo y detrás del flag.
