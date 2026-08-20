@@ -196,6 +196,52 @@ def get_dataset(dataset_id: str) -> dict | None:
 # WHERE clause builder (unchanged from original)
 # ---------------------------------------------------------------------------
 
+def _remap_trading_day(df, apply_day: str):
+    """Re-ancla las metricas al dia T+1 / T+2 (gap_1_day / gap_2_day).
+
+    Copia VERBATIM de la logica que ya vive en _fetch_qualifying_data_uncached
+    (via original), extraida para que la via materializada aplique exactamente
+    el mismo remapeo y no haya dos implementaciones que puedan divergir.
+    """
+    if apply_day == 'gap_1_day':
+        df = df.dropna(subset=['lead_timestamp_1']).copy()
+        df['timestamp'] = df['lead_timestamp_1']
+        df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+        df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
+        df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
+        df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
+        df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
+        df['rth_open']   = df['lead_rth_open_1']   if 'lead_rth_open_1'   in df.columns else np.nan
+        df['rth_high']   = df['lead_rth_high_1']   if 'lead_rth_high_1'   in df.columns else np.nan
+        df['rth_low']    = df['lead_rth_low_1']    if 'lead_rth_low_1'    in df.columns else np.nan
+        df['rth_close']  = df['lead_rth_close_1']  if 'lead_rth_close_1'  in df.columns else np.nan
+        df['rth_volume'] = df['lead_rth_volume_1'] if 'lead_rth_volume_1' in df.columns else np.nan
+        df['pm_high']    = df['lead_pm_high_1']    if 'lead_pm_high_1'    in df.columns else np.nan
+        df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
+        df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
+        df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
+        df['open']       = df['lead_open_1']       if 'lead_open_1'       in df.columns else np.nan
+    elif apply_day == 'gap_2_day':
+        df = df.dropna(subset=['lead_timestamp_2']).copy()
+        df['timestamp'] = df['lead_timestamp_2']
+        df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
+        df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
+        df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
+        df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
+        df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
+        df['rth_open']   = df['lead_rth_open_2']   if 'lead_rth_open_2'   in df.columns else np.nan
+        df['rth_high']   = df['lead_rth_high_2']   if 'lead_rth_high_2'   in df.columns else np.nan
+        df['rth_low']    = df['lead_rth_low_2']    if 'lead_rth_low_2'    in df.columns else np.nan
+        df['rth_close']  = df['lead_rth_close_2']  if 'lead_rth_close_2'  in df.columns else np.nan
+        df['rth_volume'] = df['lead_rth_volume_2'] if 'lead_rth_volume_2' in df.columns else np.nan
+        df['pm_high']    = df['lead_pm_high_2']    if 'lead_pm_high_2'    in df.columns else np.nan
+        df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
+        df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
+        df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+        df['open']       = df['lead_open_2']       if 'lead_open_2'       in df.columns else np.nan
+    return df
+
+
 def _build_where_clause(filters: dict) -> str:
     start_date = filters.get("start_date") or filters.get("date_from")
     end_date = filters.get("end_date") or filters.get("date_to")
@@ -543,7 +589,13 @@ def _evaluate_rules_on_df(df: pd.DataFrame, rules: list) -> pd.DataFrame:
 # to a plain ASCII string. TTL is short (qualifying can change when the dataset
 # is edited). Everything is best-effort: any failure falls through to a normal
 # recompute, so behavior is identical when Redis is unavailable.
-_QUALIFYING_REDIS_TTL = 300  # 5 min
+# QUALIFYING_CACHE_TTL (env, segundos): en prod la query tarda ~10-20s y 300s
+# es razonable. En un equipo local modesto la misma query tarda minutos y con
+# TTL=300 la cache caduca antes de re-ejecutar → cada run paga el coste entero.
+# La clave ya incluye los filtros resueltos (editar el dataset invalida solo),
+# asi que un TTL largo en local es seguro: el dato subyacente cambia como mucho
+# una vez al dia con la actualizacion del lago.
+_QUALIFYING_REDIS_TTL = int(os.getenv("QUALIFYING_CACHE_TTL", "300"))  # 5 min default
 # Cache the qualifying result by its REAL serialized size (Arrow IPC + base64),
 # NOT pandas memory_usage(deep=True) which over-counts object strings ~20-40x.
 # Small results go to Redis; bigger ones fall back to a local feather file under
@@ -719,6 +771,42 @@ def _fetch_qualifying_data_uncached(
                 for p in preconditions:
                     if p.get("metric") == "close_vs_sma" and p.get("sma_period"):
                         sma_periods.add(int(p.get("sma_period")))
+
+            # ─── Via materializada (env-gated, default OFF) ─────────────────
+            # QUALIFYING_WINDOWED_PARQUET: glob a un parquet con daily_metrics +
+            # las 32 columnas LAG/LEAD YA CALCULADAS offline. Computarlas al
+            # vuelo sobre ~19M filas es lo que hace que el qualifying tarde
+            # minutos en equipos modestos (medido: 494s para 2019-2026); contra
+            # el parquet materializado el mismo WHERE responde en segundos PARA
+            # CUALQUIER RANGO, sin depender de que ese rango este cacheado.
+            #
+            # Paridad por construccion: se genera con la MISMA SQL de stage-2,
+            # ejecutada una vez sobre la tabla completa (particionada por hash
+            # del ticker, que es inocuo porque las ventanas son PARTITION BY
+            # ticker). Scripts para generarlo: opt_materializar.py + opt_por_gap.py
+            # (proyecto del lago, carpeta scripts/); ver PRD_CONSTRUCCION_Y_OPTIMIZACION.md
+            #
+            # Cae a la via original (sin tocar nada) si: la env no esta puesta,
+            # el fichero no existe, o hay preconditions con SMA (columnas
+            # dinamicas por periodo que el parquet no puede llevar).
+            # ⚠️ Regenerar tras cada actualizacion del lago.
+            _win = os.getenv("QUALIFYING_WINDOWED_PARQUET", "").strip()
+            if _win and not sma_periods:
+                import glob as _glob
+                if _glob.glob(_win):
+                    logger.info(f"[QUALIFYING] via materializada: {_win}")
+                    df = con.execute(
+                        f'SELECT *, CAST("timestamp" AS DATE) AS date '
+                        f"FROM read_parquet('{_win.replace(chr(92), '/')}') "
+                        f"WHERE {where_clause}"
+                    ).fetchdf()
+                    if not df.empty:
+                        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+                    if preconditions and not df.empty:
+                        df = _evaluate_postgap_preconditions(df, preconditions)
+                    if not df.empty and apply_day in ("gap_1_day", "gap_2_day"):
+                        df = _remap_trading_day(df, apply_day)
+                    return df
 
             stage_1_smas = []
             for P in sorted(sma_periods):
