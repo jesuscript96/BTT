@@ -268,6 +268,7 @@ from app.routers import assistant
 from app.routers import feedback
 from app.routers import portfolio
 from app.routers import lake_update
+from app.routers import robustness
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -309,6 +310,8 @@ app.include_router(portfolio.router)
 # Actualizacion del lago local desde la UI. Gated por LAKE_UPDATE_ENABLED
 # (default OFF): en prod no hay lago local y el endpoint responde 503.
 app.include_router(lake_update.router, prefix="/api", tags=["Lake"])
+# Robustez: gated por ROBUSTNESS_ENABLED (apagado por defecto, ver el router).
+app.include_router(robustness.router, prefix="/api/robustness", tags=["Robustness"])
 
 @app.get("/health")
 def read_health():
