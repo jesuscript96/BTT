@@ -47,9 +47,12 @@ backtest no arranca o tarda horas:
 | `BACKTEST_NUMBA_SIM` | `1` | kernel compilado del simulador |
 | `QUALIFYING_CACHE_TTL` | `86400` | el TTL de 300s caducaba antes de re-ejecutar |
 | `QUALIFYING_DATE_PRUNE` | `true` | ver §4 |
+| `ROBUSTNESS_ENABLED` | `true` | pagina de Robustez; **default OFF**, en prod no existe |
 
-`frontend/.env.local`: `NEXT_PUBLIC_API_URL=http://localhost:8010` y
-`NEXT_PUBLIC_LOCAL_AUTH_BYPASS=true` (sin claves de Clerk, no hacen falta).
+`frontend/.env.local`: `NEXT_PUBLIC_API_URL=http://localhost:8010`,
+`NEXT_PUBLIC_LOCAL_AUTH_BYPASS=true` (sin claves de Clerk, no hacen falta) y
+`NEXT_PUBLIC_ROBUSTNESS_ENABLED=true` (entrada de menu de Robustez; sin ella
+la pagina no se lista).
 
 ## 4. Cambios en el código del repo (2, ambos sin commitear aún)
 
@@ -65,6 +68,38 @@ backtest no arranca o tarda horas:
    IDÉNTICAS. Con margen 15d, 3 de 4.899 filas tenían lag/lead distintos
    (tickers con suspensión larga); con 45d el riesgo residual afecta solo a
    `gap±1/±2` o `preconditions` en esos tickers-frontera.
+
+## 4bis. Pagina de Robustez (anadida 2026-08-20)
+
+Modulo aparte para analizar estrategias ya backtesteadas: analisis basico,
+Monte Carlo bootstrap, walk-forward (rapido y completo), y matriz
+locates x slippage. Ruta `/robustez`, endpoints bajo `/api/robustness`.
+
+**Apagado por defecto** (R7). En el repo solo cambian 3 lineas de `main.py`
+(montar el router) y el bloque de menu de `Sidebar.tsx`; todo lo demas son
+ficheros nuevos. Sin las variables de entorno, el router responde **503** y la
+entrada del menu no se pinta.
+
+**No se ha tocado** `what_if_service.py` ni `montecarlo_service.py` pese a que
+ambos tienen problemas para estrategias con `risk_type=PERCENT` (suman PnL en
+dolares, lo que produce equity negativa). El modulo lleva sus propios motores.
+Detalle y numeros en `MEMORIA.md` §4.2 y §4.4.
+
+**Dos cosas del repo que conviene saber** (documentadas, no corregidas):
+- `slippage` NO usa la misma unidad en las dos vias del simulador:
+  `portfolio_sim_jit` lo trata como **fraccion**, `backtester/engine.py` como
+  **porcentaje**. El campo de la UI se titula "Slippage (%)" pero va por la
+  primera via, asi que un `0.001` son **0,1% reales**.
+- `total_return_pct` se calcula **sin restar** `monthly_expenses`; los gastos
+  solo aparecen en `total_pnl_net`.
+
+**Un solo trabajo pesado a la vez:** los barridos llevan guardian; un segundo
+lanzamiento devuelve 409.
+
+**Cuidado al editar el backend mientras corre un barrido:** el `--reload` de
+uvicorn SI funciona en esta maquina (lo contrario de lo que decia MEMORIA hasta
+el 2026-08-20), asi que cualquier cambio en un `.py` reinicia el proceso y
+**mata el trabajo en curso**. Esperar a que termine.
 
 ## 5. Arrancar en local
 
