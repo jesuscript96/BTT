@@ -379,15 +379,33 @@ def simulate_jit(
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
         daily_locates_fee = blocks_of_100 * cost_per_100
 
-        # assign the deduction to the first short trade
-        for t in trades:
-            if t["direction"] == "Short":
-                t["pnl"] = round(t["pnl"] - daily_locates_fee, 4)
-                t["fees"] = round(t.get("fees", 0.0) + daily_locates_fee, 4)
-                break
+        # PRD fix-locates-attribution §4.2: mismo reparto proporcional que
+        # portfolio_sim (paridad). El kernel no devuelve la barra de la
+        # primera entrada corta, así que se deriva de los trades
+        # reconstruidos: min(entry_idx de los shorts) == primera entrada.
+        short_trades = [t for t in trades if t["direction"] == "Short"]
+        S = sum(t["size"] for t in short_trades)
+        if short_trades and S > 0:
+            shares = [daily_locates_fee * (t["size"] / S) for t in short_trades]
+        elif short_trades:
+            shares = [daily_locates_fee / len(short_trades)] * len(short_trades)
+        else:
+            shares = []
+        if shares:
+            shares = [round(s, 4) for s in shares]
+            # Cuadre de redondeo: el residuo va al short de mayor size.
+            residual = round(daily_locates_fee - sum(shares), 4)
+            if residual != 0.0:
+                biggest = max(range(len(short_trades)), key=lambda k: short_trades[k]["size"])
+                shares[biggest] = round(shares[biggest] + residual, 4)
+            for t, share in zip(short_trades, shares):
+                t["pnl"] = round(t["pnl"] - share, 4)
+                t["fees"] = round(t.get("fees", 0.0) + share, 4)
 
-        # reflect it on the equity curve
-        for i in range(len(equity)):
+        # PRD fix-locates-attribution §4.3: curva desde la 1a entrada corta.
+        short_entry_idxs = [t["entry_idx"] for t in short_trades]
+        start_idx = min(short_entry_idxs) if short_entry_idxs else 0
+        for i in range(start_idx, len(equity)):
             equity[i] -= daily_locates_fee
 
     # --- finalize ---
