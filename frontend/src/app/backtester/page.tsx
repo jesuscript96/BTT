@@ -28,6 +28,7 @@ import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
 import { createStrategy, createQuery, getStrategy, saveBacktest, updateStrategy } from "@/lib/api";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import { useEntitlements } from "@/lib/entitlements";
+import LakeUpdateLogo from "@/components/LakeUpdateLogo";
 import {
   startBacktest,
   startBacktestWithDefinition,
@@ -1148,13 +1149,10 @@ export default function Home() {
         flexShrink: 0,
       }}>
         <div className="flex items-center gap-3">
-          <h1 style={{
-            fontFamily: 'var(--color-ec-serif)',
-            fontSize: 20,
-            fontWeight: 600,
-            color: 'var(--color-ec-text-high)',
-            letterSpacing: '-0.3px',
-          }}>Backtester</h1>
+          {/* El titulo hace tambien de boton: al pulsarlo trae los datos de
+              mercado que falten hasta hoy. Si el backend no lo tiene
+              habilitado (LAKE_UPDATE_ENABLED), se comporta como texto normal. */}
+          <LakeUpdateLogo texto="Backtester" />
           {isHelperAdmin && (
           <button
             type="button"

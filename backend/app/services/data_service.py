@@ -197,6 +197,52 @@ def get_dataset(dataset_id: str) -> dict | None:
 # WHERE clause builder (unchanged from original)
 # ---------------------------------------------------------------------------
 
+def _remap_trading_day(df, apply_day: str):
+    """Re-ancla las metricas al dia T+1 / T+2 (gap_1_day / gap_2_day).
+
+    Copia VERBATIM de la logica que ya vive en _fetch_qualifying_data_uncached
+    (via original), extraida para que la via materializada aplique exactamente
+    el mismo remapeo y no haya dos implementaciones que puedan divergir.
+    """
+    if apply_day == 'gap_1_day':
+        df = df.dropna(subset=['lead_timestamp_1']).copy()
+        df['timestamp'] = df['lead_timestamp_1']
+        df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+        df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
+        df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
+        df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
+        df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
+        df['rth_open']   = df['lead_rth_open_1']   if 'lead_rth_open_1'   in df.columns else np.nan
+        df['rth_high']   = df['lead_rth_high_1']   if 'lead_rth_high_1'   in df.columns else np.nan
+        df['rth_low']    = df['lead_rth_low_1']    if 'lead_rth_low_1'    in df.columns else np.nan
+        df['rth_close']  = df['lead_rth_close_1']  if 'lead_rth_close_1'  in df.columns else np.nan
+        df['rth_volume'] = df['lead_rth_volume_1'] if 'lead_rth_volume_1' in df.columns else np.nan
+        df['pm_high']    = df['lead_pm_high_1']    if 'lead_pm_high_1'    in df.columns else np.nan
+        df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
+        df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
+        df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
+        df['open']       = df['lead_open_1']       if 'lead_open_1'       in df.columns else np.nan
+    elif apply_day == 'gap_2_day':
+        df = df.dropna(subset=['lead_timestamp_2']).copy()
+        df['timestamp'] = df['lead_timestamp_2']
+        df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
+        df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
+        df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
+        df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
+        df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
+        df['rth_open']   = df['lead_rth_open_2']   if 'lead_rth_open_2'   in df.columns else np.nan
+        df['rth_high']   = df['lead_rth_high_2']   if 'lead_rth_high_2'   in df.columns else np.nan
+        df['rth_low']    = df['lead_rth_low_2']    if 'lead_rth_low_2'    in df.columns else np.nan
+        df['rth_close']  = df['lead_rth_close_2']  if 'lead_rth_close_2'  in df.columns else np.nan
+        df['rth_volume'] = df['lead_rth_volume_2'] if 'lead_rth_volume_2' in df.columns else np.nan
+        df['pm_high']    = df['lead_pm_high_2']    if 'lead_pm_high_2'    in df.columns else np.nan
+        df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
+        df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
+        df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+        df['open']       = df['lead_open_2']       if 'lead_open_2'       in df.columns else np.nan
+    return df
+
+
 def _build_where_clause(filters: dict) -> str:
     start_date = filters.get("start_date") or filters.get("date_from")
     end_date = filters.get("end_date") or filters.get("date_to")
@@ -544,7 +590,13 @@ def _evaluate_rules_on_df(df: pd.DataFrame, rules: list) -> pd.DataFrame:
 # to a plain ASCII string. TTL is short (qualifying can change when the dataset
 # is edited). Everything is best-effort: any failure falls through to a normal
 # recompute, so behavior is identical when Redis is unavailable.
-_QUALIFYING_REDIS_TTL = 300  # 5 min
+# QUALIFYING_CACHE_TTL (env, segundos): en prod la query tarda ~10-20s y 300s
+# es razonable. En un equipo local modesto la misma query tarda minutos y con
+# TTL=300 la cache caduca antes de re-ejecutar → cada run paga el coste entero.
+# La clave ya incluye los filtros resueltos (editar el dataset invalida solo),
+# asi que un TTL largo en local es seguro: el dato subyacente cambia como mucho
+# una vez al dia con la actualizacion del lago.
+_QUALIFYING_REDIS_TTL = int(os.getenv("QUALIFYING_CACHE_TTL", "300"))  # 5 min default
 # Cache the qualifying result by its REAL serialized size (Arrow IPC + base64),
 # NOT pandas memory_usage(deep=True) which over-counts object strings ~20-40x.
 # Small results go to Redis; bigger ones fall back to a local feather file under
@@ -770,18 +822,48 @@ def _fetch_qualifying_data_uncached(
                     if p.get("metric") == "close_vs_sma" and p.get("sma_period"):
                         sma_periods.add(int(p.get("sma_period")))
 
-            # ─── Vía rápida bygap (opt-in: QUALIFYING_WINDOWED_PARQUET) ───
-            # El bygap materializa Stage1+Stage2 (misma fuente, mismas ventanas)
-            # ordenado por pmh_gap_pct DESC. Sustituye SOLO la lectura: todo lo
-            # que sigue (normalizar date, preconditions, remap de trading day)
-            # es común a ambas vías. Requiere sin SMAs (no viajan en el bygap)
-            # y bygap fresco (FIX A: el guardián degrada a la vía original).
+            # ─── Via materializada (env-gated, default OFF) ─────────────────
+            # QUALIFYING_WINDOWED_PARQUET: glob a un parquet con daily_metrics +
+            # las 32 columnas LAG/LEAD YA CALCULADAS offline. Computarlas al
+            # vuelo sobre ~19M filas es lo que hace que el qualifying tarde
+            # minutos en equipos modestos (medido: 494s para 2019-2026); contra
+            # el parquet materializado el mismo WHERE responde en segundos PARA
+            # CUALQUIER RANGO, sin depender de que ese rango este cacheado.
+            #
+            # Paridad por construccion: se genera con la MISMA SQL de stage-2,
+            # ejecutada una vez sobre la tabla completa (particionada por hash
+            # del ticker, que es inocuo porque las ventanas son PARTITION BY
+            # ticker). Scripts para generarlo: opt_materializar.py + opt_por_gap.py
+            # (proyecto del lago, carpeta scripts/); ver PRD_CONSTRUCCION_Y_OPTIMIZACION.md
+            #
+            # Cae a la via original (sin tocar nada) si: la env no esta puesta,
+            # el fichero no existe, hay preconditions con SMA (columnas
+            # dinamicas por periodo que el parquet no puede llevar) o el bygap
+            # esta desfasado (FIX A, guardián de frescura).
+            # ⚠️ Regenerar tras cada actualizacion del lago.
             _win = os.getenv("QUALIFYING_WINDOWED_PARQUET", "").strip()
-            _use_fast = False
             if _win and not sma_periods:
                 if glob.glob(_win):
-                    _use_fast = _bygap_is_fresh(con, _win)
-                    if not _use_fast and os.getenv("QUALIFYING_WINDOWED_STRICT", "").lower() in ("true", "1"):
+                    # FIX A: guardián de frescura (parquet_metadata + memo por
+                    # mtime). Un bygap desfasado serviría números viejos sin
+                    # avisar: degrada a la vía original; con
+                    # QUALIFYING_WINDOWED_STRICT=true falla
+                    # (_BygapStaleStrictError, re-lanzada en el except de abajo).
+                    if _bygap_is_fresh(con, _win):
+                        logger.info(f"[QUALIFYING] via materializada: {_win}")
+                        df = con.execute(
+                            f'SELECT *, CAST("timestamp" AS DATE) AS date '
+                            f"FROM read_parquet('{_win.replace(chr(92), '/')}') "
+                            f"WHERE {where_clause}"
+                        ).fetchdf()
+                        if not df.empty:
+                            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+                        if preconditions and not df.empty:
+                            df = _evaluate_postgap_preconditions(df, preconditions)
+                        if not df.empty and apply_day in ("gap_1_day", "gap_2_day"):
+                            df = _remap_trading_day(df, apply_day)
+                        return df
+                    if os.getenv("QUALIFYING_WINDOWED_STRICT", "").lower() in ("true", "1"):
                         raise _BygapStaleStrictError(
                             "[QUALIFYING] bygap desfasado respecto a daily_metrics "
                             "(QUALIFYING_WINDOWED_STRICT=true)"
@@ -792,93 +874,87 @@ def _fetch_qualifying_data_uncached(
                         f"fichero ({_win}) -> vía original"
                     )
 
-            if _use_fast:
-                df = con.execute(
-                    f'SELECT *, CAST("timestamp" AS DATE) AS date '
-                    f'FROM read_parquet(\'{_win}\') WHERE {where_clause}'
-                ).fetchdf()
-            else:
-                stage_1_smas = []
-                for P in sorted(sma_periods):
-                    stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
+            stage_1_smas = []
+            for P in sorted(sma_periods):
+                stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
 
-                stage_1_sql_cols = "*"
-                if stage_1_smas:
-                    stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
+            stage_1_sql_cols = "*"
+            if stage_1_smas:
+                stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
 
-                # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
-                stage_2_cols = [
-                    "*",
-                    # LAG 1
-                    'LAG(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_1',
-                    'LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1',
-                    'LAG(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_1',
-                    'LAG(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_1',
-                    'LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1',
-                    'LAG(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_1',
+            # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
+            stage_2_cols = [
+                "*",
+                # LAG 1
+                'LAG(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_1',
+                'LAG(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_1',
+                'LAG(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_1',
+                'LAG(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_1',
+                'LAG(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_1',
+                'LAG(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_1',
 
-                    # LAG 2
-                    'LAG(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_2',
-                    'LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2',
-                    'LAG(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_2',
-                    'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
-                    'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
-                    'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
+                # LAG 2
+                'LAG(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_open_2',
+                'LAG(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_close_2',
+                'LAG(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_high_2',
+                'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
+                'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
+                'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
 
-                    # LEAD 1
-                    'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
-                    'LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1',
-                    'LEAD(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_1',
-                    'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
-                    'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
-                    'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
-                    'LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_1',
+                # LEAD 1
+                'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
+                'LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_1',
+                'LEAD(rth_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_1',
+                'LEAD(rth_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_1',
+                'LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_1',
+                'LEAD(pm_high, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_1',
+                'LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_1',
 
-                    # LEAD 2
-                    'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
-                    'LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2',
-                    'LEAD(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_2',
-                    'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
-                    'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
-                    'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
-                    'LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_2',
+                # LEAD 2
+                'LEAD(rth_open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_2',
+                'LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_close_2',
+                'LEAD(rth_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_high_2',
+                'LEAD(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_low_2',
+                'LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_volume_2',
+                'LEAD(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_high_2',
+                'LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_open_2',
 
-                    # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
-                    'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',
-                    'LEAD(pm_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_2',
-                    'LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1',
-                    'LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2',
-                    'LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1',
-                    'LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2',
+                # LEAD pm_low / gap_pct / pm_volume (needed for Gap+1 / Gap+2 trading-day remap)
+                'LEAD(pm_low, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_1',
+                'LEAD(pm_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_low_2',
+                'LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_1',
+                'LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_gap_pct_2',
+                'LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_1',
+                'LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_pm_volume_2',
 
-                    # Timestamp LEADs for shifting
-                    'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
-                    'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
-                ]
-                for P in sorted(sma_periods):
-                    stage_2_cols.append(f'LAG(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_1')
-                    stage_2_cols.append(f'LAG(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_2')
-                    stage_2_cols.append(f'LEAD(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_1')
-                    stage_2_cols.append(f'LEAD(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_2')
+                # Timestamp LEADs for shifting
+                'LEAD("timestamp", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_1',
+                'LEAD("timestamp", 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_timestamp_2',
+            ]
+            for P in sorted(sma_periods):
+                stage_2_cols.append(f'LAG(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_1')
+                stage_2_cols.append(f'LAG(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_sma_{P}_2')
+                stage_2_cols.append(f'LEAD(sma_{P}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_1')
+                stage_2_cols.append(f'LEAD(sma_{P}, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_sma_{P}_2')
 
-                stage_2_sql_cols = ", ".join(stage_2_cols)
+            stage_2_sql_cols = ", ".join(stage_2_cols)
 
-                subquery = f"""
-                (
-                    WITH raw_daily AS (
-                        SELECT {stage_1_sql_cols}
-                        FROM daily_metrics
-                    )
-                    SELECT {stage_2_sql_cols}
-                    FROM raw_daily
-                ) i
-                """
-                sql = f"""
-                SELECT *, CAST("timestamp" AS DATE) AS date
-                FROM {subquery}
-                WHERE {where_clause}
-                """
-                df = con.execute(sql).fetchdf()
+            subquery = f"""
+            (
+                WITH raw_daily AS (
+                    SELECT {stage_1_sql_cols}
+                    FROM daily_metrics
+                )
+                SELECT {stage_2_sql_cols}
+                FROM raw_daily
+            ) i
+            """
+            sql = f"""
+            SELECT *, CAST("timestamp" AS DATE) AS date
+            FROM {subquery}
+            WHERE {where_clause}
+            """
+            df = con.execute(sql).fetchdf()
             if not df.empty:
                 df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
@@ -886,51 +962,13 @@ def _fetch_qualifying_data_uncached(
             if preconditions and not df.empty:
                 df = _evaluate_postgap_preconditions(df, preconditions)
 
-            # Apply date shifting
-            if not df.empty:
-                if apply_day == 'gap_1_day':
-                    df = df.dropna(subset=['lead_timestamp_1']).copy()
-                    df['timestamp'] = df['lead_timestamp_1']
-                    df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
-                    # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*).
-                    # Snapshot before we overwrite rth_* below.
-                    df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
-                    df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
-                    df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
-                    df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
-                    # Trading-day metrics: re-anchor to T+1 (lead_*_1)
-                    df['rth_open']   = df['lead_rth_open_1']   if 'lead_rth_open_1'   in df.columns else np.nan
-                    df['rth_high']   = df['lead_rth_high_1']   if 'lead_rth_high_1'   in df.columns else np.nan
-                    df['rth_low']    = df['lead_rth_low_1']    if 'lead_rth_low_1'    in df.columns else np.nan
-                    df['rth_close']  = df['lead_rth_close_1']  if 'lead_rth_close_1'  in df.columns else np.nan
-                    df['rth_volume'] = df['lead_rth_volume_1'] if 'lead_rth_volume_1' in df.columns else np.nan
-                    df['pm_high']    = df['lead_pm_high_1']    if 'lead_pm_high_1'    in df.columns else np.nan
-                    df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
-                    df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
-                    df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
-                    df['open']       = df['lead_open_1']       if 'lead_open_1'       in df.columns else np.nan
-                elif apply_day == 'gap_2_day':
-                    df = df.dropna(subset=['lead_timestamp_2']).copy()
-                    df['timestamp'] = df['lead_timestamp_2']
-                    df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
-                    # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1).
-                    # Snapshot before we overwrite rth_* below.
-                    df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
-                    df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
-                    df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
-                    df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
-                    # Trading-day metrics: re-anchor to T+2 (lead_*_2)
-                    df['rth_open']   = df['lead_rth_open_2']   if 'lead_rth_open_2'   in df.columns else np.nan
-                    df['rth_high']   = df['lead_rth_high_2']   if 'lead_rth_high_2'   in df.columns else np.nan
-                    df['rth_low']    = df['lead_rth_low_2']    if 'lead_rth_low_2'    in df.columns else np.nan
-                    df['rth_close']  = df['lead_rth_close_2']  if 'lead_rth_close_2'  in df.columns else np.nan
-                    df['rth_volume'] = df['lead_rth_volume_2'] if 'lead_rth_volume_2' in df.columns else np.nan
-                    df['pm_high']    = df['lead_pm_high_2']    if 'lead_pm_high_2'    in df.columns else np.nan
-                    df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
-                    df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
-                    df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
-                    df['open']       = df['lead_open_2']       if 'lead_open_2'       in df.columns else np.nan
-                # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
+            # Apply date shifting — remap UNIFICADO: la misma _remap_trading_day
+            # que usa la vía materializada (extraída VERBATIM de este bloque,
+            # que quedó duplicado con fbf8757; una sola implementación para que
+            # no puedan divergir).
+            if not df.empty and apply_day in ("gap_1_day", "gap_2_day"):
+                df = _remap_trading_day(df, apply_day)
+            # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
 
             print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
             return df
