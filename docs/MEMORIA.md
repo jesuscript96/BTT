@@ -130,6 +130,28 @@
 
 ---
 
+## 2026-08-21 (noche 4) — Cierre: staging mergeado + robustez listo para usar en local
+
+**Subido todo (con OK de Álvaro)**
+- Pushes: `alvaro-rama-desarrollo` → `e2e084d` y `alvaro/handoff-produccion`
+  → `e850d56` (F4).
+- **Merge rama→`staging`**: fast-forward limpio `d423046..e2e084d` (47
+  ficheros, +3.696/−291) y pusheado. Sailor ya tiene TODO el inventario
+  priorizado; su mensajito de handoff está en la conversación (incluye el
+  reporte del bug de clic del picker).
+
+**Robustez listo en local (para que Álvaro lo use ya)**
+- `backend/.env`: `ROBUSTNESS_ENABLED=true` (gitignored).
+- `frontend/.env.local`: `NEXT_PUBLIC_ROBUSTNESS_ENABLED=true` (gitignored,
+  añadido sin tocar lo existente) → link "Robustez" visible en el sidebar
+  (verificado en navegador).
+- Servidores arrancados con `arrancar_local.bat` (ventanas propias); el
+  backend responde los 11 endpoints de robustez con las estrategias reales.
+- Recordatorio del bug: clic de ratón en el picker selecciona la estrategia
+  de ARRIBA (usar teclado o clic en la de abajo mientras Sailor lo arregla).
+
+---
+
 ## 2026-08-21 (noche 3) — Revisión externa del handoff+sync: 4 correcciones aplicadas (F1–F4)
 
 **Contexto**
