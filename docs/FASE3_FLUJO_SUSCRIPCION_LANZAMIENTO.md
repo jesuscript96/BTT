@@ -36,10 +36,11 @@ vive el muro** y **los copys**, no reescribe el motor.
 | **④** | **Copy sin "Pro".** Etiqueta visible = **"Suscrito a Edgecute"** con estado *En prueba* / *Activo*. El enum interno sigue siendo `Pro` (invisible al usuario). |
 
 ### Módulos del producto (CERRADO 2026-08-21)
-Los módulos accesibles son los **3 que indica el doc del cliente**: **Ticker Analysis ·
-Screener · Backtester**. Las capturas antiguas del panel listaban además Baúl de estrategias
-y Market Analysis (5); **se descartan de los bullets** de la tarjeta de suscripción. El gate
-es el mismo (todo el producto dentro del muro).
+Los módulos accesibles son **Ticker Analysis · Screener · Backtester · Baúl de estrategias**
+(4). **Market Analysis queda FUERA** del producto (aclaración del cliente: "Baúl sí, Market
+Analysis no"). Implementado: bullets del gate/panel con los 4; Sidebar oculta los 2 enlaces de
+Market Analysis (a `isAdmin()`); `policy.py` cierra `market.analysis.access` en el tier `Pro`
+(no accesible por URL a suscriptores). El gate es el mismo (todo el producto dentro del muro).
 
 ---
 
@@ -153,8 +154,8 @@ sequenceDiagram
    reactivación (sin mención a prueba). Módulos = Ticker/Screener/Backtester.
 5. ⏳ **Cutover**: mecanismo de **global sign-out** en el lanzamiento (mismo `user_id`) — OPS,
    pendiente (ver §7.2). No es código de la app.
-6. ⏳ **Nav lateral**: el Sidebar aún lista Baúl de estrategias / Market Analysis. Confirmar con
-   cliente si se ocultan (ojo: Baúl guarda las estrategias del usuario). NO tocado aún.
+6. ✅ **Nav lateral**: Baúl SE QUEDA (cliente lo confirma); **Market Analysis** (link normal +
+   "MA · Adjusted") **oculto** a usuarios (gateado a `isAdmin()`, reversible). *(commit `abecd21`)*
 
 ### ⚠️ Nota de cutover que emergió al implementar
 La **migración de Fase 2** daba a los usuarios existentes un **grant local de 7 días SIN
