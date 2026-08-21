@@ -30,6 +30,53 @@
 
 ---
 
+## 2026-08-21 (noche) — Fix no-determinismo del backtester (70R ↔ 137R)
+
+**Qué pasaba**
+- El MISMO backtest daba ~70% o ~137% de return según el run (y local vs prod
+  descuadraban hasta 6×). El motor NO estaba roto; variaba **qué candidatos**
+  llegaban a él.
+
+**Causa raíz (dos cosas)**
+1. **Fallback silencioso del qualifying** (`data_service.py`): si la vía
+   autoritativa (bygap/`daily_metrics`) fallaba, caía EN SILENCIO al hot-cache en
+   RAM (`gap_pct>=10`, universo distinto: 4.013 vs 4.902). Disparador: error
+   transitorio `Table daily_metrics does not exist`, porque `_establish_connection`
+   devuelve una conexión sin las vistas del lago. ⚠️ **Este fallback está latente
+   IGUAL en `jaumen-rama-desarrollo`** — no se manifiesta ahí porque en esa rama
+   `daily_metrics` es una **tabla persistente** (pre-migración). En la de Álvaro
+   son **vistas perezosas sobre parquet** (migración GCS→local) que sí pueden
+   fallar → el bug se activa. **El bug lo despierta la migración, no es de Álvaro.**
+2. **Caché intradía por-ticker-mes desfasado** (`gcs_cache.py`): se congela en el
+   primer fetch y no se refresca cuando el lago crece en el mes en curso → 20
+   ticker-días de 2026-08-10→14 (AKAN, STKH, OFAL…) desaparecían aunque el lago
+   los tenía.
+
+**Qué hicimos**
+- **Committeado `1ec8ce9`**: `data_service.py` FAIL-FAST (propaga error, nunca
+  sirve el hot-cache no equivalente) + `backtest_orchestrator.py` guardián de
+  completitud (`data_completeness` en el payload; `BACKTEST_STRICT_COMPLETENESS=true`
+  rechaza runs parciales con 503).
+- **Sin commitear** (entrelazados con el refactor de migración, no de Álvaro):
+  `database.py` (reintento+verificación de vistas) y `gcs_cache.py` (refresh de
+  caché desfasado). Activos en runtime.
+- Borrado `.cache/intraday/raw/2026/08` (derivado) como fix inmediato del caché.
+- Informe completo: `docs/INFORME_FIX_NODETERMINISMO_BACKTEST_2026-08-21.md`
+  (commit `78a6b82`).
+
+**Verificado end-to-end** (2 backtests reales al backend 8010): idénticos,
+completitud 100%, 0 missing. Local vs prod ahora coinciden dentro del ~2%.
+
+**Para el equipo (NO tocar la rama de Jaume)**: cuando la migración GCS→local-parquet
+suba a staging/main, el fail-fast (y los refuerzos) **deben viajar CON ella**, o
+todos heredan el 70R↔137R. Es prerrequisito de la migración, no limpieza de rama.
+
+**Pendiente**: endurecer `_establish_connection` (chip de tarea creado); residual
+~6% de trades local vs prod (cobertura de datos, no motor); métrica `DAYS`
+cosmética entre versiones; config drift de "Definitiva 2.3" ya resuelto.
+
+---
+
 ## 2026-08-21 (tarde 2) — Rama handoff a producción con PRDs para Edgecute
 
 **Qué hicimos**
