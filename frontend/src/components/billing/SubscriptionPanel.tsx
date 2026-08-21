@@ -420,7 +420,7 @@ export default function SubscriptionPanel() {
           {isAdmin ? (
             <Pill tone="copper">Acceso admin</Pill>
           ) : isComped ? (
-            <Pill tone="copper">Cortesía</Pill>
+            <Pill tone="copper">Gratis</Pill>
           ) : sub ? (
             <SubStatusPill status={sub.status} />
           ) : summary.grant ? (
@@ -456,7 +456,7 @@ export default function SubscriptionPanel() {
       </Card>
 
       {isAdmin || isComped ? null : <PaymentMethodCard summary={summary} />}
-      <InvoicesCard invoices={summary.invoices} />
+      {isAdmin || isComped ? null : <InvoicesCard invoices={summary.invoices} />}
     </div>
   );
 }
