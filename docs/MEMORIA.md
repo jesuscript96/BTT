@@ -92,6 +92,47 @@
 
 ---
 
+## 2026-08-21 (tarde) — Ejecutado ITEM 2: fees por ejecución (fill)
+
+**Qué hicimos**
+- Álvaro dio el visto bueno a la spec corregida (A/B/C) y ordenó ejecutar.
+- Nuevo modelo de comisiones **por fill** en `portfolio_sim.py` (helper
+  `_fee_amount`, 6 puntos) y kernel JIT (`_fee_amount_jit`, puerto con mismo
+  orden FP): FLAT = $/acción y lado (`fees × qty`); PERCENT = fracción del
+  nocional (`notional × fees`, SIN `/100`: el frontend ya divide). El cierre
+  final paga la entrada de TODO el tamaño (`original_size`) + la salida del
+  restante; cada parcial paga solo su salida. Quirk B intacto: parciales sin
+  clave `fees`, totales sin su fee, locates intactos.
+- UI: labels `Fees (% notional)` / `Fees ($/share)` en `BacktestPanel.tsx`
+  (relabel obligatorio por el cambio de significado de FLAT). BRAIN §5
+  actualizado con el modelo por-fill.
+
+**Verificación**
+- `backend/tests/test_fees.py` nuevo (6 tests): FLAT/PERCENT full, trade plano
+  paga fee (mata el bug `abs(pnl)`), parciales FLAT/PERCENT + quirk sin
+  `fees`, paridad JIT. Escrito primero y visto en rojo (5 fallos con el motor
+  viejo), verde tras el cambio.
+- Paridad: `test_sim_jit_equivalence.py` (grid 220 configs con fees 0.01/2.5
+  ambos tipos) + fade partials + trail + locates: **28/28**.
+- Suite completa con diff contra stash: **0 fallos nuevos**; los ~119 fallos
+  preexistentes son de entorno/datos (GCS 403, bygap Parquet local, DB).
+- Humo (34 trades, 1.416 acciones, random walk sembrado): FLAT $0.01/share →
+  fee total $28.32 = exacto a $0.02 × 1.416; PERCENT 0.01% → $13.59 ≈
+  0.0002 × nocional; paridad JIT exacta en los 3 escenarios.
+
+**Impacto (avisado en spec y commit)**
+- PERCENT: cambia la fórmula, no la magnitud con el default 0.01%.
+- FLAT: cambio de SIGNIFICADO ($/trade → $/share) — backtests guardados con
+  FLAT>0 dan números muy distintos; el relabel de UI lo hace explícito.
+
+**Dónde lo dejamos**
+- Commits del día: `5741202` (ITEM 3), `59a869d` (ITEM 1), `75f4bee` (docs),
+  + commit de ITEM 2 (fees). Todo en `alvaro-rama-desarrollo`, **sin push**.
+- `PROXIMOS_ITEMS.md` queda solo con el Backlog congelado: los 3 items de la
+  auditoría están ejecutados y registrados aquí.
+
+---
+
 ## 2026-08-20 (tarde) — Diagnóstico inconsistencias de P&L + PRD fix de locates
 
 **Qué hicimos**

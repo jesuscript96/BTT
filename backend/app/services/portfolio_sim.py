@@ -72,6 +72,20 @@ def _attach_prev_max_metrics(trades, high, low, prev_highs, is_long, partial_tak
         t["partials_skipped"] = skipped
 
 
+def _fee_amount(fee_type: str, fees: float, qty: float, notional: float) -> float:
+    """Fee de una ejecución bajo el modelo por-fill (spec fees 2026-08-21).
+
+    FLAT: `fees` = $ por acción y lado → fee = fees × qty (acciones del fill).
+    PERCENT: `fees` = fracción del nocional por lado → fee = notional × fees
+    (`fees` llega YA como fracción: el frontend divide /100 al enviar).
+    Cierre final: qty = original_size + size y notional = entrada + salida
+    (la entrada de TODO el tamaño se cobra ahí). Parciales: solo su salida.
+    """
+    if fee_type == "FLAT":
+        return fees * qty
+    return notional * fees
+
+
 def simulate(
     close: np.ndarray,
     open_: np.ndarray,
@@ -317,11 +331,7 @@ def simulate(
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -369,11 +379,7 @@ def simulate(
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -424,11 +430,7 @@ def simulate(
                                         gross_pnl = (net_pt_exit - entry_price) * pt_size
                                     else:
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                    
-                                    if fee_type == "FLAT":
-                                        fee_amount = fees * 2
-                                    else:
-                                        fee_amount = abs(gross_pnl) * fees
+                                    fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -492,10 +494,7 @@ def simulate(
                             pt_size = min(pt_size, size)  # Can't close more than remaining
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -558,10 +557,7 @@ def simulate(
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -676,14 +672,16 @@ def simulate(
                 else:
                     gross_pnl = (entry_price - net_exit) * size
 
-                # Fee calculation depends on fee_type
-                if fee_type == "FLAT":
-                    # Flat $ fee: charged once for entry + once for exit = 2x
-                    fee_amount = fees * 2
-                else:
-                    # Percentage fee: applied on the gross PnL
-                    fee_amount = abs(gross_pnl) * fees
-                
+                # Fee por-fill (spec 2026-08-21): el cierre final paga la
+                # entrada de TODO el tamaño (original_size) + la salida del
+                # restante (size). FLAT = $/acción; PERCENT = fracción del
+                # nocional neto (fees llega ya como fracción desde el frontend).
+                fee_amount = _fee_amount(
+                    fee_type, fees,
+                    original_size + size,
+                    entry_price * original_size + net_exit * size,
+                )
+
                 # Net PnL is Gross PnL minus Fees
                 pnl = gross_pnl - fee_amount
 
@@ -749,7 +747,7 @@ def simulate(
                     prev_signal = current_signal # Update for next loop
                     continue
 
-                # Fees are now calculated purely on exit Gross PnL
+                # Fee de entrada + salida se calcula en el bloque de cierre (por-fill).
                 
                 # Calculate Risk Amount ($)
                 if risk_type == "PERCENT":

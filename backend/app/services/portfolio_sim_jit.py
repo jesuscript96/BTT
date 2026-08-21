@@ -73,6 +73,16 @@ PT_HOUR = 3
 
 
 @njit(cache=True)
+def _fee_amount_jit(fee_type_code, fees, qty, notional):
+    # Puerto bit a bit de portfolio_sim._fee_amount (mismo orden de ops FP).
+    # FLAT: $/acción y lado → fees × qty. PERCENT: fracción del nocional
+    # (fees llega ya como fracción) → notional × fees.
+    if fee_type_code == FEE_FLAT:
+        return fees * qty
+    return notional * fees
+
+
+@njit(cache=True)
 def _core_simulate_jit(
     close, open_, high, low, entries, exits,
     is_long,
@@ -293,10 +303,7 @@ def _core_simulate_jit(
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -337,10 +344,7 @@ def _core_simulate_jit(
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -382,10 +386,7 @@ def _core_simulate_jit(
                                         gross_pnl = (net_pt_exit - entry_price) * pt_size
                                     else:
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                    if fee_type_code == FEE_FLAT:
-                                        fee_amount = fees * 2
-                                    else:
-                                        fee_amount = abs(gross_pnl) * fees
+                                    fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -439,10 +440,7 @@ def _core_simulate_jit(
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
-                                if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -493,10 +491,7 @@ def _core_simulate_jit(
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -599,10 +594,13 @@ def _core_simulate_jit(
                     gross_pnl = (net_exit - entry_price) * size
                 else:
                     gross_pnl = (entry_price - net_exit) * size
-                if fee_type_code == FEE_FLAT:
-                    fee_amount = fees * 2
-                else:
-                    fee_amount = abs(gross_pnl) * fees
+                # Fee por-fill (puerto de portfolio_sim): el cierre final paga
+                # la entrada de TODO el tamaño + la salida del restante.
+                fee_amount = _fee_amount_jit(
+                    fee_type_code, fees,
+                    original_size + size,
+                    entry_price * original_size + net_exit * size,
+                )
                 pnl = gross_pnl - fee_amount
                 realized_pnl += pnl
                 capital_at_risk = entry_price * size

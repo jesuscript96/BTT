@@ -69,7 +69,7 @@ Misma estructura que Entry Logic. Las condiciones definen **cuándo cerrar** la 
 
 | Parámetro | Efecto |
 |-----------|--------|
-| **Commission ($/share)** | Coste por acción al abrir (y opcionalmente al cerrar). Comisión total = commission_per_share × position_size. |
+| **Fees ($/share o % notional)** | Comisión por ejecución (fill), un lado = entrada, otro = salida. **FLAT**: $ por acción y lado → fee del fill = fees × tamaño. **PERCENT**: % del nocional ejecutado por lado → fee del fill = precio neto × tamaño × fees (el frontend envía el % ya como fracción). Cada acción paga la entrada una vez y la salida una vez; los parciales pagan su salida y el cierre final paga la entrada completa + su salida. Los trades de parcial no exponen `fees` (quirk contractual) aunque su pnl sí la descuenta. |
 | **Locates ($/100 shares)** | Coste por cada 100 acciones (redondeo al alza). Locate fee = ceil(position_size/100) × locate_cost_per_100. |
 | **Slippage (%)** | Se aplica al precio de entrada y salida (empeora el precio en el % indicado). |
 | **Lookahead Prevention** | Si está activo, las señales de entrada y salida se desplazan 1 barra (entrada/salida en la barra siguiente a la que disparó la condición). |
@@ -93,7 +93,7 @@ Misma estructura que Entry Logic. Las condiciones definen **cuándo cerrar** la 
 - [ ] **Exit Logic**: Misma lógica que Entry pero para cerrar.
 - [ ] **Hard Stop / Take Profit**: Distancia en % o ATR desde entrada; se pueden desactivar con los toggles.
 - [ ] **Trailing Stop**: Activation % (umbral para activar, vacío = la distancia) + Distance % que sigue el precio a favor; solo se endurece. Distance 0 = break-even.
-- [ ] **Comisiones y locates**: Por share y por cada 100 shares.
+- [ ] **Comisiones y locates**: Fees por fill ($/share o % notional por lado); locates por cada 100 shares.
 - [ ] **Slippage**: Aplicado en entrada y salida.
 - [ ] **Look-ahead**: Señales desplazadas 1 barra.
 - [ ] **Risk per trade**: R en USD por operación.
