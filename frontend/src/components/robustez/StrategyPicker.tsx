@@ -13,7 +13,7 @@ import { Help } from "./help";
  * "que" se opera); son el "como" se ejecuto, y sin ellos no se pueden
  * interpretar ni el retorno ni el resto de graficos.
  */
-function executionLines(bp: Record<string, any> | undefined): Array<[string, string, React.ReactNode?]> {
+export function executionLines(bp: Record<string, any> | undefined): Array<[string, string, React.ReactNode?]> {
   if (!bp || !Object.keys(bp).length) return [];
   const n = (v: unknown, d = 2) => (v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(d));
   const out: Array<[string, string, React.ReactNode?]> = [];
@@ -109,7 +109,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
   );
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+export function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
@@ -126,7 +126,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ConditionList({ items }: { items: ReturnType<typeof flattenConditions> }) {
+export function ConditionList({ items }: { items: ReturnType<typeof flattenConditions> }) {
   if (!items.length) {
     return <div style={{ fontSize: 12, color: color.textMuted, fontFamily: font.sans }}>Sin condiciones</div>;
   }
@@ -156,7 +156,7 @@ function ConditionList({ items }: { items: ReturnType<typeof flattenConditions> 
   );
 }
 
-function KeyVals({ rows }: { rows: Array<[string, string, React.ReactNode?]> }) {
+export function KeyVals({ rows }: { rows: Array<[string, string, React.ReactNode?]> }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {rows.map(([k, v, help], i) => (

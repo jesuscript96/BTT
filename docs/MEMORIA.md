@@ -30,6 +30,105 @@
 
 ---
 
+## 2026-08-21 (Sailor) — Módulo Portfolio: página nueva `/portfolio`
+
+> Entrada escrita por Sailor (Jaume + Claude). Guía completa de integración en
+> **`docs/MODULO_PORTFOLIO_GUIA_INTEGRACION.md`** — leedla antes de tocar nada.
+
+**Qué es**
+
+Página nueva para estudiar varias estrategias **como una sola cartera**: cuánto
+rinden juntas, cuánto se solapan, qué drawdown esperar del conjunto, cuánto
+riesgo asignar a cada una, y cómo se compara con la operativa real del trader.
+
+Mismo principio que Robustez: **trabaja sobre las corridas ya guardadas**, no
+re-ejecuta backtests (salvo la Monitorización, que lo hace bajo petición
+explícita). Normaliza cada estrategia a R por trade sin costes y desde ahí
+combina, correlaciona y re-aplica costes por reconstrucción.
+
+Tres pestañas: **Baúl** (inventario + cuadros portfolio/incubadora, con todas
+las condiciones de cada estrategia al desplegar), **Portfolio** (imagen general
+lineal / modelos de escalado y pesos / comparativa) y **Monitorización**
+(últimos 6 meses re-ejecutados por estrategia + control en tiempo real con
+importación del CSV del bróker).
+
+**Está APAGADO por defecto.** Si no tocáis las variables, esta rama se comporta
+igual que antes del commit:
+
+```bash
+backend/.env         PORTFOLIO_LAB_ENABLED=true
+frontend/.env.local  NEXT_PUBLIC_PORTFOLIO_ENABLED=true
+```
+
+**Qué toca de vuestro código** (mínimo imprescindible)
+
+- `backend/app/main.py`: +4 líneas (import + `include_router`). Prefijo
+  **`/api/portfolio-lab`** — ojo, `/api/portfolio` (sin `-lab`) es vuestro
+  módulo de producción y **no se toca**.
+- `frontend/src/components/Sidebar.tsx`: +15 líneas, entrada gated. **El Baúl
+  se queda como está**: la de Portfolio se añade *además*.
+- `robustez/StrategyPicker.tsx` y `robustez/charts/MonteCarloCharts.tsx`:
+  cambios **puramente aditivos** (4 funciones pasan a `export`, y
+  `SpaghettiChart` acepta un prop opcional `xLabel` con valor por defecto). No
+  cambian el comportamiento de Robustez.
+- Tres tablas nuevas en `users.duckdb`, creadas de forma perezosa y solo con el
+  módulo activo: `portfolio_lab_assignments`, `portfolio_lab_monitor`,
+  `portfolio_lab_real_pnl`. No se toca `init_db.py`.
+
+Todo lo demás son ficheros nuevos (4 en backend, 14 en frontend). Reutiliza
+`robustness_service`, `robustness_mc`, `optimization_service` y
+`backtest_orchestrator`, que ya están en esta rama — verificado, y `tsc
+--noEmit` pasa sin errores **contra el código de staging**.
+
+**Qué NO se ha traído a propósito**
+
+1. **El borrado del Baúl.** En la rama de Sailor, Portfolio lo reemplaza y se
+   eliminó `/database`. Aquí el Baúl sigue intacto — decidid vosotros.
+2. **El fix de comisiones PERCENT** (`abs(gross_pnl)*fees` → % del nocional por
+   lado). Vosotros ya tenéis vuestro modelo por fill (`77236d2`), así que no se
+   pisa nada. Ver el punto (a) de abajo.
+
+**Puntos que hay que acordar entre las dos ramas**
+
+- **(a) FLAT.** Vosotros lo redefinisteis como `fees × acciones` ($/acción);
+  Sailor mantiene `fees × 2` ($/trade). En PERCENT los dos modelos coinciden en
+  el total; **en FLAT no**. Habrá conflicto al mergear: hay que elegir
+  convención.
+- **(b) El fallback silencioso de `data_service.py`** que documentasteis en
+  `INFORME_FIX_NODETERMINISMO_BACKTEST_2026-08-21.md`: en la rama de Sailor no
+  se dispara (allí `daily_metrics` es tabla persistente), pero **el código está
+  igual de presente**. Cuando la migración GCS→parquet llegue a esa rama, el
+  fail-fast (`1ec8ce9`) tiene que viajar CON ella.
+- **(c) Sortino y (d) anualización del Sharpe.** El módulo Portfolio usa la
+  downside deviation canónica y anualiza con la frecuencia efectiva de la serie
+  (el calendario solo tiene días con operaciones, y con 252 fijo el Sharpe sale
+  inflado ~1/√fracción_activa). `backtest_service.py:1240-1242` mantiene el
+  cálculo anterior — **no se ha tocado** por ser motor compartido. Decidid si se
+  unifica.
+
+**Sobre la diferencia 133 R (Sailor) vs 137 R (vosotros)**
+
+Investigada por nuestro lado. **No es un bug de motor.** El lago local de Sailor
+llegaba hasta **2026-08-14** (verificado en `/api/market/available-date-range`),
+así que un backtest pedido hasta el 19-20 de agosto perdía 3 sesiones enteras
+(~1,3 R a su media de agosto). El resto encaja con el residual de cobertura que
+vosotros mismos documentáis en §6.2 de vuestro informe. Su universo es estable
+(7.809 trades en todos los runs), lo que confirma vuestra predicción de que el
+no-determinismo 70R↔137R no le afectaba.
+
+**Cómo se ha verificado el módulo**
+
+- Paridad **exacta a 6 decimales** entre el motor de escalado y la imagen
+  general en los dos casos ancla (`fixed $100` → 304,420878%; `percent 3%`
+  diario → 699.805,793146%).
+- Validación cruzada de la normalización: corridas sucias reconstruidas dan
+  305,14% vs 304,42% de copias re-corridas limpias — el 0,24% es el margen
+  esperado de la reconstrucción aproximada del slippage.
+- Revisión adversaria multi-agente (4 lentes + un escéptico por hallazgo): 7
+  hallazgos confirmados y corregidos, 3 refutados.
+
+---
+
 ## 2026-08-21 (noche) — Fix no-determinismo del backtester (70R ↔ 137R)
 
 **Qué pasaba**

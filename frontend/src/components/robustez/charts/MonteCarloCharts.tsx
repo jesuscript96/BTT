@@ -57,11 +57,14 @@ export function SpaghettiChart({
   bands,
   baseCurve,
   initCash,
+  xLabel = "trades →",
 }: {
   spaghetti: number[][];
   bands: McBands;
   baseCurve: number[];
   initCash: number;
+  /** Unidad del eje X: robustez remuestrea por trade, portfolio por dia. */
+  xLabel?: string;
 }) {
   const H = 300;
   const geom = useMemo(() => {
@@ -162,7 +165,7 @@ export function SpaghettiChart({
         fill="var(--color-ec-text-muted)"
         fontFamily="var(--color-ec-sans)"
       >
-        trades →
+        {xLabel}
       </text>
     </Frame>
   );
