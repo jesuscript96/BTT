@@ -1,7 +1,10 @@
 import json
 import logging
+import os
 import random
 import time
+
+import pandas as pd
 
 from datetime import datetime, timezone
 
@@ -17,6 +20,20 @@ from app.services.data_service import (
 from app.services.backtest_service import run_backtest
 
 logger = logging.getLogger("backtester.orchestrator")
+
+# ── Guardián de completitud de datos ────────────────────────────────────────
+# El stream intradía (gcs_cache.iter_intraday_groups_streamed) SOLO emite los
+# ticker-días cuyo M1 se pudo leer en ese instante; los que fallan (query del
+# lago que peta por memoria/concurrencia, caché fría, prewarm a medias) se
+# descartan SIN error y SIN aviso. Efecto medido: el MISMO backtest da resultados
+# distintos entre runs (p.ej. 11R → 46R) según lo caliente que esté la caché →
+# el motor no es reproducible. Reconciliamos ejecutados vs candidatos y lo
+# reportamos siempre en el resultado; con el flag en 'true' se rechaza el
+# resultado parcial en vez de devolver un número mentiroso.
+# Default OFF (solo reporta) → no cambia el comportamiento de prod ni de nadie.
+_STRICT_COMPLETENESS = os.getenv(
+    "BACKTEST_STRICT_COMPLETENESS", "false"
+).strip().lower() in ("1", "true", "yes", "on")
 
 
 class BacktestRequest(BaseModel):
@@ -263,6 +280,19 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         intraday_stream = get_intraday_stream(qualifying, date_from, date_to)
         print(f"[DEBUG] intraday_stream created: type={type(intraday_stream)}")
 
+        # Registro de completitud: envolvemos el iterador para anotar qué
+        # (ticker, date) llegan de verdad a la simulación. Lo que no se emita aquí
+        # es un candidato descartado en silencio aguas abajo (ver nota del flag
+        # _STRICT_COMPLETENESS arriba). No altera el orden ni los datos: solo mira.
+        _executed_keys: set[tuple[str, str]] = set()
+
+        def _tracked_stream(inner):
+            for (d, tk), day_df in inner:
+                _executed_keys.add((str(tk), str(d)[:10]))
+                yield (d, tk), day_df
+
+        intraday_stream = _tracked_stream(intraday_stream)
+
         # ── PHASE 4: run backtest with streaming ──
         strategy_def = strategy["definition"]
         print(f"[DEBUG ORCH] strategy_def type: {type(strategy_def)}")
@@ -361,6 +391,59 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             "total": n_qualifying,
             "percent": 100.0
         }
+
+        # ── Reconciliación de completitud de datos ──
+        # Candidatos (qualifying) vs ejecutados de verdad (lo que emitió el
+        # stream). Si faltan, hubo descarte silencioso de intradía → el resultado
+        # es parcial y NO reproducible. Se reporta SIEMPRE en el payload; con
+        # BACKTEST_STRICT_COMPLETENESS=true además se rechaza (503).
+        try:
+            q_keys = set(
+                zip(
+                    qualifying["ticker"].astype(str),
+                    pd.to_datetime(qualifying["date"]).dt.strftime("%Y-%m-%d"),
+                )
+            )
+            n_expected = len(q_keys)
+            missing = q_keys - _executed_keys
+            n_missing = len(missing)
+            n_executed = n_expected - n_missing
+            pct_complete = round(100.0 * n_executed / n_expected, 2) if n_expected else 100.0
+            missing_sample = sorted(f"{t}:{d}" for t, d in list(missing)[:50])
+            results["data_completeness"] = {
+                "expected_ticker_days": n_expected,
+                "executed_ticker_days": n_executed,
+                "missing_ticker_days": n_missing,
+                "completeness_pct": pct_complete,
+                "missing_sample": missing_sample,
+            }
+            if n_missing:
+                logger.error(
+                    f"[COMPLETENESS] {n_missing}/{n_expected} ticker-días candidatos "
+                    f"SIN intradía → descartados en silencio (completitud "
+                    f"{pct_complete:.1f}%). El resultado es PARCIAL y no reproducible "
+                    f"hasta que la caché intradía esté completa. Muestra: "
+                    f"{missing_sample[:10]}"
+                )
+                if _STRICT_COMPLETENESS:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            f"Backtest incompleto: {n_missing} de {n_expected} "
+                            f"ticker-días candidatos no tienen intradía disponible "
+                            f"({pct_complete:.1f}% completo). Con "
+                            f"BACKTEST_STRICT_COMPLETENESS=true el motor rechaza "
+                            f"resultados parciales — calienta la caché o revisa el lago."
+                        ),
+                    )
+            else:
+                logger.info(
+                    f"[COMPLETENESS] 100% — {n_executed}/{n_expected} ticker-días ejecutados"
+                )
+        except HTTPException:
+            raise
+        except Exception as _rec_err:
+            logger.warning(f"[COMPLETENESS] reconciliación falló (no crítico): {_rec_err}")
 
         t_end = time.time()
         total_elapsed = round(t_end - t0, 2)

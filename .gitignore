@@ -104,3 +104,6 @@ backend/edgecute_api.sqlite
 
 # Logs de arranque local de uvicorn (ruido de desarrollo)
 backend/uvicorn*.log
+
+# Cache de intradia (regenerable; no debe viajar en el repo)
+backend/app/.cache/

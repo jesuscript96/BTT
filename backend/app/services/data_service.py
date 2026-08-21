@@ -946,8 +946,50 @@ def _fetch_qualifying_data_uncached(
             return df
         except Exception as e:
             print(f"[ERROR] local fetch_qualifying_data failed: {e}")
+            # ── FAIL-FAST: fix definitivo del no-determinismo del universo (70R↔137R) ──
+            # Causa raíz: un error aquí — típicamente "Table daily_metrics does not
+            # exist", cuando _establish_connection devolvió una conexión SIN las
+            # vistas del lago — hacía caer EN SILENCIO al fallback hot-cache de
+            # abajo. Pero el hot-cache está prefiltrado por gap_pct>=10
+            # (cache_service.py:211) y sirve un universo DISTINTO (4.013 en vez de
+            # 4.902): el MISMO backtest daba 70R o 137R según qué rama cayera.
+            #
+            # Política (máxima garantía, elegida por el usuario): CUALQUIER fallo de
+            # la vía autoritativa (DuckDB/bygap) se PROPAGA. Nunca se sirve el
+            # hot-cache como si fuera el universo completo. La rama hot-cache de
+            # abajo queda así INALCANZABLE cuando se entró por aquí (reglas propias
+            # o apply_day no-gap). Mejor un 500 honesto que un número degradado en
+            # silencio. Sin reintento de la query: no se "insiste hasta que cuele";
+            # o sale el universo correcto, o sale error.
+            #
+            # Se descarta la conexión (pudo quedar sin las vistas del lago) para que
+            # la SIGUIENTE petición re-establezca una sana. Esto NO reintenta la
+            # query de este run — es limpieza para el siguiente.
+            try:
+                from app.database import reset_connection
+                reset_connection()
+            except Exception:
+                pass
+            # NOTA DE ADAPTACION (Sailor, 2026-08-21): el original de staging
+            # re-lanzaba aqui _BygapStaleStrictError tal cual. Esa clase viene
+            # de su guardian de frescura del bygap (FIX A del PRD bygap), que
+            # esta rama NO tiene: referenciarla daria NameError justo en el
+            # camino de error. Como sin ese guardian no existe tal excepcion,
+            # la comprobacion sobra y todo fallo cae en el RuntimeError de
+            # abajo, que es el comportamiento deseado igualmente. Si algun dia
+            # se trae el guardian bygap, hay que restaurar estas dos lineas.
+            raise RuntimeError(
+                "Qualifying por la vía autoritativa (DuckDB local / bygap) falló. "
+                "Se RECHAZA el backtest en vez de caer al fallback hot-cache, que "
+                "serviría un universo prefiltrado distinto (4.013 vs 4.902) y "
+                "produciría el no-determinismo 70R↔137R. No hay dato degradado "
+                f"posible: revisa el lago / la conexión. Error de origen: {e!r}"
+            ) from e
 
-    # Use RAM cache if applicable
+    # Use RAM cache if applicable — SOLO alcanzable cuando NO se entró en la rama
+    # DuckDB de arriba (es decir: sin reglas propias y apply_day de gap). Si se
+    # entró arriba y falló, ya se propagó el error (fail-fast); nunca se llega aquí
+    # con un universo que debía venir de la vía autoritativa.
     if use_hot_cache:
         from app.services.cache_service import get_hot_daily_cache
         hot_df = get_hot_daily_cache()
