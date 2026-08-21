@@ -130,6 +130,35 @@
 
 ---
 
+## 2026-08-21 (noche 5) — RETRACTACIÓN: el "bug de clic" del picker de robustez NO existe
+
+**Qué pasó**
+- La entrada "noche 2" reportaba un bug de selección por clic (off-by-one) en
+  el picker de estrategias del módulo de robustez, y el mensaje para Sailor
+  lo incluía. **Era falso**: fue un artefacto de mi automatización.
+- Sesión de diagnóstico exhaustiva: repro "limpia" en pestaña nueva seguía
+  fallando, PERO los resultados eran incoherentes entre sí (a veces 1 arriba,
+  a veces 2, a veces "teleporta" a la primera tarjeta, a veces clic muerto) —
+  ningún patrón compatible con un bug real de la página. El Enter (sin
+  coordenadas) SIEMPRE selecciona correcto. El código React revisado línea a
+  línea es correcto (`onSelect(s.id)` directo, keys estables, sin CSS
+          solapado/absolute/transform). Y el propio Álvaro confirma que con su
+  ratón real funciona bien.
+- **Causa del artefacto:** el pipeline de input del navegador integrado que
+  uso para probar despacha los clics con desfase/contaminación (además la
+  pestaña estaba visible en la pantalla de Álvaro → clics suyos simultáneos
+  posibles en algunos tests).
+
+**Correcciones**
+- El mensaje para Sailor: quitar la sección del bug (versión corregida
+  entregada en la conversación). **No hay nada que arreglar en robustez.**
+- Lección para futuras sesiones (regla): los clics automatizados del
+  navegador integrado NO son evidencia válida de bugs de UI en este repo;
+  usar teclado (`press("Enter")`) para probar selección, o pedir a Álvaro
+  que clique él. Verificar siempre con el código antes de reportar.
+
+---
+
 ## 2026-08-21 (noche 4) — Cierre: staging mergeado + robustez listo para usar en local
 
 **Subido todo (con OK de Álvaro)**

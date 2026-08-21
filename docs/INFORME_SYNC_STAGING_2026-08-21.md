@@ -51,13 +51,12 @@
 - Nota: la carpeta `ALVARO_CAMBIOS/` (copia de docs que hizo Sailor) queda
   duplicada intencionadamente con `docs/MEMORIA.md` (el original vivo).
 
-## 5. Prueba runtime (hecha el misma noche — ver MEMORIA "noche 2")
+## 5. Prueba runtime (hecha el misma noche — ver MEMORIA "noche 2" y "noche 5")
 
 - Módulo de robustez probado en navegador con backend del merge: **funciona**
   (lista estrategias reales, auto-análisis, 11 endpoints 200, recalcula al
   cambiar estrategia).
-- **🐛 Bug encontrado (presente en staging)**: clic de ratón en la tarjeta N
-  del picker selecciona la estrategia N−1 (verificado contra el log del
-  backend); con teclado selecciona la correcta → código React bien, es
-  hit-testing/área de clic solapada. Reportado a Sailor en el mensaje de
-  handoff. No bloquea el merge a staging (el bug ya está en staging).
+- ~~Bug de selección por clic~~ — **RETRACTADO** (MEMORIA "noche 5"): era un
+  artefacto del input automatizado del navegador de pruebas (desfase/ clicks
+  contaminados), no un bug de la página. Código revisado y correcto; con
+  ratón real y con teclado funciona bien. Nada que arreglar.
