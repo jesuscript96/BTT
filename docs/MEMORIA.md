@@ -68,10 +68,20 @@
   comportamiento exacto. Pendiente: validarlo (tsc + visual) y commitearlo
   aquí con su propio commit.
 
+**Continuación (misma tarde)**
+- Álvaro pidió mensaje + PRD de orientación para Adri (que sepa qué subir a
+  main sin liarse). Añadido **`PRD_00_PLAN_DE_SUBIDA_A_MAIN.md`** a la tanda
+  (commit `9f7e22c`, en la rama handoff): resumen simple, 2 PRs pedidos,
+  orden recomendado (PRD_02 primero), checklist de verificación antes de
+  main (incluye smoke de identidad con fees=0), guarda-raíles (no mergear
+  mis ramas, no git apply, quirks intactos) y nota de release sugerida.
+  README del handoff actualizado con su fila. Mensaje corto para Adri
+  entregado en la conversación (no en el repo).
+
 **Dónde lo dejamos**
-- `alvaro/handoff-produccion` **pusheada** a origin (tanda 1, `7f65d83`),
-  con OK explícito de Álvaro. `alvaro-rama-desarrollo` también pusheada
-  (commit de esta MEMORIA).
+- `alvaro/handoff-produccion`: tanda 1 (`7f65d83`) **pusheada**; PRD_00
+  (`9f7e22c`) **sin push** (pendiente OK de Álvaro).
+- `alvaro-rama-desarrollo`: este commit de MEMORIA **sin push**.
 - Working tree de `alvaro-rama-desarrollo` intacto (solo se commiteó
   MEMORIA.md).
 
