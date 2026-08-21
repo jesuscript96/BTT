@@ -48,9 +48,13 @@ y UI **como si cada uno fuera un trade**:
 ### T1 — Backend: agrupar ejecuciones en trades (el corazón del fix)
 
 - Portar `_group_partial_exits` — **código completo en
-  `reference/group_partial_exits.py.txt`** (98 líneas, portable casi tal
-  cual: los campos que no existan en vuestros registros quedan a `None`/`[]`
-  porque todo va con `.get()`) — y envolver el punto único:
+  `reference/group_partial_exits.py.txt`** (98 líneas). **Portable, pero
+  REQUIERE** que los registros lleven estas claves (subíndices duros, no
+  `.get()`): `pnl`, `size`, `entry_price`, `exit_idx`, `exit_time`,
+  `exit_time_epoch`, `exit_price`, `exit_reason` — **verificadas presentes**
+  en `_enrich_trades` @ `develop` `e368839`; si develop renombra o quita
+  alguna, falla con `KeyError` (no silencioso). El resto de campos van con
+  `.get()` y caen a `None`/`[]` — y envolver el punto único:
 
   ```python
   trades_records = _group_partial_exits(_enrich_trades(...))   # antes de :803
