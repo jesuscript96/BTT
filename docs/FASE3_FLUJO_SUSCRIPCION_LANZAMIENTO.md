@@ -141,15 +141,29 @@ sequenceDiagram
 - **Admins exentos** → allowlist / `resolve_tier`.
 
 ### 🔧 Nuevo / a rehacer
-1. **Onboarding gate post-login** (frontend): interstitial bloqueante que fuerza Checkout
-   antes de dejar entrar a la app. Sustituye al CTA dentro del panel.
-2. **Estado `REGISTRADO_SIN_TARJETA`** explícito en backend: usuario en Clerk sin customer/
-   subscription ⇒ 0 acceso. El gate unificado debe tratar "sin tarjeta" como no-acceso.
-3. **La prueba deja de ser accionable**: el trial arranca al completar el Checkout del
-   onboarding, no por un botón. Retirar "Empezar prueba gratis" del flujo normal.
-4. **Copys**: quitar "Pro" → "Suscrito a Edgecute"; textos de onboarding/tarjeta; enrutado del
-   caso baja→vuelve al panel con CTA Suscribirme.
-5. **Cutover**: mecanismo de **global sign-out** en el lanzamiento (mismo `user_id`).
+1. ✅ **Onboarding gate post-login** (frontend `BillingGuard.tsx`): overlay **bloqueante a
+   pantalla completa** (opción A, sin escape) que fuerza Checkout. Sustituye al redirect a
+   `/billing`. Maneja el retorno de Checkout (sync + reload). *(commit `3d62180`)*
+2. ✅ **Estado `onboarding` / `resubscribe`** en backend: `/api/billing/me` devuelve un campo
+   `stage` (fuente única) que distingue nuevo (sin sub → onboarding) de baja→vuelve (sub previa
+   → resubscribe) del resto (trialing/active/past_due/trial_grant/admin). Sin acceso = gate.
+3. ✅ **La prueba deja de ser accionable**: fuera "Empezar prueba gratis"; el CTA es "Añadir
+   tarjeta y empezar". El trial lo decide Stripe al completar Checkout.
+4. ✅ **Copys**: "Suscrito a Edgecute" (sin "Pro"); onboarding/tarjeta; baja→vuelve con copy de
+   reactivación (sin mención a prueba). Módulos = Ticker/Screener/Backtester.
+5. ⏳ **Cutover**: mecanismo de **global sign-out** en el lanzamiento (mismo `user_id`) — OPS,
+   pendiente (ver §7.2). No es código de la app.
+6. ⏳ **Nav lateral**: el Sidebar aún lista Baúl de estrategias / Market Analysis. Confirmar con
+   cliente si se ocultan (ojo: Baúl guarda las estrategias del usuario). NO tocado aún.
+
+### ⚠️ Nota de cutover que emergió al implementar
+La **migración de Fase 2** daba a los usuarios existentes un **grant local de 7 días SIN
+tarjeta** (acceso primero, tarjeta después). El modelo del cliente de Fase 3 es el contrario:
+**tarjeta upfront para todos**, incluidos los existentes, con los **días que les correspondan**
+(favoritos de Álvaro = más). → En el cutover de Fase 3 **no** se siembran grants card-less;
+se siembran **`trial_overrides` (Path B) por `user_id`** para los días preferenciales y **todos
+pasan por el gate de tarjeta**. (Los grants de migración quedan como camino heredado; decidir en
+la reu si se retiran para el go-live de Fase 3.)
 
 ---
 
