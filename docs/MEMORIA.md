@@ -130,6 +130,57 @@
 
 ---
 
+## 2026-08-21 (noche) — Sync con staging (opción A): merge limpio + inventario priorizado para subir
+
+**Qué hicimos**
+- Revisión de divergencia con `origin/staging`: ellos +6 / nosotros +28.
+- **Merge `38298f1`** (origin/staging → alvaro-rama-desarrollo), **0 conflictos**.
+  Truco necesario: los renames STAGED del WIP (backend/scripts → _archive)
+  bloqueaban el merge por estado de índice; se des-stagearon, se mergeó y se
+  re-stagearon idénticos (12 entradas A/R intactas, disco sin tocar).
+- **Nos trae** (33 ficheros, +10.280 líneas): módulo de **robustez** de
+  Sailor completo (useLocates/useMonteCarlo/useWfo + api_robustez + analytics,
+  30 ficheros nuevos), su aplicación del fix de locates, copia del PRD y
+  carpeta `ALVARO_CAMBIOS/` (MEMORIA+PROXIMOS para el equipo).
+
+**Verificado**
+- Fix de locates de Sailor = **idéntico al nuestro**: el merge dejó nuestros
+  `portfolio_sim.py`/`sim_dispatch.py`/`test_locates.py`/PRD.md byte a byte
+  iguales (diff vacío). Nada que reemplazar.
+- `test_locates.py` + `test_sim_jit_equivalence.py`: **12/12 verde**.
+- `tsc --noEmit`: **limpio** con el módulo de robustez incluido.
+
+**Inventario priorizado de NUESTROS commits para staging (28, decisión de
+Álvaro: subir TODOS, con esta prioridad)**
+
+🔴 **Urgente — bug** (van también a main vía handoff):
+- `77236d2` fees por ejecución (fill) · `588588b` calendario/retorno real ·
+  `5741202` OOS MAX DD $ · `2a51b94+8896ece+de14125` locates (ya en staging
+  por Sailor, duplicado idéntico) · `1249ca1` EXIT parciales invisibles ·
+  `6c37f94` hidratación rango dataset · `e42d34b` logging translate_strategy
+
+🟡 **Feature validada** (Sailor decide si las toma):
+- `59a869d` trailing break-even (activation_pct) + tests · parciales fade
+  1A/1B (`ddba140`,`e251727`,`d334aff`,`1e18432`,`d6a2fab`) · `6631056`
+  Current Gap (%) · `447612c` regla/línea chart · `93656e0` ejecuciones
+  señaladas al precio · `3dcd7d0` export CSV (interno; NO va a main)
+
+🟢 **Infra/DX**:
+- `9f39a17` bygap vía rápida (env-gated, inerte sin `.env`) · arranque 1-clic
+  (dentro de `6c37f94`)
+
+📄 **Docs** (nuestro kanban real para el equipo, complementa ALVARO_CAMBIOS):
+- `f8a7bd7`, `c779560`, `75f4bee`, `2e431ac`, `478ce55`, `8176d83`,
+  `1a04176` + este · `23bd2e1` merge previo (histórico)
+
+**Pendiente**
+- Push de `alvaro-rama-desarrollo` (merge + docs) → hecho tras este commit.
+- **Merge de nuestra rama → `staging`**: pendiente OK explícito de Álvaro.
+  Se haría por worktree (el working tree principal está sucio con el WIP
+  GCS). Con eso Sailor recibe TODO el inventario de arriba.
+
+---
+
 ## 2026-08-21 — Ejecutados ITEM 3 e ITEM 1 (PROXIMOS_ITEMS); spec ITEM 2 corregida
 
 **Contexto**
