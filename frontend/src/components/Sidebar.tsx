@@ -10,6 +10,7 @@ import {
     MessageSquarePlus,
     Flame,
     BarChart3,
+    ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -228,6 +229,21 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     <Play style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                     <span style={labelFade(isCollapsed)}>Backtester</span>
                 </Link>
+
+                {/* Robustez — solo local: gated por NEXT_PUBLIC_ROBUSTNESS_ENABLED,
+                    apagado por defecto para que produccion no vea la entrada. */}
+                {process.env.NEXT_PUBLIC_ROBUSTNESS_ENABLED === "true" && (
+                    <Link
+                        href="/robustez"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/robustez"),
+                        }}
+                    >
+                        <ShieldCheck style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Robustez</span>
+                    </Link>
+                )}
 
 
                 {/* Baúl */}
