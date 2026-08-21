@@ -1,0 +1,355 @@
+diff --git a/frontend/src/app/backtester/page.tsx b/frontend/src/app/backtester/page.tsx
+index d53df99..46155c7 100644
+--- a/frontend/src/app/backtester/page.tsx
++++ b/frontend/src/app/backtester/page.tsx
+@@ -396,9 +396,13 @@ export default function Home() {
+   }, [builderDraft, activeStrategy]);
+ 
+ 
+-  const handleRunWithDraft = async (draft: Draft) => {
++  const handleRunWithDraft = async (draft: Draft, paramsOverride?: any) => {
+     setDraftStrategy(draft);
+-    const p = panelParamsRef.current;
++    // paramsOverride = parámetros que el panel pasó a handleRun al lanzar la
++    // corrida. Sin él (wizard/builder) se usa el último estado del panel,
++    // como antes. Este camino llegaba al backend con defaults (10000/FIXED)
++    // ignorando lo tecleado, porque solo leía panelParamsRef.
++    const p = paramsOverride ?? panelParamsRef.current;
+     
+     let activeDatasetId = (draft as any).dataset_id;
+     
+@@ -511,8 +515,8 @@ export default function Home() {
+         fees: p?.fees ?? 0.01,
+         fee_type: p?.fee_type ?? "PERCENT",
+         slippage: p?.slippage ?? 0.01,
+-        start_date: (draft as any).universe_filters?.date_from || undefined,
+-        end_date: (draft as any).universe_filters?.date_to || undefined,
++        start_date: p?.start_date || (draft as any).universe_filters?.date_from || undefined,
++        end_date: p?.end_date || (draft as any).universe_filters?.date_to || undefined,
+         market_sessions: draft.market_sessions || p?.market_sessions,
+         custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time || undefined) : undefined,
+         custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
+@@ -650,7 +654,7 @@ export default function Home() {
+             custom_start_time: def.custom_start_time || params.custom_start_time,
+             custom_end_time: def.custom_end_time || params.custom_end_time,
+           } as any;
+-          await handleRunWithDraft(draft);
++          await handleRunWithDraft(draft, params);
+           return;
+         }
+       } catch (err) {
+@@ -690,7 +694,7 @@ export default function Home() {
+         custom_start_time: targetDraft.definition?.custom_start_time || targetDraft.custom_start_time || params.custom_start_time,
+         custom_end_time: targetDraft.definition?.custom_end_time || targetDraft.custom_end_time || params.custom_end_time,
+       } as any;
+-      await handleRunWithDraft(draft);
++      await handleRunWithDraft(draft, params);
+       return;
+     }
+ 
+@@ -891,6 +895,17 @@ export default function Home() {
+         const saved = JSON.parse(stored);
+         if (saved.result) setResult(saved.result);
+         if (saved.jobId) jobIdRef.current = saved.jobId;
++        // Restaurar la base de la corrida: los refs no sobreviven a la
++        // recarga y quedaban en los defaults (10000/100) aunque el result
++        // restaurado correspondiera a otra configuración.
++        const ge0 = saved.result?.global_equity?.[0]?.value;
++        if (typeof ge0 === "number" && ge0 > 0) initCashRef.current = ge0;
++        if (saved.backtestParams) {
++          backtestParamsRef.current = saved.backtestParams;
++          if (typeof saved.backtestParams.risk_r === "number") {
++            riskRRef.current = saved.backtestParams.risk_r;
++          }
++        }
+         if (saved.activeStrategy) {
+           setActiveStrategy(saved.activeStrategy);
+           if (saved.activeStrategy.id && !saved.activeStrategy.id.startsWith("draft") && !saved.activeStrategy.id.startsWith("wizard_draft")) {
+@@ -914,6 +929,7 @@ export default function Home() {
+     const resultsState = {
+       result: lightweightResult,
+       jobId: jobIdRef.current, // keep so equity can be re-fetched after a reload (within the 1h job TTL)
++      backtestParams: backtestParamsRef.current, // risk_type/monthly_expenses/is_percent tras recargar
+       activeStrategy,
+       selectedDay,
+       mode,
+@@ -1019,14 +1035,43 @@ export default function Home() {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [result, selectedDay, equityKey]);
+ 
++  // ── Base $ de esta corrida (fuente de verdad) ──
++  // El primer punto de global_equity SIEMPRE es el init_cash con el que corrió
++  // el backend. initCashRef puede quedar desincronizado (recarga de página,
++  // resultado restaurado de sessionStorage), así que los paneles usan esto.
++  const runInitCash = useMemo(
++    () => (result?.global_equity?.length ? result.global_equity[0].value : initCashRef.current),
++    [result]
++  );
++
+   // ── IS/OOS filtering ──
+   const currentIsPercent = (panelParamsRef.current?.is_percent as number) ?? 100;
+ 
+   const isFilteredResult = useMemo(() => {
+-    if (!result || currentIsPercent >= 100) return result;
++    if (!result) return result;
++
++    // "Days" en días de calendario únicos: el backend reporta total_days como
++    // pares (ticker, día). Con IS=100 el filtro de abajo no corre y el valor
++    // crudo llegaba a la UI, así que la corrección se aplica también aquí
++    // (mismo criterio que el bloque IS de abajo, evita el salto al mover el slider).
++    const uniqueDaysAll = result.trades?.length
++      ? new Set(result.trades.map(t => t.date)).size
++      : (result.aggregate_metrics?.total_days ?? 0);
++    const sumRAll = result.trades?.length
++      ? result.trades.reduce((sum, t) => sum + (t.r_multiple ?? 0), 0)
++      : 0;
+ 
+     const eq = result.global_equity || [];
+-    if (eq.length < 2) return result;
++    if (currentIsPercent >= 100 || eq.length < 2) {
++      return {
++        ...result,
++        aggregate_metrics: {
++          ...result.aggregate_metrics,
++          total_days: uniqueDaysAll,
++          avg_r_per_day: uniqueDaysAll > 0 ? sumRAll / uniqueDaysAll : 0,
++        },
++      };
++    }
+ 
+     // Find the IS cutoff index based on percentage of equity points
+     const cutoffIdx = Math.max(1, Math.floor(eq.length * currentIsPercent / 100));
+@@ -1063,7 +1108,7 @@ export default function Home() {
+     const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+     const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0);
+-    const initCash = initCashRef.current;
++    const initCash = runInitCash;
+     const totalReturnPct = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
+ 
+     // Daily returns for Sharpe/Sortino
+@@ -1448,7 +1493,7 @@ export default function Home() {
+                     globalDrawdown={isFilteredResult!.global_drawdown}
+                     trades={isFilteredResult!.trades}
+                     metrics={isFilteredResult!.aggregate_metrics}
+-                    initCash={initCashRef.current}
++                    initCash={runInitCash}
+                     riskR={riskRRef.current}
+                     monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
+                     isPercent={currentIsPercent}
+@@ -1511,7 +1556,7 @@ export default function Home() {
+               <ResultsTabs
+                 result={isFilteredResult!}
+                 fullTrades={result.trades}
+-                initCash={initCashRef.current}
++                initCash={runInitCash}
+                 riskR={riskRRef.current}
+                 dayCandles={dayCandles}
+                 multiDayCandles={multiDayCandles}
+diff --git a/frontend/src/components/backtester/MetricsCard.tsx b/frontend/src/components/backtester/MetricsCard.tsx
+index 6edb9ff..01a3dfd 100644
+--- a/frontend/src/components/backtester/MetricsCard.tsx
++++ b/frontend/src/components/backtester/MetricsCard.tsx
+@@ -12,12 +12,16 @@ interface MetricsCardProps {
+ export default function MetricsCard({ metrics, vertical = false }: MetricsCardProps) {
+   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+   const rows = [
+-    { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Número total de días que abarca el período del backtest." },
++    { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Días de calendario únicos en los que hubo operaciones. Varios tickers el mismo día cuentan como un solo día (no es el número de pares ticker-día)." },
+     { label: "Trades", value: String(metrics.total_trades ?? 0), tooltip: "Cantidad total de operaciones ejecutadas." },
+     { label: "Win Rate", value: `${(metrics.win_rate_pct ?? 0).toFixed(1)}%`, tooltip: "Porcentaje de operaciones ganadas sobre el total de trades. Ej: 55% significa que ganas 55 de cada 100 operaciones." },
+     { label: "PF", value: (metrics.avg_profit_factor ?? 0).toFixed(3), tooltip: "Profit Factor. Relación de beneficio bruto / pérdida bruta. Ej: PF de 1.8 significa que por cada $1 que pierdes, ganas $1.80. Valores > 1.0 son rentables." },
+     { label: "Return", value: `${(metrics.total_return_pct ?? 0).toFixed(2)}%`, tooltip: "Rentabilidad porcentual total acumulada en base al capital inicial." },
+     { label: "Max MAE", value: `${(metrics.max_mae ?? 0).toFixed(2)}%`, tooltip: "Mínima excursión adversa máxima. La mayor pérdida flotante porcentual que llegó a registrar una sola operación antes de cerrarse." },
++    { label: "SL Dist Med", value: `${(metrics.sl_dist_pct_median ?? 0).toFixed(1)}%`, tooltip: "Mediana de la distancia porcentual entre el precio de entrada y su stop (|stop − entry| / entry). Con stops de Market Structure la distancia varía en cada trade: la mediana es la cifra representativa (la media se dispara con outliers). Excluye trades sin stop válido y distancias > 200% (splits/datos malos)." },
++    { label: "SL Dist P25", value: `${(metrics.sl_dist_pct_p25 ?? 0).toFixed(1)}%`, tooltip: "Percentil 25 de la distancia porcentual al stop: el 25% de los trades entró con el stop más cerca que esto." },
++    { label: "SL Dist P75", value: `${(metrics.sl_dist_pct_p75 ?? 0).toFixed(1)}%`, tooltip: "Percentil 75 de la distancia porcentual al stop: el 25% de los trades entró con el stop más lejos que esto." },
++    { label: "SL Dist Avg", value: `${(metrics.sl_dist_pct_mean ?? 0).toFixed(1)}%`, tooltip: "Media de la distancia porcentual al stop. Sensible a outliers: para stops de Market Structure, la mediana (SL Dist Med) refleja mejor el riesgo típico." },
+     { label: "Avg Ret/Day", value: `${(metrics.avg_return_per_day_pct ?? 0).toFixed(3)}%`, tooltip: "Retorno porcentual promedio por día." },
+     { label: "Avg R/Day", value: `${(metrics.avg_r_per_day ?? 0).toFixed(3)}R`, tooltip: "Resultado promedio por día medido en múltiplos de tu riesgo inicial por operación (R)." },
+     { label: "Sharpe", value: (metrics.avg_sharpe ?? 0).toFixed(3), tooltip: "Ratio de Sharpe. Muestra el rendimiento en relación al riesgo asumido (volatilidad). Cuanto más alto, más estable y seguro es el retorno. Sharpe > 1.0 es bueno, > 1.5 es excelente." },
+diff --git a/frontend/src/components/backtester/tabs/CalendarTab.tsx b/frontend/src/components/backtester/tabs/CalendarTab.tsx
+index 1dde377..2c68c0e 100644
+--- a/frontend/src/components/backtester/tabs/CalendarTab.tsx
++++ b/frontend/src/components/backtester/tabs/CalendarTab.tsx
+@@ -28,7 +28,10 @@ function formatPnl(pnl: number, isGastos = false): string {
+ }
+ 
+ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, onSelectTrade }: CalendarTabProps) {
+-  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("profits");
++  // Default "net": es la vista que coincide con RETURN/total_pnl. El modo
++  // "profits" muestra el PnL BRUTO (suma las fees de vuelta al pnl), así que
++  // una estrategia perdedora neta puede verse ganadora en esa vista.
++  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("net");
+   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+ 
+   // Cerrar el detalle de día con Escape
+@@ -116,7 +119,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
+       }}>
+         {(["profits", "gastos", "net"] as const).map((mode) => {
+           const isActive = viewMode === mode;
+-          const label = mode === "profits" ? "Profits" : mode === "gastos" ? "Gastos" : "Profits - Gastos";
++          const label = mode === "profits" ? "Profits (brutos)" : mode === "gastos" ? "Gastos" : "Profits - Gastos";
+           return (
+             <button
+               key={mode}
+diff --git a/frontend/src/components/backtester/tabs/ChartsTab.tsx b/frontend/src/components/backtester/tabs/ChartsTab.tsx
+index 75f382b..77b5132 100644
+--- a/frontend/src/components/backtester/tabs/ChartsTab.tsx
++++ b/frontend/src/components/backtester/tabs/ChartsTab.tsx
+@@ -1273,6 +1273,12 @@ function WhatIfEquityChart({
+     );
+   }
+ 
++  // "Días totales" del SIM en días de calendario únicos, para comparar con el
++  // ORIG (total_days del backend cuenta pares ticker-día, no días reales).
++  const simUniqueDays = simResult?.trades?.length
++    ? new Set(simResult.trades.map(t => t.date)).size
++    : (simResult?.aggregate_metrics?.total_days ?? 0);
++
+   return (
+     <div className="relative">
+       <div className="flex items-center justify-between mb-3.5">
+@@ -1343,12 +1349,12 @@ function WhatIfEquityChart({
+             </thead>
+             <tbody>
+               {[
+-                { 
+-                  label: "Días totales", 
+-                  orig: metrics?.total_days ?? 0, 
+-                  sim: simResult.aggregate_metrics.total_days ?? 0,
++                {
++                  label: "Días totales",
++                  orig: metrics?.total_days ?? 0,
++                  sim: simUniqueDays,
+                   origColor: getRowColor(metrics?.total_days, false),
+-                  simColor: getRowColor(simResult.aggregate_metrics.total_days, true)
++                  simColor: getRowColor(simUniqueDays, true)
+                 },
+                 { 
+                   label: "Trades", 
+diff --git a/frontend/src/components/backtester/tabs/EquityCurveTab.tsx b/frontend/src/components/backtester/tabs/EquityCurveTab.tsx
+index fd505a5..a6b2cbb 100644
+--- a/frontend/src/components/backtester/tabs/EquityCurveTab.tsx
++++ b/frontend/src/components/backtester/tabs/EquityCurveTab.tsx
+@@ -173,6 +173,24 @@ export default function EquityCurveTab({
+       return riskR > 0 ? ((ddPct / 100) * initCash) / riskR : 0;
+     }
+   };
++
++  // Drawdown en $ por punto de la curva (value − running max). Convertir el
++  // dd% con init_cash es incorrecto con compounding: el dd% es relativo al
++  // pico de equity del momento, no al capital inicial.
++  const ddDollarByTime = useMemo(() => {
++    const m = new Map<number, number>();
++    if (!globalEquity.length) return m;
++    let peak = globalEquity[0].value;
++    for (const p of globalEquity) {
++      if (p.value > peak) peak = p.value;
++      m.set(p.time as number, p.value - peak);
++    }
++    return m;
++  }, [globalEquity]);
++  const maxDdDollar = useMemo(
++    () => (ddDollarByTime.size ? Math.min(...ddDollarByTime.values()) : 0),
++    [ddDollarByTime]
++  );
+   const [activeMainTab, setActiveMainTab] = useState<"equity" | "oos_degradation">("equity");
+ 
+   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
+@@ -444,7 +462,8 @@ export default function EquityCurveTab({
+           if (viewMode === "R") {
+             val = getDrawdownRValue(p.value);
+           } else if (viewMode === "$") {
+-            val = (p.value / 100) * initCash;
++            const dd = ddDollarByTime.get(p.time as number);
++            val = dd !== undefined ? dd : (p.value / 100) * initCash;
+           }
+           return { time: p.time as Time, value: val };
+         })
+@@ -615,7 +634,7 @@ export default function EquityCurveTab({
+       chartRef.current = null;
+       ddChartRef.current = null;
+     };
+-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType]);
++  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType, ddDollarByTime]);
+ 
+   if (!trades || trades.length === 0) {
+     return (
+@@ -679,7 +698,7 @@ export default function EquityCurveTab({
+ 
+   const ddDisplay = (() => {
+     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
+-    if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
++    if (viewMode === "$") return `$${maxDdDollar.toFixed(2)}`;
+     if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
+     return `${maxDD.toFixed(2)}%`;
+   })();
+diff --git a/frontend/src/components/backtester/tabs/PerformanceTab.tsx b/frontend/src/components/backtester/tabs/PerformanceTab.tsx
+index 318215c..47264d2 100644
+--- a/frontend/src/components/backtester/tabs/PerformanceTab.tsx
++++ b/frontend/src/components/backtester/tabs/PerformanceTab.tsx
+@@ -33,10 +33,11 @@ interface CellData {
+   grossLoss: number;
+   dailyReturns: number[];
+   rMultiple: number;
++  baseEquity: number;
+ }
+ 
+ function emptyCell(): CellData {
+-  return { pnl: 0, trades: 0, wins: 0, grossProfit: 0, grossLoss: 0, dailyReturns: [], rMultiple: 0 };
++  return { pnl: 0, trades: 0, wins: 0, grossProfit: 0, grossLoss: 0, dailyReturns: [], rMultiple: 0, baseEquity: 0 };
+ }
+ 
+ // Helper: Get ISO week string 'YYYY-Www'
+@@ -77,13 +78,32 @@ export default function PerformanceTab({
+       if (y > endYear) endYear = y;
+     }
+ 
++    // Base de cada periodo: equity al inicio del periodo (init_cash + pnl de
++    // trades cerrados antes). El % del portfolio es pnl/base. Componer los
++    // retornos por (ticker,día) como se hacía antes infla el número con
++    // posiciones solapadas: cada total_return_pct de day_results se calcula
++    // sobre la base COMPLETA del portfolio, no sobre una fracción de él.
++    const sortedTrades = [...trades]
++      .filter(t => t.exit_time)
++      .sort((a, b) => a.exit_time!.localeCompare(b.exit_time!));
++    const cumPnlBefore = (threshold: string) => {
++      let c = 0;
++      for (const t of sortedTrades) {
++        if (t.exit_time! < threshold) c += t.pnl;
++        else break;
++      }
++      return c;
++    };
++
+     if (startYear <= endYear) {
+       for (let y = startYear; y <= endYear; y++) {
+         const mMap = new Map<string, CellData>();
+         for (const m of MONTHS) {
+           mMap.set(m, emptyCell());
++          mMap.get(m)!.baseEquity = initCash + cumPnlBefore(`${y}-${m}-01`);
+         }
+         mMap.set("YTD", emptyCell()); // The total for the year
++        mMap.get("YTD")!.baseEquity = initCash + cumPnlBefore(`${y}-01-01`);
+         yearsMap.set(y.toString(), mMap);
+       }
+     }
+@@ -134,7 +154,7 @@ export default function PerformanceTab({
+     }
+ 
+     return yearsMap;
+-  }, [dayResults, trades]);
++  }, [dayResults, trades, initCash]);
+ 
+   // Render a specific cell based on the selected metric
+   const renderCell = (cell: CellData) => {
+@@ -145,7 +165,7 @@ export default function PerformanceTab({
+ 
+     switch (metric) {
+       case "PnL %":
+-        val = cell.dailyReturns.reduce((acc, r) => acc * (1 + r / 100), 1) * 100 - 100;
++        val = cell.baseEquity > 0 ? (cell.pnl / cell.baseEquity) * 100 : 0;
+         text = `${val > 0 ? "+" : ""}${val.toFixed(2)}`;
+         break;
+       case "PnL $":

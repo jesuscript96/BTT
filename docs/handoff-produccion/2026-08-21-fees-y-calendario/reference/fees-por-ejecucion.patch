@@ -1,0 +1,455 @@
+commit 77236d29c4276e6d6460eb40c53fb4c637c413f2
+Author: mrcangrejo96 <mrcangrejo96@gmail.com>
+Date:   Fri Aug 21 11:47:37 2026 +0200
+
+    feat(fees): modelo de comisiones por ejecucion (fill) en motor Python y JIT
+    
+    FLAT: fees = $/accion y lado -> fee del fill = fees x size.
+    PERCENT: fees = fraccion del nocional por lado -> fee del fill =
+    precio_neto x size x fees (SIN /100: el frontend ya divide al enviar,
+    BacktestPanel.tsx:688). Mata los dos bugs: fees*2 fijos (tamanho-agnostico)
+    y % del |pnl| (un trade plano pagaba 0).
+    
+    Modelo por-fill: el cierre final paga la entrada de TODO el tamanho
+    (original_size) + la salida del restante; cada parcial paga solo su salida.
+    Quirk contractual intacto: parciales sin clave fees, totales sin su fee,
+    reparto de locates intacto. Helper unico _fee_amount (Python) y
+    _fee_amount_jit (kernel, mismo orden FP, tol-0).
+    
+    UI: labels 'Fees (% notional)' / 'Fees ($/share)' (relabel obligatorio:
+    FLAT cambia de SIGNIFICADO $/trade -> $/share). BRAIN §5 actualizado.
+    
+    Verificacion: test_fees.py nuevo (6/6, visto en rojo antes), paridad JIT
+    28/28 (grid 220 configs con fees ambos tipos), suite completa con diff vs
+    stash = 0 fallos nuevos, humo: FLAT $0.01/share x 1.416 acc = $28.32
+    exacto; PERCENT 0.01% = $13.59 ~ 0.0002 x nocional.
+    (PROXIMOS_ITEMS ITEM 2, spec corregida A/B/C aprobada por Alvaro)
+
+diff --git a/backend/app/services/portfolio_sim.py b/backend/app/services/portfolio_sim.py
+index 7f9872d..bc70f15 100644
+--- a/backend/app/services/portfolio_sim.py
++++ b/backend/app/services/portfolio_sim.py
+@@ -72,6 +72,20 @@ def _attach_prev_max_metrics(trades, high, low, prev_highs, is_long, partial_tak
+         t["partials_skipped"] = skipped
+ 
+ 
++def _fee_amount(fee_type: str, fees: float, qty: float, notional: float) -> float:
++    """Fee de una ejecución bajo el modelo por-fill (spec fees 2026-08-21).
++
++    FLAT: `fees` = $ por acción y lado → fee = fees × qty (acciones del fill).
++    PERCENT: `fees` = fracción del nocional por lado → fee = notional × fees
++    (`fees` llega YA como fracción: el frontend divide /100 al enviar).
++    Cierre final: qty = original_size + size y notional = entrada + salida
++    (la entrada de TODO el tamaño se cobra ahí). Parciales: solo su salida.
++    """
++    if fee_type == "FLAT":
++        return fees * qty
++    return notional * fees
++
++
+ def simulate(
+     close: np.ndarray,
+     open_: np.ndarray,
+@@ -317,11 +331,7 @@ def simulate(
+                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                 else:
+                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                
+-                                if fee_type == "FLAT":
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -369,11 +379,7 @@ def simulate(
+                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                 else:
+                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                
+-                                if fee_type == "FLAT":
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -424,11 +430,7 @@ def simulate(
+                                         gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                     else:
+                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                    
+-                                    if fee_type == "FLAT":
+-                                        fee_amount = fees * 2
+-                                    else:
+-                                        fee_amount = abs(gross_pnl) * fees
++                                    fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                     pnl = gross_pnl - fee_amount
+                                     realized_pnl += pnl
+                                     capital_at_risk = entry_price * pt_size
+@@ -492,10 +494,7 @@ def simulate(
+                             pt_size = min(pt_size, size)  # Can't close more than remaining
+                             if pt_size > 0:
+                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
+-                                if fee_type == "FLAT":
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -558,10 +557,7 @@ def simulate(
+                             pt_size = min(pt_size, size)
+                             if pt_size > 0:
+                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                if fee_type == "FLAT":
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -676,14 +672,16 @@ def simulate(
+                 else:
+                     gross_pnl = (entry_price - net_exit) * size
+ 
+-                # Fee calculation depends on fee_type
+-                if fee_type == "FLAT":
+-                    # Flat $ fee: charged once for entry + once for exit = 2x
+-                    fee_amount = fees * 2
+-                else:
+-                    # Percentage fee: applied on the gross PnL
+-                    fee_amount = abs(gross_pnl) * fees
+-                
++                # Fee por-fill (spec 2026-08-21): el cierre final paga la
++                # entrada de TODO el tamaño (original_size) + la salida del
++                # restante (size). FLAT = $/acción; PERCENT = fracción del
++                # nocional neto (fees llega ya como fracción desde el frontend).
++                fee_amount = _fee_amount(
++                    fee_type, fees,
++                    original_size + size,
++                    entry_price * original_size + net_exit * size,
++                )
++
+                 # Net PnL is Gross PnL minus Fees
+                 pnl = gross_pnl - fee_amount
+ 
+@@ -749,7 +747,7 @@ def simulate(
+                     prev_signal = current_signal # Update for next loop
+                     continue
+ 
+-                # Fees are now calculated purely on exit Gross PnL
++                # Fee de entrada + salida se calcula en el bloque de cierre (por-fill).
+                 
+                 # Calculate Risk Amount ($)
+                 if risk_type == "PERCENT":
+diff --git a/backend/app/services/portfolio_sim_jit.py b/backend/app/services/portfolio_sim_jit.py
+index 89da7d1..f21f9ab 100644
+--- a/backend/app/services/portfolio_sim_jit.py
++++ b/backend/app/services/portfolio_sim_jit.py
+@@ -72,6 +72,16 @@ PT_TIME = 2
+ PT_HOUR = 3
+ 
+ 
++@njit(cache=True)
++def _fee_amount_jit(fee_type_code, fees, qty, notional):
++    # Puerto bit a bit de portfolio_sim._fee_amount (mismo orden de ops FP).
++    # FLAT: $/acción y lado → fees × qty. PERCENT: fracción del nocional
++    # (fees llega ya como fracción) → notional × fees.
++    if fee_type_code == FEE_FLAT:
++        return fees * qty
++    return notional * fees
++
++
+ @njit(cache=True)
+ def _core_simulate_jit(
+     close, open_, high, low, entries, exits,
+@@ -293,10 +303,7 @@ def _core_simulate_jit(
+                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                 else:
+                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                if fee_type_code == FEE_FLAT:
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -337,10 +344,7 @@ def _core_simulate_jit(
+                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                 else:
+                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                if fee_type_code == FEE_FLAT:
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -382,10 +386,7 @@ def _core_simulate_jit(
+                                         gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                     else:
+                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                    if fee_type_code == FEE_FLAT:
+-                                        fee_amount = fees * 2
+-                                    else:
+-                                        fee_amount = abs(gross_pnl) * fees
++                                    fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
+                                     pnl = gross_pnl - fee_amount
+                                     realized_pnl += pnl
+                                     capital_at_risk = entry_price * pt_size
+@@ -439,10 +440,7 @@ def _core_simulate_jit(
+                             pt_size = min(pt_size, size)
+                             if pt_size > 0:
+                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
+-                                if fee_type_code == FEE_FLAT:
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -493,10 +491,7 @@ def _core_simulate_jit(
+                             pt_size = min(pt_size, size)
+                             if pt_size > 0:
+                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
+-                                if fee_type_code == FEE_FLAT:
+-                                    fee_amount = fees * 2
+-                                else:
+-                                    fee_amount = abs(gross_pnl) * fees
++                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
+                                 pnl = gross_pnl - fee_amount
+                                 realized_pnl += pnl
+                                 capital_at_risk = entry_price * pt_size
+@@ -599,10 +594,13 @@ def _core_simulate_jit(
+                     gross_pnl = (net_exit - entry_price) * size
+                 else:
+                     gross_pnl = (entry_price - net_exit) * size
+-                if fee_type_code == FEE_FLAT:
+-                    fee_amount = fees * 2
+-                else:
+-                    fee_amount = abs(gross_pnl) * fees
++                # Fee por-fill (puerto de portfolio_sim): el cierre final paga
++                # la entrada de TODO el tamaño + la salida del restante.
++                fee_amount = _fee_amount_jit(
++                    fee_type_code, fees,
++                    original_size + size,
++                    entry_price * original_size + net_exit * size,
++                )
+                 pnl = gross_pnl - fee_amount
+                 realized_pnl += pnl
+                 capital_at_risk = entry_price * size
+diff --git a/backend/tests/test_fees.py b/backend/tests/test_fees.py
+new file mode 100644
+index 0000000..9fccfea
+--- /dev/null
++++ b/backend/tests/test_fees.py
+@@ -0,0 +1,177 @@
++"""
++Modelo de comisiones por ejecución (fill) — PROXIMOS_ITEMS ITEM 2, spec
++corregida 2026-08-21 (notas A/B/C aplicadas).
++
++Semántica bloqueada:
++- `fee_type="FLAT"`: `fees` = **$ por acción y lado**. Fee de un fill =
++  `fees × size` del fill.
++- `fee_type="PERCENT"`: `fees` = **fracción del nocional por lado** (el
++  frontend YA divide /100 en `BacktestPanel.tsx:688` → NO dividir aquí).
++  Fee de un fill = `precio_neto × size × fees`.
++- Por-fill: la ENTRADA de todo el tamaño se cobra en el bloque de cierre
++  final (`original_size`); cada parcial paga solo la salida de sus acciones.
++- Quirk contractual (nota B): los parciales NO llevan clave `fees` y el
++  total reportado los excluye. Se mantiene a propósito.
++- El fee NUNCA depende del PnL (bug 2 viejo: `abs(gross_pnl) * fees`).
++
++OHLC sintético determinista: señal en barra 0 → entrada en open_[1] = 100.0
++(look_ahead_prevention), salida EOD en close[n-1]. Sizing exacto vía
++risk_type=FIXED: size = risk_r / entry.
++"""
++import numpy as np
++import pytest
++
++from app.services.portfolio_sim import simulate as sim_py
++from app.services.sim_dispatch import simulate_jit, warmup
++
++
++@pytest.fixture(scope="module", autouse=True)
++def _warm():
++    warmup()
++
++
++def _ohlc(rows):
++    """[(open, high, low, close), ...] -> arrays numpy float64."""
++    arr = np.asarray(rows, dtype=np.float64)
++    n = len(rows)
++    entries = np.zeros(n, dtype=bool)
++    entries[0] = True
++    return {
++        "close": arr[:, 3], "open_": arr[:, 0], "high": arr[:, 1], "low": arr[:, 2],
++        "entries": entries, "exits": np.zeros(n, dtype=bool),
++    }
++
++
++# Entrada 100.0, size 1000 (risk_r = 1000 × 100), EOD a 102.0.
++_ROWS_EXIT_102 = [
++    (100.0, 100.1,  99.9, 100.0),  # señal
++    (100.0, 100.6,  99.5, 100.5),  # entrada open=100
++    (101.0, 102.0, 100.8, 101.8),
++    (102.0, 102.5, 101.5, 102.0),  # EOD close=102
++]
++_BASE_FLAT_1000 = {
++    "direction": "longonly",
++    "init_cash": 200_000.0,
++    "risk_r": 100_000.0,        # size = 100000 / 100 = 1000 acciones
++    "risk_type": "FIXED",
++    "fee_type": "FLAT",
++    "fees": 0.01,               # $ por acción y lado
++    "slippage": 0.0,
++    "look_ahead_prevention": True,
++}
++
++
++def test_flat_cobra_por_accion_y_lado():
++    """1000 acc × $0.01 → $10 entrada + $10 salida = $20 (antes: $0.02 fijos)."""
++    res = sim_py(**_ohlc(_ROWS_EXIT_102), **_BASE_FLAT_1000)
++    assert len(res["trades"]) == 1
++    t = res["trades"][0]
++    assert t["exit_reason"] == "EOD"
++    assert t["size"] == pytest.approx(1000.0)
++    assert t["fees"] == pytest.approx(20.0, abs=1e-9)
++    assert t["pnl"] == pytest.approx(1980.0, abs=1e-6)  # (102-100)×1000 − 20
++
++
++def test_percent_fraccion_de_nocional_sin_dividir_100():
++    """0.01% sobre nocional: fees llega como FRACCIÓN (0.0001). $10.000 por
++    lado de entrada → $1; salida 102×100=$10.200 → $1.02. Total $2.02."""
++    rows = [
++        (100.0, 100.1,  99.9, 100.0),
++        (100.0, 100.6,  99.5, 100.5),
++        (101.0, 102.0, 100.8, 101.8),
++        (102.0, 102.5, 101.5, 102.0),
++    ]
++    cfg = {**_BASE_FLAT_1000, "fee_type": "PERCENT", "fees": 0.0001,
++           "risk_r": 10_000.0}  # size = 100
++    res = sim_py(**_ohlc(rows), **cfg)
++    t = res["trades"][0]
++    assert t["size"] == pytest.approx(100.0)
++    assert t["fees"] == pytest.approx(2.02, abs=1e-6)
++    assert t["pnl"] == pytest.approx(197.98, abs=1e-6)
++
++
++def test_percent_trade_plano_tambien_paga():
++    """El fee no puede depender del PnL (bug 2): salida exactamente a entrada
++    → gross 0, fee $2 (2 lados de $10.000 al 0.01%), pnl −$2. Antes: fee 0."""
++    rows = [
++        (100.0, 100.1,  99.9, 100.0),
++        (100.0, 100.4,  99.6, 100.2),
++        (100.2, 100.5,  99.8, 100.1),
++        (100.0, 100.4,  99.7, 100.0),  # EOD close=100 = entrada
++    ]
++    cfg = {**_BASE_FLAT_1000, "fee_type": "PERCENT", "fees": 0.0001,
++           "risk_r": 10_000.0}  # size = 100, nocional $10.000/lado
++    res = sim_py(**_ohlc(rows), **cfg)
++    t = res["trades"][0]
++    assert t["fees"] == pytest.approx(2.0, abs=1e-6)
++    assert t["pnl"] == pytest.approx(-2.0, abs=1e-6)
++
++
++def test_parcial_paga_su_salida_y_el_final_la_entrada():
++    """Parcial 30% (FLAT $0.01, 1000 acc): el parcial paga 300×$0.01 = $3
++    (sin clave fees — quirk B); el cierre final paga la entrada COMPLETA +
++    su salida: (1000 + 700) × $0.01 = $17."""
++    rows = [
++        (100.0, 100.1,  99.9, 100.0),
++        (100.0, 100.4,  99.6, 100.2),  # entrada; sin TP aún (< 102)
++        (101.0, 102.5, 100.9, 102.3),  # high ≥ 102 → parcial al nivel 102
++        (102.3, 102.8, 101.8, 102.4),  # EOD close=102.4
++    ]
++    res = sim_py(
++        **_ohlc(rows), **_BASE_FLAT_1000,
++        partial_take_profits=[{"distance_pct": 0.02, "capital_pct": 0.3}],
++    )
++    assert len(res["trades"]) == 2
++    parcial, final = res["trades"]
++    assert parcial["exit_reason"] == "Partial TP"
++    assert parcial["size"] == pytest.approx(300.0)
++    assert parcial["pnl"] == pytest.approx(597.0, abs=1e-6)  # 600 − 3
++    assert "fees" not in parcial, "quirk contractual B: el parcial no lleva fees"
++    assert final["exit_reason"] == "EOD"
++    assert final["size"] == pytest.approx(700.0)
++    assert final["fees"] == pytest.approx(17.0, abs=1e-9)   # (1000 + 700) × 0.01
++    assert final["pnl"] == pytest.approx(1663.0, abs=1e-6)  # 2.4×700 − 17
++
++
++def test_parcial_percent():
++    """Mismo caso con PERCENT 0.01%: parcial 3.06; final 17.168."""
++    rows = [
++        (100.0, 100.1,  99.9, 100.0),
++        (100.0, 100.4,  99.6, 100.2),
++        (101.0, 102.5, 100.9, 102.3),
++        (102.3, 102.8, 101.8, 102.4),
++    ]
++    cfg = {**_BASE_FLAT_1000, "fee_type": "PERCENT", "fees": 0.0001,
++           "risk_r": 10_000.0}
++    res = sim_py(
++        **_ohlc(rows), **cfg,
++        partial_take_profits=[{"distance_pct": 0.02, "capital_pct": 0.3}],
++    )
++    parcial, final = res["trades"]
++    assert parcial["size"] == pytest.approx(30.0)
++    assert parcial["pnl"] == pytest.approx(59.694, abs=1e-6)  # 60 − 0.306
++    assert "fees" not in parcial
++    assert final["size"] == pytest.approx(70.0)
++    assert final["fees"] == pytest.approx(1.7168, abs=1e-6)   # (10.000 + 7.168) × 0.0001
++    assert final["pnl"] == pytest.approx(166.2832, abs=1e-4)  # 168 − 1.7168
++
++
++def test_paridad_jit_python():
++    """Mismos casos (parcial FLAT y full PERCENT) por los dos motores:
++    trades idénticos (dict equality tras el redondeo contractual)."""
++    rows = [
++        (100.0, 100.1,  99.9, 100.0),
++        (100.0, 100.4,  99.6, 100.2),
++        (101.0, 102.5, 100.9, 102.3),
++        (102.3, 102.8, 101.8, 102.4),
++    ]
++    for cfg in (
++        {**_BASE_FLAT_1000,
++         "partial_take_profits": [{"distance_pct": 0.02, "capital_pct": 0.3}]},
++        {**_BASE_FLAT_1000, "fee_type": "PERCENT", "fees": 0.0001, "risk_r": 10_000.0},
++    ):
++        kwargs = {**_ohlc(rows), **cfg}
++        a = sim_py(**kwargs)
++        b = simulate_jit(**kwargs)
++        assert a["trades"] == b["trades"], f"trades difieren: {cfg['fee_type']}"
++        np.testing.assert_array_equal(a["equity"], b["equity"])
+diff --git a/frontend/src/components/backtester/BacktestPanel.tsx b/frontend/src/components/backtester/BacktestPanel.tsx
+index af1d19b..53966a6 100644
+--- a/frontend/src/components/backtester/BacktestPanel.tsx
++++ b/frontend/src/components/backtester/BacktestPanel.tsx
+@@ -1381,7 +1381,7 @@ export default function BacktestPanel({
+                 letterSpacing: '0.12em',
+                 color: 'var(--color-ec-text-muted)',
+               }}>
+-                Fees {feeType === "PERCENT" ? "(%)" : "($)"}
++                Fees {feeType === "PERCENT" ? "(% notional)" : "($/share)"}
+               </label>
+               <select
+                 value={feeType}
+@@ -1397,8 +1397,8 @@ export default function BacktestPanel({
+                   cursor: 'pointer',
+                 }}
+               >
+-                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
+-                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
++                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>% notional</option>
++                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$ / share</option>
+               </select>
+             </div>
+             <input
