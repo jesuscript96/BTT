@@ -190,8 +190,8 @@ export const NavigateSchema: JSONSchema = {
     properties: {
         to: {
             type: 'string',
-            enum: ['/', '/backtester', '/database', '/tutorials'],
-            description: 'Ruta destino: "/" = Ticker Analysis, "/backtester" = Backtester (formulario, builders y resultados), "/database" = Trunk (estrategias/datasets/backtests guardados), "/tutorials" = tutoriales.',
+            enum: ['/', '/backtester', '/portfolio', '/tutorials'],
+            description: 'Ruta destino: "/" = Ticker Analysis, "/backtester" = Backtester (formulario, builders y resultados), "/portfolio" = Portfolio (baul de estrategias y estudio de cartera), "/tutorials" = tutoriales.',
         },
     },
     required: ['to'],
@@ -209,28 +209,6 @@ export const SetModeSchema: JSONSchema = {
         },
     },
     required: ['mode'],
-    additionalProperties: false,
-};
-
-export const TrunkDeleteSchema: JSONSchema = {
-    type: 'object',
-    description: 'Elimina permanentemente una estrategia o un dataset guardado del Trunk.',
-    properties: {
-        type: { type: 'string', enum: ['strategy', 'dataset'], description: 'Tipo de elemento a borrar.' },
-        id: { type: 'string', description: 'ID exacto (preferido; consulta el contexto trunk.page).' },
-        name: { type: 'string', description: 'Nombre exacto o fragmento, solo si no conoces el ID. Con varias coincidencias devolverá error.' },
-    },
-    required: ['type'],
-    additionalProperties: false,
-};
-
-export const TrunkOpenStrategySchema: JSONSchema = {
-    type: 'object',
-    description: 'Abre una estrategia guardada en el Backtester (precarga su selección).',
-    properties: {
-        id: { type: 'string', description: 'ID exacto de la estrategia (preferido).' },
-        name: { type: 'string', description: 'Nombre o fragmento si no conoces el ID.' },
-    },
     additionalProperties: false,
 };
 

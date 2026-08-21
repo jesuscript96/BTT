@@ -242,7 +242,9 @@ def simulate(
                                 if fee_type == "FLAT":
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -294,7 +296,9 @@ def simulate(
                                 if fee_type == "FLAT":
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -349,7 +353,8 @@ def simulate(
                                     if fee_type == "FLAT":
                                         fee_amount = fees * 2
                                     else:
-                                        fee_amount = abs(gross_pnl) * fees
+                                        # % sobre el NOCIONAL de cada lado (entrada + salida).
+                                        fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -396,7 +401,9 @@ def simulate(
                                 if fee_type == "FLAT":
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -439,7 +446,9 @@ def simulate(
                                 if fee_type == "FLAT":
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -555,8 +564,11 @@ def simulate(
                     # Flat $ fee: charged once for entry + once for exit = 2x
                     fee_amount = fees * 2
                 else:
-                    # Percentage fee: applied on the gross PnL
-                    fee_amount = abs(gross_pnl) * fees
+                    # Percentage fee sobre el NOCIONAL de cada lado (entrada +
+                    # salida), como cobra un broker real. Antes se aplicaba
+                    # sobre |PnL bruto|, con lo que un trade en tablas pagaba
+                    # $0 de comision moviera las acciones que moviera.
+                    fee_amount = (entry_price + net_exit) * size * fees
                 
                 # Net PnL is Gross PnL minus Fees
                 pnl = gross_pnl - fee_amount

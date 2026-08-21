@@ -101,3 +101,6 @@ dump.rdb
 edgecute_api.sqlite
 backend/edgecute_api.sqlite
 *.sqlite
+
+# Logs de arranque local de uvicorn (ruido de desarrollo)
+backend/uvicorn*.log

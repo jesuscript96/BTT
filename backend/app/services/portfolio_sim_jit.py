@@ -278,7 +278,8 @@ def _core_simulate_jit(
                                 if fee_type_code == FEE_FLAT:
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -322,7 +323,8 @@ def _core_simulate_jit(
                                 if fee_type_code == FEE_FLAT:
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -367,7 +369,8 @@ def _core_simulate_jit(
                                     if fee_type_code == FEE_FLAT:
                                         fee_amount = fees * 2
                                     else:
-                                        fee_amount = abs(gross_pnl) * fees
+                                        # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                        fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -408,7 +411,8 @@ def _core_simulate_jit(
                                 if fee_type_code == FEE_FLAT:
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -446,7 +450,8 @@ def _core_simulate_jit(
                                 if fee_type_code == FEE_FLAT:
                                     fee_amount = fees * 2
                                 else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -550,7 +555,8 @@ def _core_simulate_jit(
                 if fee_type_code == FEE_FLAT:
                     fee_amount = fees * 2
                 else:
-                    fee_amount = abs(gross_pnl) * fees
+                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                    fee_amount = (entry_price + net_exit) * size * fees
                 pnl = gross_pnl - fee_amount
                 realized_pnl += pnl
                 capital_at_risk = entry_price * size
