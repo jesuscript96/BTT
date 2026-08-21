@@ -82,31 +82,58 @@ export function BillingGuard() {
     }
   }, []);
 
-  // Dormant, still verifying, or the user has access → render nothing (no flash
-  // on loading; the backend gate protects endpoints meanwhile).
-  if (!BILLING_ENABLED || !ready || !summary || summary.access) return null;
+  // Dormant → never blocks.
+  if (!BILLING_ENABLED) return null;
+
+  // Full-screen overlay shell, reused for the loader / error / gate. It covers
+  // the whole app (sidebar included) so app content never flashes before access
+  // is confirmed — someone can't peek at the modules while /me resolves.
+  const overlayStyle: React.CSSProperties = {
+    position: "fixed",
+    inset: 0,
+    zIndex: 1000,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+    background: "color-mix(in srgb, var(--color-ec-bg-base) 88%, black)",
+    backdropFilter: "blur(6px)",
+    WebkitBackdropFilter: "blur(6px)",
+    overflowY: "auto",
+  };
+
+  // Verifying access (or syncing a Checkout return) → block, don't flash.
+  if (!ready) {
+    return (
+      <div style={overlayStyle}>
+        <div style={{ color: color.textSecondary, fontSize: 14 }}>Verificando tu suscripción…</div>
+      </div>
+    );
+  }
+
+  // Couldn't confirm access → FAIL CLOSED (block with a retry) rather than let
+  // the app through. A paying user just reloads; nobody slips in on an error.
+  if (!summary) {
+    return (
+      <div style={overlayStyle}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ color: color.textHigh, fontSize: 14, marginBottom: 14 }}>
+            {error || "No se pudo verificar tu suscripción"}
+          </div>
+          <Button variant="secondary" onClick={() => window.location.reload()}>Reintentar</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Access confirmed (incl. admins via the allowlist) → get out of the way.
+  if (summary.access) return null;
 
   const returning = summary.stage === "resubscribe";
   const price = formatMoney(summary.plan.amount_cents, summary.plan.currency);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 1000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 20,
-        background: "color-mix(in srgb, var(--color-ec-bg-base) 88%, black)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
-        overflowY: "auto",
-      }}
-    >
+    <div role="dialog" aria-modal="true" style={overlayStyle}>
       <div
         style={{
           width: "100%",

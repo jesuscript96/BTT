@@ -28,6 +28,16 @@ def _int(name: str, default: int) -> int:
 # onward; the store itself (this phase) is inert until a caller uses it.
 BILLING_ENABLED = os.getenv("BILLING_ENABLED", "false").lower() in ("1", "true", "yes", "on")
 
+# ── Admin allowlist ───────────────────────────────────────────────────────────
+# Comma-separated Clerk user_ids that bypass Stripe entirely (internal team,
+# decision #1): always tier "Admin", no card, no trial. Single source of truth —
+# both get_tier (middleware) and the /me summary (service) resolve admins here,
+# so an admin never sees the card gate.
+def billing_admin_ids() -> frozenset:
+    raw = os.getenv("BILLING_ADMIN_USER_IDS", "")
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
 # ── Store ─────────────────────────────────────────────────────────────────────
 # Dedicated SQLite file. In prod it MUST sit on a persistent volume (or be
 # GCS-synced); if lost, it is reconstructible from Stripe (reconciliation job,

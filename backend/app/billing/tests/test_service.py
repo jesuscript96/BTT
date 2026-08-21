@@ -252,6 +252,16 @@ def test_stage_admin(svc, store):
     assert svc.get_billing_summary("u1")["stage"] == "admin"
 
 
+def test_admin_allowlist_never_sees_gate(svc, monkeypatch):
+    # An admin in BILLING_ADMIN_USER_IDS has NO grant/sub, yet must resolve to
+    # Admin (access, no card gate) — mirrors get_tier's allowlist precedence.
+    monkeypatch.setenv("BILLING_ADMIN_USER_IDS", "admin_1, admin_2")
+    s = svc.get_billing_summary("admin_2")
+    assert s["tier"] == "Admin" and s["stage"] == "admin" and s["access"] is True
+    # A non-listed user with the same empty state still hits onboarding.
+    assert svc.get_billing_summary("rando")["stage"] == "onboarding"
+
+
 def test_billing_me_endpoint_exposes_grant_countdown(svc, store):
     store.upsert_grant("u1", "Pro", reason="migration-trial", expires_at=9_999_999_999.0)
     r = _client(svc).get("/api/billing/me")

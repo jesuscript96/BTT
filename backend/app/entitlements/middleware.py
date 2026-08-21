@@ -34,10 +34,9 @@ _CLERK_TIMEOUT = 5.0
 
 
 def _billing_admin_ids() -> frozenset[str]:
-    """Admin allowlist for the billing world (comma-separated Clerk user_ids in
-    BILLING_ADMIN_USER_IDS). Internal team bypasses Stripe (decision #1)."""
-    raw = os.getenv("BILLING_ADMIN_USER_IDS", "")
-    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+    """Admin allowlist for the billing world. Delegates to billing.config so the
+    /me summary and get_tier share one source of truth (decision #1)."""
+    return billing_config.billing_admin_ids()
 
 
 def get_tier(user_id: Optional[str]) -> str:

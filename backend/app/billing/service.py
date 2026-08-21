@@ -167,7 +167,13 @@ class BillingService:
         tier + subscription + default payment method + invoices + the trial
         countdown source (subscription.trial_end or a migration grant) + a single
         `stage` string that tells the frontend which screen to render (Fase 3)."""
-        tier = resolve_tier(user_id, store=self._store)
+        # Admin allowlist wins over subscription state (same precedence as
+        # get_tier), so an internal admin never sees the card gate. Without this
+        # the summary would resolve_tier() → Locked for admins (no grant/sub).
+        if user_id and user_id in config.billing_admin_ids():
+            tier = "Admin"
+        else:
+            tier = resolve_tier(user_id, store=self._store)
         sub = self._store.get_latest_subscription_for_user(user_id)
         pm = self._store.get_default_payment_method(user_id)
         grant = self._store.get_grant(user_id)
