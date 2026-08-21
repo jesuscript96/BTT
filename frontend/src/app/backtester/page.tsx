@@ -1205,20 +1205,21 @@ export default function Home() {
             <BacktestPanel
               onRun={handleRun}
               onNewStrategy={() => {
-                const hadSavedOrLoaded = !!loadedStrategyId;
-                if (hadSavedOrLoaded) {
+                const isOpening = !(mode === 'builder' || mode === 'builder_choice' || mode === 'wizard');
+                if (isOpening) {
+                  // "Nueva Estrategia" debe arrancar SIEMPRE en blanco. Antes el
+                  // reset estaba condicionado a loadedStrategyId, así que un
+                  // borrador SIN guardar sobrevivía y "Config. libre" heredaba la
+                  // estrategia anterior (el Wizard la re-fijaba al testear, por eso
+                  // solo se notaba en Config. libre).
                   setActiveStrategy(null);
                   setBuilderDraft(null);
                   setDraftStrategy(null);
+                  setLoadedStrategyId(null);
+                  setMode('builder_choice');
+                } else {
+                  setMode('config');
                 }
-                setLoadedStrategyId(null);
-                setMode((prev) => {
-                  const isOpening = !(prev === 'builder' || prev === 'builder_choice' || prev === 'wizard');
-                  if (isOpening) {
-                    return 'builder_choice';
-                  }
-                  return 'config';
-                });
               }}
               onNewDataset={() => setMode((prev) => (prev === 'dataset' ? 'config' : 'dataset'))}
               onParamsChange={handlePanelParamsChange}
