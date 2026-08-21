@@ -357,6 +357,7 @@ export default function SubscriptionPanel() {
   }
 
   const sub = summary.subscription;
+  const isAdmin = summary.stage === "admin";
   const isTrial =
     sub?.status === "trialing" || (summary.grant?.reason === "migration-trial" && !sub);
   const isPastDue = sub?.status === "past_due";
@@ -415,24 +416,30 @@ export default function SubscriptionPanel() {
               {PLAN_FEATURES.slice(0, 4).join(" · ")}
             </div>
           </div>
-          {sub ? <SubStatusPill status={sub.status} /> : summary.grant ? <Pill tone="copper">En prueba</Pill> : null}
+          {isAdmin ? (
+            <Pill tone="copper">Acceso admin</Pill>
+          ) : sub ? (
+            <SubStatusPill status={sub.status} />
+          ) : summary.grant ? (
+            <Pill tone="copper">En prueba</Pill>
+          ) : null}
         </div>
         <Divider />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
           <div>
             <div style={label}>{isTrial ? "Al terminar la prueba" : "Precio"}</div>
             <div style={{ marginTop: 5 }}>
-              <span style={{ ...bigVal, fontSize: 20 }}>{formatMoney(summary.plan.amount_cents, summary.plan.currency)}</span>
+              <span style={{ ...bigVal, fontSize: 20 }}>{formatMoney(isAdmin ? 0 : summary.plan.amount_cents, summary.plan.currency)}</span>
               <span style={{ color: color.textSecondary }}> / mes</span>
             </div>
           </div>
           <div>
-            <div style={label}>{isTrial ? "Primer cobro" : sub?.cancel_at_period_end ? "Acceso hasta" : "Próxima renovación"}</div>
+            <div style={label}>{isAdmin ? "Estado" : isTrial ? "Primer cobro" : sub?.cancel_at_period_end ? "Acceso hasta" : "Próxima renovación"}</div>
             <div style={{ color: color.textPrimary, marginTop: 5 }}>
-              {formatDate(isTrial ? trialEnd : sub?.current_period_end ?? null)}
+              {isAdmin ? "Acceso de administrador" : formatDate(isTrial ? trialEnd : sub?.current_period_end ?? null)}
             </div>
           </div>
-          {manageBtn}
+          {isAdmin ? null : manageBtn}
         </div>
         {sub?.cancel_at_period_end ? (
           <div style={{ color: color.warning, fontSize: 12.5, marginTop: 12 }}>
