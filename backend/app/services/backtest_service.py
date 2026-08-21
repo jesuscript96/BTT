@@ -795,6 +795,13 @@ def run_backtest(
         f"({round(time.time()-t1, 2)}s)"
     )
 
+    # PRD_03: agrupar las ejecuciones de cada posición (parciales + cierre) en un
+    # solo trade ANTES de equity/métricas, para que todo cuente TRADES y no
+    # ejecuciones. Punto de convergencia real de los 3 motores (secuencial,
+    # paralelo, slab); clave compuesta (ticker,date,entry_idx). Sin parciales es
+    # un no-op de métricas (solo añade `legs`), así los backtests simples no cambian.
+    all_trades = _group_partial_exits(all_trades)
+
     t4 = time.time()
     # Logic: global_eq is pure trades, global_eq_exp is trades - monthly_expenses
     global_eq, global_dd, global_eq_exp = _compute_global_equity_and_drawdown(
@@ -967,6 +974,107 @@ def _enrich_trades(
         })
     return result
 
+
+def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
+    """
+    Fusiona en UN trade todas las ejecuciones de una misma posición (PRD_03).
+
+    El simulador emite un registro por ejecución: cada Partial TP es un registro
+    aparte que comparte entry_idx con el cierre final (SL/TP/Time/EOD) de la
+    misma posición. Contar registros infla total_trades y contamina win rate,
+    streaks, avg win/loss, expectancy, etc.
+
+    Agrupa ejecuciones CONSECUTIVAS con la misma clave (ticker, date, entry_idx).
+    El simulador es monoposición: los registros de una posición salen consecutivos
+    y no puede re-entrar en la misma barra. Se usa la clave COMPUESTA (no solo
+    entry_idx) porque esta función se aplica al `all_trades` global (todos los
+    días/tickers ya ensamblados por cualquiera de los 3 motores: secuencial,
+    paralelo o slab), y entry_idx es un índice de barra que se repite entre días.
+    Un trade agrupado conserva todos los campos del registro; pnl/fees/size se
+    suman, entry viene de la primera ejecución, exit (hora/precio/razón) de la
+    última, mae/mfe toman el máximo.
+    """
+    if len(trades_records) < 2:
+        return trades_records
+
+    grouped: list[dict] = []
+    run: list[dict] = []
+    run_key = None
+
+    def _flush():
+        if not run:
+            return
+        if len(run) == 1:
+            rec = dict(run[0])
+            rec["legs"] = [
+                {
+                    "exit_time": rec.get("exit_time"),
+                    "exit_time_epoch": rec.get("exit_time_epoch"),
+                    "exit_price": rec.get("exit_price"),
+                    "exit_reason": rec.get("exit_reason"),
+                    "size": rec.get("size"),
+                    "pnl": rec.get("pnl"),
+                }
+            ]
+            grouped.append(rec)
+            return
+        first, last = run[0], run[-1]
+        pnl = round(sum(t["pnl"] for t in run), 4)
+        fees = round(sum(t.get("fees", 0.0) or 0.0 for t in run), 4)
+        size = round(sum(t["size"] for t in run), 6)
+        capital = first["entry_price"] * size
+        ret_pct = round((pnl / capital) * 100, 4) if capital > 0 else 0.0
+        r_values = [t.get("r_multiple") for t in run if t.get("r_multiple") is not None]
+        trade = dict(first)
+        trade.update({
+            "pnl": pnl,
+            "fees": fees,
+            "size": size,
+            "return_pct": ret_pct,
+            "exit_idx": last["exit_idx"],
+            "exit_time": last["exit_time"],
+            "exit_time_epoch": last["exit_time_epoch"],
+            "exit_price": last["exit_price"],
+            "exit_reason": last["exit_reason"],
+            # Cadena completa de razones de las legs (el parcial es intermedia y
+            # exit_reason solo conserva la última — PRD reporte parciales fade).
+            "exit_reasons": [t.get("exit_reason") for t in run],
+            "mae": max(t.get("mae", 0.0) or 0.0 for t in run),
+            "mfe": max(t.get("mfe", 0.0) or 0.0 for t in run),
+            "mae_prev_max": max(t.get("mae_prev_max", 0.0) or 0.0 for t in run),
+            "mfe_prev_max": max(t.get("mfe_prev_max", 0.0) or 0.0 for t in run),
+            "prev_max_ref": first.get("prev_max_ref"),
+            "fade_at_entry_pct": first.get("fade_at_entry_pct"),
+            "partials_skipped": first.get("partials_skipped", []),
+            "r_multiple": round(sum(r_values), 2) if r_values else None,
+            "n_executions": len(run),
+            # Ejecuciones individuales de la posición (parciales + cierre) para
+            # poder señalar cada una en el chart a su precio exacto.
+            "legs": [
+                {
+                    "exit_time": t.get("exit_time"),
+                    "exit_time_epoch": t.get("exit_time_epoch"),
+                    "exit_price": t.get("exit_price"),
+                    "exit_reason": t.get("exit_reason"),
+                    "size": t.get("size"),
+                    "pnl": t.get("pnl"),
+                }
+                for t in run
+            ],
+        })
+        grouped.append(trade)
+
+    for t in trades_records:
+        key = (t.get("ticker"), t.get("date"), t.get("entry_idx"))
+        if run and key == run_key:
+            run.append(t)
+        else:
+            _flush()
+            run = [t]
+            run_key = key
+    _flush()
+
+    return grouped
 
 
 def _compute_r_multiple(pnl: float, risk_unit_dollar: float) -> float | None:
