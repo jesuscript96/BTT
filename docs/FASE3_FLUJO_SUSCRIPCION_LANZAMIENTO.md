@@ -266,3 +266,27 @@ gratis" **no necesita fontanería nueva**.
 ### Esfuerzo
 Pequeño: el acceso es gratis (ya existe). Falta stage+copy (como el de admin), la CLI y tests.
 
+### ✅ IMPLEMENTADO 2026-08-21 (decisiones Adrian) — commit `2f1017e`
+Se eligió **allowlist como la de admin** (más simple que grants+CLI): env
+**`BILLING_COMPED_USER_IDS`** (Clerk user_ids separados por coma; se edita en Coolify).
+- Precedencia: **admin > comped > store**. `get_tier`→`Pro`; `get_billing_summary`→tier `Pro`
+  + `stage="comped"`. Feature-set = Pro (4 módulos, sin Market Analysis, sin poderes admin).
+- **Panel** (`stage="comped"`): título "Suscrito a Edgecute", badge **Cortesía**, precio
+  **29,00 €**, estado **"Cortesía de Edgecute"**, sin portal ni método de pago.
+- **Nunca ve el gate** (access=true). Sin Stripe, sin tarjeta, sin cobro, indefinido.
+- **Revocar** (decisión #1, "simple") = quitar el id de la env → cae al gate y paga normal.
+- Tests: `test_comped_allowlist_full_access_free`, `test_admin_beats_comped` (suite 96 OK).
+
+**Decisiones cerradas:** ①revocar=simple (quitar id→paga); ②acceso idéntico a Pro; ③copy
+"Suscrito a Edgecute" + "Cortesía de Edgecute" (29 €); ④gestión = lista tipo admin.
+
+### Punto ④ — alta de colegas (registrados vs. no registrados)
+- **Ya registrado:** se añade su `user_id` a `BILLING_COMPED_USER_IDS` en Coolify → en cuanto
+  recargue, sale con acceso de cortesía. ✅ (esto es lo implementado)
+- **No registrado aún:** la allowlist es por `user_id`, que solo existe **tras** registrarse.
+  Flujo: se le **invita** en Clerk → se registra → se copia su `user_id` a la env → cortesía.
+  ⚠️ Para que sea **automático** al registrarse (sin copiar el id a mano) haría falta una lista
+  **por EMAIL** materializada en el alta (webhook Clerk `user.created`, o lookup del email en el
+  primer `/me`). Es un **follow-up pequeño** — decidir si se quiere ese automatismo o basta con
+  añadir el `user_id` tras el registro (una línea en Coolify, como con los admins).
+
