@@ -30,6 +30,53 @@
 
 ---
 
+## 2026-08-21 (tarde 2) — Rama handoff a producción con PRDs para Edgecute
+
+**Qué hicimos**
+- Álvaro pidió rama para entregar al developer de Edgecute (vía develop→main,
+  ese salto es de Adrian) las dos mejoras apremiantes: fees por ejecución y
+  calendario/retorno real. Creada **`alvaro/handoff-produccion`** (commit
+  `7f65d83`) **basada en `origin/develop` @ `e368839`**, por worktree temporal
+  (el working tree de esta rama no se tocó). Es un **canal permanente**: sin
+  fecha en el nombre; cada tanda de mejoras va en una carpeta fechada dentro.
+- **Solo documentación**: `docs/handoff-produccion/` con README índice vivo +
+  tanda `2026-08-21-fees-y-calendario/` (PRD_01 fees, PRD_02 calendario,
+  `reference/` con parches + `test_fees.py` copiable tal cual).
+  Todas las anclas `fichero:línea` verificadas contra develop@e368839.
+
+**Hechos verificados (importan para el futuro)**
+- Cherry-pick de `77236d2` (fees) sobre develop **NO aplica limpio**:
+  conflictúa en `portfolio_sim.py` (construido sobre trailing+locates+
+  parciales fade de mi rama). Con `59a869d`+`77236d2` el trailing sí aplica,
+  fees sigue conflictuando. → Handoff por PRD, no por código. `test_fees.py`
+  sí es copiable (archivo nuevo, sin dependencias de features mías).
+- `origin/alvaro-rama-desarrollo` == local (0 commits sin push): la nota
+  "sin push" de las entradas anteriores quedó desactualizada.
+- Clasificación del working tree sin commitear: **paquete calendario/retorno
+  (6 ficheros: CalendarTab, PerformanceTab, EquityCurveTab, ChartsTab,
+  MetricsCard, page.tsx)** = el fix que el usuario quiere en producción;
+  `sl_dist_pct_*` (api_backtester, tradesCsv, MetricsCard, backend) y
+  `activation_pct` (strategy.ts) = features aparte, fuera del handoff.
+  El parche de referencia del calendario se generó de este diff.
+
+**Decisiones**
+- Handoff **docs-only**: nada de mi montaje local (bygap, migración GCS/lago,
+  MEMORIA/PROXIMOS) puede colarse. README lista explícitamente lo excluido +
+  candidatos futuros (fix locates `2a51b94..de14125`, OOS DD$ `5741202`).
+- El fix del calendario sigue **sin commitear** en esta rama (trabajo de la
+  sesión paralela); el PRD es autocontenido y el parche documenta el
+  comportamiento exacto. Pendiente: validarlo (tsc + visual) y commitearlo
+  aquí con su propio commit.
+
+**Dónde lo dejamos**
+- `alvaro/handoff-produccion` **pusheada** a origin (tanda 1, `7f65d83`),
+  con OK explícito de Álvaro. `alvaro-rama-desarrollo` también pusheada
+  (commit de esta MEMORIA).
+- Working tree de `alvaro-rama-desarrollo` intacto (solo se commiteó
+  MEMORIA.md).
+
+---
+
 ## 2026-08-21 — Ejecutados ITEM 3 e ITEM 1 (PROXIMOS_ITEMS); spec ITEM 2 corregida
 
 **Contexto**
