@@ -233,6 +233,9 @@ export interface TrailingStopSettings {
     type: string;
     buffer_pct: number;
     buffer_r?: number;
+    // Umbral de activación (% a favor) desacoplado de la distancia de trailing.
+    // Con buffer_pct = 0 el stop se fija en break-even al activarse.
+    activation_pct?: number | '';
 }
 
 export interface RiskManagement {

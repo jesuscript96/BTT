@@ -14,6 +14,7 @@ const COLUMNS = [
   "entry_price",
   "size",
   "stop_loss",
+  "sl_dist_pct",
   "exit_time",
   "exit_price",
   "exit_reason",
@@ -63,6 +64,16 @@ function partialsSkipped(t: TradeRecord): string {
   return (t.partials_skipped ?? []).map((s) => s.reason).join(";");
 }
 
+// Distancia % del stop al entry — misma fórmula que la métrica agregada del
+// backend (abs(stop − entry) / entry × 100). Vacío si el trade no tiene stop
+// válido o el entry es inválido.
+function slDistPct(t: TradeRecord): string {
+  const sl = t.stop_loss ?? 0;
+  const ep = t.entry_price ?? 0;
+  if (sl <= 0 || ep <= 0) return "";
+  return ((Math.abs(sl - ep) / ep) * 100).toFixed(1);
+}
+
 export function buildTradesCsv(trades: TradeRecord[]): { csv: string; filename: string } {
   // Orden cronológico por entrada, independiente del orden visual del tab.
   const sorted = [...trades].sort((a, b) => (a.entry_time_epoch ?? 0) - (b.entry_time_epoch ?? 0));
@@ -76,6 +87,7 @@ export function buildTradesCsv(trades: TradeRecord[]): { csv: string; filename: 
       num(t.entry_price),
       num(t.size),
       num(t.stop_loss),
+      slDistPct(t),
       t.exit_time ?? "",
       num(t.exit_price),
       t.exit_reason ?? "",

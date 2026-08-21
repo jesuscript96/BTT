@@ -396,9 +396,13 @@ export default function Home() {
   }, [builderDraft, activeStrategy]);
 
 
-  const handleRunWithDraft = async (draft: Draft) => {
+  const handleRunWithDraft = async (draft: Draft, paramsOverride?: any) => {
     setDraftStrategy(draft);
-    const p = panelParamsRef.current;
+    // paramsOverride = parámetros que el panel pasó a handleRun al lanzar la
+    // corrida. Sin él (wizard/builder) se usa el último estado del panel,
+    // como antes. Este camino llegaba al backend con defaults (10000/FIXED)
+    // ignorando lo tecleado, porque solo leía panelParamsRef.
+    const p = paramsOverride ?? panelParamsRef.current;
     
     let activeDatasetId = (draft as any).dataset_id;
     
@@ -511,8 +515,8 @@ export default function Home() {
         fees: p?.fees ?? 0.01,
         fee_type: p?.fee_type ?? "PERCENT",
         slippage: p?.slippage ?? 0.01,
-        start_date: (draft as any).universe_filters?.date_from || undefined,
-        end_date: (draft as any).universe_filters?.date_to || undefined,
+        start_date: p?.start_date || (draft as any).universe_filters?.date_from || undefined,
+        end_date: p?.end_date || (draft as any).universe_filters?.date_to || undefined,
         market_sessions: draft.market_sessions || p?.market_sessions,
         custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time || undefined) : undefined,
         custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
@@ -650,7 +654,7 @@ export default function Home() {
             custom_start_time: def.custom_start_time || params.custom_start_time,
             custom_end_time: def.custom_end_time || params.custom_end_time,
           } as any;
-          await handleRunWithDraft(draft);
+          await handleRunWithDraft(draft, params);
           return;
         }
       } catch (err) {
@@ -690,7 +694,7 @@ export default function Home() {
         custom_start_time: targetDraft.definition?.custom_start_time || targetDraft.custom_start_time || params.custom_start_time,
         custom_end_time: targetDraft.definition?.custom_end_time || targetDraft.custom_end_time || params.custom_end_time,
       } as any;
-      await handleRunWithDraft(draft);
+      await handleRunWithDraft(draft, params);
       return;
     }
 
@@ -891,6 +895,17 @@ export default function Home() {
         const saved = JSON.parse(stored);
         if (saved.result) setResult(saved.result);
         if (saved.jobId) jobIdRef.current = saved.jobId;
+        // Restaurar la base de la corrida: los refs no sobreviven a la
+        // recarga y quedaban en los defaults (10000/100) aunque el result
+        // restaurado correspondiera a otra configuración.
+        const ge0 = saved.result?.global_equity?.[0]?.value;
+        if (typeof ge0 === "number" && ge0 > 0) initCashRef.current = ge0;
+        if (saved.backtestParams) {
+          backtestParamsRef.current = saved.backtestParams;
+          if (typeof saved.backtestParams.risk_r === "number") {
+            riskRRef.current = saved.backtestParams.risk_r;
+          }
+        }
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
           if (saved.activeStrategy.id && !saved.activeStrategy.id.startsWith("draft") && !saved.activeStrategy.id.startsWith("wizard_draft")) {
@@ -914,6 +929,7 @@ export default function Home() {
     const resultsState = {
       result: lightweightResult,
       jobId: jobIdRef.current, // keep so equity can be re-fetched after a reload (within the 1h job TTL)
+      backtestParams: backtestParamsRef.current, // risk_type/monthly_expenses/is_percent tras recargar
       activeStrategy,
       selectedDay,
       mode,
@@ -1019,14 +1035,43 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, selectedDay, equityKey]);
 
+  // ── Base $ de esta corrida (fuente de verdad) ──
+  // El primer punto de global_equity SIEMPRE es el init_cash con el que corrió
+  // el backend. initCashRef puede quedar desincronizado (recarga de página,
+  // resultado restaurado de sessionStorage), así que los paneles usan esto.
+  const runInitCash = useMemo(
+    () => (result?.global_equity?.length ? result.global_equity[0].value : initCashRef.current),
+    [result]
+  );
+
   // ── IS/OOS filtering ──
   const currentIsPercent = (panelParamsRef.current?.is_percent as number) ?? 100;
 
   const isFilteredResult = useMemo(() => {
-    if (!result || currentIsPercent >= 100) return result;
+    if (!result) return result;
+
+    // "Days" en días de calendario únicos: el backend reporta total_days como
+    // pares (ticker, día). Con IS=100 el filtro de abajo no corre y el valor
+    // crudo llegaba a la UI, así que la corrección se aplica también aquí
+    // (mismo criterio que el bloque IS de abajo, evita el salto al mover el slider).
+    const uniqueDaysAll = result.trades?.length
+      ? new Set(result.trades.map(t => t.date)).size
+      : (result.aggregate_metrics?.total_days ?? 0);
+    const sumRAll = result.trades?.length
+      ? result.trades.reduce((sum, t) => sum + (t.r_multiple ?? 0), 0)
+      : 0;
 
     const eq = result.global_equity || [];
-    if (eq.length < 2) return result;
+    if (currentIsPercent >= 100 || eq.length < 2) {
+      return {
+        ...result,
+        aggregate_metrics: {
+          ...result.aggregate_metrics,
+          total_days: uniqueDaysAll,
+          avg_r_per_day: uniqueDaysAll > 0 ? sumRAll / uniqueDaysAll : 0,
+        },
+      };
+    }
 
     // Find the IS cutoff index based on percentage of equity points
     const cutoffIdx = Math.max(1, Math.floor(eq.length * currentIsPercent / 100));
@@ -1063,7 +1108,7 @@ export default function Home() {
     const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
     const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0);
-    const initCash = initCashRef.current;
+    const initCash = runInitCash;
     const totalReturnPct = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
 
     // Daily returns for Sharpe/Sortino
@@ -1448,7 +1493,7 @@ export default function Home() {
                     globalDrawdown={isFilteredResult!.global_drawdown}
                     trades={isFilteredResult!.trades}
                     metrics={isFilteredResult!.aggregate_metrics}
-                    initCash={initCashRef.current}
+                    initCash={runInitCash}
                     riskR={riskRRef.current}
                     monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
                     isPercent={currentIsPercent}
@@ -1511,7 +1556,7 @@ export default function Home() {
               <ResultsTabs
                 result={isFilteredResult!}
                 fullTrades={result.trades}
-                initCash={initCashRef.current}
+                initCash={runInitCash}
                 riskR={riskRRef.current}
                 dayCandles={dayCandles}
                 multiDayCandles={multiDayCandles}

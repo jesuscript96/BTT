@@ -33,10 +33,11 @@ interface CellData {
   grossLoss: number;
   dailyReturns: number[];
   rMultiple: number;
+  baseEquity: number;
 }
 
 function emptyCell(): CellData {
-  return { pnl: 0, trades: 0, wins: 0, grossProfit: 0, grossLoss: 0, dailyReturns: [], rMultiple: 0 };
+  return { pnl: 0, trades: 0, wins: 0, grossProfit: 0, grossLoss: 0, dailyReturns: [], rMultiple: 0, baseEquity: 0 };
 }
 
 // Helper: Get ISO week string 'YYYY-Www'
@@ -77,13 +78,32 @@ export default function PerformanceTab({
       if (y > endYear) endYear = y;
     }
 
+    // Base de cada periodo: equity al inicio del periodo (init_cash + pnl de
+    // trades cerrados antes). El % del portfolio es pnl/base. Componer los
+    // retornos por (ticker,día) como se hacía antes infla el número con
+    // posiciones solapadas: cada total_return_pct de day_results se calcula
+    // sobre la base COMPLETA del portfolio, no sobre una fracción de él.
+    const sortedTrades = [...trades]
+      .filter(t => t.exit_time)
+      .sort((a, b) => a.exit_time!.localeCompare(b.exit_time!));
+    const cumPnlBefore = (threshold: string) => {
+      let c = 0;
+      for (const t of sortedTrades) {
+        if (t.exit_time! < threshold) c += t.pnl;
+        else break;
+      }
+      return c;
+    };
+
     if (startYear <= endYear) {
       for (let y = startYear; y <= endYear; y++) {
         const mMap = new Map<string, CellData>();
         for (const m of MONTHS) {
           mMap.set(m, emptyCell());
+          mMap.get(m)!.baseEquity = initCash + cumPnlBefore(`${y}-${m}-01`);
         }
         mMap.set("YTD", emptyCell()); // The total for the year
+        mMap.get("YTD")!.baseEquity = initCash + cumPnlBefore(`${y}-01-01`);
         yearsMap.set(y.toString(), mMap);
       }
     }
@@ -134,7 +154,7 @@ export default function PerformanceTab({
     }
 
     return yearsMap;
-  }, [dayResults, trades]);
+  }, [dayResults, trades, initCash]);
 
   // Render a specific cell based on the selected metric
   const renderCell = (cell: CellData) => {
@@ -145,7 +165,7 @@ export default function PerformanceTab({
 
     switch (metric) {
       case "PnL %":
-        val = cell.dailyReturns.reduce((acc, r) => acc * (1 + r / 100), 1) * 100 - 100;
+        val = cell.baseEquity > 0 ? (cell.pnl / cell.baseEquity) * 100 : 0;
         text = `${val > 0 ? "+" : ""}${val.toFixed(2)}`;
         break;
       case "PnL $":

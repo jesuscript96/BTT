@@ -28,7 +28,10 @@ function formatPnl(pnl: number, isGastos = false): string {
 }
 
 export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, onSelectTrade }: CalendarTabProps) {
-  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("profits");
+  // Default "net": es la vista que coincide con RETURN/total_pnl. El modo
+  // "profits" muestra el PnL BRUTO (suma las fees de vuelta al pnl), así que
+  // una estrategia perdedora neta puede verse ganadora en esa vista.
+  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("net");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   // Cerrar el detalle de día con Escape
@@ -116,7 +119,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
       }}>
         {(["profits", "gastos", "net"] as const).map((mode) => {
           const isActive = viewMode === mode;
-          const label = mode === "profits" ? "Profits" : mode === "gastos" ? "Gastos" : "Profits - Gastos";
+          const label = mode === "profits" ? "Profits (brutos)" : mode === "gastos" ? "Gastos" : "Profits - Gastos";
           return (
             <button
               key={mode}

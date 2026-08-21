@@ -199,6 +199,14 @@ export interface AggregateMetrics {
   dd_return_ratio: number;
   r_squared: number;
   max_mae: number;
+  // Distancia % del stop al entry por trade (abs(stop − entry) / entry × 100).
+  // Con stops de Market Structure la distancia varía en cada trade: media,
+  // mediana y cuartiles sobre los trades con stop válido (excluye > 200%,
+  // splits/datos malos). Opcionales: resultados guardados previos no los traen.
+  sl_dist_pct_mean?: number;
+  sl_dist_pct_median?: number;
+  sl_dist_pct_p25?: number;
+  sl_dist_pct_p75?: number;
   max_profit_pct: number;
   avg_win: number;
   avg_loss: number;
