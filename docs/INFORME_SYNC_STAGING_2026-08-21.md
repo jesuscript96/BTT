@@ -51,9 +51,13 @@
 - Nota: la carpeta `ALVARO_CAMBIOS/` (copia de docs que hizo Sailor) queda
   duplicada intencionadamente con `docs/MEMORIA.md` (el original vivo).
 
-## 5. Riesgos residuales
+## 5. Prueba runtime (hecha el misma noche — ver MEMORIA "noche 2")
 
-- El merge es autosuficiente (tests verdes), pero la interacción
-  robustez × backtester en runtime no se ha probado más allá del tipado
-  (`tsc`). Recomendado: abrir la UI y correr un backtest + una vista del
-  módulo de robustez antes de dar la rama por "lista para Sailor".
+- Módulo de robustez probado en navegador con backend del merge: **funciona**
+  (lista estrategias reales, auto-análisis, 11 endpoints 200, recalcula al
+  cambiar estrategia).
+- **🐛 Bug encontrado (presente en staging)**: clic de ratón en la tarjeta N
+  del picker selecciona la estrategia N−1 (verificado contra el log del
+  backend); con teclado selecciona la correcta → código React bien, es
+  hit-testing/área de clic solapada. Reportado a Sailor en el mensaje de
+  handoff. No bloquea el merge a staging (el bug ya está en staging).

@@ -130,6 +130,40 @@
 
 ---
 
+## 2026-08-21 (noche 2) — Prueba runtime del módulo de robustez: FUNCIONA, con 1 bug de selección
+
+**Montaje**
+- El backend que corría era **pre-merge** (sin endpoints de robustez):
+  reiniciado con el código del merge (puerto 8010, queda corriendo en
+  background de esta sesión). Frontend ya corría (Next dev recompila solo).
+- `ROBUSTNESS_ENABLED=true` añadido a `backend/.env` (local, gitignored; el
+  módulo viene apagado por defecto — regla R7). El link del sidebar sigue
+  oculto sin `NEXT_PUBLIC_ROBUSTNESS_ENABLED`, pero `/robustez` entra por
+  URL directa.
+
+**Verificado ✓**
+- Página carga; lista las 4 estrategias reales con sus métricas; auto-análisis
+  de la primera al abrir (drawdown, rachas, 5 peores hundimientos, ulcer).
+- 11 endpoints del router responden 200; el análisis recalcula al cambiar de
+  estrategia; `tsc` limpio (ya verificado en el merge).
+
+**🐛 Bug encontrado (presente en staging; reportado a Sailor)**
+- **Clic con ratón en la tarjeta N selecciona la estrategia N−1**: clic en
+  "Definitiva 2.3" (4ª) → cargó "Sailor RTH 1" (3ª); clic en "RTH 2" (2ª) →
+  cargó "Investigar contextos AH" (1ª). Patrón consistente (verificado en el
+  log del backend: los `/run` pedidos no coinciden con la tarjeta clicada).
+- **Con teclado (Enter) selecciona la CORRECTA** → el código React está bien
+  (`StrategyPicker.tsx` pasa `s.id` directo; `page.tsx:72` también): es un
+  problema de **área de clic / hit-testing solapado** entre tarjetas
+  (probablemente CSS del header clicable). Un usuario real con ratón lo
+  sufrirá igual.
+
+**Dónde lo dejamos**
+- Backend corriendo con código del merge + robustez activo (local).
+- Merge rama → `staging` sigue **pendiente de OK** de Álvaro.
+
+---
+
 ## 2026-08-21 (noche) — Sync con staging (opción A): merge limpio + inventario priorizado para subir
 
 **Qué hicimos**
