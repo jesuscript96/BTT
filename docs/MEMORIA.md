@@ -30,6 +30,68 @@
 
 ---
 
+## 2026-08-21 — Ejecutados ITEM 3 e ITEM 1 (PROXIMOS_ITEMS); spec ITEM 2 corregida
+
+**Contexto**
+- Auditoría del backtester del 2026-08-21 → `docs/PROXIMOS_ITEMS.md` con 3 items.
+- Revisión Claude (Opus) con notas 🔎 A/B/C sobre la spec de ITEM 2. Esta sesión:
+  verificar esas notas contra el código, ejecutar ITEM 3 e ITEM 1 (aprobados por
+  Álvaro, en ese orden), corregir la spec de ITEM 2. **ITEM 2 NO ejecutado.**
+
+**Verificación de las notas A/B/C (todas correctas)**
+- **A**: `BacktestPanel.tsx:688` ya divide `fees/100` antes de enviar → al motor
+  llega como fracción; el `/100` de la fórmula PERCENT de la spec habría cobrado
+  100× de menos.
+- **B**: parciales sin clave `fees` a propósito (`sim_dispatch.py:348-351`,
+  comentario "quirk contractual"); el total (`backtest_service.py:1033`) los
+  excluye. Tocarlo rompería `test_sim_jit_equivalence`.
+- **C**: label actual es `Fees ($)` (`BacktestPanel.tsx:1384`); con el cambio
+  $/trade → $/share el relabel es obligatorio.
+- Anclas de ITEM 1 (7/7) e ITEM 3 verificadas. Ningún test referenciaba
+  `trail_activation` (hueco real de cobertura).
+
+**ITEM 3 — MAX DD $ del tab OOS (commit `5741202`)**
+- `OOSDegradationTab.tsx`: la serie (`:371`) y el header (`:556`) convertían
+  `dd$ = (dd%/100) × initCash`, que subestima el DD cuando el pico supera el
+  capital inicial. Arreglado copiando el patrón de `EquityCurveTab.tsx:177-193`:
+  memo `ddDollarByTime` (value − running peak sobre `fullGlobalEquity`) para
+  serie y header, con fallback a la fórmula vieja si no hay punto. Solo
+  presentación; `tsc --noEmit` limpio.
+
+**ITEM 1 — Trailing Break-Even desacoplado (commit `59a869d`)**
+- La feature vivía sin commitear en la working tree. Validada contra cálculo
+  manual, testeada, documentada y commiteada (solo sus 9 ficheros):
+  `strategy_engine.py` (parsing ×2 paths), `portfolio_sim.py`, `portfolio_sim_jit.py`
+  (puerto línea a línea, mismo orden FP), `sim_dispatch.py`, `schemas/strategy.py`
+  (`activation_pct: None` explícito en el default), `RiskManagement.tsx`,
+  `BACKTESTER_BRAIN.md` §4 + checklist.
+- Tests nuevos: `backend/tests/test_trail_break_even.py` (T1 BE long, T2
+  no-activación → SL, T3 activación+distancia, T4 espejo short, T5 regresión
+  bit-identica del trailing clásico via `trail_activation=None` vs
+  `=trail_pct`) y `test_sim_jit_equivalence.py::test_trail_activation_equivalence`
+  (T6 paridad JIT con BE y mixto). **19/19 verdes** (suite ITEM 1 + fade
+  partials). Numba 0.66.0 real, kernel cacheado.
+- Nota semántica: `buffer_pct=0` antes era falsy → trailing inerte; ahora
+  admite 0.0 → "BE inmediato" (caso documentado en BRAIN §4).
+
+**ITEM 2 — Fix fees: spec corregida, PENDIENTE de orden**
+- `docs/PROXIMOS_ITEMS.md` §ITEM 2 reescrito con A/B/C aplicadas: fórmula
+  PERCENT sin `/100` (fees llega como fracción), tabla de fórmulas por bloque
+  (el fee de ENTRADA cae en el cierre final: `original_size`; parciales solo su
+  salida), decisión explícita de **mantener el quirk** de parciales sin `fees`,
+  y relabel "$/share" marcado obligatorio.
+- **Esperando visto bueno de Álvaro a la spec antes de tocar el motor.**
+
+**Dónde lo dejamos**
+- Commits en `alvaro-rama-desarrollo`, **sin push** (pendiente confirmación).
+- Working tree: siguen los cambios WIP de Álvaro (migración GCS, renames
+  `backend/scripts → backend/_archive/scripts_gcs_2026-08` staged, etc.).
+- `test_strategy_api.py::test_create_and_get_strategy` falla 422 de forma
+  **preexistente** (verificado con stash, sin relación con estos cambios). No
+  estaba en la lista de tests rotos conocidos del Backlog.
+
+---
+
 ## 2026-08-20 (tarde) — Diagnóstico inconsistencias de P&L + PRD fix de locates
 
 **Qué hicimos**
