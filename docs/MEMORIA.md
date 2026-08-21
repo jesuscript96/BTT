@@ -99,13 +99,34 @@
   actualizados a **3 PRs** (orden: PRD_02 → PRD_03 → PRD_01). Mensaje para
   Adri reescrito con 3 items.
 
-**Dónde lo dejamos**
-- `alvaro/handoff-produccion`: tanda 1 (`7f65d83`) y PRD_00 (`9f7e22c`)
-  **pusheados**; PRD_03 (`33713af`) **sin push** (pendiente OK).
-- `alvaro-rama-desarrollo`: commits de MEMORIA **sin push** (el de la
-  entrega anterior si fue pusheado como `478ce55`; este nuevo pendiente).
-- Working tree de `alvaro-rama-desarrollo` intacto (solo se commitea
-  MEMORIA.md).
+**Continuación 3 (tarde) — Commiteado el trabajo aprobado que estaba vivo en el working tree + CSV fuera del handoff**
+- **Queja de Álvaro (procede):** trabajo YA aprobado seguía sin commitear en
+  la rama (ni MEMORIA). Commit `588588b` recoge los 9 ficheros frontend del
+  working tree (tsc --noEmit limpio), en 3 bloques: (1) fix
+  calendario/retorno real — el que va a producción vía handoff PRD_02;
+  (2) métricas `sl_dist_pct_*` — feature LOCAL, no va al handoff; su
+  cálculo backend sigue sin commitear (mezclado con migración GCS en
+  `backtest_service.py`) → sin él las filas muestran 0; (3) tipo
+  `activation_pct` — resto del ITEM 1 (`59a869d`) que quedó sin commitear.
+- **Regla a partir de ahora:** cuando Álvaro aprueba algo, SE COMMITEA en la
+  misma sesión (su rama + entrada MEMORIA). Nada aprobado queda vivo en el
+  working tree. Lo no aprobado se declara en MEMORIA como pendiente.
+- **Decisión de Álvaro — handoff solo fixes flagrantes, SIN export CSV** (los
+  trades viven dentro del backtester, nada se externaliza): PRD_03 amendado
+  (`6185254`) quitando el CSV del T4 y dejándolo dicho; README del handoff
+  lo explicita. Sigue pendiente: merge a `staging` (requiere orden
+  explícita de Álvaro; Sailor comparte esa rama).
+- Pendiente de decisión: extraer algún día los hunks `sl_dist` de
+  `backtest_service.py` para completar la feature (hoy bloqueado por la
+  migración GCS sin commitear).
+
+**Dónde lo dejamos (final de sesión)**
+- `alvaro/handoff-produccion`: PRD_03 (`6185254`) **sin push** al escribir
+  esto — pusheado a continuación con OK de Álvaro.
+- `alvaro-rama-desarrollo`: `588588b` (trabajo aprobado) + commit de esta
+  MEMORIA, **sin push** al escribir esto — pusheados a continuación.
+- Working tree: queda SOLO el WIP no aprobado (migración GCS backend +
+  renames staged + analisis/ + untracked varios).
 
 ---
 
