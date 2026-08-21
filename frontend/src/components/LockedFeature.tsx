@@ -16,13 +16,12 @@ import { useEntitlements } from "@/lib/entitlements";
 
 interface LockedFeatureProps {
   feature: string;
-  requiredTier: string;
+  requiredTier?: string; // kept for callers; no longer shown (Fase 3: no "Pro")
   children?: ReactNode;
 }
 
 export default function LockedFeature({
   feature,
-  requiredTier,
   children,
 }: LockedFeatureProps) {
   const { can } = useEntitlements();
@@ -70,7 +69,7 @@ export default function LockedFeature({
           color: "var(--color-ec-text-high)",
         }}
       >
-        Esta función requiere plan {requiredTier}
+        Esta función requiere una suscripción activa
       </p>
 
       <button

@@ -55,6 +55,18 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
         user?.emailAddresses[0]?.emailAddress ??
         "Usuario";
     const avatarLetter = displayName[0]?.toUpperCase() ?? "U";
+    // Fase 3 (④): no exponer el enum interno "Pro" al usuario. Con billing activo
+    // la etiqueta visible es "Suscrito a Edgecute" (o "Admin"); sin billing, el
+    // tier tal cual (Beta, etc.).
+    const tierLabel = loading
+        ? ""
+        : !BILLING_ENABLED
+            ? tier
+            : tier === "Admin"
+                ? "Admin"
+                : tier === "Pro"
+                    ? "Suscrito a Edgecute"
+                    : "";
     // El tier lo dice el BACKEND (useEntitlements), no el publicMetadata de Clerk.
     // Leerlo de Clerk mentía: quien no tiene tier puesto cae a DEFAULT_TIER ("Beta")
     // en el backend, pero aquí se pintaba "Free" porque el metadata venía vacío. El
@@ -371,8 +383,11 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                             textTransform: 'uppercase',
                             letterSpacing: '1.5px',
                             color: 'var(--color-ec-copper)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
                         }}>
-                            {loading ? "" : tier}
+                            {tierLabel}
                         </span>
                     </div>
                 )}
