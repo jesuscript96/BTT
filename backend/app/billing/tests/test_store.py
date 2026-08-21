@@ -176,6 +176,19 @@ def test_trial_override_rearm_delete_and_list(store):
     assert len(store.list_trial_overrides()) == 1
 
 
+# ── Comped emails (Fase 3: courtesy colleagues by email) ──────────────────────
+def test_comped_emails_roundtrip_and_normalization(store):
+    store.add_comped_email("  Colega@Edgecute.COM  ", granted_by="adrian")
+    assert store.has_comped_email("colega@edgecute.com") is True   # normalized
+    assert store.has_comped_email("other@x.com") is False
+    assert store.list_comped_emails() == ["colega@edgecute.com"]
+    # Idempotent re-add, then remove.
+    store.add_comped_email("colega@edgecute.com", granted_by="jesus")
+    assert len(store.list_comped_emails()) == 1
+    store.remove_comped_email("COLEGA@edgecute.com")
+    assert store.has_comped_email("colega@edgecute.com") is False
+
+
 # ── Persistence across connections (durability of the file) ───────────────────
 def test_state_persists_across_reopen(tmp_path):
     path = str(tmp_path / "billing.sqlite")

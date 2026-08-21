@@ -162,11 +162,32 @@ class BillingService:
         return count
 
     # ── Billing summary for the UI (GET /api/billing/me) ─────────────────────
-    def get_billing_summary(self, user_id: str) -> dict:
+    def _reconcile_comped_email(self, user_id: str, email: Optional[str]) -> None:
+        """Materialize/revoke courtesy access from the email list (Fase 3).
+
+        With a TRUSTED email (Clerk JWT): if listed and the user has no grant yet,
+        seed a perpetual Pro grant (reason='comped') keyed by user_id so the
+        product gate honors it too. If the user has a comped grant but is no longer
+        listed, delete it (revoke on next /me). No-op without a trusted email, so
+        we never revoke a grant we can't verify.
+        """
+        if not email:
+            return
+        listed = self._store.has_comped_email(email)
+        grant = self._store.get_grant(user_id)
+        is_comped_grant = grant is not None and grant.reason == "comped"
+        if listed and grant is None:
+            self._store.upsert_grant(user_id, "Pro", reason="comped", expires_at=None)
+        elif not listed and is_comped_grant:
+            self._store.delete_grant(user_id)
+
+    def get_billing_summary(self, user_id: str, email: Optional[str] = None) -> dict:
         """Read-only snapshot for the billing section (no Stripe call): resolved
         tier + subscription + default payment method + invoices + the trial
         countdown source (subscription.trial_end or a migration grant) + a single
         `stage` string that tells the frontend which screen to render (Fase 3)."""
+        # Courtesy-by-email reconciliation first (may seed/revoke a comped grant).
+        self._reconcile_comped_email(user_id, email)
         # Admin/comped allowlists win over subscription state (same precedence as
         # get_tier), so neither ever sees the card gate. Without this the summary
         # would resolve_tier() → Locked for them (no grant/sub).
@@ -220,7 +241,8 @@ def _billing_stage(tier: str, sub, grant) -> str:
         if sub is not None and sub.status in ("trialing", "active", "past_due"):
             return sub.status
         if grant is not None and grant.grant_tier == "Pro":
-            return "trial_grant"
+            # A perpetual courtesy grant vs the expiring migration-trial grant.
+            return "comped" if grant.reason == "comped" else "trial_grant"
         return "active"  # access via some other path; treat as active
     # No access (Locked). A prior subscription row means the user already went
     # through Checkout once → returning; otherwise they never put a card in.

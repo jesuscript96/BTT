@@ -168,6 +168,48 @@ def get_optional_user_id(authorization: Optional[str] = Header(default=None)) ->
     return claims.get("sub")
 
 
+def _claim_is_true(value) -> bool:
+    """Truthy check tolerant to JWT string booleans (templates often stringify)."""
+    if value is True:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes")
+    return False
+
+
+def get_optional_user_email(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
+    """Resolve the caller's TRUSTED, VERIFIED email from the Clerk JWT (normalized).
+
+    Used ONLY for entitlement decisions (courtesy/comped list). Two hard rules:
+      1. The email comes from the SIGNED Clerk JWT, never from a client-supplied
+         field — a bearer cannot forge it.
+      2. It is honored ONLY if the JWT also asserts `email_verified` truthy. This
+         is the security guard: without it, a user could set an UNVERIFIED primary
+         email to a colleague's comped address and claim free access. Fail-closed —
+         if the JWT template omits `email`/`email_verified`, this returns None and
+         the comped-by-email feature stays completely inert (nothing else depends
+         on this function, so no other flow is affected).
+
+    Returns None when auth is disabled, the token is missing/invalid, the email is
+    absent, or the email is not asserted verified.
+    """
+    if not AUTH_ENABLED:
+        return None
+    token = _extract_bearer(authorization)
+    if not token:
+        return None
+    try:
+        claims = verify_clerk_token(token)
+    except HTTPException:
+        return None
+    email = claims.get("email")
+    if not (isinstance(email, str) and email.strip()):
+        return None
+    if not _claim_is_true(claims.get("email_verified")):
+        return None  # SECURITY: unverified emails are not trusted for entitlements
+    return email.strip().lower()
+
+
 def get_current_user_id(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
     """
     Require a valid Clerk session when auth is enabled; return the user_id.

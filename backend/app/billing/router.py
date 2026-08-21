@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.auth.clerk import get_current_user_id
+from app.auth.clerk import get_current_user_id, get_optional_user_email
 from app.billing import config
 from app.billing import store as store_mod
 from app.billing import webhook as webhook_mod
@@ -49,12 +49,14 @@ class SyncRequest(BaseModel):
 @router.get("/me")
 def billing_me(
     user_id: Optional[str] = Depends(get_current_user_id),
+    email: Optional[str] = Depends(get_optional_user_email),
     svc: BillingService = Depends(get_billing_service),
 ):
-    """Read-only billing summary for the current user (no Stripe call)."""
+    """Read-only billing summary for the current user (no Stripe call). The
+    trusted JWT email drives courtesy (comped) reconciliation."""
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required")
-    return svc.get_billing_summary(user_id)
+    return svc.get_billing_summary(user_id, email=email)
 
 
 @router.post("/checkout")

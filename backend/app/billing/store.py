@@ -214,6 +214,17 @@ class Store:
                     created_at   REAL NOT NULL,
                     consumed_at  REAL                -- NULL = pending; set when used
                 );
+
+                -- Courtesy/comped colleagues by EMAIL (Fase 3). Managed via CLI
+                -- (no Coolify redeploy). On login the /me summary reads the user's
+                -- TRUSTED email from the Clerk JWT; if listed, it materializes a
+                -- perpetual Pro grant (reason='comped') keyed by user_id so the
+                -- product gate honors it too. Removing the email revokes on next /me.
+                CREATE TABLE IF NOT EXISTS comped_emails (
+                    email        TEXT PRIMARY KEY,   -- normalized (lower/trim)
+                    granted_by   TEXT,
+                    created_at   REAL NOT NULL
+                );
                 """
             )
             self._con.commit()
@@ -620,6 +631,42 @@ class Store:
                 "SELECT * FROM trial_overrides ORDER BY created_at DESC"
             ).fetchall()
         return [_to_trial_override(r) for r in rows]
+
+    # ── Comped emails (Fase 3 — courtesy colleagues by email) ────────────────
+    @staticmethod
+    def _norm_email(email: str) -> str:
+        return email.strip().lower()
+
+    def add_comped_email(self, email: str, granted_by: Optional[str] = None) -> None:
+        """Add (or refresh) an email to the courtesy list. Idempotent."""
+        with self._lock:
+            self._con.execute(
+                "INSERT INTO comped_emails (email, granted_by, created_at) VALUES (?,?,?)"
+                " ON CONFLICT(email) DO UPDATE SET granted_by=excluded.granted_by",
+                (self._norm_email(email), granted_by, _now()),
+            )
+            self._con.commit()
+
+    def remove_comped_email(self, email: str) -> None:
+        with self._lock:
+            self._con.execute(
+                "DELETE FROM comped_emails WHERE email = ?", (self._norm_email(email),)
+            )
+            self._con.commit()
+
+    def has_comped_email(self, email: str) -> bool:
+        with self._lock:
+            row = self._con.execute(
+                "SELECT 1 FROM comped_emails WHERE email = ?", (self._norm_email(email),)
+            ).fetchone()
+        return row is not None
+
+    def list_comped_emails(self) -> list[str]:
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT email FROM comped_emails ORDER BY created_at DESC"
+            ).fetchall()
+        return [r["email"] for r in rows]
 
     def close(self) -> None:
         with self._lock:

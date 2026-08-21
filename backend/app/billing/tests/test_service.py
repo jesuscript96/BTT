@@ -263,6 +263,34 @@ def test_comped_allowlist_full_access_free(svc, monkeypatch):
     assert svc.get_billing_summary("friend_2")["stage"] == "onboarding"
 
 
+def test_comped_email_materializes_and_revokes(svc, store):
+    # Listed email → /me seeds a perpetual comped grant → full access, stage comped.
+    store.add_comped_email("Colega@Edgecute.com", granted_by="adrian")
+    s = svc.get_billing_summary("u_colega", email="colega@edgecute.com")
+    assert s["tier"] == "Pro" and s["stage"] == "comped" and s["access"] is True
+    g = store.get_grant("u_colega")
+    assert g is not None and g.reason == "comped" and g.expires_at is None
+    # Delisted → next /me revokes (deletes the comped grant) → back to the gate.
+    store.remove_comped_email("colega@edgecute.com")
+    s2 = svc.get_billing_summary("u_colega", email="colega@edgecute.com")
+    assert s2["stage"] == "onboarding" and s2["access"] is False
+    assert store.get_grant("u_colega") is None
+
+
+def test_comped_email_needs_trusted_email(svc, store):
+    # Without a trusted email (JWT template not set), nothing is materialized.
+    store.add_comped_email("colega@edgecute.com")
+    assert svc.get_billing_summary("u_colega", email=None)["stage"] == "onboarding"
+
+
+def test_comped_reconcile_leaves_migration_grant_alone(svc, store):
+    # A migration-trial grant must NOT be revoked by comped reconciliation.
+    store.upsert_grant("u1", "Pro", reason="migration-trial", expires_at=9_999_999_999.0)
+    s = svc.get_billing_summary("u1", email="not-listed@x.com")
+    assert s["stage"] == "trial_grant"
+    assert store.get_grant("u1") is not None
+
+
 def test_admin_beats_comped(svc, monkeypatch):
     monkeypatch.setenv("BILLING_ADMIN_USER_IDS", "u1")
     monkeypatch.setenv("BILLING_COMPED_USER_IDS", "u1")
