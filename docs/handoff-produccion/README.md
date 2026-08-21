@@ -33,6 +33,7 @@
 
 | PRD | Tipo | Estado | Nota |
 |-----|------|--------|------|
+| [`PRD_00_PLAN_DE_SUBIDA_A_MAIN.md`](2026-08-21-fees-y-calendario/PRD_00_PLAN_DE_SUBIDA_A_MAIN.md) | 📋 plan | — | **Empezar aquí**: resumen simple, orden recomendado, checklist de verificación y guarda-raíles. |
 | [`PRD_01_fees_por_ejecucion.md`](2026-08-21-fees-y-calendario/PRD_01_fees_por_ejecucion.md) | 🐛 fix motor (backend) | **Pendiente de implementar** | Alta: comisiones incorrectas hoy con `fees > 0`. ⚠️ BREAKING en FLAT (relabel UI obligatorio). Incluye `reference/test_fees.py` copiable tal cual (spec ejecutable). |
 | [`PRD_02_calendario_retorno_real.md`](2026-08-21-fees-y-calendario/PRD_02_calendario_retorno_real.md) | 🐛 fix presentación (frontend) | **Pendiente de implementar** | Alta: el calendario abre en beneficio bruto; una perdedora neta se ve ganadora. Solo TSX, sin tocar motor. |
 
