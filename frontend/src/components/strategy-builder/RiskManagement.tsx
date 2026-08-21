@@ -428,38 +428,85 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
 
                 {/* Body */}
                 {risk.trailing_stop.active && (
-                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
-                            <div className="relative" style={{ width: '120px' }}>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={risk.trailing_stop.buffer_pct ?? ''}
-                                    onChange={(e) => setTrailingField('buffer_pct', e.target.value === '' ? '' : e.target.value)}
-                                    onBlur={() => {
-                                        const val = parseFloat(String(risk.trailing_stop.buffer_pct));
-                                        setTrailingField('buffer_pct', isNaN(val) ? 0.5 : val);
-                                    }}
-                                    onFocus={(e) => e.target.select()}
-                                    style={{
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        borderRadius: 5,
-                                        padding: '7px 24px 7px 10px',
-                                        fontSize: 13,
-                                        fontWeight: 600,
-                                        color: 'var(--color-ec-text-primary)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        outline: 'none',
-                                        width: '100%',
-                                        height: '36px',
-                                        textAlign: 'center',
-                                    }}
-                                />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                    <div className="flex flex-col animate-in fade-in duration-200" style={{ marginTop: 12, gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24, flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
+                                <div className="relative" style={{ width: '120px' }}>
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0"
+                                        value={risk.trailing_stop.buffer_pct ?? ''}
+                                        onChange={(e) => setTrailingField('buffer_pct', e.target.value === '' ? '' : e.target.value)}
+                                        onBlur={() => {
+                                            const val = parseFloat(String(risk.trailing_stop.buffer_pct));
+                                            setTrailingField('buffer_pct', isNaN(val) ? 0.5 : Math.max(0, val));
+                                        }}
+                                        onFocus={(e) => e.target.select()}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 24px 7px 10px',
+                                            fontSize: 13,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
+                                        }}
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Activación:</span>
+                                <div className="relative" style={{ width: '120px' }}>
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0"
+                                        placeholder="= distancia"
+                                        value={risk.trailing_stop.activation_pct ?? ''}
+                                        onChange={(e) => setTrailingField('activation_pct', e.target.value === '' ? '' : e.target.value)}
+                                        onBlur={() => {
+                                            const raw = String(risk.trailing_stop.activation_pct ?? '');
+                                            if (raw === '') return; // vacío = sin umbral propio (usa la distancia)
+                                            const val = parseFloat(raw);
+                                            setTrailingField('activation_pct', isNaN(val) ? '' : Math.max(0, val));
+                                        }}
+                                        onFocus={(e) => e.target.select()}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 24px 7px 10px',
+                                            fontSize: 13,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
+                                        }}
+                                    />
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                </div>
                             </div>
                         </div>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            textAlign: 'center',
+                        }}>
+                            Distancia 0% = stop fijo en break-even · Activación = % a favor necesario para activar (vacío = la propia distancia)
+                        </span>
                     </div>
                 )}
             </div>

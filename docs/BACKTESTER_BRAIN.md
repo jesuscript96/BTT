@@ -58,8 +58,12 @@ Misma estructura que Entry Logic. Las condiciones definen **cuándo cerrar** la 
 ### Trailing Stop
 
 - **Activo** (on/off).
-- **Tipo**: Percentage (distancia % que sigue el precio a favor). La distancia se indica en **Distance %** (buffer_pct).
-- Comportamiento: el stop solo se endurece cuando el precio va a favor (no se relaja). Salida cuando el precio toca el nivel (usando high/low de la barra).
+- **Tipo**: Percentage. Dos parámetros desacoplados:
+  - **Distance %** (`buffer_pct`): distancia que el stop mantiene respecto al mejor precio alcanzado una vez activo.
+  - **Activation %** (`activation_pct`, opcional): % a favor necesario para que el trailing se active. Vacío = usa la propia distancia (trailing clásico de siempre).
+- **Modo break-even**: Distance 0 con Activation > 0 → al alcanzar el umbral de activación, el stop salta al **precio de entrada** (el trade queda "gratis", salvo gap a través del stop / fees). Distance 0 **sin** activation = BE inmediato (se activa en la primera vela): válido pero sorprendente.
+- Comportamiento: el stop solo se endurece cuando el precio va a favor (no se relaja). Salida cuando el precio toca el nivel (usando high/low de la barra). El stop de trailing (incluido BE) solo ejecuta si queda por encima del hard stop en long (por debajo en short).
+- Tests de bloqueo: `backend/tests/test_trail_break_even.py` (T1-T5) y `test_sim_jit_equivalence.py::test_trail_activation_equivalence` (paridad JIT).
 
 ## 5. Parámetros del Backtester (Execution Panel)
 
@@ -88,7 +92,7 @@ Misma estructura que Entry Logic. Las condiciones definen **cuándo cerrar** la 
 - [ ] **Entry Logic**: Cada fila (indicador + comparador + valor/indicador) es una condición; AND/OR según el grupo.
 - [ ] **Exit Logic**: Misma lógica que Entry pero para cerrar.
 - [ ] **Hard Stop / Take Profit**: Distancia en % o ATR desde entrada; se pueden desactivar con los toggles.
-- [ ] **Trailing Stop**: Distancia % que sigue el precio a favor; solo se endurece.
+- [ ] **Trailing Stop**: Activation % (umbral para activar, vacío = la distancia) + Distance % que sigue el precio a favor; solo se endurece. Distance 0 = break-even.
 - [ ] **Comisiones y locates**: Por share y por cada 100 shares.
 - [ ] **Slippage**: Aplicado en entrada y salida.
 - [ ] **Look-ahead**: Señales desplazadas 1 barra.

@@ -100,6 +100,7 @@ def simulate_jit(
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
+    trail_activation: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
@@ -203,6 +204,8 @@ def simulate_jit(
     tp_stop_v = float(tp_stop) if has_tp_stop else 0.0
     has_trail_pct = trail_pct is not None
     trail_pct_v = float(trail_pct) if has_trail_pct else 0.0
+    has_trail_act = trail_activation is not None
+    trail_act_v = float(trail_activation) if has_trail_act else 0.0
 
     # --- optional arrays -> (flag, zeros-or-array) ---
     def _opt(arr):
@@ -306,6 +309,7 @@ def simulate_jit(
         bool(accumulate),
         int(max_reentries),
         has_trail_pct, trail_pct_v,
+        has_trail_act, trail_act_v,
         bool(look_ahead_prevention),
         hs_type_code, hs_value_code, sl_offset,
         has_hods, hods_a,

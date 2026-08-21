@@ -311,7 +311,7 @@ class RiskManagement(BaseModel):
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
     partial_take_profits: Optional[List[PartialTakeProfit]] = Field(default_factory=list)
-    trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
+    trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5, "activation_pct": None})
     swing_option: Optional[dict] = Field(default_factory=lambda: {"active": False, "target_day": "gap_1_day"})
     max_drawdown_daily: Optional[float] = None  # Circuit breaker
 

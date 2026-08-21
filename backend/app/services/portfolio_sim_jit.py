@@ -89,6 +89,7 @@ def _core_simulate_jit(
     accumulate,
     max_reentries,
     has_trail_pct, trail_pct,
+    has_trail_act, trail_act,
     look_ahead_prevention,
     hs_type_code, hs_value_code, sl_offset,
     has_hods, hods,
@@ -195,15 +196,22 @@ def _core_simulate_jit(
                             exit_reason_code = REASON_SL
 
                 # 2. Trailing Stop (high-water mark)
+                # activation_pct (trail_act) desacopla el umbral de activación
+                # de la distancia de trailing. trail_pct == 0 = modo break-even:
+                # tras activarse, el stop queda FIJO en el precio de entrada.
                 if sl_trail and has_trail_pct:
+                    _act_thr = trail_act if has_trail_act else trail_pct
                     if is_long:
                         if not trail_activated:
-                            if high[i] >= entry_price * (1 + trail_pct) - 1e-9:
+                            if high[i] >= entry_price * (1 + _act_thr) - 1e-9:
                                 trail_activated = True
                                 trail_extreme = max(entry_price, high[i])
                         if trail_activated:
-                            trail_extreme = max(trail_extreme, high[i])
-                            trail_sl_price = trail_extreme - (entry_price * trail_pct)
+                            if trail_pct > 0.0:
+                                trail_extreme = max(trail_extreme, high[i])
+                                trail_sl_price = trail_extreme - (entry_price * trail_pct)
+                            else:
+                                trail_sl_price = entry_price
                             if price_for_sl <= trail_sl_price + 1e-9:
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
@@ -215,12 +223,15 @@ def _core_simulate_jit(
                                     exit_reason_code = REASON_TRAILING
                     else:
                         if not trail_activated:
-                            if low[i] <= entry_price * (1 - trail_pct) + 1e-9:
+                            if low[i] <= entry_price * (1 - _act_thr) + 1e-9:
                                 trail_activated = True
                                 trail_extreme = min(entry_price, low[i])
                         if trail_activated:
-                            trail_extreme = min(trail_extreme, low[i])
-                            trail_sl_price = trail_extreme + (entry_price * trail_pct)
+                            if trail_pct > 0.0:
+                                trail_extreme = min(trail_extreme, low[i])
+                                trail_sl_price = trail_extreme + (entry_price * trail_pct)
+                            else:
+                                trail_sl_price = entry_price
                             if price_for_sl >= trail_sl_price - 1e-9:
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price

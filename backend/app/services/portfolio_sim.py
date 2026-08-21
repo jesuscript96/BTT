@@ -95,6 +95,7 @@ def simulate(
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
+    trail_activation: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
@@ -201,19 +202,26 @@ def simulate(
                             exit_reason = "SL"
 
                 # 2. Trailing Stop Logic (Standard High-Water Mark)
+                # activation_pct desacopla el umbral de activación de la
+                # distancia de trailing. trail_pct == 0 = modo break-even:
+                # tras activarse, el stop queda FIJO en el precio de entrada.
                 if sl_trail and trail_pct is not None:
+                    _act_thr = trail_activation if trail_activation is not None else trail_pct
                     if is_long:
-                        # Check activation: price must go in favor by at least trail_pct
+                        # Check activation: price must go in favor by at least the activation threshold
                         if not trail_activated:
-                            if high[i] >= entry_price * (1 + trail_pct) - 1e-9:
+                            if high[i] >= entry_price * (1 + _act_thr) - 1e-9:
                                 trail_activated = True
                                 trail_extreme = max(entry_price, high[i])
 
                         # Evaluate trailing stop if active
                         if trail_activated:
-                            trail_extreme = max(trail_extreme, high[i])
-                            trail_sl_price = trail_extreme - (entry_price * trail_pct)
-                            
+                            if trail_pct > 0.0:
+                                trail_extreme = max(trail_extreme, high[i])
+                                trail_sl_price = trail_extreme - (entry_price * trail_pct)
+                            else:
+                                trail_sl_price = entry_price
+
                             if price_for_sl <= trail_sl_price + 1e-9:
                                 # Verify trailing stop doesn't override a better hard stop
                                 if hs_type == "Market Structure (HOD/LOD)":
@@ -225,17 +233,20 @@ def simulate(
                                     exit_price = max(trail_sl_price, low[i])
                                     exit_reason = "Trailing"
                     else:
-                        # Short: Check activation: price must go in favor by at least trail_pct (drops)
+                        # Short: Check activation: price must go in favor by at least the threshold (drops)
                         if not trail_activated:
-                            if low[i] <= entry_price * (1 - trail_pct) + 1e-9:
+                            if low[i] <= entry_price * (1 - _act_thr) + 1e-9:
                                 trail_activated = True
                                 trail_extreme = min(entry_price, low[i])
 
                         # Evaluate trailing stop if active
                         if trail_activated:
-                            trail_extreme = min(trail_extreme, low[i])
-                            trail_sl_price = trail_extreme + (entry_price * trail_pct)
-                            
+                            if trail_pct > 0.0:
+                                trail_extreme = min(trail_extreme, low[i])
+                                trail_sl_price = trail_extreme + (entry_price * trail_pct)
+                            else:
+                                trail_sl_price = entry_price
+
                             if price_for_sl >= trail_sl_price - 1e-9:
                                 # Verify trailing stop doesn't override a better hard stop
                                 if hs_type == "Market Structure (HOD/LOD)":

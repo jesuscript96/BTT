@@ -556,7 +556,7 @@ def translate_strategy(
     )
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
-    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps = \
+    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, trail_activation, partial_tps = \
         _parse_risk_management(risk, df, daily_stats, risk_cache)
 
     return {
@@ -568,6 +568,7 @@ def translate_strategy(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
+        "trail_activation": trail_activation,
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -700,6 +701,7 @@ def translate_strategy_native(
     tp_stop = None
     tp_time_limit = None
     trail_pct = None
+    trail_activation = None
     partial_tps = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
@@ -721,11 +723,19 @@ def translate_strategy_native(
             first_close = float(C[0]) if n_bars > 0 else 1.0
             sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
 
+    # Paridad exacta con _parse_risk_management (incluido el modo BE con buffer 0).
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
         sl_trail = True
-        if trailing.get("type") == "Percentage" and trailing.get("buffer_pct"):
-            trail_pct = trailing["buffer_pct"] / 100.0
+        if trailing.get("type") == "Percentage":
+            _buf = trailing.get("buffer_pct")
+            if isinstance(_buf, (int, float)) and _buf >= 0:
+                trail_pct = float(_buf) / 100.0
+            _act = trailing.get("activation_pct")
+            if isinstance(_act, (int, float)) and _act > 0:
+                trail_activation = float(_act) / 100.0
+                if trail_pct is None:
+                    trail_pct = 0.0  # activación sin distancia → BE tras el umbral
 
     if risk.get("use_take_profit") is not False:
         tp_mode = risk.get("take_profit_mode", "Full")
@@ -750,6 +760,7 @@ def translate_strategy_native(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
+        "trail_activation": trail_activation,
         "accept_reentries": compiled.get("accept_reentries", False),
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -1258,6 +1269,7 @@ def _parse_risk_management(
     tp_stop = None
     tp_time_limit = None
     trail_pct = None
+    trail_activation = None
     partial_tps = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
@@ -1277,11 +1289,22 @@ def _parse_risk_management(
         elif hs_type == "Market Structure (HOD/LOD)":
             sl_stop = None
 
+    # Trailing: buffer_pct = distancia (0 = break-even: stop fijo en entrada
+    # tras activarse). activation_pct (opcional) desacopla el umbral de
+    # activación; si se fija sin buffer, la distancia cae a 0 (BE tras +T%).
+    # isinstance(...) rechaza ""/None y admite 0.0 (antes 0 era falsy → inerte).
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
         sl_trail = True
-        if trailing.get("type") == "Percentage" and trailing.get("buffer_pct"):
-            trail_pct = trailing["buffer_pct"] / 100.0
+        if trailing.get("type") == "Percentage":
+            _buf = trailing.get("buffer_pct")
+            if isinstance(_buf, (int, float)) and _buf >= 0:
+                trail_pct = float(_buf) / 100.0
+            _act = trailing.get("activation_pct")
+            if isinstance(_act, (int, float)) and _act > 0:
+                trail_activation = float(_act) / 100.0
+                if trail_pct is None:
+                    trail_pct = 0.0
 
     if risk.get("use_take_profit") is not False:
         tp_mode = risk.get("take_profit_mode", "Full")
@@ -1297,4 +1320,4 @@ def _parse_risk_management(
             elif tp_type == "Hour":
                 tp_time_limit = f"HOUR:{tp.get('value', '15:30')}"
 
-    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps
+    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, trail_activation, partial_tps
