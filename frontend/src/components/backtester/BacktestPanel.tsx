@@ -1381,7 +1381,7 @@ export default function BacktestPanel({
                 letterSpacing: '0.12em',
                 color: 'var(--color-ec-text-muted)',
               }}>
-                Fees {feeType === "PERCENT" ? "(%)" : "($)"}
+                Fees {feeType === "PERCENT" ? "(% notional)" : "($/share)"}
               </label>
               <select
                 value={feeType}
@@ -1397,8 +1397,8 @@ export default function BacktestPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
-                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
+                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>% notional</option>
+                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$ / share</option>
               </select>
             </div>
             <input

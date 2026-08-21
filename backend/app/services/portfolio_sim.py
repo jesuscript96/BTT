@@ -10,6 +10,15 @@ import numpy as np
 from datetime import datetime, timezone
 
 
+def _fee_amount(fee_type: str, fees: float, qty: float, notional: float) -> float:
+    """Comisión de UN fill (PRD_01). FLAT: `fees` = $ por acción → fees*qty.
+    PERCENT: `fees` = fracción del nocional (el frontend ya divide /100) →
+    notional*fees. NUNCA depende del PnL. Debe hacer las operaciones en el mismo
+    orden que _fee_amount_jit (paridad Python↔JIT bit-idéntica)."""
+    if fee_type == "FLAT":
+        return fees * qty
+    return notional * fees
+
 
 def simulate(
     close: np.ndarray,
@@ -239,10 +248,8 @@ def simulate(
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                # PRD_01: parcial paga solo su salida (pt_size).
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -291,10 +298,8 @@ def simulate(
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                # PRD_01: parcial paga solo su salida (pt_size).
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -346,10 +351,8 @@ def simulate(
                                     else:
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
                                     
-                                    if fee_type == "FLAT":
-                                        fee_amount = fees * 2
-                                    else:
-                                        fee_amount = abs(gross_pnl) * fees
+                                    # PRD_01: parcial paga solo su salida (pt_size).
+                                    fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -393,10 +396,8 @@ def simulate(
                             pt_size = min(pt_size, size)  # Can't close more than remaining
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                # PRD_01: parcial paga solo su salida (pt_size).
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -436,10 +437,8 @@ def simulate(
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                if fee_type == "FLAT":
-                                    fee_amount = fees * 2
-                                else:
-                                    fee_amount = abs(gross_pnl) * fees
+                                # PRD_01: parcial paga solo su salida (pt_size).
+                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -550,13 +549,14 @@ def simulate(
                 else:
                     gross_pnl = (entry_price - net_exit) * size
 
-                # Fee calculation depends on fee_type
-                if fee_type == "FLAT":
-                    # Flat $ fee: charged once for entry + once for exit = 2x
-                    fee_amount = fees * 2
-                else:
-                    # Percentage fee: applied on the gross PnL
-                    fee_amount = abs(gross_pnl) * fees
+                # Fee calculation (PRD_01): por fill. El cierre final paga la
+                # ENTRADA de todo el tamaño original + la SALIDA del restante. La
+                # entrada no se cobró al entrar; se cobra aquí. Mismo orden de
+                # operaciones que el kernel JIT (paridad bit-idéntica).
+                fee_amount = (
+                    _fee_amount(fee_type, fees, original_size, entry_price * original_size)
+                    + _fee_amount(fee_type, fees, size, net_exit * size)
+                )
                 
                 # Net PnL is Gross PnL minus Fees
                 pnl = gross_pnl - fee_amount
