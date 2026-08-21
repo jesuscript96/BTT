@@ -12,7 +12,7 @@ interface MetricsCardProps {
 export default function MetricsCard({ metrics, vertical = false }: MetricsCardProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const rows = [
-    { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Número total de días que abarca el período del backtest." },
+    { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Días de calendario únicos en los que hubo operaciones. Varios tickers el mismo día cuentan como un solo día (no es el número de pares ticker-día)." },
     { label: "Trades", value: String(metrics.total_trades ?? 0), tooltip: "Cantidad total de operaciones ejecutadas." },
     { label: "Win Rate", value: `${(metrics.win_rate_pct ?? 0).toFixed(1)}%`, tooltip: "Porcentaje de operaciones ganadas sobre el total de trades. Ej: 55% significa que ganas 55 de cada 100 operaciones." },
     { label: "PF", value: (metrics.avg_profit_factor ?? 0).toFixed(3), tooltip: "Profit Factor. Relación de beneficio bruto / pérdida bruta. Ej: PF de 1.8 significa que por cada $1 que pierdes, ganas $1.80. Valores > 1.0 son rentables." },
