@@ -358,6 +358,7 @@ export default function SubscriptionPanel() {
 
   const sub = summary.subscription;
   const isAdmin = summary.stage === "admin";
+  const isComped = summary.stage === "comped";
   const isTrial =
     sub?.status === "trialing" || (summary.grant?.reason === "migration-trial" && !sub);
   const isPastDue = sub?.status === "past_due";
@@ -418,6 +419,8 @@ export default function SubscriptionPanel() {
           </div>
           {isAdmin ? (
             <Pill tone="copper">Acceso admin</Pill>
+          ) : isComped ? (
+            <Pill tone="copper">Cortesía</Pill>
           ) : sub ? (
             <SubStatusPill status={sub.status} />
           ) : summary.grant ? (
@@ -434,12 +437,16 @@ export default function SubscriptionPanel() {
             </div>
           </div>
           <div>
-            <div style={label}>{isAdmin ? "Estado" : isTrial ? "Primer cobro" : sub?.cancel_at_period_end ? "Acceso hasta" : "Próxima renovación"}</div>
+            <div style={label}>{isAdmin || isComped ? "Estado" : isTrial ? "Primer cobro" : sub?.cancel_at_period_end ? "Acceso hasta" : "Próxima renovación"}</div>
             <div style={{ color: color.textPrimary, marginTop: 5 }}>
-              {isAdmin ? "Acceso de administrador" : formatDate(isTrial ? trialEnd : sub?.current_period_end ?? null)}
+              {isAdmin
+                ? "Acceso de administrador"
+                : isComped
+                  ? "Cortesía de Edgecute"
+                  : formatDate(isTrial ? trialEnd : sub?.current_period_end ?? null)}
             </div>
           </div>
-          {isAdmin ? null : manageBtn}
+          {isAdmin || isComped ? null : manageBtn}
         </div>
         {sub?.cancel_at_period_end ? (
           <div style={{ color: color.warning, fontSize: 12.5, marginTop: 12 }}>
@@ -448,7 +455,7 @@ export default function SubscriptionPanel() {
         ) : null}
       </Card>
 
-      <PaymentMethodCard summary={summary} />
+      {isAdmin || isComped ? null : <PaymentMethodCard summary={summary} />}
       <InvoicesCard invoices={summary.invoices} />
     </div>
   );

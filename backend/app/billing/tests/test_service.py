@@ -252,6 +252,23 @@ def test_stage_admin(svc, store):
     assert svc.get_billing_summary("u1")["stage"] == "admin"
 
 
+def test_comped_allowlist_full_access_free(svc, monkeypatch):
+    # A comped colleague (no grant/sub) gets Pro access + stage "comped", free.
+    monkeypatch.setenv("BILLING_COMPED_USER_IDS", "friend_1, friend_2")
+    s = svc.get_billing_summary("friend_2")
+    assert s["tier"] == "Pro" and s["stage"] == "comped" and s["access"] is True
+    assert s["subscription"] is None  # never went through Stripe
+    # Removing them from the list drops access to the gate (revoke = they pay).
+    monkeypatch.setenv("BILLING_COMPED_USER_IDS", "friend_1")
+    assert svc.get_billing_summary("friend_2")["stage"] == "onboarding"
+
+
+def test_admin_beats_comped(svc, monkeypatch):
+    monkeypatch.setenv("BILLING_ADMIN_USER_IDS", "u1")
+    monkeypatch.setenv("BILLING_COMPED_USER_IDS", "u1")
+    assert svc.get_billing_summary("u1")["stage"] == "admin"  # admin precedence
+
+
 def test_admin_allowlist_never_sees_gate(svc, monkeypatch):
     # An admin in BILLING_ADMIN_USER_IDS has NO grant/sub, yet must resolve to
     # Admin (access, no card gate) — mirrors get_tier's allowlist precedence.

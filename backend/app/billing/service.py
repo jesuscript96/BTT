@@ -167,11 +167,14 @@ class BillingService:
         tier + subscription + default payment method + invoices + the trial
         countdown source (subscription.trial_end or a migration grant) + a single
         `stage` string that tells the frontend which screen to render (Fase 3)."""
-        # Admin allowlist wins over subscription state (same precedence as
-        # get_tier), so an internal admin never sees the card gate. Without this
-        # the summary would resolve_tier() → Locked for admins (no grant/sub).
+        # Admin/comped allowlists win over subscription state (same precedence as
+        # get_tier), so neither ever sees the card gate. Without this the summary
+        # would resolve_tier() → Locked for them (no grant/sub).
+        is_comped = bool(user_id and user_id in config.billing_comped_user_ids())
         if user_id and user_id in config.billing_admin_ids():
             tier = "Admin"
+        elif is_comped:
+            tier = "Pro"  # comped: full access, free (no card, no charge)
         else:
             tier = resolve_tier(user_id, store=self._store)
         sub = self._store.get_latest_subscription_for_user(user_id)
@@ -181,7 +184,9 @@ class BillingService:
         return {
             "tier": tier,
             "access": tier != "Locked",
-            "stage": _billing_stage(tier, sub, grant),
+            # Admin precedence over comped (matches get_tier); _billing_stage
+            # returns "admin" when tier is Admin.
+            "stage": "comped" if (is_comped and tier != "Admin") else _billing_stage(tier, sub, grant),
             "plan": {
                 "label": config.BILLING_PLAN_LABEL,
                 "amount_cents": config.BILLING_PLAN_AMOUNT_CENTS,
@@ -206,6 +211,8 @@ class BillingService:
 #   resubscribe  — was subscribed, now no access → returning user (baja→vuelve),
 #                  Checkout WITHOUT trial (server-side anti-recycle decides)
 #   onboarding   — never subscribed + no access → new user / REGISTRADO_SIN_TARJETA
+#   comped       — courtesy allowlist (colleague): full access, free, no card.
+#                  Set by the caller (allowlist) BEFORE this helper, not here.
 def _billing_stage(tier: str, sub, grant) -> str:
     if tier == "Admin":
         return "admin"

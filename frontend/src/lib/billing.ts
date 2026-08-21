@@ -60,6 +60,7 @@ export interface BillingInvoice {
 // never guesses new-vs-returning from partial signals.
 export type BillingStage =
   | "admin"
+  | "comped" // courtesy allowlist (colleague): full access, free, no card
   | "trialing"
   | "active"
   | "past_due"

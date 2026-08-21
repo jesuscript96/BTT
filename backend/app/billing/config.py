@@ -38,6 +38,16 @@ def billing_admin_ids() -> frozenset:
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
+# Comped allowlist (Fase 3): Clerk user_ids that get FULL product access (same as
+# a paying Pro: the 4 modules, no Market Analysis, no admin powers) for FREE — no
+# card, no charge, indefinitely. For colleagues/courtesy. Managed exactly like the
+# admin list: edit the env, no Stripe. Revoke = remove the id → they fall to the
+# card gate and pay normally. Same resolution precedence as admins (below them).
+def billing_comped_user_ids() -> frozenset:
+    raw = os.getenv("BILLING_COMPED_USER_IDS", "")
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
 # ── Store ─────────────────────────────────────────────────────────────────────
 # Dedicated SQLite file. In prod it MUST sit on a persistent volume (or be
 # GCS-synced); if lost, it is reconstructible from Stripe (reconciliation job,

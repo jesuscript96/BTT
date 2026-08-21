@@ -65,6 +65,10 @@ def get_tier(user_id: Optional[str]) -> str:
     if billing_config.BILLING_ENABLED:
         if user_id and user_id in _billing_admin_ids():
             return "Admin"
+        # Comped colleagues get the Pro feature-set for free (Fase 3), resolved
+        # like the admin allowlist — above the subscription store, below admins.
+        if user_id and user_id in billing_config.billing_comped_user_ids():
+            return "Pro"
         return resolve_tier(user_id)
 
     if not user_id:
