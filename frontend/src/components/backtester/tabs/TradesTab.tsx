@@ -207,12 +207,26 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
                 <td className="px-4 py-1.5">
                   {(() => {
                     const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                    // PRD_03: si el trade agrupó varias ejecuciones (parciales +
+                    // cierre), lo marcamos con ×N para que no parezca un solo fill.
+                    const nExec = t.n_executions ?? 0;
                     return (
-                      <span
-                        className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                        style={{ backgroundColor: style.bg, color: style.text }}
-                      >
-                        {t.exit_reason}
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span
+                          className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                          style={{ backgroundColor: style.bg, color: style.text }}
+                        >
+                          {t.exit_reason}
+                        </span>
+                        {nExec > 1 && (
+                          <span
+                            className="inline-block px-1 py-0.5 rounded-sm text-[9px] font-semibold"
+                            style={{ backgroundColor: "rgba(216,122,61,0.14)", color: "var(--color-ec-copper)" }}
+                            title={`${nExec} ejecuciones agrupadas (parciales + cierre): ${(t.exit_reasons || []).join(" → ")}`}
+                          >
+                            ×{nExec}
+                          </span>
+                        )}
                       </span>
                     );
                   })()}

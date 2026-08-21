@@ -114,6 +114,20 @@ export interface TradeRecord {
   entry_hour: number;
   entry_weekday: number;
   gap_pct?: number | null;
+  // PRD_03: un trade agrupa N ejecuciones (parciales + cierre). Presentes solo
+  // cuando la posición tuvo >1 ejecución; `legs` en cada trade (incl. de 1 leg).
+  n_executions?: number;
+  legs?: TradeLeg[];
+  exit_reasons?: string[];
+}
+
+export interface TradeLeg {
+  exit_time?: string;
+  exit_time_epoch?: number;
+  exit_price?: number;
+  exit_reason?: string;
+  size?: number;
+  pnl?: number;
 }
 
 export interface CandleData {
