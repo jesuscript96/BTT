@@ -290,3 +290,28 @@ Se eligió **allowlist como la de admin** (más simple que grants+CLI): env
   primer `/me`). Es un **follow-up pequeño** — decidir si se quiere ese automatismo o basta con
   añadir el `user_id` tras el registro (una línea en Coolify, como con los admins).
 
+### ✅ Cortesía por EMAIL — IMPLEMENTADO (commit `455ce3b`) + guard de seguridad
+Se añadió el 2º mecanismo (a petición de Adrian: "la lista aliviana la carga de Coolify"):
+**lista de colegas por email en la BD** (tabla `comped_emails`), gestionada por CLI **sin
+redeploy** y que **se auto-aplica en cuanto el colega invitado se registra**.
+- **CLI** `scripts/comp_emails.py` (`--add`/`--remove`/`--list`). Escribe en el store montado.
+- **Materialización** en `/me`: lee el email **CONFIABLE del JWT de Clerk**; si está en la lista
+  y no tiene grant → siembra grant **Pro perpetuo `reason='comped'`** (keyed por `user_id`, lo
+  respeta también el gate de producto); si se le quita de la lista → borra el grant (revoca en el
+  siguiente `/me`). No-op sin email confiable (nunca revoca lo que no puede verificar).
+
+#### 🔒 Guard de seguridad (análisis adversarial 2026-08-21)
+Riesgo detectado: si Clerk emitiera el `primary_email_address` **sin verificar**, un atacante
+podría poner el email comped de un colega y colarse (obtendría **Pro gratis**, NO admin/ilimitado).
+**Cierre:** `get_optional_user_email` honra el email **solo si el JWT afirma `email_verified`
+truthy** (fail-closed). Esta función **solo la usa `/me`** → endurecerla no afecta a ningún otro
+flujo. 7 tests del guard. Resto verificado sin puertas: no se confía el email del cliente (solo
+JWT); grant hardcodeado a `Pro` (sin escalada a Admin); solo te concedes a ti mismo (user_id del
+propio JWT); lista no-autoservicio (solo CLI); 403 en producto antes del primer `/me`.
+
+**⚙️ Requiere en Clerk (pendiente ops):** (1) verificación de email al registro; (2) claims en el
+**session token**: `"email":"{{user.primary_email_address}}"`, `"email_verified":"{{user.email_verified}}"`.
+Hasta configurarlo, la cortesía-por-email queda **inerte** (fail-closed) — no rompe nada; el env
+`BILLING_COMPED_USER_IDS` (por user_id, sin riesgo de email) sigue disponible. ⚠️ Clerk es
+instancia compartida staging↔prod: el cambio aplica a ambas (inofensivo en prod, billing dormido).
+
