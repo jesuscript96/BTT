@@ -78,11 +78,33 @@
   README del handoff actualizado con su fila. Mensaje corto para Adri
   entregado en la conversación (no en el repo).
 
+**Continuación 2 (tarde) — PRD_03 trades vs ejecuciones (mea culpa)**
+- Álvaro corrigió: el fix apremiante nº 1 NO era el de fees — era el de
+  **trades listados como ejecuciones** (1 trade ≥ 2 ejecuciones; con
+  parciales 3+). Lo arreglamos ~08-17/20 (¿sesión con otra IA?): commits
+  `39a2d80` (función `_group_partial_exits`, backtest_service.py:992, +
+  badge calendario), `3dcd7d0` (n_executions/legs en API+CSV+TradesTab),
+  `1249ca1` (EXIT), `93656e0` (chart). Yo lo había clasificado como
+  "botón export CSV" y no lo vi. Evidencia de esa sesión en el working
+  tree: `backend/.audit_replay.py`, `backend/.audit_all_trades.csv`
+  (columna `n_executions`).
+- **Verificado contra develop**: el motor hace `trades.append` POR
+  EJECUCIÓN (parcial :302, cierres :250/357/404/447/569) y NO existe
+  agrupación → develop TIENE el bug (total_trades inflado, win rate
+  contaminado).
+- Añadido **`PRD_03_trades_vs_ejecuciones.md`** a la tanda (commit
+  `33713af`, sin push al escribir esto): portar `_group_partial_exits`
+  (copiada íntegra a `reference/group_partial_exits.py.txt`) envolviendo
+  `_enrich_trades` (:756 único call-site en develop). PRD_00 y README
+  actualizados a **3 PRs** (orden: PRD_02 → PRD_03 → PRD_01). Mensaje para
+  Adri reescrito con 3 items.
+
 **Dónde lo dejamos**
-- `alvaro/handoff-produccion`: tanda 1 (`7f65d83`) **pusheada**; PRD_00
-  (`9f7e22c`) **sin push** (pendiente OK de Álvaro).
-- `alvaro-rama-desarrollo`: este commit de MEMORIA **sin push**.
-- Working tree de `alvaro-rama-desarrollo` intacto (solo se commiteó
+- `alvaro/handoff-produccion`: tanda 1 (`7f65d83`) y PRD_00 (`9f7e22c`)
+  **pusheados**; PRD_03 (`33713af`) **sin push** (pendiente OK).
+- `alvaro-rama-desarrollo`: commits de MEMORIA **sin push** (el de la
+  entrega anterior si fue pusheado como `478ce55`; este nuevo pendiente).
+- Working tree de `alvaro-rama-desarrollo` intacto (solo se commitea
   MEMORIA.md).
 
 ---
