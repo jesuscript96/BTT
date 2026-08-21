@@ -189,3 +189,80 @@ la reu si se retiran para el go-live de Fase 3.)
   que el usuario pueda disparar/pausar la prueba.
 - La lógica de Stripe (Checkout + `trial_period_days` + `payment_method_collection=always`)
   **no cambia**; cambia **cuándo y dónde** se invoca (onboarding en vez de panel).
+
+---
+
+## 9. Fixes tras la validación en staging (2026-08-21)
+
+E2E del flujo probado en staging (gate → Checkout `4242` → panel "En prueba" + Visa ••4242):
+**funciona**. Bugs encontrados y corregidos:
+
+| # | Bug | Causa | Fix | Commit |
+|---|-----|-------|-----|--------|
+| A | **Admin veía el gate de tarjeta** | `/me` (`get_billing_summary`) usaba solo `resolve_tier` (grants+subs) e **ignoraba la allowlist** de admins → un admin salía `Locked` | `/me` resuelve la allowlist antes (tier=Admin), igual que `get_tier`; fuente única en `config.billing_admin_ids()`, middleware delega ahí | `fe458fa` |
+| B | **Flash del panel antes del gate** | `BillingGuard` devolvía `null` mientras cargaba `/me` → la app se veía un instante | El guard **bloquea con loader full-screen** mientras verifica; fail-closed con reintento si `/me` falla. (El backend ya devolvía 403 en los endpoints → no había fuga de datos, solo visual.) | `fe458fa` |
+| C | **Chip del sidebar mostraba "PRO"** | Pintaba el enum interno `tier` crudo | Con billing activo se mapea a "Suscrito a Edgecute" (o "Admin"); `LockedFeature` deja de decir "plan Pro" | `4cd8bd0` |
+| D | **Panel de admin: 29€ y "—"** | El panel no distinguía admin | Rama admin: precio **0,00 €**, estado **"Acceso de administrador"**, sin botón de portal | `3da98c2` |
+
+**Enforcement verificado:** los endpoints de producto (Backtester/Ticker/Screener/Baúl) llevan
+`subscription_gate`, que con billing activo resuelve el tier (allowlist + store local) y devuelve
+**403** a un `Locked`. El gate visual es UX; el muro real es el backend.
+
+**Nota de prueba:** para probar el gate con una cuenta que tenía grant de migración se le borró
+el grant en staging (`store.delete_grant`) → cayó en `stage: onboarding` → gate. Borrar el grant
+**no cierra sesión** (el gate es in-app); el cierre de sesión global del cutover es aparte (ops).
+
+---
+
+## 10. Tier "gratis / cortesía" para colegas — análisis
+
+**Requisito (Adrian, cliente):** unos usuarios (colegas) deben tener **el mismo acceso que los
+que pagan, pero gratis, sin tarjeta y de forma indefinida**. No son admins (no tienen los poderes
+internos de admin: Market Analysis, features en preview, etc.).
+
+### La clave: el mecanismo YA existe
+La tabla `entitlement_grants` + `resolve_tier` **ya conceden acceso perpetuo** con un grant
+`grant_tier="Pro"` y `expires_at=None` (`_grant_is_active`: sin expiry = perpetuo). Es la misma
+maquinaria del grant de migración, pero **sin caducidad** y con otra `reason`. → "acceso completo
+gratis" **no necesita fontanería nueva**.
+
+### Recomendación: grant de cortesía perpetuo (Opción A)
+- Grant: `grant_tier="Pro"`, `expires_at=None`, `reason="comped"`, `granted_by="<admin>"`.
+- `resolve_tier` → **Pro** → acceso a los 4 módulos (Ticker/Screener/Backtester/Baúl), **sin**
+  Market Analysis (Pro lo tiene cerrado), **sin** poderes de admin → "igual que los que pagan".
+- **Gate**: access=true → **nunca ve el muro de tarjeta**. Sin Stripe, sin tarjeta, sin cobro,
+  sin facturas. Keyed por `user_id`; sobrevive al cutover (re-login → grant → acceso).
+
+### Qué hay que construir (pequeño)
+1. **Stage/label `comped`**: distinguir cortesía de prueba/pago para que el panel no mienta
+   ("29€/mes", "primer cobro"). Regla: grant Pro con `expires_at is None` → `stage="comped"`.
+   Copy del panel: "Acceso de cortesía · Gratis · Sin cobro", precio 0/oculto, sin botón de
+   portal (igual que el tratamiento de admin ya hecho en §9-D).
+2. **CLI de gestión** `scripts/set_comp.py` (`--user-ids`, `--reason`, `--grant|--revoke|--list`):
+   reusa `store.upsert_grant`/`delete_grant`. **Solo servidor, sin endpoint público** (mismo
+   guardarraíl que Path B / `set_trial_override`).
+3. **Auditoría**: listar grants con `reason='comped'`.
+
+### Decisiones a cerrar (esto es "cómo lo gestionamos")
+- **a. ¿Reversible?** Si termina la cortesía → revocar grant → Locked → gate → pasaría por
+  Checkout normal. (Opcional "amable": sembrarle antes un `trial_override` de N días.)
+- **b. ¿Feature-set idéntico a Pro?** Recomendado sí (los 4 módulos). Si los colegas debieran
+  tener algo distinto (p.ej. Market Analysis), eso ya pediría un tier dedicado.
+- **c. Wording al colega:** ¿ve "Cortesía/Invitado/Gratis" o simplemente "Suscrito a Edgecute"
+  sin precio? Recomendado: etiqueta discreta "Cortesía" + panel sin precio/renovación.
+- **d. Alta:** el grant necesita `user_id` → el colega debe **registrarse en Clerk primero**,
+  luego se le concede. ⚠️ Ventana: si carga la app antes de que le demos el grant, verá el gate.
+  Para fricción cero habría que **pre-conceder por email** (materializar en el primer login) —
+  eso sí es código extra. MVP: conceder por `user_id` tras registro (puede ver el gate hasta
+  que se le concede).
+
+### Alternativas descartadas
+- **Tier `Comped` dedicado en `policy.py`**: más código, duplica el feature-set de Pro,
+  `resolve_tier` tendría que aceptar un `grant_tier` nuevo. Solo valdría si el feature-set fuese
+  distinto de Pro.
+- **Cupón Stripe 100% off**: seguiría pidiendo tarjeta/Checkout y mete al colega en Stripe;
+  contradice "sin pagar". Descartado.
+
+### Esfuerzo
+Pequeño: el acceso es gratis (ya existe). Falta stage+copy (como el de admin), la CLI y tests.
+
