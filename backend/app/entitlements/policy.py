@@ -6,7 +6,8 @@ la app se comporta como antes para ellos. Lo que varía hoy por tier es
 `admin.preview_features` (solo Admin) y el tier "Beta", que sí restringe de verdad.
 
 "Beta" (2026-07) es para los beta-testers invitados: solo Screener, Ticker Analysis,
-Backtester y Baúl. Es el ÚNICO tier con `market.analysis.access` en False.
+Backtester y Baúl. Desde Fase 3 (billing), "Pro" y "Locked" también tienen
+`market.analysis.access` en False (el cliente deja Market Analysis fuera del producto).
 
 Para activar el resto de restricciones (ver docs/entitlements/ARQUITECTURA.md) basta
 con editar los valores de POLICY — el comentario tras cada límite muestra el valor de
@@ -100,7 +101,9 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "screener.access": True,
         "api.portal.access": False,
         "market.sentiment.access": False,
-        "market.analysis.access": True,
+        # Fase 3: el cliente deja Market Analysis FUERA del producto de pago
+        # (módulos = Ticker/Screener/Backtester/Baúl). Cerrado también server-side.
+        "market.analysis.access": False,
         "admin.preview_features": False,
     },
     "Mid": {
@@ -121,8 +124,8 @@ POLICY: Dict[str, Dict[str, FeatureValue]] = {
         "admin.preview_features": False,
     },
     # Beta-testers invitados (2026-07): SOLO Screener, Ticker Analysis, Backtester
-    # y Baúl. Todo lo demás cerrado — es el único tier con market.analysis.access
-    # en False, y por eso el gating de Market Analysis solo muerde aquí.
+    # y Baúl. Todo lo demás cerrado. (Desde Fase 3, Pro y Locked también cierran
+    # market.analysis.access — ver docstring del módulo.)
     "Beta": {
         "backtester.run": True,
         "backtester.surface_3d": True,

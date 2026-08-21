@@ -30,7 +30,7 @@ import { BILLING_ENABLED, billingApi, formatMoney, type BillingSummary } from "@
 // (incl. per-user preferential days, Path B) is decided by Stripe at Checkout.
 const TRIAL_DAYS = 7;
 
-const MODULES = ["Ticker Analysis", "Screener", "Backtester"];
+const MODULES = ["Ticker Analysis", "Screener", "Backtester", "Baúl de estrategias"];
 
 export function BillingGuard() {
   const [summary, setSummary] = useState<BillingSummary | null>(null);

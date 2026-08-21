@@ -21,11 +21,13 @@ import {
   type BillingSummary,
 } from "@/lib/billing";
 
-// Módulos del producto (Fase 3): Ticker Analysis · Screener · Backtester.
+// Módulos del producto (Fase 3): Ticker Analysis · Screener · Backtester · Baúl
+// de estrategias. Market Analysis queda fuera.
 const PLAN_FEATURES = [
   "Ticker Analysis",
   "Screener",
   "Backtester",
+  "Baúl de estrategias",
   "Sin permanencia",
 ];
 
@@ -410,7 +412,7 @@ export default function SubscriptionPanel() {
             <div style={label}>Plan actual</div>
             <div style={{ ...bigVal, marginTop: 6 }}>Suscrito a Edgecute</div>
             <div style={{ color: color.textSecondary, fontSize: 13, marginTop: 3 }}>
-              {PLAN_FEATURES.slice(0, 3).join(" · ")}
+              {PLAN_FEATURES.slice(0, 4).join(" · ")}
             </div>
           </div>
           {sub ? <SubStatusPill status={sub.status} /> : summary.grant ? <Pill tone="copper">En prueba</Pill> : null}

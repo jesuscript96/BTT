@@ -205,8 +205,10 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </Link>
                 )}
 
-                {/* Market Analysis (gappers) */}
-                {allowed("market.analysis.access") && (
+                {/* Market Analysis (gappers). Fase 3: el cliente lo deja FUERA del
+                    producto (módulos = Ticker/Screener/Backtester/Baúl). Se oculta a
+                    los usuarios; se conserva para admins (interno, reversible). */}
+                {isAdmin() && (
                     <Link
                         href="/market-analysis"
                         style={{
@@ -219,8 +221,9 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </Link>
                 )}
 
-                {/* Market Analysis — Adjusted (split-adjusted data) */}
-                {allowed("market.analysis.access") && (
+                {/* Market Analysis — Adjusted (split-adjusted data). Fase 3: fuera
+                    para usuarios (ver arriba), solo admins. */}
+                {isAdmin() && (
                     <Link
                         href="/market-analysis-adjusted"
                         style={{
