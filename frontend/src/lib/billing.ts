@@ -56,9 +56,21 @@ export interface BillingInvoice {
   created_at: number;
 }
 
+// Server-computed screen selector (Fase 3). 1:1 with a UI state; the client
+// never guesses new-vs-returning from partial signals.
+export type BillingStage =
+  | "admin"
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "trial_grant"
+  | "resubscribe" // returning user (baja→vuelve): re-subscribe, no trial
+  | "onboarding"; // new user / REGISTRADO_SIN_TARJETA: add card to start trial
+
 export interface BillingSummary {
   tier: string;
   access: boolean;
+  stage: BillingStage;
   plan: BillingPlan;
   subscription: BillingSubscription | null;
   grant: BillingGrant | null;

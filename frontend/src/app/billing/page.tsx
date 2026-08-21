@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import SubscriptionPanel from "@/components/billing/SubscriptionPanel";
 import { color, font } from "@/components/ui/tokens";
-import { BILLING_ENABLED, billingApi } from "@/lib/billing";
+import { BILLING_ENABLED } from "@/lib/billing";
 
 const container: React.CSSProperties = { maxWidth: 860, margin: "0 auto", padding: "26px 22px 60px" };
 
@@ -25,21 +25,9 @@ export default function BillingPage() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // On return from Stripe Checkout the success_url carries ?session_id=… — confirm
-    // the subscription synchronously (§4 step 5a) so access does not wait on the
-    // webhook, then clean the URL so a refresh doesn't re-sync. setReady only runs
-    // in async callbacks (no synchronous setState in the effect body).
-    const sessionId = new URLSearchParams(window.location.search).get("session_id");
-    if (sessionId && BILLING_ENABLED) {
-      billingApi
-        .sync(sessionId)
-        .catch(() => {})
-        .finally(() => {
-          window.history.replaceState({}, "", "/billing");
-          setReady(true);
-        });
-      return;
-    }
+    // The Checkout return (?session_id=…) is handled globally by BillingGuard,
+    // which syncs and hard-reloads so the new tier propagates everywhere — so
+    // this page no longer needs to sync. It just renders the panel once mounted.
     const t = setTimeout(() => setReady(true), 0);
     return () => clearTimeout(t);
   }, []);

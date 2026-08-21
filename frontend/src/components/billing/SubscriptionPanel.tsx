@@ -21,12 +21,11 @@ import {
   type BillingSummary,
 } from "@/lib/billing";
 
+// Módulos del producto (Fase 3): Ticker Analysis · Screener · Backtester.
 const PLAN_FEATURES = [
-  "Screener en vivo",
-  "Backtester completo",
   "Ticker Analysis",
-  "Baúl de estrategias",
-  "Market Analysis",
+  "Screener",
+  "Backtester",
   "Sin permanencia",
 ];
 
@@ -229,10 +228,10 @@ function Paywall({ summary, onCheckout, busy }: { summary: BillingSummary; onChe
         <Lock size={24} strokeWidth={2} />
       </div>
       <h2 style={{ fontFamily: font.serif, fontWeight: 500, fontSize: 23, color: color.textHigh, margin: "0 0 6px" }}>
-        Empieza tu prueba de 7 días
+        Añade tu tarjeta para empezar
       </h2>
       <p style={{ color: color.textSecondary, margin: "0 auto", maxWidth: 400, fontSize: 14 }}>
-        Accede a todo Edgecute {summary.plan.label} gratis durante 7 días. Cancela cuando quieras.
+        Empieza tus 7 días gratis en Edgecute. No se te cobra hoy. Cancela cuando quieras.
       </p>
       <div style={{ margin: "14px 0 4px" }}>
         <span style={{ fontFamily: font.serif, fontSize: 34, color: color.textHigh, fontWeight: 500 }}>
@@ -273,7 +272,7 @@ function Paywall({ summary, onCheckout, busy }: { summary: BillingSummary; onChe
         ))}
       </ul>
       <Button variant="primary" size="lg" loading={busy} onClick={onCheckout} style={{ width: "100%", maxWidth: 300 }}>
-        Empezar prueba gratis
+        Añadir tarjeta y empezar
       </Button>
       <div style={{ color: color.textMuted, fontSize: 12, marginTop: 14 }}>
         Se pedirá una tarjeta. No se te cobrará durante los 7 días de prueba.
@@ -381,9 +380,12 @@ export default function SubscriptionPanel() {
               : "Suscríbete para conservar el acceso."
           }
           action={
-            <Button variant="primary" onClick={openPortal} loading={busy}>
-              Suscribirme
-            </Button>
+            !sub ? (
+              // Migration-grant user with no card yet → add a card to subscribe.
+              <Button variant="primary" onClick={startCheckout} loading={busy}>
+                Suscribirme
+              </Button>
+            ) : undefined
           }
         />
       ) : null}
@@ -406,9 +408,9 @@ export default function SubscriptionPanel() {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
           <div>
             <div style={label}>Plan actual</div>
-            <div style={{ ...bigVal, marginTop: 6 }}>Edgecute {summary.plan.label}</div>
+            <div style={{ ...bigVal, marginTop: 6 }}>Suscrito a Edgecute</div>
             <div style={{ color: color.textSecondary, fontSize: 13, marginTop: 3 }}>
-              {PLAN_FEATURES.slice(0, 5).join(" · ")}
+              {PLAN_FEATURES.slice(0, 3).join(" · ")}
             </div>
           </div>
           {sub ? <SubStatusPill status={sub.status} /> : summary.grant ? <Pill tone="copper">En prueba</Pill> : null}

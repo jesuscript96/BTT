@@ -165,7 +165,8 @@ class BillingService:
     def get_billing_summary(self, user_id: str) -> dict:
         """Read-only snapshot for the billing section (no Stripe call): resolved
         tier + subscription + default payment method + invoices + the trial
-        countdown source (subscription.trial_end or a migration grant)."""
+        countdown source (subscription.trial_end or a migration grant) + a single
+        `stage` string that tells the frontend which screen to render (Fase 3)."""
         tier = resolve_tier(user_id, store=self._store)
         sub = self._store.get_latest_subscription_for_user(user_id)
         pm = self._store.get_default_payment_method(user_id)
@@ -174,6 +175,7 @@ class BillingService:
         return {
             "tier": tier,
             "access": tier != "Locked",
+            "stage": _billing_stage(tier, sub, grant),
             "plan": {
                 "label": config.BILLING_PLAN_LABEL,
                 "amount_cents": config.BILLING_PLAN_AMOUNT_CENTS,
@@ -185,6 +187,31 @@ class BillingService:
             "payment_method": _payment_method_dict(pm),
             "invoices": [_invoice_dict(i) for i in invoices],
         }
+
+
+# ── Onboarding/gate stage (Fase 3) ────────────────────────────────────────────
+# One string the frontend maps 1:1 to a screen, computed from authoritative
+# state so the client never guesses new-vs-returning from partial signals.
+#   admin        — internal, never gated (no card, no trial)
+#   trialing     — Stripe trial running (access)
+#   active       — paying (access)
+#   past_due     — failed charge, Smart Retries window (access kept)
+#   trial_grant  — migrated user on the in-app 7-day grant (access, no sub yet)
+#   resubscribe  — was subscribed, now no access → returning user (baja→vuelve),
+#                  Checkout WITHOUT trial (server-side anti-recycle decides)
+#   onboarding   — never subscribed + no access → new user / REGISTRADO_SIN_TARJETA
+def _billing_stage(tier: str, sub, grant) -> str:
+    if tier == "Admin":
+        return "admin"
+    if tier != "Locked":  # has access
+        if sub is not None and sub.status in ("trialing", "active", "past_due"):
+            return sub.status
+        if grant is not None and grant.grant_tier == "Pro":
+            return "trial_grant"
+        return "active"  # access via some other path; treat as active
+    # No access (Locked). A prior subscription row means the user already went
+    # through Checkout once → returning; otherwise they never put a card in.
+    return "resubscribe" if sub is not None else "onboarding"
 
 
 # ── Serializers (dataclass -> plain JSON dict for the API) ────────────────────

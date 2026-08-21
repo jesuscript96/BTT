@@ -216,6 +216,42 @@ def test_billing_summary_reflects_active_subscription(svc, store):
     assert len(s["invoices"]) == 1 and s["invoices"][0]["status"] == "paid"
 
 
+# ── Onboarding/gate stage (Fase 3) ────────────────────────────────────────────
+def test_stage_onboarding_for_brand_new_user(svc):
+    # No customer, no subscription, no grant → new user must hit the card gate.
+    s = svc.get_billing_summary("newbie")
+    assert s["stage"] == "onboarding" and s["access"] is False
+
+
+def test_stage_resubscribe_for_returning_canceled_user(svc, store):
+    # Had a subscription, now canceled (baja consumida) → returning, no access.
+    store.upsert_customer("u1", "cus_1")
+    store.upsert_subscription("sub_1", "u1", "cus_1", status="canceled")
+    s = svc.get_billing_summary("u1")
+    assert s["stage"] == "resubscribe" and s["access"] is False
+
+
+def test_stage_trialing_active_past_due(svc, store):
+    store.upsert_customer("u1", "cus_1")
+    store.upsert_subscription("sub_1", "u1", "cus_1", status="trialing")
+    assert svc.get_billing_summary("u1")["stage"] == "trialing"
+    store.upsert_subscription("sub_1", "u1", "cus_1", status="active")
+    assert svc.get_billing_summary("u1")["stage"] == "active"
+    store.upsert_subscription("sub_1", "u1", "cus_1", status="past_due")
+    assert svc.get_billing_summary("u1")["stage"] == "past_due"
+
+
+def test_stage_trial_grant_for_migrated_user(svc, store):
+    store.upsert_grant("u1", "Pro", reason="migration-trial", expires_at=9_999_999_999.0)
+    s = svc.get_billing_summary("u1")
+    assert s["stage"] == "trial_grant" and s["access"] is True
+
+
+def test_stage_admin(svc, store):
+    store.upsert_grant("u1", "Admin", reason="internal")
+    assert svc.get_billing_summary("u1")["stage"] == "admin"
+
+
 def test_billing_me_endpoint_exposes_grant_countdown(svc, store):
     store.upsert_grant("u1", "Pro", reason="migration-trial", expires_at=9_999_999_999.0)
     r = _client(svc).get("/api/billing/me")
