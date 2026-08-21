@@ -36,16 +36,20 @@
 | [`PRD_00_PLAN_DE_SUBIDA_A_MAIN.md`](2026-08-21-fees-y-calendario/PRD_00_PLAN_DE_SUBIDA_A_MAIN.md) | 📋 plan | — | **Empezar aquí**: resumen simple, orden recomendado, checklist de verificación y guarda-raíles. |
 | [`PRD_01_fees_por_ejecucion.md`](2026-08-21-fees-y-calendario/PRD_01_fees_por_ejecucion.md) | 🐛 fix motor (backend) | **Pendiente de implementar** | Alta: comisiones incorrectas hoy con `fees > 0`. ⚠️ BREAKING en FLAT (relabel UI obligatorio). Incluye `reference/test_fees.py` copiable tal cual (spec ejecutable). |
 | [`PRD_02_calendario_retorno_real.md`](2026-08-21-fees-y-calendario/PRD_02_calendario_retorno_real.md) | 🐛 fix presentación (frontend) | **Pendiente de implementar** | Alta: el calendario abre en beneficio bruto; una perdedora neta se ve ganadora. Solo TSX, sin tocar motor. |
+| [`PRD_03_trades_vs_ejecuciones.md`](2026-08-21-fees-y-calendario/PRD_03_trades_vs_ejecuciones.md) | 🐛 fix métricas/reporte | **Pendiente de implementar** | Alta: cada ejecución se cuenta como un trade (total_trades inflado, win rate contaminado). Agrupación en la agregación — el kernel NO se toca. Función de referencia completa y probada incluida. |
 
-Ambas son **independientes** (PRs separados, cualquier orden).
+Las tres son **independientes** (PRs separados, cualquier orden; el PRD_00 sugiere uno).
 
 ## Qué NO va en este canal (a propósito)
 
 Nada de mi montaje local puede colar: migración GCS → lago local (rutas de mi
 máquina), qualifying bygap (perf opt-in por `.env`), mi kanban personal
 (`MEMORIA.md`, `PROXIMOS_ITEMS.md`), o features sin decisión (métricas
-`sl_dist_pct_*`, trailing break-even desacoplado, parciales fade, chart,
-export CSV).
+`sl_dist_pct_*`, trailing break-even desacoplado, parciales fade, chart).
+
+**Este canal solo lleva fixes flagrantes.** El **export CSV de trades está
+expresamente excluido** (decisión de Álvaro): los trades viven dentro del
+backtester, nada se externaliza.
 
 ### Candidatos para próximas tandas (si os interesan, pedidlos)
 

@@ -3,7 +3,7 @@
 > **Para:** Adri (Edgecute). **De:** Álvaro. **Fecha:** 2026-08-21.
 > **Qué es esto:** el mapa de esta tanda — qué tiene que llegar a `main`, en
 > qué orden, cómo verificar que nada se rompe y qué NO hacer. Los detalles
-> finos están en el PRD_01 y el PRD_02; aquí solo el plan. Escrito para que
+> finos están en los PRD 01–03; aquí solo el plan. Escrito para que
 > pueda leerlo cualquiera, incluido Álvaro 😉
 
 ---
@@ -26,17 +26,24 @@
    - Las métricas en $ usan un capital desincronizado (default 10.000
      hardcodeado; al lanzar desde el builder no llegaban los parámetros
      tecleados).
+3. **Cada ejecución se cuenta como un trade (PRD_03, backend de agregación +
+   UI).** El simulador emite un registro por ejecución (cada parcial + el
+   cierre) y así llegan a las métricas: una posición con 2 parciales cuenta
+   como 3 trades. Un trade, por definición, son **2+ ejecuciones** (entrada y
+   salida; con parciales, 3+). Esto infla `total_trades` y contamina win
+   rate, streaks, avg win/loss y expectancy.
 
 ## 2. Qué se pide exactamente
 
-**Dos PRs a `develop`** (son independientes: PRs separados, cualquier orden):
+**Tres PRs a `develop`** (son independientes: PRs separados, cualquier orden):
 
 | PR | Qué | Dónde |
 |----|-----|-------|
 | A | Implementar **PRD_02** (calendario/retorno real) | Solo frontend (TSX/TS) |
-| B | Implementar **PRD_01** (comisiones por ejecución) | Motor Python + kernel Numba + 2 labels de UI |
+| B | Implementar **PRD_03** (trades ≠ ejecuciones) | Agregación backend + UI de reporte (sin tocar el kernel) |
+| C | Implementar **PRD_01** (comisiones por ejecución) | Motor Python + kernel Numba + 2 labels de UI |
 
-Después, con los dos en `develop` y verificados: **subida a `main` en tu
+Después, con los tres en `develop` y verificados: **subida a `main` en tu
 cadencia normal**. La decisión y ejecución de `develop → main` es tuya, como
 siempre — este documento no te la delega, solo te da el contexto.
 
@@ -44,11 +51,14 @@ siempre — este documento no te la delega, solo te da el contexto.
 
 1. **PRD_02 primero**: es 1–2 h de frontend, cero riesgo de motor, y el
    usuario deja de ver números mentirosos de inmediato.
-2. **PRD_01 después**: toca el motor financiero, exige paridad Python↔JIT y
+2. **PRD_03 después**: agrupación de ejecuciones en trades — acotada a la
+   agregación (el kernel no se toca) y con la función de referencia completa
+   y probada incluida.
+3. **PRD_01 al final**: toca el motor financiero, exige paridad Python↔JIT y
    tiene un cambio de significado (FLAT pasa de $/trade a **$/share**) que
    merece su nota de release.
-3. Con ambos en `develop`, **un solo salto a `main`** con la nota de release
-   del §6.
+4. Con los tres en `develop`, **un solo salto a `main`** con la nota de
+   release del §6.
 
 ## 4. Cómo verificar que no se rompe nada (checklist antes de `main`)
 
@@ -58,6 +68,14 @@ siempre — este documento no te la delega, solo te da el contexto.
       ≈ RETURN, DD$ coherente, parámetros tecleados llegan, recarga mantiene
       la base, Days únicos).
 - No cambia ningún número que produzca el backend: es presentación.
+
+**PRD_03 (agregación de trades):**
+- [ ] Portar `reference/group_partial_exits.py.txt` y envolver el punto
+      único de `_enrich_trades` (`backtest_service.py:756`).
+- [ ] **Smoke de identidad**: backtest **sin parciales** → resultados
+      idénticos antes/después.
+- [ ] Con parciales: `total_trades` == nº de posiciones; `pnl` del trade ==
+      Σ `pnl` de sus legs.
 
 **PRD_01 (motor):**
 - [ ] Copiar `reference/test_fees.py` a `backend/tests/` → 6/6 verde (es la
@@ -84,8 +102,9 @@ siempre — este documento no te la delega, solo te da el contexto.
    develop no tiene. Por eso este canal es de PRDs.
 2. **No `git apply` de los `reference/*.patch`**: son referencia de
    comportamiento exacto, no parches aplicables (sus contextos no existen en
-   develop). Lo único copiable tal cual es `reference/test_fees.py`
-   (archivo nuevo, sin dependencias).
+   develop). Lo copiable tal cual: `reference/test_fees.py` (archivo nuevo,
+   sin dependencias) y `reference/group_partial_exits.py.txt` (función
+   autosuficiente, todo con `.get()`).
 3. **No cambiar schema de BD, ni la API, ni el significado de los campos**
    `fees` / `fee_type`: viajan igual que hoy.
 4. **Preservar los quirks del PRD_01 §3.4**: los trades parciales sin clave
@@ -101,19 +120,25 @@ siempre — este documento no te la delega, solo te da el contexto.
 > broker real. El modo de comisión en $ pasa a significar **$ por acción y
 > lado** (antes era una cantidad fija por trade, independiente del tamaño);
 > los backtests guardados con comisión $ mostrarán números distintos — los
-> nuevos son los correctos. Además, el calendario ahora abre mostrando el
-> resultado **neto** (antes abría en bruto) y el % mensual se calcula sobre
-> la equity real de cada periodo.
+> nuevos son los correctos. Las métricas ahora cuentan **trades, no
+> ejecuciones** (una posición con parciales ya no cuenta como varios
+> trades: total de trades y win rate reflejan tus operaciones reales).
+> Además, el calendario ahora abre mostrando el resultado **neto** (antes
+> abría en bruto) y el % mensual se calcula sobre la equity real de cada
+> periodo.
 
 ## 7. FAQ
 
 - **¿Cambian los backtests guardados?** PRD_02 no toca números. PRD_01: en
   PERCENT apenas (ahora los trades planos y parciales pagan lo que deben); en
   FLAT cambia el significado ($/trade → $/share) y los números cambian — de
-  ahí el relabel de UI y la nota de release.
+  ahí el relabel de UI y la nota de release. PRD_03: cambian `total_trades`,
+  win rate, streaks y avg win/loss **solo en backtests con parciales**
+  (pasan de contar ejecuciones a contar trades); sin parciales, idénticos.
 - **¿Pueden subir a main por separado?** Sí, son independientes.
-- **¿Riesgo de romper producción?** PRD_02 es solo presentación. PRD_01 toca
-  el motor pero está acotado a los puntos de fee, con tests de aceptación
-  incluidos y la checklist del §4.
+- **¿Riesgo de romper producción?** PRD_02 es solo presentación; PRD_03 es
+  agregación posterior al motor (el kernel no se toca) con smoke de
+  identidad; PRD_01 toca el motor pero está acotado a los puntos de fee, con
+  tests de aceptación incluidos y la checklist del §4.
 - **¿Dónde pregunto?** A Álvaro directamente. Cada PRD es autocontenido; si
   algo no cuadra con la spec, parar y preguntar antes de improvisar.
