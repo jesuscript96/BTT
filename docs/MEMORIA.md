@@ -130,6 +130,49 @@
 
 ---
 
+## 2026-08-21 (noche 3) — Revisión externa del handoff+sync: 4 correcciones aplicadas (F1–F4)
+
+**Contexto**
+- La IA arquitecta de Álvaro revisó el trabajo contra el repo real: confirma
+  handoff docs-only (9 ficheros, +1.740, 100% en docs/handoff-produccion/),
+  anclas de los 4 PRDs exactas contra `origin/develop@e368839`,
+  independencia de los 3 PRDs verificada (interacción fees↔agrupación
+  segura en cualquier orden) y reference copiable. 4 correcciones, ninguna
+  bloqueante — **todas aplicadas**.
+
+**F1 (🔴) — Baseline de tests backend (la importante de cara a main)**
+- Suite completa: `pytest tests/ -q --continue-on-collection-errors` →
+  **108 failed / 337 passed / 15 errors** (2:39). Requiere el flag: 2
+  módulos con imports muertos abortan la recolección (Backlog #4).
+- Baseline registrada en **`docs/BASELINE_TESTS_BACKEND.md`** (123 rojos,
+  agrupados y categorizados: entorno/datos vs Backlog #3/#4 vs conocidos).
+- **Regla:** antes de cualquier salto `staging→develop→main`, correr la
+  suite y comparar contra esa lista: rojo NUEVO = regresión → parar.
+
+**F2 (🟡) — develop local desfasado**
+- El branch local `develop` estaba en `d4065b9` (por detrás de
+  `origin/develop@e368839`) → `git branch -f develop origin/develop`.
+- **Regla:** las anclas de los PRDs se verifican SIEMPRE contra
+  `origin/develop`, nunca contra el branch local.
+
+**F3 (🟡) — 588588b mal etiquetado**
+- El inventario lo listaba como 🔴 puro; es **MIXTO** (calendario→prod +
+  sl_dist local + activation_pct). Corregido arriba en el inventario.
+
+**F4 (🟡) — PRD_03 sobrevendía portabilidad**
+- `_group_partial_exits` tiene 8 subíndices duros (`pnl`, `size`,
+  `entry_price`, `exit_idx`, `exit_time`, `exit_time_epoch`, `exit_price`,
+  `exit_reason`) → KeyError si develop los toca, no None silencioso.
+  PRD_03 §3-T1 corregido (commit `e850d56` en la rama handoff, sin push
+  al escribir esto).
+
+**Dónde lo dejamos**
+- Pendiente push: `alvaro/handoff-produccion` (`e850d56`) y esta rama.
+  El merge rama→`staging` sigue esperando OK de Álvaro (la revisión no lo
+  bloquea).
+
+---
+
 ## 2026-08-21 (noche 2) — Prueba runtime del módulo de robustez: FUNCIONA, con 1 bug de selección
 
 **Montaje**
@@ -188,8 +231,10 @@
 Álvaro: subir TODOS, con esta prioridad)**
 
 🔴 **Urgente — bug** (van también a main vía handoff):
-- `77236d2` fees por ejecución (fill) · `588588b` calendario/retorno real ·
-  `5741202` OOS MAX DD $ · `2a51b94+8896ece+de14125` locates (ya en staging
+- `77236d2` fees por ejecución (fill) · `588588b` **MIXTO**: calendario/retorno
+  real (→prod vía PRD_02) + métricas `sl_dist_pct_*` (local, NO handoff) +
+  tipo `activation_pct` (resto ITEM 1) · `5741202` OOS MAX DD $ ·
+  `2a51b94+8896ece+de14125` locates (ya en staging
   por Sailor, duplicado idéntico) · `1249ca1` EXIT parciales invisibles ·
   `6c37f94` hidratación rango dataset · `e42d34b` logging translate_strategy
 
