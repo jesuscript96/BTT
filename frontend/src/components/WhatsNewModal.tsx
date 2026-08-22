@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Sparkles, X } from "lucide-react";
 import { LATEST_RELEASE } from "@/data/releases";
+import { useEntitlements } from "@/lib/entitlements";
 import { track, EVENTS } from "@/lib/analytics";
 
 /**
@@ -13,19 +14,27 @@ import { track, EVENTS } from "@/lib/analytics";
  * tied to the USER (survives new sessions and other devices) — not localStorage
  * per browser. It only appears when LATEST_RELEASE.id differs from what the user
  * has already seen, so it never shows on every login.
+ *
+ * It also waits until the user is INSIDE the panel (tier resolved and not
+ * "Locked"), so it never overlaps the billing onboarding gate — otherwise the
+ * announcement (z-index 1001) stacked over the card-entry gate (1000) and got
+ * marked "seen" before the user ever reached the app.
  */
 export default function WhatsNewModal() {
   const { user, isLoaded } = useUser();
+  const { tier, loading: entLoading } = useEntitlements();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!isLoaded || !user || !LATEST_RELEASE) return;
+    // Gate up / access not yet confirmed → don't surface over it.
+    if (entLoading || !tier || tier === "Locked") return;
     const seen = user.unsafeMetadata?.lastSeenReleaseId as string | undefined;
     if (seen !== LATEST_RELEASE.id) {
       setOpen(true);
       track(EVENTS.WHATSNEW_VIEWED, { release_id: LATEST_RELEASE.id });
     }
-  }, [isLoaded, user]);
+  }, [isLoaded, user, tier, entLoading]);
 
   async function dismiss() {
     setOpen(false);
