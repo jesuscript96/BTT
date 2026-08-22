@@ -1388,7 +1388,7 @@ export default function BacktestPanel({
                   ? "Porcentaje del valor operado. Se cobra en la compra y en la venta."
                   : "$ por acción. Se cobra en la compra y en la venta: 0,003 con 100 acciones = 0,30 € + 0,30 €."}
               >
-                Fees {feeType === "PERCENT" ? "(%)" : "($ por acción)"}
+                Fees {feeType === "PERCENT" ? "(%)" : "($/acc)"}
               </label>
               <select
                 value={feeType}
