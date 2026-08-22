@@ -267,6 +267,8 @@ export interface Strategy {
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;
     risk_management: RiskManagement;
+    // Solo presente si la piramidación está activa y con niveles válidos.
+    pyramiding?: { timeframe: Timeframe; levels: PyramidLevel[] };
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
@@ -320,4 +322,37 @@ export const initialExitLogic: ExitLogic = {
         operator: "AND",
         conditions: []
     }
+};
+
+// ── Piramidación (2026-08-22) ────────────────────────────────────────────
+// Gestión dinámica de la posición: niveles con el MISMO árbol de condiciones
+// que entrada/salida, evaluados por el backend con la misma maquinaria (todos
+// los indicadores y grupos AND/OR funcionan sin lista aparte). Cada nivel
+// añade (% del EQUITY de la cuenta) o quita (% de la posición FLOTANTE) y
+// dispara UNA sola vez por trade; la reentrada los rearma. TP/SL corren en
+// paralelo y se llevan lo que las reducciones no quiten.
+export interface PyramidLevel {
+    root_condition: ConditionGroup;
+    action: 'add' | 'reduce';
+    capital_pct: number;   // % en unidades de UI (1 = 1%)
+}
+
+export interface PyramidingConfig {
+    active: boolean;       // toggle de la UI; si está OFF, la definición NO
+                           // lleva la clave `pyramiding` (regla nº1: sin
+                           // piramidar, nada cambia en el backend)
+    timeframe: Timeframe;
+    levels: PyramidLevel[];
+}
+
+export const emptyPyramidLevel = (): PyramidLevel => ({
+    root_condition: { type: "group", operator: "AND", conditions: [] },
+    action: 'add',
+    capital_pct: 1.0,
+});
+
+export const initialPyramiding: PyramidingConfig = {
+    active: false,
+    timeframe: Timeframe.M1,
+    levels: [],
 };
