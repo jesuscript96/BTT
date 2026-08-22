@@ -201,6 +201,9 @@ def _compute_signals_for_pair(
         sig_tp_time_limit = signals.get("tp_time_limit")
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
+        # El fast-path nativo no evalua piramide (con piramide, has_special
+        # fuerza el camino clasico), pero la variable debe existir aguas abajo.
+        sig_pyramid_levels = []
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
         pm_highs_vals = pm_high_run
@@ -242,6 +245,7 @@ def _compute_signals_for_pair(
         sig_tp_time_limit = signals.get("tp_time_limit")
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
+        sig_pyramid_levels = signals.get("pyramid_levels") or []
 
     # Fast return if no entries (only for legacy; fast path already returns arrays)
     if indicator_plan is None and not np.any(entries_arr):
@@ -298,6 +302,10 @@ def _compute_signals_for_pair(
 
     entries_arr = entries_arr[session_mask_np]
     exits_arr = exits_arr[session_mask_np]
+    if sig_pyramid_levels:
+        sig_pyramid_levels = [
+            {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
+        ]
 
     arrays_out = {
         "open": O[session_mask_np],
@@ -372,6 +380,7 @@ def _compute_signals_for_pair(
         "sig_tp_time_limit": sig_tp_time_limit,
         "sig_trail_pct": sig_trail_pct,
         "sig_partial_tps": sig_partial_tps,
+        "sig_pyramid_levels": sig_pyramid_levels,
         "gap_pct": daily_stats.get("gap_pct"),
     }
 
@@ -955,6 +964,7 @@ def simulate_and_accumulate(signals_sorted, params):
         sig_tp_time_limit = sig["sig_tp_time_limit"]
         sig_trail_pct = sig["sig_trail_pct"]
         sig_partial_tps = sig["sig_partial_tps"]
+        sig_pyramid_levels = sig.get("sig_pyramid_levels") or []
         gap_pct = sig["gap_pct"]
 
         # When moving to a new day, add the previous day's PnL to the global pool (349-355)
@@ -1005,6 +1015,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
                 partial_take_profits=sig_partial_tps,
+                pyramid_levels=sig_pyramid_levels,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,

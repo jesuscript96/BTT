@@ -38,6 +38,7 @@ def simulate(
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
     partial_take_profits: list | None = None,
+    pyramid_levels: list | None = None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
@@ -71,6 +72,16 @@ def simulate(
     mfe = 0.0  # Maximum Favorable Excursion
     trail_activated = False
     original_size = 0.0  # Track original position size for partial TPs
+    # -- Piramidacion (2026-08-22) --
+    # avg_entry_price: precio medio ponderado de la posicion. SIN piramidar
+    # se asigna una vez (= entry_price) y no cambia: todos los calculos de
+    # PnL/fees/capital que lo usan son bit-identicos al motor anterior.
+    # entry_price queda como ANCLA DE NIVELES: SL, TP, trailing y las
+    # distancias de los parciales se siguen midiendo desde la entrada
+    # ORIGINAL (decision del usuario: el stop no se mueve al piramidar).
+    avg_entry_price = 0.0
+    pyramid_mode = bool(pyramid_levels)
+    pyr_fired: list = []
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
     # Risk amount tracking for reporting
@@ -231,28 +242,28 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                            pt_size = original_size * cap_frac
+                            pt_size = (size if pyramid_mode else original_size) * cap_frac
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 if is_long:
-                                    gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                    gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                 else:
-                                    gross_pnl = (entry_price - net_pt_exit) * pt_size
+                                    gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
                                 
                                 if fee_type == "FLAT":
                                     fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
-                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(entry_price, 6),
+                                    "entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -286,28 +297,28 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                            pt_size = original_size * cap_frac
+                            pt_size = (size if pyramid_mode else original_size) * cap_frac
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 if is_long:
-                                    gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                    gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                 else:
-                                    gross_pnl = (entry_price - net_pt_exit) * pt_size
+                                    gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
                                 
                                 if fee_type == "FLAT":
                                     fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
-                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(entry_price, 6),
+                                    "entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -344,27 +355,27 @@ def simulate(
                                 
                                 slip = pt_exit_price * slippage
                                 net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                                pt_size = original_size * cap_frac
+                                pt_size = (size if pyramid_mode else original_size) * cap_frac
                                 pt_size = min(pt_size, size)
                                 if pt_size > 0:
                                     if is_long:
-                                        gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                        gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                     else:
-                                        gross_pnl = (entry_price - net_pt_exit) * pt_size
+                                        gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
                                     
                                     if fee_type == "FLAT":
                                         fee_amount = fees * pt_size * 2
                                     else:
                                         # % sobre el NOCIONAL de cada lado (entrada + salida).
-                                        fee_amount = (entry_price + net_pt_exit) * pt_size * fees
+                                        fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
-                                    capital_at_risk = entry_price * pt_size
+                                    capital_at_risk = avg_entry_price * pt_size
                                     ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                     trades.append({
                                         "entry_idx": entry_idx,
                                         "exit_idx": i,
-                                        "entry_price": round(entry_price, 6),
+                                        "entry_price": round(avg_entry_price, 6),
                                         "exit_price": round(net_pt_exit, 6),
                                         "pnl": round(pnl, 4),
                                         "return_pct": round(ret_pct, 4),
@@ -397,24 +408,24 @@ def simulate(
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
                             # Close cap_frac of original position
-                            pt_size = original_size * cap_frac
+                            pt_size = (size if pyramid_mode else original_size) * cap_frac
                             pt_size = min(pt_size, size)  # Can't close more than remaining
                             if pt_size > 0:
-                                gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                 if fee_type == "FLAT":
                                     fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
-                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(entry_price, 6),
+                                    "entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -443,24 +454,24 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
-                            pt_size = original_size * cap_frac
+                            pt_size = (size if pyramid_mode else original_size) * cap_frac
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
-                                gross_pnl = (entry_price - net_pt_exit) * pt_size
+                                gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
                                 if fee_type == "FLAT":
                                     fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
-                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(entry_price, 6),
+                                    "entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -560,9 +571,9 @@ def simulate(
                 
                 # Gross PnL
                 if is_long:
-                    gross_pnl = (net_exit - entry_price) * size
+                    gross_pnl = (net_exit - avg_entry_price) * size
                 else:
-                    gross_pnl = (entry_price - net_exit) * size
+                    gross_pnl = (avg_entry_price - net_exit) * size
 
                 # Fee calculation depends on fee_type
                 if fee_type == "FLAT":
@@ -577,20 +588,20 @@ def simulate(
                     # salida), como cobra un broker real. Antes se aplicaba
                     # sobre |PnL bruto|, con lo que un trade en tablas pagaba
                     # $0 de comision moviera las acciones que moviera.
-                    fee_amount = (entry_price + net_exit) * size * fees
+                    fee_amount = (avg_entry_price + net_exit) * size * fees
                 
                 # Net PnL is Gross PnL minus Fees
                 pnl = gross_pnl - fee_amount
 
                 realized_pnl += pnl
                 # For capital at risk, we just use the entry capital required
-                capital_at_risk = entry_price * size
+                capital_at_risk = avg_entry_price * size
                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
 
                 trades.append({
                     "entry_idx": entry_idx,
                     "exit_idx": eff_exit_idx,
-                    "entry_price": round(entry_price, 6),
+                    "entry_price": round(avg_entry_price, 6),
                     "exit_price": round(net_exit, 6),
                     "pnl": round(pnl, 4),
                     "fees": round(fee_amount, 4),
@@ -605,6 +616,83 @@ def simulate(
                 })
                 in_position = False
                 size = 0.0
+
+
+        # --- Piramidacion: condiciones logicas POST-entrada (2026-08-22) ---
+        # Orden dentro de la barra: DESPUES de todas las salidas y solo si la
+        # posicion sigue viva -- una barra que toca el stop no piramida. Cada
+        # nivel dispara UNA sola vez por trade (pyr_fired), estrictamente
+        # despues de la barra de entrada, y se rearma con cada entrada nueva.
+        # TP/SL/parciales corren en paralelo: aqui solo se ajusta el tamaño.
+        if pyramid_mode and in_position and i > entry_idx:
+            for lv_idx, lv in enumerate(pyramid_levels):
+                if pyr_fired[lv_idx] or not lv["signals"][i]:
+                    continue
+                pyr_fired[lv_idx] = True
+                px = close[i]
+                if px <= 0:
+                    continue
+                slip = px * slippage
+                if lv["action"] == "add":
+                    # AÑADIR: % del EQUITY de la cuenta (decision del usuario),
+                    # convertido a acciones al precio de la barra con slippage
+                    # de entrada. Tope: el coste total de la posicion no puede
+                    # superar el cash disponible (misma regla que la entrada).
+                    add_px = (px + slip) if is_long else (px - slip)
+                    if add_px <= 0:
+                        continue
+                    cash_now = init_cash + realized_pnl
+                    if cash_now <= 0:
+                        continue
+                    add_size = (cash_now * lv["capital_frac"]) / add_px
+                    add_size = min(add_size, max(0.0, cash_now / add_px - size))
+                    if add_size <= 0:
+                        continue
+                    avg_entry_price = (avg_entry_price * size + add_px * add_size) / (size + add_size)
+                    size += add_size
+                    if not is_long:
+                        max_short_size_today = max(max_short_size_today, size)
+                else:
+                    # REDUCIR: % de la posicion FLOTANTE actual (coherente con
+                    # los parciales en modo piramide). Es una leg de cierre
+                    # normal: su pnl, sus fees por los dos lados y su registro.
+                    red_size = min(size, size * lv["capital_frac"])
+                    if red_size <= 0:
+                        continue
+                    net_red = (px - slip) if is_long else (px + slip)
+                    if is_long:
+                        gross_pnl = (net_red - avg_entry_price) * red_size
+                    else:
+                        gross_pnl = (avg_entry_price - net_red) * red_size
+                    if fee_type == "FLAT":
+                        fee_amount = fees * red_size * 2
+                    else:
+                        fee_amount = (avg_entry_price + net_red) * red_size * fees
+                    pnl = gross_pnl - fee_amount
+                    realized_pnl += pnl
+                    capital_at_risk = avg_entry_price * red_size
+                    ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                    trades.append({
+                        "entry_idx": entry_idx,
+                        "exit_idx": i,
+                        "entry_price": round(avg_entry_price, 6),
+                        "exit_price": round(net_red, 6),
+                        "pnl": round(pnl, 4),
+                        "return_pct": round(ret_pct, 4),
+                        "direction": "Long" if is_long else "Short",
+                        "status": "Closed",
+                        "size": round(red_size, 6),
+                        "exit_reason": "Pyramid Reduce",
+                        "fees": round(fee_amount, 4),
+                        "mae": round(mae, 4),
+                        "mfe": round(mfe, 4),
+                        "stop_loss": round(trade_sl_price, 6),
+                    })
+                    size -= red_size
+                    if size <= 0.0001:
+                        in_position = False
+                        size = 0.0
+                        break
 
         # --- check entries ---
         # Edge Detection: only enter when signal turns from False to True.
@@ -715,6 +803,10 @@ def simulate(
                     mae = 0.0
                     mfe = 0.0
                     original_size = size
+                    avg_entry_price = entry_price
+                    # La piramide va SIEMPRE asociada a la entrada: cada
+                    # entrada (reentradas incluidas) rearma sus niveles.
+                    pyr_fired = [False] * len(pyramid_levels) if pyramid_mode else []
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
                     total_trades += 1
                 else:
@@ -727,9 +819,9 @@ def simulate(
         current_equity = init_cash + realized_pnl
         if in_position:
             if is_long:
-                unrealized = (close[i] - entry_price) * size
+                unrealized = (close[i] - avg_entry_price) * size
             else:
-                unrealized = (entry_price - close[i]) * size
+                unrealized = (avg_entry_price - close[i]) * size
             equity[i] = current_equity + unrealized
         else:
             equity[i] = current_equity

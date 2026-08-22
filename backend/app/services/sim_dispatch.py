@@ -31,7 +31,19 @@ def _numba_sim_enabled() -> bool:
 
 
 def simulate(**kwargs) -> dict:
-    """Punto único de entrada del simulador (misma firma/retorno que portfolio_sim)."""
+    """Punto único de entrada del simulador (misma firma/retorno que portfolio_sim).
+
+    Piramidación (2026-08-22): el kernel JIT NO la soporta — una estrategia con
+    niveles de pirámide se rutea SIEMPRE al motor Python, que es LA
+    especificación. Es la vía de mínimo riesgo: el JIT queda intacto (bit a bit)
+    para todo lo demás, y las estrategias piramidadas pagan el motor lento hasta
+    que se porte con su suite de paridad. Sin niveles, el kwarg se retira antes
+    de llamar al JIT (no conoce el parámetro).
+    """
+    pyramid_levels = kwargs.get("pyramid_levels")
+    if pyramid_levels:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("pyramid_levels", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)

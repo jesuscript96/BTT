@@ -338,6 +338,32 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     _normalize_tree(entry_logic.get("root_condition", {}))
     _normalize_tree(exit_logic.get("root_condition", {}))
 
+    # ── Piramidación (2026-08-22) ──
+    # Bloque opcional `pyramiding` en la definición: lista de niveles, cada uno
+    # con el MISMO árbol de condiciones que entrada/salida, más la acción
+    # (add | reduce) y el % de capital. Los nombres se normalizan igual que en
+    # los árboles de entrada/salida. Sin bloque → lista vacía → todo lo demás
+    # queda inerte (prioridad nº1 del usuario: cero cambios si no se piramida).
+    pyramiding = strategy_def.get("pyramiding") or {}
+    pyr_levels_def = []
+    for lv in (pyramiding.get("levels") or []):
+        root = lv.get("root_condition") or {}
+        if not root.get("conditions"):
+            continue
+        _normalize_tree(root)
+        try:
+            pct = float(lv.get("capital_pct", 0.0))
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct <= 0:
+            continue
+        pyr_levels_def.append({
+            "root_condition": root,
+            "action": "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add",
+            # La UI manda % (1 = 1%); el motor trabaja en fracción.
+            "capital_frac": pct / 100.0,
+        })
+
     compiled = {
         "bias": bias,
         "direction": "longonly" if bias == "long" else "shortonly",
@@ -353,10 +379,19 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "entry_time_windows": entry_logic.get("entry_time_windows", []),
         "entry_candle_delay": entry_logic.get("candle_delay"),
         "exit_candle_delay": exit_logic.get("candle_delay"),
+        "pyramid_tf": pyramiding.get("timeframe", "1m"),
+        "pyramid_levels_def": pyr_levels_def,
     }
 
     # N2a: generate indicator plan for native evaluation
     compiled["_indicator_plan"] = _extract_indicator_plan(compiled)
+
+    # Con piramidación, TODA la estrategia va por el camino clásico: el path
+    # nativo no evalúa los niveles de pirámide, y aquí se aplica la misma regla
+    # que ya rige ese gate — mejor «correcto por el path clásico» que un nivel
+    # ignorado en silencio.
+    if pyr_levels_def:
+        compiled["_indicator_plan"]["has_special"] = True
 
     return compiled
 
@@ -561,7 +596,43 @@ def translate_strategy(
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
+        "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache),
     }
+
+
+def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
+                             daily_stats: dict | None, entry_cache: dict) -> list:
+    """Señales de los niveles de piramidación (2026-08-22).
+
+    Cada nivel se evalúa con EXACTAMENTE la misma maquinaria que la entrada y
+    la salida (`_evaluate_condition_group`), sobre el timeframe del bloque.
+    Devuelve la lista que espera el simulador: `signals` (bool por vela 1m),
+    `action` y `capital_frac`. Sin niveles → lista vacía, y el simulador ni se
+    entera (el dispatcher retira el kwarg antes del JIT).
+
+    Se comparte la caché de indicadores de la entrada cuando el timeframe
+    coincide: un Darvas usado en la entrada y en un nivel se calcula una vez.
+    """
+    levels_def = compiled.get("pyramid_levels_def") or []
+    if not levels_def:
+        return []
+    tf = compiled.get("pyramid_tf", "1m")
+    cache = entry_cache if tf == compiled.get("entry_tf") else {}
+    out = []
+    for lv in levels_def:
+        try:
+            sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
+            sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
+            out.append({
+                "signals": sig_arr.astype(bool),
+                "action": lv["action"],
+                "capital_frac": lv["capital_frac"],
+            })
+        except Exception as e:
+            # Un nivel que no se pueda evaluar NO puede convertirse en un nivel
+            # ignorado en silencio a medias: se registra y se omite entero.
+            logger.error(f"[PYRAMID] nivel no evaluable, se omite: {e}")
+    return out
 
 
 # ── N2a: Native numpy translate (fast path) ─────────────────────────────

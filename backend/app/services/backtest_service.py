@@ -548,6 +548,7 @@ def run_backtest(
             sig_direction = cached["direction"]
             sig_accept_reentries = cached["accept_reentries"]
             sig_max_reentries = cached.get("max_reentries", -1)
+            sig_pyramid_levels = cached.get("pyramid_levels") or []
 
             if not np.any(entries_arr):
                 del mini_df
@@ -578,6 +579,7 @@ def run_backtest(
             sig_tp_time_limit = signals.get("tp_time_limit")
             sig_trail_pct = signals.get("trail_pct")
             sig_partial_tps = signals.get("partial_take_profits")
+            sig_pyramid_levels = signals.get("pyramid_levels") or []
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -587,6 +589,9 @@ def run_backtest(
                     "direction": sig_direction,
                     "accept_reentries": sig_accept_reentries,
                     "max_reentries": sig_max_reentries,
+                    "pyramid_levels": [
+                        {**lv, "signals": lv["signals"].copy()} for lv in sig_pyramid_levels
+                    ],
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -631,6 +636,10 @@ def run_backtest(
             session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
+            if sig_pyramid_levels:
+                sig_pyramid_levels = [
+                    {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
+                ]
 
         # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays ---
         if compiled_strategy:
@@ -713,6 +722,7 @@ def run_backtest(
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
                 partial_take_profits=sig_partial_tps,
+                pyramid_levels=sig_pyramid_levels,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,
