@@ -462,7 +462,8 @@ def run_scaling(runs: list[dict], cfg: dict) -> dict:
                 gross = rn * risk_usd
                 # Comision PERCENT sobre el NOCIONAL de cada lado, igual que el
                 # motor real tras el fix de 2026-08-21 (antes iba sobre |PnL|).
-                fee = (fees * 2 if fee_flat else fees * (entry + exitp) * new_size) if risk_usd > 0 else 0.0
+                # FLAT = $ POR ACCION en los dos lados (fix de 2026-08-22).
+                fee = (fees * new_size * 2 if fee_flat else fees * (entry + exitp) * new_size) if risk_usd > 0 else 0.0
                 slip = slip_frac * (entry + exitp) * new_size
                 net = gross - fee - slip
 

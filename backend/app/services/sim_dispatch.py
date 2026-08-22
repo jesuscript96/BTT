@@ -324,15 +324,31 @@ def simulate_jit(
             "mfe": round(r_mfe[t], 4),
             "stop_loss": round(r_stop[t], 6),
         }
-        if rc not in _PARTIAL_REASONS:
-            # el trade de cierre final SÍ lleva fees; los parciales NO (quirk contractual)
-            rec_final = dict(rec)
-            rec_final["fees"] = round(r_fees[t], 4)
-            # preservar el ORDEN de claves del original (pnl, fees, return_pct, ...)
+        # Los DOS tipos de registro llevan `fees`. Los parciales la omitían —
+        # su comisión iba restada en `pnl` pero se reportaba como cero, y el
+        # agrupador de ejecuciones (backtest_service._agrupar) la perdía: con
+        # comisiones por acción, la columna mostraba 75 $ de los 114 $ que el
+        # motor había cobrado de verdad. Corregido el 2026-08-22 EN PARIDAD con
+        # portfolio_sim.py, que ahora también la registra.
+        # El ORDEN de claves se conserva distinto en cada caso, calcado del que
+        # produce portfolio_sim.py: en el cierre final va tras `pnl`, en el
+        # parcial tras `exit_reason`.
+        fee_t = round(r_fees[t], 4)
+        if rc in _PARTIAL_REASONS:
             rec = {
                 "entry_idx": rec["entry_idx"], "exit_idx": rec["exit_idx"],
                 "entry_price": rec["entry_price"], "exit_price": rec["exit_price"],
-                "pnl": rec["pnl"], "fees": rec_final["fees"],
+                "pnl": rec["pnl"], "return_pct": rec["return_pct"],
+                "direction": rec["direction"], "status": rec["status"],
+                "size": rec["size"], "exit_reason": rec["exit_reason"],
+                "fees": fee_t, "mae": rec["mae"], "mfe": rec["mfe"],
+                "stop_loss": rec["stop_loss"],
+            }
+        else:
+            rec = {
+                "entry_idx": rec["entry_idx"], "exit_idx": rec["exit_idx"],
+                "entry_price": rec["entry_price"], "exit_price": rec["exit_price"],
+                "pnl": rec["pnl"], "fees": fee_t,
                 "return_pct": rec["return_pct"], "direction": rec["direction"],
                 "status": rec["status"], "size": rec["size"],
                 "exit_reason": rec["exit_reason"], "mae": rec["mae"],

@@ -155,7 +155,28 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
     prod, can take minutes). Returns (pairs_df, date_from, date_to) for the
     intraday pre-cache. Raises on failure so the caller can mark the dataset
     creation as errored.
+
+    Partida en dos mitades (`_compute_dataset_pairs` + `_insert_dataset_pairs`)
+    para que la actualizacion del lago pueda calcular los pares UNA sola vez y
+    reutilizarlos en los varios datasets que comparten filtros, en vez de pagar
+    la consulta pesada una vez por dataset. Ver services/lake_db_loader.py.
     """
+    pairs_df = _compute_dataset_pairs(filters)
+
+    date_from = ""
+    date_to = ""
+    if not pairs_df.empty:
+        date_from = pairs_df["date"].min()
+        date_to = pairs_df["date"].max()
+        _insert_dataset_pairs(query_id, pairs_df)
+
+    print(f"Saved combinations for dataset {query_id}: {len(pairs_df)} pairs")
+
+    return pairs_df, date_from, date_to
+
+
+def _compute_dataset_pairs(filters: dict):
+    """Mitad cara: los pares (ticker, dia) que cumplen los filtros. No escribe."""
     from app.services.query_service import build_screener_query
 
     _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
@@ -194,31 +215,44 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
     con = get_db_connection()
     pairs_df = con.execute(select_sql, params).fetchdf()
 
-    date_from = ""
-    date_to = ""
     if not pairs_df.empty:
         pairs_df = pairs_df.drop_duplicates(subset=["ticker", "date"])
-        date_from = pairs_df['date'].min()
-        date_to = pairs_df['date'].max()
+    return pairs_df
 
-    # Fast phase WITH the lock: bulk-insert the precomputed pairs (sub-second)
-    if not pairs_df.empty:
-        lock = get_user_db_lock()
-        with lock:
-            con = get_user_db_connection()
-            try:
-                con.register("pairs_tmp", pairs_df)
-                con.execute(
-                    "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
-                    "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp "
-                    "ON CONFLICT DO NOTHING",
-                    [query_id],
-                )
-            finally:
-                con.close()
-    print(f"Saved combinations for dataset {query_id}: {len(pairs_df)} pairs")
 
-    return pairs_df, date_from, date_to
+def _insert_dataset_pairs(query_id: str, pairs_df) -> int:
+    """Mitad barata WITH the lock: bulk-insert de los pares (sub-second).
+
+    `ON CONFLICT DO NOTHING` sobre la PK (dataset_id, ticker, date) hace que
+    sea idempotente y que se pueda usar tambien para AÑADIR los dias nuevos a
+    un dataset que ya tenia pares.
+
+    Devuelve cuantas filas se han añadido DE VERDAD, no cuantas se intentaron:
+    en un reinsertado la diferencia es todo el dataset, y un log que cante
+    "4.941 pares nuevos" cuando en realidad eran 22 no vale para nada.
+    """
+    if pairs_df is None or pairs_df.empty:
+        return 0
+    lock = get_user_db_lock()
+    with lock:
+        con = get_user_db_connection()
+        try:
+            antes = con.execute(
+                "SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?", [query_id]
+            ).fetchone()[0]
+            con.register("pairs_tmp", pairs_df)
+            con.execute(
+                "INSERT INTO dataset_pairs (dataset_id, ticker, date) "
+                "SELECT ? as dataset_id, ticker, CAST(date AS DATE) FROM pairs_tmp "
+                "ON CONFLICT DO NOTHING",
+                [query_id],
+            )
+            despues = con.execute(
+                "SELECT COUNT(*) FROM dataset_pairs WHERE dataset_id = ?", [query_id]
+            ).fetchone()[0]
+            return despues - antes
+        finally:
+            con.close()
 
 
 @router.post("/", response_model=SavedQuery)

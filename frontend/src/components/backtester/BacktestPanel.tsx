@@ -1380,8 +1380,15 @@ export default function BacktestPanel({
                 textTransform: 'uppercase',
                 letterSpacing: '0.12em',
                 color: 'var(--color-ec-text-muted)',
-              }}>
-                Fees {feeType === "PERCENT" ? "(%)" : "($)"}
+              }}
+                // El importe se cobra DOS veces, una por operacion (compra y
+                // venta). En FLAT `fees` es ademas $ por accion, asi que el
+                // total de un trade es fees x acciones x 2.
+                title={feeType === "PERCENT"
+                  ? "Porcentaje del valor operado. Se cobra en la compra y en la venta."
+                  : "$ por acción. Se cobra en la compra y en la venta: 0,003 con 100 acciones = 0,30 € + 0,30 €."}
+              >
+                Fees {feeType === "PERCENT" ? "(%)" : "($ por acción)"}
               </label>
               <select
                 value={feeType}
@@ -1398,6 +1405,11 @@ export default function BacktestPanel({
                 }}
               >
                 <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
+                {/* El desplegable elige la UNIDAD del importe ($ o %); las dos
+                    se cobran igual en la compra y en la venta. El "$" a secas
+                    era ambiguo y ademas describia el modelo viejo, que ignoraba
+                    el numero de acciones. La explicacion completa esta en el
+                    title de la etiqueta de arriba. */}
                 <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
               </select>
             </div>

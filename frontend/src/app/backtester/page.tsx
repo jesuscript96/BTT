@@ -276,19 +276,41 @@ export default function Home() {
     setEquityCache(new Map()); // fresh run → drop the previous run's equity cache
     const final = await new Promise<{ status: string; error?: string | null }>((resolve) => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      // El registro de trabajos del backend vive EN MEMORIA: si el proceso se
+      // reinicia mientras corre un backtest, el job desaparece y este sondeo
+      // recibe un 404 permanente. Antes se trataba como "error de red pasajero"
+      // y reintentaba cada 500 ms indefinidamente, escupiendo dos errores por
+      // segundo a la consola y dejando la barra de progreso colgada para
+      // siempre. Se tolera algún 404 suelto (carrera entre crear el job y
+      // registrarlo) pero no una racha.
+      let faltantes = 0;
+      const parar = () => {
+        if (pollTimerRef.current) {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      };
       pollTimerRef.current = setInterval(async () => {
         try {
           const s = await fetchBacktestJobStatus(job_id);
+          faltantes = 0;
           setBacktestProgress(s);
           if (s.status === "succeeded" || s.status === "failed" || s.status === "cancelled") {
-            if (pollTimerRef.current) {
-              clearInterval(pollTimerRef.current);
-              pollTimerRef.current = null;
-            }
+            parar();
             resolve(s);
           }
         } catch (err) {
-          // transient network error → keep polling
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status === 404 && ++faltantes >= 3) {
+            parar();
+            resolve({
+              status: "failed",
+              error:
+                "El backtest se ha perdido: el backend se reinició mientras corría. Vuelve a lanzarlo.",
+            });
+            return;
+          }
+          // resto de errores → de verdad pueden ser pasajeros, se sigue sondeando
           console.warn("Could not fetch backtest job status:", err);
         }
       }, 500);

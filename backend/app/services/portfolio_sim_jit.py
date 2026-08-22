@@ -32,6 +32,14 @@ RISK_FIXED = 1
 RISK_HSQRT = 2   # "FIXED_RATIO" (Ryan Jones)
 
 # --- fee types ---
+# Los DOS cobran los dos lados de la operacion, entrada y salida:
+#   FEE_FLAT    -> `fees` es $ POR ACCION   -> fees * acciones * 2
+#   FEE_PERCENT -> `fees` es fraccion sobre el nocional de cada lado
+#                  -> (precio_entrada + precio_salida) * acciones * fees
+# FLAT era `fees * 2`, una cantidad fija por operacion que ignoraba el numero
+# de acciones (corregido el 2026-08-22 a peticion del usuario). Cualquier
+# cambio aqui hay que replicarlo EN PARIDAD BIT A BIT en portfolio_sim.py,
+# portfolio_lab_engine.py y portfolio_lab_scaling.py.
 FEE_PERCENT = 0
 FEE_FLAT = 1
 
@@ -276,7 +284,7 @@ def _core_simulate_jit(
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
                                     fee_amount = (entry_price + net_pt_exit) * pt_size * fees
@@ -289,7 +297,7 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
                                 r_reason[k] = REASON_PARTIAL_EOD
@@ -321,7 +329,7 @@ def _core_simulate_jit(
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
                                     fee_amount = (entry_price + net_pt_exit) * pt_size * fees
@@ -334,7 +342,7 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
                                 r_reason[k] = REASON_PARTIAL_TIME
@@ -367,7 +375,7 @@ def _core_simulate_jit(
                                     else:
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
                                     if fee_type_code == FEE_FLAT:
-                                        fee_amount = fees * 2
+                                        fee_amount = fees * pt_size * 2
                                     else:
                                         # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
                                         fee_amount = (entry_price + net_pt_exit) * pt_size * fees
@@ -380,7 +388,7 @@ def _core_simulate_jit(
                                     r_entry_px[k] = entry_price
                                     r_exit_px[k] = net_pt_exit
                                     r_pnl[k] = pnl
-                                    r_fees[k] = 0.0
+                                    r_fees[k] = fee_amount
                                     r_return_pct[k] = ret_pct
                                     r_size[k] = pt_size
                                     r_reason[k] = REASON_PARTIAL_HOUR
@@ -409,7 +417,7 @@ def _core_simulate_jit(
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
                                     fee_amount = (entry_price + net_pt_exit) * pt_size * fees
@@ -422,7 +430,7 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
                                 r_reason[k] = REASON_PARTIAL
@@ -448,7 +456,7 @@ def _core_simulate_jit(
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 if fee_type_code == FEE_FLAT:
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
                                     fee_amount = (entry_price + net_pt_exit) * pt_size * fees
@@ -461,7 +469,7 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
                                 r_reason[k] = REASON_PARTIAL
@@ -553,7 +561,7 @@ def _core_simulate_jit(
                 else:
                     gross_pnl = (entry_price - net_exit) * size
                 if fee_type_code == FEE_FLAT:
-                    fee_amount = fees * 2
+                    fee_amount = fees * size * 2
                 else:
                     # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
                     fee_amount = (entry_price + net_exit) * size * fees

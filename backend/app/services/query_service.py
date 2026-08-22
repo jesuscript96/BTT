@@ -241,6 +241,12 @@ def build_screener_query(
     
     for k, v in filters.items():
         if k in ['limit', 'trade_date', 'start_date', 'end_date', 'ticker', 'rules', 'close_red']: continue
+        # Los interruptores booleanos del panel (require_shortable,
+        # exclude_dilution...) NO son columnas de daily_metrics, pero
+        # `float(True)` vale 1.0, asi que se colaban por el camino numerico y
+        # generaban `require_shortable >= 1.0` -> BinderException que tumbaba
+        # la consulta entera. Los `None` ya caian solos por el except; estos no.
+        if isinstance(v, bool): continue
         try:
             val = float(v)
             if k in ['min_gap', 'min_run', 'min_volume'] and val <= 0: continue

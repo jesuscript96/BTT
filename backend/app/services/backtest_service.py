@@ -1237,8 +1237,14 @@ def _extract_day_stats_from_values(
         mean_r = float(np.mean(bar_returns)) if len(bar_returns) > 0 else 0.0
         ann_factor = np.sqrt(252 * 390)
         sharpe = (mean_r / std * ann_factor) if std > 0 else 0.0
-        down_returns = bar_returns[bar_returns < 0]
-        down_std = float(np.std(down_returns)) if len(down_returns) > 1 else 0.0
+        # Downside deviation CANONICA: RMS de min(ret, 0) sobre TODAS las
+        # observaciones. Lo anterior era np.std de solo los retornos negativos,
+        # que los mide alrededor de SU propia media en vez de alrededor de cero
+        # y no divide por el total — dos sesgos que inflaban el Sortino y que
+        # ademas lo hacian discrepar del que calcula el modulo de portfolio
+        # (portfolio_lab_engine.py) para la misma estrategia.
+        down_std = float(np.sqrt(np.mean(np.minimum(bar_returns, 0.0) ** 2))) \
+            if len(bar_returns) > 1 else 0.0
         sortino = (mean_r / down_std * ann_factor) if down_std > 0 else 0.0
     except Exception:
         return empty
@@ -1368,8 +1374,11 @@ def _aggregate_metrics(
             # Annualize (approx 365 calendar days or 252 trading days. Using 365 since frequency is 'D')
             avg_sharpe = (mean_r / std * np.sqrt(365)) if std > 0 else 0.0
             
-            down_rets = daily_rets[daily_rets < 0]
-            down_std = float(np.std(down_rets)) if len(down_rets) > 0 else 0.0
+            # Downside deviation canonica (ver la nota de la otra ocurrencia,
+            # mas arriba en este mismo fichero): RMS de min(ret, 0) sobre todas
+            # las observaciones, no la std de solo los dias perdedores.
+            down_std = float(np.sqrt(np.mean(np.minimum(daily_rets, 0.0) ** 2))) \
+                if len(daily_rets) > 0 else 0.0
             sortino_ratio = (mean_r / down_std * np.sqrt(365)) if down_std > 0 else 0.0
 
         except Exception as e:

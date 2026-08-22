@@ -240,7 +240,7 @@ def simulate(
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 
                                 if fee_type == "FLAT":
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
@@ -260,6 +260,7 @@ def simulate(
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
                                     "exit_reason": "Partial TP (EOD)",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -294,7 +295,7 @@ def simulate(
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 
                                 if fee_type == "FLAT":
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
@@ -314,6 +315,7 @@ def simulate(
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
                                     "exit_reason": "Partial TP (Time)",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -351,7 +353,7 @@ def simulate(
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
                                     
                                     if fee_type == "FLAT":
-                                        fee_amount = fees * 2
+                                        fee_amount = fees * pt_size * 2
                                     else:
                                         # % sobre el NOCIONAL de cada lado (entrada + salida).
                                         fee_amount = (entry_price + net_pt_exit) * pt_size * fees
@@ -370,6 +372,7 @@ def simulate(
                                         "status": "Closed",
                                         "size": round(pt_size, 6),
                                         "exit_reason": "Partial TP (Hour)",
+                                        "fees": round(fee_amount, 4),
                                         "mae": round(mae, 4),
                                         "mfe": round(mfe, 4),
                                         "stop_loss": round(trade_sl_price, 6),
@@ -399,7 +402,7 @@ def simulate(
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 if fee_type == "FLAT":
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
@@ -419,6 +422,7 @@ def simulate(
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
                                     "exit_reason": "Partial TP",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -444,7 +448,7 @@ def simulate(
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 if fee_type == "FLAT":
-                                    fee_amount = fees * 2
+                                    fee_amount = fees * pt_size * 2
                                 else:
                                     # % sobre el NOCIONAL de cada lado (entrada + salida),
                                     # no sobre el PnL: un breakeven tambien paga comision.
@@ -464,6 +468,7 @@ def simulate(
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
                                     "exit_reason": "Partial TP",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -561,8 +566,12 @@ def simulate(
 
                 # Fee calculation depends on fee_type
                 if fee_type == "FLAT":
-                    # Flat $ fee: charged once for entry + once for exit = 2x
-                    fee_amount = fees * 2
+                    # FLAT = $ POR ACCION, cobrado en los DOS lados (fix de
+                    # 2026-08-22). 0,003 con 100 acciones = 0,30 $ al comprar +
+                    # 0,30 $ al vender. Antes era `fees * 2`: una cantidad fija
+                    # por operacion que IGNORABA el tamaño, asi que con 10.000
+                    # acciones cobraba 1 centimo donde el broker cobra 60 $.
+                    fee_amount = fees * size * 2
                 else:
                     # Percentage fee sobre el NOCIONAL de cada lado (entrada +
                     # salida), como cobra un broker real. Antes se aplicaba

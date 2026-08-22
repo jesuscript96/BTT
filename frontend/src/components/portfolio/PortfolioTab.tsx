@@ -317,7 +317,10 @@ export function PortfolioTab({ strategies }: { strategies: PortfolioStrategy[] }
                 value={cfg.fee_type}
                 onChange={(v) => set("fee_type", v)}
                 options={[
-                  { value: "FLAT", label: "$ por lado" },
+                  // "$ por lado" describia el modelo viejo, que ignoraba el
+                  // numero de acciones. Desde 2026-08-22 el importe es $ POR
+                  // ACCION — y, como el %, se cobra en la compra Y en la venta.
+                  { value: "FLAT", label: "$ por acción" },
                   { value: "PERCENT", label: "% del valor" },
                 ]}
               />

@@ -157,8 +157,9 @@ class CombineReq(BaseModel):
     `slippage_pct` y `risk_r` van en unidades REALES de interfaz: slippage en
     porcentaje (0.1 = 0,1%) y aqui se convierte a fraccion antes de entrar al
     motor — la trampa de la doble unidad del repo (MEMORIA §4.5) no puede
-    cruzar esta frontera. `fees` es $ por operacion si fee_type=FLAT, o
-    porcentaje del VALOR OPERADO por lado si PERCENT (fix de 2026-08-21).
+    cruzar esta frontera. `fees` es $ POR ACCION si fee_type=FLAT (fix de
+    2026-08-22), o porcentaje del VALOR OPERADO por lado si PERCENT (fix de
+    2026-08-21). Los dos se cobran en la entrada Y en la salida.
     """
     strategy_ids: list[str]
     init_cash: float = Field(default=10000.0, gt=0)
