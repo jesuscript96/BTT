@@ -435,7 +435,7 @@ export default function InlineStrategyBuilder({
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
     if (stratObj.pyramiding) {
-      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, levels: stratObj.pyramiding.levels || [] });
+      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) });
     } else {
       setPyramiding(initialPyramiding);
     }
@@ -574,7 +574,7 @@ export default function InlineStrategyBuilder({
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
   const [pyramiding, setPyramiding] = useState<PyramidingConfig>(
     stratObj?.pyramiding
-      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, levels: stratObj.pyramiding.levels || [] }
+      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) }
       : initialPyramiding
   );
   const [summaryExpanded, setSummaryExpanded] = useState(false);
@@ -699,6 +699,7 @@ export default function InlineStrategyBuilder({
     pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
       ? { pyramiding: {
             timeframe: pyramiding.timeframe,
+                        mode: pyramiding.mode || 'individual',
             levels: pyramiding.levels.filter(l => l.root_condition.conditions.length > 0 && l.capital_pct > 0),
           } }
       : {};

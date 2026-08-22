@@ -39,6 +39,7 @@ def simulate(
     look_ahead_prevention: bool = True,
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
+    pyramid_sequential: bool = False,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
@@ -81,7 +82,7 @@ def simulate(
     # ORIGINAL (decision del usuario: el stop no se mueve al piramidar).
     avg_entry_price = 0.0
     pyramid_mode = bool(pyramid_levels)
-    pyr_fired: list = []
+    pyr_fired: list = []   # contador de disparos por nivel (int)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
     # Risk amount tracking for reporting
@@ -620,15 +621,30 @@ def simulate(
 
         # --- Piramidacion: condiciones logicas POST-entrada (2026-08-22) ---
         # Orden dentro de la barra: DESPUES de todas las salidas y solo si la
-        # posicion sigue viva -- una barra que toca el stop no piramida. Cada
-        # nivel dispara UNA sola vez por trade (pyr_fired), estrictamente
-        # despues de la barra de entrada, y se rearma con cada entrada nueva.
-        # TP/SL/parciales corren en paralelo: aqui solo se ajusta el tamaño.
+        # posicion sigue viva -- una barra que toca el stop no piramida.
+        #
+        # Las piramides son INDIVIDUALES por defecto: cada una vigila su propia
+        # condicion en paralelo, sin anclaje entre ellas (la numeracion de la
+        # UI es solo orden de lista). Con pyramid_sequential=True, cada nivel
+        # solo se ARMA cuando el anterior ya ha disparado al menos una vez.
+        #
+        # Cada nivel dispara hasta `max_fires` veces por trade (decision del
+        # usuario 2026-08-22: configurable; antes era 1 fija), SOLO en FLANCOS
+        # de su señal (False->True): una condicion sostenida muchas barras es
+        # UN evento, no uno por barra — sin esto, "gana mas de X%" con 3 veces
+        # dispararia en 3 barras seguidas. Con señales de cruce (eventos de una
+        # barra) el flanco es identico al comportamiento anterior. Todo se
+        # rearma con cada entrada nueva; TP/SL/parciales corren en paralelo.
         if pyramid_mode and in_position and i > entry_idx:
             for lv_idx, lv in enumerate(pyramid_levels):
-                if pyr_fired[lv_idx] or not lv["signals"][i]:
+                if pyr_fired[lv_idx] >= lv["max_fires"]:
                     continue
-                pyr_fired[lv_idx] = True
+                # flanco: señal True que en la barra anterior estaba False
+                if not lv["signals"][i] or (i > 0 and lv["signals"][i - 1]):
+                    continue
+                if pyramid_sequential and lv_idx > 0 and pyr_fired[lv_idx - 1] < 1:
+                    continue
+                pyr_fired[lv_idx] += 1
                 px = close[i]
                 if px <= 0:
                     continue
@@ -806,7 +822,7 @@ def simulate(
                     avg_entry_price = entry_price
                     # La piramide va SIEMPRE asociada a la entrada: cada
                     # entrada (reentradas incluidas) rearma sus niveles.
-                    pyr_fired = [False] * len(pyramid_levels) if pyramid_mode else []
+                    pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
                     total_trades += 1
                 else:

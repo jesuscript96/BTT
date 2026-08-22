@@ -549,6 +549,7 @@ def run_backtest(
             sig_accept_reentries = cached["accept_reentries"]
             sig_max_reentries = cached.get("max_reentries", -1)
             sig_pyramid_levels = cached.get("pyramid_levels") or []
+            sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
 
             if not np.any(entries_arr):
                 del mini_df
@@ -580,6 +581,7 @@ def run_backtest(
             sig_trail_pct = signals.get("trail_pct")
             sig_partial_tps = signals.get("partial_take_profits")
             sig_pyramid_levels = signals.get("pyramid_levels") or []
+            sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -592,6 +594,7 @@ def run_backtest(
                     "pyramid_levels": [
                         {**lv, "signals": lv["signals"].copy()} for lv in sig_pyramid_levels
                     ],
+                    "pyramid_sequential": sig_pyramid_sequential,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -723,6 +726,7 @@ def run_backtest(
                 max_reentries=sig_max_reentries,
                 partial_take_profits=sig_partial_tps,
                 pyramid_levels=sig_pyramid_levels,
+                pyramid_sequential=sig_pyramid_sequential,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,

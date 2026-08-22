@@ -268,7 +268,7 @@ export interface Strategy {
     exit_logic?: ExitLogic;
     risk_management: RiskManagement;
     // Solo presente si la piramidación está activa y con niveles válidos.
-    pyramiding?: { timeframe: Timeframe; levels: PyramidLevel[] };
+    pyramiding?: { timeframe: Timeframe; mode?: 'individual' | 'sequential'; levels: PyramidLevel[] };
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
@@ -335,6 +335,9 @@ export interface PyramidLevel {
     root_condition: ConditionGroup;
     action: 'add' | 'reduce';
     capital_pct: number;   // % en unidades de UI (1 = 1%)
+    // Cuantas veces puede disparar por trade (flancos de su señal). 1 = el
+    // clasico "una vez"; con Darvas, 3 = hasta tres cajas seguidas.
+    times: number;
 }
 
 export interface PyramidingConfig {
@@ -342,6 +345,10 @@ export interface PyramidingConfig {
                            // lleva la clave `pyramiding` (regla nº1: sin
                            // piramidar, nada cambia en el backend)
     timeframe: Timeframe;
+    // individual (por defecto): cada piramide vigila su condicion en paralelo,
+    // sin anclaje entre ellas. sequential: cada una se ARMA solo cuando la
+    // anterior ya ha disparado al menos una vez.
+    mode: 'individual' | 'sequential';
     levels: PyramidLevel[];
 }
 
@@ -349,10 +356,12 @@ export const emptyPyramidLevel = (): PyramidLevel => ({
     root_condition: { type: "group", operator: "AND", conditions: [] },
     action: 'add',
     capital_pct: 1.0,
+    times: 1,
 });
 
 export const initialPyramiding: PyramidingConfig = {
     active: false,
     timeframe: Timeframe.M1,
+    mode: 'individual',
     levels: [],
 };

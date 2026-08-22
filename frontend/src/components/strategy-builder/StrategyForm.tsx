@@ -169,6 +169,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             ...(pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
                 ? { pyramiding: {
                         timeframe: pyramiding.timeframe,
+                        mode: pyramiding.mode || 'individual',
                         levels: pyramiding.levels.filter(l => l.root_condition.conditions.length > 0 && l.capital_pct > 0),
                     } }
                 : {}),

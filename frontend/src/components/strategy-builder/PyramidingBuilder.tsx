@@ -58,8 +58,11 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
     // que lo honesto es mostrar el total efectivo 1 - prod(1 - pct).
     const adds = config.levels.filter(l => l.action === 'add');
     const reduces = config.levels.filter(l => l.action === 'reduce');
-    const totalAddPct = adds.reduce((s, l) => s + (l.capital_pct || 0), 0);
-    const totalReducePct = (1 - reduces.reduce((p, l) => p * (1 - Math.min(100, l.capital_pct || 0) / 100), 1)) * 100;
+    // cada nivel puede disparar `times` veces: los añadidos se multiplican y
+    // las quitas se encadenan tambien por sus repeticiones
+    const totalAddPct = adds.reduce((s, l) => s + (l.capital_pct || 0) * Math.max(1, l.times || 1), 0);
+    const totalReducePct = (1 - reduces.reduce(
+        (p, l) => p * Math.pow(1 - Math.min(100, l.capital_pct || 0) / 100, Math.max(1, l.times || 1)), 1)) * 100;
 
     return (
         <div style={{
@@ -124,15 +127,31 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }} className="animate-in fade-in duration-200">
                     {/* Timeframe del bloque + contador */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Timeframe:</span>
-                            <select
-                                value={config.timeframe}
-                                onChange={(e) => onChange({ ...config, timeframe: e.target.value as Timeframe })}
-                                style={selectStyle}
-                            >
-                                {TIMEFRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
-                            </select>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Timeframe:</span>
+                                <select
+                                    value={config.timeframe}
+                                    onChange={(e) => onChange({ ...config, timeframe: e.target.value as Timeframe })}
+                                    style={selectStyle}
+                                >
+                                    {TIMEFRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
+                                </select>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Modo:</span>
+                                <select
+                                    value={config.mode || 'individual'}
+                                    onChange={(e) => onChange({ ...config, mode: e.target.value as 'individual' | 'sequential' })}
+                                    style={selectStyle}
+                                    title={(config.mode || 'individual') === 'individual'
+                                        ? 'Cada pirámide vigila su condición en paralelo, sin depender de las demás.'
+                                        : 'Cada pirámide solo se arma cuando la anterior ya ha disparado al menos una vez.'}
+                                >
+                                    <option value="individual">Individual</option>
+                                    <option value="sequential">Secuencial</option>
+                                </select>
+                            </div>
                         </div>
                         {/* El contador pedido por el usuario */}
                         {config.levels.length > 0 && (
@@ -188,6 +207,18 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                 <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>
                                     {lv.action === 'add' ? '% del equity' : '% de la posición'}
                                 </span>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', marginLeft: 6 }}>Veces:</span>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    step={1}
+                                    value={lv.times ?? 1}
+                                    onChange={(e) => setLevel(idx, { ...lv, times: e.target.value === '' ? 1 : Math.max(1, Math.floor(Number(e.target.value))) })}
+                                    onFocus={(e) => e.target.select()}
+                                    style={{ ...selectStyle, width: 52, cursor: 'text' }}
+                                    title="Cuántas veces puede disparar esta pirámide por trade (cada cumplimiento nuevo de la condición cuenta una vez)"
+                                />
                                 <button
                                     type="button"
                                     onClick={() => removeLevel(idx)}
@@ -232,9 +263,12 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                     >+ Añadir pirámide</button>
 
                     <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9.5, color: 'var(--color-ec-text-muted)', lineHeight: 1.5 }}>
-                        Cada pirámide dispara una sola vez por trade, siempre después de la entrada; una reentrada las rearma.
-                        El stop y el take profit no se recalculan al añadir (quedan anclados a la entrada original) y corren en
-                        paralelo: cierran lo que las quitas no se hayan llevado.
+                        {(config.mode || 'individual') === 'individual'
+                            ? 'Cada pirámide es INDEPENDIENTE: vigila su condición en paralelo, sin depender de las demás (la numeración es solo orden).'
+                            : 'Modo SECUENCIAL: cada pirámide solo se arma cuando la anterior ya ha disparado al menos una vez.'}
+                        {' '}Dispara hasta las «veces» indicadas, contando cada cumplimiento nuevo de la condición, siempre después de la
+                        entrada; una reentrada lo rearma todo. El stop y el take profit no se recalculan al añadir (quedan anclados a la
+                        entrada original) y corren en paralelo: cierran lo que las quitas no se hayan llevado.
                     </span>
                 </div>
             )}

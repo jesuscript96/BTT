@@ -357,11 +357,19 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             pct = 0.0
         if pct <= 0:
             continue
+        try:
+            veces = int(lv.get("times", 1))
+        except (TypeError, ValueError):
+            veces = 1
         pyr_levels_def.append({
             "root_condition": root,
             "action": "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add",
             # La UI manda % (1 = 1%); el motor trabaja en fracción.
             "capital_frac": pct / 100.0,
+            # Cuantas veces puede disparar este nivel por trade (flancos de su
+            # señal). 1 es el clasico; el tope de 100 es un cinturon contra
+            # valores absurdos, no un limite de diseño.
+            "max_fires": max(1, min(100, veces)),
         })
 
     compiled = {
@@ -380,6 +388,9 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "entry_candle_delay": entry_logic.get("candle_delay"),
         "exit_candle_delay": exit_logic.get("candle_delay"),
         "pyramid_tf": pyramiding.get("timeframe", "1m"),
+        # individual (por defecto): cada piramide vigila su condicion en
+        # paralelo. sequential: cada una se arma cuando la anterior disparo.
+        "pyramid_sequential": str(pyramiding.get("mode", "individual")).lower() == "sequential",
         "pyramid_levels_def": pyr_levels_def,
     }
 
@@ -597,6 +608,7 @@ def translate_strategy(
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
         "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache),
+        "pyramid_sequential": compiled.get("pyramid_sequential", False),
     }
 
 
@@ -627,6 +639,7 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 "signals": sig_arr.astype(bool),
                 "action": lv["action"],
                 "capital_frac": lv["capital_frac"],
+                "max_fires": lv.get("max_fires", 1),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel

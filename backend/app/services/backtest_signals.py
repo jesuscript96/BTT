@@ -204,6 +204,7 @@ def _compute_signals_for_pair(
         # El fast-path nativo no evalua piramide (con piramide, has_special
         # fuerza el camino clasico), pero la variable debe existir aguas abajo.
         sig_pyramid_levels = []
+        sig_pyramid_sequential = False
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
         pm_highs_vals = pm_high_run
@@ -246,6 +247,7 @@ def _compute_signals_for_pair(
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
         sig_pyramid_levels = signals.get("pyramid_levels") or []
+        sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
 
     # Fast return if no entries (only for legacy; fast path already returns arrays)
     if indicator_plan is None and not np.any(entries_arr):
@@ -381,6 +383,7 @@ def _compute_signals_for_pair(
         "sig_trail_pct": sig_trail_pct,
         "sig_partial_tps": sig_partial_tps,
         "sig_pyramid_levels": sig_pyramid_levels,
+        "sig_pyramid_sequential": sig_pyramid_sequential,
         "gap_pct": daily_stats.get("gap_pct"),
     }
 
@@ -965,6 +968,7 @@ def simulate_and_accumulate(signals_sorted, params):
         sig_trail_pct = sig["sig_trail_pct"]
         sig_partial_tps = sig["sig_partial_tps"]
         sig_pyramid_levels = sig.get("sig_pyramid_levels") or []
+        sig_pyramid_sequential = bool(sig.get("sig_pyramid_sequential"))
         gap_pct = sig["gap_pct"]
 
         # When moving to a new day, add the previous day's PnL to the global pool (349-355)
@@ -1016,6 +1020,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 max_reentries=sig_max_reentries,
                 partial_take_profits=sig_partial_tps,
                 pyramid_levels=sig_pyramid_levels,
+                pyramid_sequential=sig_pyramid_sequential,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,

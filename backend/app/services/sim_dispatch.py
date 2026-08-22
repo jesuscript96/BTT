@@ -44,6 +44,7 @@ def simulate(**kwargs) -> dict:
     if pyramid_levels:
         return _legacy_simulate(**kwargs)
     kwargs.pop("pyramid_levels", None)
+    kwargs.pop("pyramid_sequential", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)
