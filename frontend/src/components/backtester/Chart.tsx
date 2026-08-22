@@ -30,6 +30,7 @@ import {
   calculateIchimoku,
   calculateParabolicSAR,
   calculateDonchian,
+  calculateDarvasBoxes,
   calculateBollingerBands,
   calculateOpeningRange,
   calculateRSI,
@@ -559,6 +560,45 @@ export default function Chart({
               sL.setData(d.map(p => ({ time: p.time, value: p.lower })));
               const sM = chart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 1, lineStyle: 2 });
               sM.setData(d.map(p => ({ time: p.time, value: p.middle })));
+            }
+            break;
+          }
+          case "DARVAS": {
+            // El RECTANGULO COMPLETO de cada caja, desde la vela cuyo maximo es
+            // el techo (el pico) hasta la vela que la rompe con su cierre.
+            //
+            // Dos tonos con significado:
+            //   - ATENUADO  (origen -> consolidacion): la caja en formacion. El
+            //     techo ya esta puesto pero el suelo aun se esta buscando; solo
+            //     se conoce a posteriori, y el motor NO emite nivel ahi (seria
+            //     lookahead). Es seguro pintarlo: durante la formacion el precio
+            //     nunca sale de los niveles (un maximo por encima cancela la
+            //     caja y un minimo por debajo desplaza el suelo), asi que aqui
+            //     no puede haber ninguna señal que el motor "se pierda".
+            //   - SOLIDO (consolidacion -> ruptura): la caja operativa. Como
+            //     dentro de la caja los cierres no salen, LA SEÑAL ES SIEMPRE
+            //     EL BORDE DERECHO del tramo solido: la vela que la mata.
+            //
+            // Cada linea son DOS puntos al mismo nivel -> horizontal y estatica
+            // por construccion. Una serie por tramo: el primer intento uso una
+            // sola serie con "whitespace" y lightweight-charts NO corta la
+            // linea en el whitespace (solo reserva el hueco en el eje), asi que
+            // los techos de todas las cajas salian unidos en diagonal.
+            const boxes = calculateDarvasBoxes(deduped, ai.params.period ?? 3);
+            const solido = {
+              color: "#f59e0b", lineWidth: 2 as const,
+              lastValueVisible: false, priceLineVisible: false,
+            };
+            const tenue = { ...solido, color: "rgba(245, 158, 11, 0.35)" };
+            for (const b of boxes) {
+              for (const nivel of [b.upper, b.lower]) {
+                if (b.consolidated !== b.from) {
+                  const f = chart.addSeries(LineSeries, tenue);
+                  f.setData([{ time: b.from, value: nivel }, { time: b.consolidated, value: nivel }]);
+                }
+                const a = chart.addSeries(LineSeries, solido);
+                a.setData([{ time: b.consolidated, value: nivel }, { time: b.to, value: nivel }]);
+              }
             }
             break;
           }

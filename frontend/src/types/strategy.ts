@@ -51,6 +51,11 @@ export enum IndicatorType {
     EMA = "EMA",
     VWAP = "VWAP",
     DONCHIAN = "Donchian",
+    // Caja de Darvas: soporte y resistencia HORIZONTALES que nacen de la
+    // maquina de 3 estados del indicador (techo -> suelo -> caja). Se usa como
+    // NIVEL contra el que cruzar cualquier otra variable, igual que Donchian.
+    // El valor que llega al backend es el nombre canonico de indicators.py.
+    DARVAS_BOX = "Darvas Box",
     BOLLINGER_BANDS = "Bollinger Bands",
     ACCUMULATED_VOLUME = "Accumulated Volume",
     YESTERDAY_VOLUME = "Yesterday Volume",

@@ -121,6 +121,19 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     multiSeries: true,
   },
   {
+    // Caja de Darvas. `period` no es una ventana movil: son las velas de
+    // CONFIRMACION que el nivel tiene que aguantar para validarse (3 es el
+    // parametro clasico del metodo). multi: true porque tiene sentido pintar
+    // dos cajas con distinta confirmacion a la vez y compararlas.
+    id: "DARVAS",
+    label: "Darvas Box",
+    category: "Volatility",
+    displayMode: "overlay",
+    params: [{ name: "period", label: "Velas confirm.", default: 3, min: 1, max: 100 }],
+    multi: true,
+    multiSeries: true,
+  },
+  {
     id: "BOLLINGER",
     label: "Bollinger Bands",
     category: "Volatility",
