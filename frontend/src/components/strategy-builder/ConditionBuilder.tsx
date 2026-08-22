@@ -51,6 +51,10 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
             return { period: 20, stdDev: 2, band_line: "Upper" };
         case IndicatorType.DONCHIAN:
             return { period: 20, band_line: "Upper" };
+        // Darvas: 3 velas de confirmacion es el parametro clasico del metodo,
+        // y "Upper" (la resistencia) es la linea que se usa casi siempre.
+        case IndicatorType.DARVAS_BOX:
+            return { period: 3, band_line: "Upper" };
         case IndicatorType.HIGH_X_DAYS:
         case IndicatorType.LOW_X_DAYS:
             return { days_lookback: 5 };
@@ -104,7 +108,8 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     ],
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
-        IndicatorType.DONCHIAN, IndicatorType.BOLLINGER_BANDS,
+        IndicatorType.DONCHIAN, IndicatorType.DARVAS_BOX,
+        IndicatorType.BOLLINGER_BANDS,
         IndicatorType.ACCUMULATED_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
     ],
@@ -170,6 +175,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.EMA]: "EMA",
     [IndicatorType.VWAP]: "VWAP",
     [IndicatorType.DONCHIAN]: "Donchian",
+    [IndicatorType.DARVAS_BOX]: "Darvas Box",
     [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
     [IndicatorType.ACCUMULATED_VOLUME]: "Accum. Volume",
     [IndicatorType.YESTERDAY_VOLUME]: "Yesterday Volume",
@@ -234,6 +240,7 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.EMA]: "Media Móvil Exponencial.",
     [IndicatorType.VWAP]: "Precio Medio Ponderado por Volumen de la sesión.",
     [IndicatorType.DONCHIAN]: "Canales de Donchian.",
+    [IndicatorType.DARVAS_BOX]: "Caja de Darvas: resistencia (Upper) y soporte (Lower) horizontales. El techo se valida cuando N velas seguidas no lo superan; el suelo, cuando N velas seguidas no lo perforan. Las mechas construyen la caja; solo un CIERRE fuera la rompe.",
     [IndicatorType.BOLLINGER_BANDS]: "Bandas de Bollinger.",
     [IndicatorType.ACCUMULATED_VOLUME]: "Volumen total acumulado desde el inicio de la sesión en Premarket hasta la vela actual",
     [IndicatorType.YESTERDAY_VOLUME]: "Volumen total registrado el día de ayer.",
@@ -260,6 +267,7 @@ const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
     IndicatorType.ACCUMULATED_VOLUME,
     IndicatorType.BOLLINGER_BANDS,
     IndicatorType.DONCHIAN,
+    IndicatorType.DARVAS_BOX,
     IndicatorType.RVOL,
     IndicatorType.VOLUME,
     IndicatorType.ATR
@@ -580,6 +588,7 @@ export const IndicatorParams = ({
                         );
                     case IndicatorType.BOLLINGER_BANDS:
                     case IndicatorType.DONCHIAN:
+                    case IndicatorType.DARVAS_BOX:
                         return (
                             <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap' }}>
                                 <input
@@ -587,7 +596,10 @@ export const IndicatorParams = ({
                                     value={value.period ?? ''}
                                     onChange={(e) => onChange({ ...value, period: e.target.value === '' ? undefined : Number(e.target.value) })}
                                     onFocus={(e) => e.target.select()}
-                                    placeholder="Period"
+                                    // En Darvas el periodo no es una ventana movil: son las
+                                    // velas de CONFIRMACION que el techo (o el suelo) tiene que
+                                    // aguantar para validarse. Merece su propia etiqueta.
+                                    placeholder={value.name === IndicatorType.DARVAS_BOX ? "Velas" : "Period"}
                                     style={{
                                         flex: '1 1 70px',
                                         minWidth: '70px',
@@ -601,7 +613,9 @@ export const IndicatorParams = ({
                                         fontFamily: 'var(--color-ec-sans)',
                                         outline: 'none',
                                     }}
-                                    title="Period"
+                                    title={value.name === IndicatorType.DARVAS_BOX
+                                        ? "Velas de confirmación: cuántas velas seguidas tienen que respetar el nivel para que quede validado"
+                                        : "Period"}
                                 />
                                 {value.name === IndicatorType.BOLLINGER_BANDS && (
                                     <input
@@ -644,9 +658,22 @@ export const IndicatorParams = ({
                                         cursor: 'pointer',
                                     }}
                                 >
-                                    <option value="Upper">Upper</option>
-                                    <option value="Lower">Lower</option>
-                                    <option value="Basis">Basis</option>
+                                    {/* El valor que viaja al backend es siempre Upper/Lower/Basis
+                                        (band_line). Solo cambia la etiqueta: en Darvas "banda
+                                        superior" no dice nada y "resistencia" sí. */}
+                                    {value.name === IndicatorType.DARVAS_BOX ? (
+                                        <>
+                                            <option value="Upper">Darvas superior (resistencia)</option>
+                                            <option value="Lower">Darvas inferior (soporte)</option>
+                                            <option value="Basis">Centro de la caja</option>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <option value="Upper">Upper</option>
+                                            <option value="Lower">Lower</option>
+                                            <option value="Basis">Basis</option>
+                                        </>
+                                    )}
                                 </select>
                             </div>
                         );

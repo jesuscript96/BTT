@@ -25,6 +25,10 @@ const ALL_BEHAVIOUR = [
 const ALL_INDICATORS = [
     IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
     IndicatorType.DONCHIAN, IndicatorType.BOLLINGER_BANDS,
+    // La caja de Darvas es un NIVEL (soporte/resistencia), asi que tiene
+    // que poder enfrentarse a cualquier variable de entrada y de salida,
+    // igual que Donchian o las Bollinger.
+    IndicatorType.DARVAS_BOX,
 ];
 
 const YESTERDAY_VARS = [
@@ -151,6 +155,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.EMA]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.VWAP]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.DONCHIAN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.DARVAS_BOX]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.BOLLINGER_BANDS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // Volume — standalone o valor fijo
@@ -186,6 +191,7 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
     [IndicatorType.EMA]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.VWAP]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.DONCHIAN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.DARVAS_BOX]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.BOLLINGER_BANDS]: [...DISTANCE_ALLOWED_TARGETS],
 };
 

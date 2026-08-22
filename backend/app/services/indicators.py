@@ -426,6 +426,128 @@ def _consecutive_count(signal: np.ndarray) -> np.ndarray:
     return _consecutive_count_core(np.ascontiguousarray(signal))
 
 
+# --- Darvas Box -----------------------------------------------------------
+# Maquina de 3 estados, literal del documento del usuario ("Indicador Darvas"):
+#   1. BUSCANDO_TECHO  -> un maximo que aguanta N velas sin ser igualado
+#   2. BUSCANDO_SUELO  -> un minimo que aguanta N velas sin ser perforado
+#   3. CAJA_CONSOLIDADA-> dos lineas HORIZONTALES y ESTATICAS hasta que un
+#                         CIERRE salga de ellas
+#
+# Las dos reglas que no se pueden confundir, y que son la esencia del indicador:
+#   * las MECHAS (high/low) construyen y validan la caja (pasos 1 y 2);
+#   * solo los CIERRES la destruyen (paso 3). Una mecha fuera no rompe nada.
+#
+# Comparaciones, tomadas al pie de la letra del documento porque cambian el
+# resultado: el techo se reinicia con un maximo "igual o mayor" (>=), pero se
+# confirma con maximos "estrictamente menores" (<). El suelo se confirma con
+# minimos "estrictamente mayores" (>), baja con uno menor (<), y con uno IGUAL
+# ni confirma ni baja: rompe la racha y el contador vuelve a cero.
+BUSCANDO_TECHO = 0
+BUSCANDO_SUELO = 1
+CAJA_CONSOLIDADA = 2
+
+
+@njit(cache=True)
+def _darvas_box_core(high, low, close, n_confirm):
+    """Devuelve (techo, suelo) por vela. NaN mientras no haya caja viva.
+
+    Causal por construccion: cada barra se decide solo con datos hasta esa
+    barra, nunca mirando adelante.
+
+    En la vela que ROMPE la caja se sigue emitiendo el nivel que tenia. Es
+    deliberado: si se pusiera NaN ahi, un cruce contra el techo nunca podria
+    detectarse en la vela que precisamente lo cruza. A partir de la siguiente
+    ya sale NaN, hasta que nazca la caja nueva.
+    """
+    n = len(close)
+    techo = np.full(n, np.nan)
+    suelo = np.full(n, np.nan)
+    if n == 0:
+        return techo, suelo
+
+    estado = BUSCANDO_TECHO
+    cand_techo = high[0]
+    # Indice donde nacio el candidato a techo: el suelo inicial es el minimo de
+    # TODO el periodo de formacion del techo (desde esa vela hasta la que lo
+    # confirma), tal y como pide el paso 2.
+    idx_origen = 0
+    cuenta = 0
+    techo_ok = np.nan
+    suelo_ok = np.nan
+    cand_suelo = np.nan
+
+    for i in range(1, n):
+        if estado == BUSCANDO_TECHO:
+            if high[i] >= cand_techo:
+                cand_techo = high[i]        # reinicio: nuevo candidato
+                idx_origen = i
+                cuenta = 0
+            else:
+                cuenta += 1
+                if cuenta >= n_confirm:
+                    techo_ok = cand_techo
+                    # Minimo de todo el periodo de formacion, extremos incluidos
+                    m = low[idx_origen]
+                    for j in range(idx_origen + 1, i + 1):
+                        if low[j] < m:
+                            m = low[j]
+                    cand_suelo = m
+                    cuenta = 0
+                    estado = BUSCANDO_SUELO
+
+        elif estado == BUSCANDO_SUELO:
+            # Escenario C: el precio se dispara y supera el techo ya validado.
+            # Se cancela todo y se vuelve al paso 1 con este maximo.
+            if high[i] > techo_ok:
+                cand_techo = high[i]
+                idx_origen = i
+                cuenta = 0
+                techo_ok = np.nan
+                cand_suelo = np.nan
+                estado = BUSCANDO_TECHO
+            elif low[i] < cand_suelo:
+                cand_suelo = low[i]         # el suelo se desplaza hacia abajo
+                cuenta = 0
+            elif low[i] > cand_suelo:
+                cuenta += 1
+                if cuenta >= n_confirm:
+                    suelo_ok = cand_suelo
+                    estado = CAJA_CONSOLIDADA
+            else:
+                cuenta = 0                  # minimo IGUAL: rompe la racha
+
+        else:  # CAJA_CONSOLIDADA
+            # Solo el cierre puede matarla. Las mechas fuera no cuentan.
+            if close[i] > techo_ok or close[i] < suelo_ok:
+                techo[i] = techo_ok         # el nivel vive en la vela que rompe
+                suelo[i] = suelo_ok
+                cand_techo = high[i]        # el maximo de la vela de ruptura
+                idx_origen = i
+                cuenta = 0
+                techo_ok = np.nan
+                suelo_ok = np.nan
+                cand_suelo = np.nan
+                estado = BUSCANDO_TECHO
+                continue
+
+        if estado == CAJA_CONSOLIDADA:
+            techo[i] = techo_ok
+            suelo[i] = suelo_ok
+
+    return techo, suelo
+
+
+def _darvas_box(high: np.ndarray, low: np.ndarray, close: np.ndarray,
+                n_confirm: int) -> tuple[np.ndarray, np.ndarray]:
+    n_confirm = max(1, int(n_confirm))
+    return _darvas_box_core(
+        np.ascontiguousarray(high, dtype=np.float64),
+        np.ascontiguousarray(low, dtype=np.float64),
+        np.ascontiguousarray(close, dtype=np.float64),
+        n_confirm,
+    )
+
+
 def _hammer(open_: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
     body = np.abs(close - open_)
     full_range = high - low + 1e-10
@@ -767,6 +889,11 @@ INDICATOR_NAME_MAP = {
     "Triangle Symmetric": "Triangle Symmetric",
 
     # Indicators
+    # Darvas: el nombre canonico es "Darvas Box"; los alias son como puede
+    # llegar desde la interfaz o desde estrategias escritas a mano.
+    "Darvas Box": "Darvas Box",
+    "Darvas": "Darvas Box",
+    "Caja Darvas": "Darvas Box",
     "Donchian": "Donchian Channels",
     "Bollinger Bands": "Bollinger Bands",
     "Accumulated Volume": "Accumulated Volume",
@@ -1458,6 +1585,29 @@ def _compute_raw(
         sd = std_dev or 2.0
         _, _, lower = _bollinger_bands(close.values.astype(np.float64), period or 20, sd)
         return pd.Series(lower, index=close.index)
+
+    if name == "Darvas Box":
+        # `period` = N velas de confirmacion (3 en el Darvas clasico).
+        # `band_line` elige que linea de la caja se devuelve:
+        #   "Upper" -> darvas superior, la RESISTENCIA (por defecto)
+        #   "Lower" -> darvas inferior, el SOPORTE
+        #   "Basis" -> el centro, por simetria con las otras bandas
+        # Devuelve un NIVEL por vela, constante mientras la caja vive, para
+        # poder cruzarlo contra cualquier otra variable igual que un soporte o
+        # una resistencia cualquiera. NaN mientras no hay caja: una comparacion
+        # contra NaN da False, que es justo lo que se quiere (sin caja no hay
+        # señal). Ver _darvas_box_core para la maquina de estados.
+        techo, suelo = _darvas_box(
+            high.values.astype(np.float64),
+            low.values.astype(np.float64),
+            close.values.astype(np.float64),
+            period or 3,
+        )
+        if band_line == "Lower":
+            return pd.Series(suelo, index=close.index)
+        if band_line == "Basis":
+            return pd.Series((techo + suelo) / 2.0, index=close.index)
+        return pd.Series(techo, index=close.index)
 
     if name == "Donchian Channels":
         period = period or 20

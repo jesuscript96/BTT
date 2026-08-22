@@ -399,6 +399,145 @@ export function calculateDonchian(data: CandleData[], period: number): BandDataP
 }
 
 // ---------------------------------------------------------------------------
+// 9b. Darvas Box
+// ---------------------------------------------------------------------------
+/** Un punto de la caja. `null` = no hay caja viva en esa vela. */
+export interface DarvasDataPoint {
+    time: Time;
+    upper: number | null;
+    lower: number | null;
+}
+
+/**
+ * Caja de Darvas: máquina de 3 estados (buscar techo → buscar suelo → caja).
+ *
+ * ⚠️ PARIDAD OBLIGATORIA con `_darvas_box_core` de
+ * `backend/app/services/indicators.py`. Este cálculo es el que se DIBUJA y
+ * aquel el que DECIDE las entradas: si divergen, el gráfico miente justo en lo
+ * que se quiere comprobar (que la estrategia entra y sale donde debe). Si se
+ * toca uno, tocar el otro y volver a comparar.
+ *
+ * Las dos reglas que lo definen: las mechas (high/low) construyen y validan la
+ * caja; solo un CIERRE fuera la destruye. Y los operadores van al pie de la
+ * letra de la especificación: el techo se reinicia con `>=` pero se confirma
+ * con `<`; el suelo se confirma con `>`, baja con `<`, y con un mínimo IGUAL ni
+ * confirma ni baja — rompe la racha.
+ */
+/**
+ * Una caja consolidada entera, para poder dibujarla como el rectángulo
+ * clásico de Darvas: desde la vela cuyo máximo ES el techo (el pico) hasta la
+ * vela que la rompe con su cierre.
+ *
+ * `consolidated` marca dónde la caja "nace oficialmente" (techo Y suelo
+ * validados). Antes de ese punto la caja estaba en formación: se conoce solo a
+ * posteriori, y por eso el motor de estrategias NO emite nivel ahí (sería
+ * lookahead). Dibujarla entera es seguro para verificar señales porque durante
+ * la formación el precio NUNCA sale de los niveles — un máximo por encima del
+ * techo la cancela (Escenario C) y un mínimo por debajo DESPLAZA el suelo, así
+ * que una caja que llegó a nacer contiene todas sus velas por construcción.
+ */
+export interface DarvasBoxSegment {
+    from: Time;          // vela cuyo máximo es el techo (origen visual)
+    consolidated: Time;  // vela donde la caja queda validada (empieza a operar)
+    to: Time;            // vela que la rompe con su cierre, o la última del dato
+    fromIdx: number;
+    consolidatedIdx: number;
+    toIdx: number;
+    upper: number;
+    lower: number;
+}
+
+function darvasMachine(sorted: CandleData[], nConfirm: number): { points: DarvasDataPoint[]; boxes: DarvasBoxSegment[] } {
+    const points: DarvasDataPoint[] = [];
+    const boxes: DarvasBoxSegment[] = [];
+    const n = sorted.length;
+    if (n === 0) return { points, boxes };
+
+    const N = Math.max(1, Math.floor(nConfirm || 3));
+    const BUSCANDO_TECHO = 0, BUSCANDO_SUELO = 1, CAJA = 2;
+
+    let estado = BUSCANDO_TECHO;
+    let candTecho = sorted[0].high;
+    let idxOrigen = 0;
+    let cuenta = 0;
+    let techoOk = NaN, sueloOk = NaN, candSuelo = NaN;
+    let origenCaja = 0;       // idxOrigen del techo validado vigente (el pico)
+    let idxConsolidada = 0;   // vela donde nació la caja vigente
+
+    const empujarCaja = (toIdx: number) => {
+        boxes.push({
+            from: sorted[origenCaja].time as Time,
+            consolidated: sorted[idxConsolidada].time as Time,
+            to: sorted[toIdx].time as Time,
+            fromIdx: origenCaja, consolidatedIdx: idxConsolidada, toIdx,
+            upper: techoOk, lower: sueloOk,
+        });
+    };
+
+    points.push({ time: sorted[0].time as Time, upper: null, lower: null });
+
+    for (let i = 1; i < n; i++) {
+        const { high, low, close } = sorted[i];
+        let rompeAqui = false;
+
+        if (estado === BUSCANDO_TECHO) {
+            if (high >= candTecho) {
+                candTecho = high; idxOrigen = i; cuenta = 0;
+            } else {
+                cuenta++;
+                if (cuenta >= N) {
+                    techoOk = candTecho;
+                    origenCaja = idxOrigen;
+                    let m = sorted[idxOrigen].low;
+                    for (let j = idxOrigen + 1; j <= i; j++) if (sorted[j].low < m) m = sorted[j].low;
+                    candSuelo = m; cuenta = 0; estado = BUSCANDO_SUELO;
+                }
+            }
+        } else if (estado === BUSCANDO_SUELO) {
+            if (high > techoOk) {
+                // Rompe el techo ya validado: se cancela todo y se vuelve al paso 1.
+                candTecho = high; idxOrigen = i; cuenta = 0;
+                techoOk = NaN; candSuelo = NaN; estado = BUSCANDO_TECHO;
+            } else if (low < candSuelo) {
+                candSuelo = low; cuenta = 0;
+            } else if (low > candSuelo) {
+                cuenta++;
+                if (cuenta >= N) { sueloOk = candSuelo; idxConsolidada = i; estado = CAJA; }
+            } else {
+                cuenta = 0;
+            }
+        } else {
+            if (close > techoOk || close < sueloOk) {
+                // El nivel se emite en la vela que rompe, para que el cruce sea visible ahí.
+                points.push({ time: sorted[i].time as Time, upper: techoOk, lower: sueloOk });
+                empujarCaja(i);
+                candTecho = high; idxOrigen = i; cuenta = 0;
+                techoOk = NaN; sueloOk = NaN; candSuelo = NaN;
+                estado = BUSCANDO_TECHO;
+                rompeAqui = true;
+            }
+        }
+
+        if (rompeAqui) continue;
+        if (estado === CAJA) points.push({ time: sorted[i].time as Time, upper: techoOk, lower: sueloOk });
+        else points.push({ time: sorted[i].time as Time, upper: null, lower: null });
+    }
+    // Caja aún viva al acabar el dato: se dibuja hasta la última vela.
+    if (estado === CAJA) empujarCaja(n - 1);
+    return { points, boxes };
+}
+
+/** Serie causal por vela (la misma que usa el motor). NaN/null = sin caja. */
+export function calculateDarvasBox(data: CandleData[], nConfirm: number): DarvasDataPoint[] {
+    return darvasMachine(sortAndDedup(data), nConfirm).points;
+}
+
+/** Las cajas enteras, con su origen, para dibujar el rectángulo completo. */
+export function calculateDarvasBoxes(data: CandleData[], nConfirm: number): DarvasBoxSegment[] {
+    return darvasMachine(sortAndDedup(data), nConfirm).boxes;
+}
+
+// ---------------------------------------------------------------------------
 // 10. Bollinger Bands
 // ---------------------------------------------------------------------------
 export function calculateBollingerBands(data: CandleData[], period: number, stdDev: number): BandDataPoint[] {
