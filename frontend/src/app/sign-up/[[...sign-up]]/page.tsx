@@ -116,7 +116,11 @@ export default function SignUpPage() {
           backgroundColor: "#101213",
         }}
       >
-        <SignUp />
+        {/* routing="hash": los pasos del alta (email → código → continuar) van en
+            el hash de la URL, no en sub-rutas. Con la página en `force-dynamic`,
+            navegar entre sub-rutas por paso re-fetcheaba el RSC y hacía parpadear
+            la tarjeta de registro varias veces antes del gate; el hash lo evita. */}
+        <SignUp routing="hash" />
       </div>
     </div>
   );
