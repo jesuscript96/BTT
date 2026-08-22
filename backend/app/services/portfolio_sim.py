@@ -139,7 +139,8 @@ def simulate(
     entry_price = 0.0
     entry_idx = 0
     entry_time = 0
-    entry_fee_amount = 0.0
+    # ITEM 4 (fees): ¿ya se cobró el lado de entrada de la posición abierta?
+    entry_fee_charged = False
     size = 0.0
     trade_sl_price = 0.0
     trail_extreme = 0.0
@@ -326,12 +327,21 @@ def simulate(
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
                             pt_size = original_size * cap_frac
                             pt_size = min(pt_size, size)
+                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
+                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 if is_long:
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                if closes_position and not entry_fee_charged:
+                                    # Si esta leg cierra todo, el bloque de cierre final
+                                    # nunca correrá → cobrar AQUÍ el lado de entrada (UNA
+                                    # vez). Orden FP: salida primero, luego += entrada
+                                    # (paridad bit a bit con el kernel JIT).
+                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
+                                    entry_fee_charged = True
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -374,12 +384,21 @@ def simulate(
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
                             pt_size = original_size * cap_frac
                             pt_size = min(pt_size, size)
+                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
+                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 if is_long:
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                if closes_position and not entry_fee_charged:
+                                    # Si esta leg cierra todo, el bloque de cierre final
+                                    # nunca correrá → cobrar AQUÍ el lado de entrada (UNA
+                                    # vez). Orden FP: salida primero, luego += entrada
+                                    # (paridad bit a bit con el kernel JIT).
+                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
+                                    entry_fee_charged = True
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -425,12 +444,19 @@ def simulate(
                                 net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
                                 pt_size = original_size * cap_frac
                                 pt_size = min(pt_size, size)
+                                # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
+                                closes_position = (size - pt_size) <= 0.0001
                                 if pt_size > 0:
                                     if is_long:
                                         gross_pnl = (net_pt_exit - entry_price) * pt_size
                                     else:
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
                                     fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                    if closes_position and not entry_fee_charged:
+                                        # ITEM 4: cierre total por parcial → cobrar aquí
+                                        # la entrada (UNA vez). Mismo orden FP que el JIT.
+                                        fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
+                                        entry_fee_charged = True
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -492,9 +518,16 @@ def simulate(
                             _cap = (pt.get("capital_pct_a") or pt["capital_pct"]) if _fire_a else pt["capital_pct"]
                             pt_size = original_size * _cap
                             pt_size = min(pt_size, size)  # Can't close more than remaining
+                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
+                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                if closes_position and not entry_fee_charged:
+                                    # ITEM 4: cierre total por parcial → cobrar aquí la
+                                    # entrada (UNA vez). Orden FP: salida, luego += entrada.
+                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
+                                    entry_fee_charged = True
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -555,9 +588,16 @@ def simulate(
                             _cap = (pt.get("capital_pct_a") or pt["capital_pct"]) if _fire_a else pt["capital_pct"]
                             pt_size = original_size * _cap
                             pt_size = min(pt_size, size)
+                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
+                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
                                 fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
+                                if closes_position and not entry_fee_charged:
+                                    # ITEM 4: cierre total por parcial → cobrar aquí la
+                                    # entrada (UNA vez). Orden FP: salida, luego += entrada.
+                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
+                                    entry_fee_charged = True
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -821,6 +861,7 @@ def simulate(
                     mae = 0.0
                     mfe = 0.0
                     original_size = size
+                    entry_fee_charged = False  # ITEM 4: reset por posición
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
                     # 1A (fade desde el máximo previo del día): nivel y skip se
                     # calculan UNA vez con los precios de entrada. ref = máximo

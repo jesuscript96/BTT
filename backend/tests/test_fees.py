@@ -175,3 +175,111 @@ def test_paridad_jit_python():
         b = simulate_jit(**kwargs)
         assert a["trades"] == b["trades"], f"trades difieren: {cfg['fee_type']}"
         np.testing.assert_array_equal(a["equity"], b["equity"])
+
+
+# ─── ITEM 4 (2026-08-22, reporte Sailor): cierre 100% vía parciales ────────
+# El lado de ENTRADA solo lo cobra el bloque de cierre final; si la posición
+# cierra entera por parciales, ese bloque nunca corre y la entrada queda sin
+# cobrar. T-A/T-B (rojos antes del fix), T-C/T-D (anti-regresión: los caminos
+# que ya funcionaban deben quedar BIT-IDÉNTICOS — detectan doble cobro o
+# toque accidental del bloque final).
+
+_ROWS_PARCIAL = [
+    (100.0, 100.1,  99.9, 100.0),  # señal
+    (100.0, 100.4,  99.6, 100.2),  # entrada open=100
+    (101.0, 102.5, 100.9, 102.3),  # high ≥ 102 → disparan los parciales
+    (102.3, 102.8, 101.8, 102.4),  # EOD (sin posición ya)
+]
+
+
+def test_TA_cierre_100pct_via_1_parcial_cobra_entrada():
+    """T-A: parcial capital 100% a +2%. gross (102−100)×1000 = 2000.
+    Fee correcto = entrada 1000×$0.01 + salida 1000×$0.01 = $20 → pnl 1980.
+    (Antes del fix: solo la salida → pnl 1990.)"""
+    res = sim_py(
+        **_ohlc(_ROWS_PARCIAL), **_BASE_FLAT_1000,
+        partial_take_profits=[{"distance_pct": 0.02, "capital_pct": 1.0}],
+    )
+    assert len(res["trades"]) == 1
+    t = res["trades"][0]
+    assert t["exit_reason"] == "Partial TP"
+    assert t["size"] == pytest.approx(1000.0)
+    assert t["pnl"] == pytest.approx(1980.0, abs=1e-6)  # 2000 − 20
+    assert "fees" not in t  # quirk B intacto: el fee vive dentro del pnl
+
+
+def test_TB_cierre_via_2_parciales_50_50_cobra_entrada_una_vez():
+    """T-B: dos slots 50% al mismo nivel. leg1 (no cierra): fee salida $5 →
+    pnl 995. leg2 (cierra): fee salida $5 + entrada $10 → pnl 985. Σ fee $20."""
+    res = sim_py(
+        **_ohlc(_ROWS_PARCIAL), **_BASE_FLAT_1000,
+        partial_take_profits=[
+            {"distance_pct": 0.02, "capital_pct": 0.5},
+            {"distance_pct": 0.02, "capital_pct": 0.5},
+        ],
+    )
+    assert len(res["trades"]) == 2
+    leg1, leg2 = res["trades"]
+    assert leg1["pnl"] == pytest.approx(995.0, abs=1e-6)   # 1000 − 5
+    assert leg2["pnl"] == pytest.approx(985.0, abs=1e-6)   # 1000 − (5 + 10)
+    assert sum(t["pnl"] for t in res["trades"]) == pytest.approx(1980.0, abs=1e-6)
+
+
+def test_TC_parcial_30_final_70_identico_a_hoy_FLAT():
+    """T-C (anti-doble-cobro) FLAT: el parcial 30% NO cobra entrada; el cierre
+    final (intacto) cobra entrada completa + su salida. Valores exactos de HOY:
+    parcial 597, final fees 17, final pnl 1663."""
+    res = sim_py(
+        **_ohlc(_ROWS_PARCIAL), **_BASE_FLAT_1000,
+        partial_take_profits=[{"distance_pct": 0.02, "capital_pct": 0.3}],
+    )
+    parcial, final = res["trades"]
+    assert parcial["pnl"] == pytest.approx(597.0, abs=1e-6)
+    assert final["fees"] == pytest.approx(17.0, abs=1e-9)     # (1000+700)×0.01
+    assert final["pnl"] == pytest.approx(1663.0, abs=1e-6)
+
+
+def test_TC_parcial_30_final_70_identico_a_hoy_PERCENT():
+    """T-C PERCENT: mismos valores exactos de hoy (fórmula combinada del cierre
+    final intacta — no se redistribuye en A·fees + B·fees)."""
+    cfg = {**_BASE_FLAT_1000, "fee_type": "PERCENT", "fees": 0.0001, "risk_r": 10_000.0}
+    res = sim_py(
+        **_ohlc(_ROWS_PARCIAL), **cfg,
+        partial_take_profits=[{"distance_pct": 0.02, "capital_pct": 0.3}],
+    )
+    parcial, final = res["trades"]
+    assert parcial["size"] == pytest.approx(30.0)
+    assert parcial["pnl"] == pytest.approx(59.694, abs=1e-6)
+    assert final["fees"] == pytest.approx(1.7168, abs=1e-6)
+    assert final["pnl"] == pytest.approx(166.2832, abs=1e-4)
+
+
+def test_TD_sin_parciales_identico_a_hoy():
+    """T-D: sin parciales, FLAT y PERCENT — idéntico a hoy (el bloque de cierre
+    final no se toca)."""
+    res = sim_py(**_ohlc(_ROWS_EXIT_102), **_BASE_FLAT_1000)
+    t = res["trades"][0]
+    assert t["fees"] == pytest.approx(20.0, abs=1e-9)
+    assert t["pnl"] == pytest.approx(1980.0, abs=1e-6)
+
+    cfg = {**_BASE_FLAT_1000, "fee_type": "PERCENT", "fees": 0.0001, "risk_r": 10_000.0}
+    res = sim_py(**_ohlc(_ROWS_EXIT_102), **cfg)
+    t = res["trades"][0]
+    assert t["fees"] == pytest.approx(2.02, abs=1e-6)
+    assert t["pnl"] == pytest.approx(197.98, abs=1e-6)
+
+
+def test_item4_paridad_jit_python_cierre_100pct():
+    """ITEM 4 también en paridad: cierre 100% vía parcial y 50+50 por los dos
+    motores → trades y equity idénticos."""
+    for pts in (
+        [{"distance_pct": 0.02, "capital_pct": 1.0}],
+        [{"distance_pct": 0.02, "capital_pct": 0.5},
+         {"distance_pct": 0.02, "capital_pct": 0.5}],
+    ):
+        kwargs = {**_ohlc(_ROWS_PARCIAL), **_BASE_FLAT_1000,
+                  "partial_take_profits": pts}
+        a = sim_py(**kwargs)
+        b = simulate_jit(**kwargs)
+        assert a["trades"] == b["trades"], f"trades difieren: {len(pts)} slot(s)"
+        np.testing.assert_array_equal(a["equity"], b["equity"])
