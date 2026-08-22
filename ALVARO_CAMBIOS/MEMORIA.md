@@ -30,6 +30,570 @@
 
 ---
 
+## 2026-08-22 — ITEM 4 fees (reporte de Sailor) + merge Portfolio de Jaume
+
+**Qué pasó**
+- Sailor reportó por WhatsApp (07:28): "tus comisiones se calculan por shares,
+  debería ser 2×shares porque compra Y venta cobran". Cotejo contra el código:
+  el modelo por-fill del ITEM 2 **ya cobra los dos lados** en el camino normal
+  (round trip = 2×rate×shares, testeado), pero el reporte destapó un **agujero
+  real**: si la posición cierra **100% por parciales**, el bloque de cierre
+  final nunca corre y **la entrada no se cobra** (1.000 acc FLAT $0.01 →
+  pagaba $10 en vez de $20; verificado empíricamente).
+- Además: la nota de Sailor en staging (`ff276ef`) **cierra el desacuerdo
+  FLAT** ("coincidimos") y avisa de que él corrigió el quirk B (parciales sin
+  clave `fees`) **en su rama** — no en staging. Decisión: NO duplicar su
+  corrección aquí (evitar conflicto); se adopta cuando su rama llegue.
+
+**El fix (ITEM 4, commit `cd455ae`)**
+- Diseño de **mínima superficie bit-preserving** (dirigido por el revisor en
+  directiva escrita): el bloque de cierre final queda **intacto** (fórmula
+  combinada `(original_size + size)`); solo el parcial que **liquida la
+  posición** (`(size − pt_size) <= 0.0001`) añade el lado de entrada UNA vez
+  (flag `entry_fee_charged`, reset por apertura). Orden FP fijo: salida
+  primero, luego `+=` entrada. Aplicado a los 5 bloques de parciales en
+  `portfolio_sim.py` + espejo exacto en `portfolio_sim_jit.py`.
+- Tests: T-A (1 parcial 100%) y T-B (50+50) rojo→verde; T-C/T-D
+  (anti-doble-cobro, valores **bit-idénticos** a hoy en los caminos que ya
+  funcionaban) verdes; paridad JIT del caso nuevo. 17+54 passed, 0 rojos
+  nuevos.
+- Vestigio `entry_fee_amount` eliminado.
+
+**⚠️ Interacción con el quirk B de Sailor (dejar avisado)**
+Con este fix, cuando el cierre es 100% por parciales, el fee de entrada vive
+dentro del `pnl` de la leg que cierra pero NO en su clave `fees` (que no
+existe — quirk B). Cuando la corrección del quirk B de Sailor llegue a
+staging y exponga `fees` por leg, esa leg deberá reflejar salida + entrada
+absorbida, o su `fees` no reconciliará con su `pnl`. Avisado en
+`ALVARO_CAMBIOS/README.md`.
+
+**También en la sesión**
+- FF-merge de `origin/staging` ×2: `9d24781` (módulo **Portfolio** de Jaume —
+  baúl, escalado, monitorización, página `/portfolio`) y `ff276ef` (nota de
+  Sailor en MEMORIA, commiteada por Jaume).
+- Push a staging de este fix: gate de confirmación de Álvaro al cierre de la
+  sesión (regla de oro #3).
+
+---
+
+## 2026-08-22 (Sailor) — Actualización del lago en un botón + FLAT por acción (coincidimos) + 4 bugs del motor
+
+> Entrada informativa: **no se ha subido código a `staging`**, solo esta nota.
+> Todo está en `sailor-rama-desarrollo`, commit `9c76e6b`. El resumen técnico
+> para decidir qué adoptar está en `docs/CAMBIOS_SAILOR_PARA_STAGING.md` de esa
+> rama.
+
+**Comisiones FLAT: hemos llegado al mismo sitio por caminos distintos**
+
+Sailor pidió que FLAT fuera **$ por acción, cobrado en la compra y en la venta**
+(su ejemplo: 0,003 con 100 acciones = 0,30 € + 0,30 € = 0,60 €). Nuestra rama
+tenía todavía `fees × 2` — cantidad fija por operación que ignoraba el tamaño.
+Cambiado a `fees × acciones × 2` en los cuatro motores (14 puntos).
+
+**Esto ya no choca con vuestro ITEM 2 del 08-21**: vuestro modelo por fill
+—entrada de `original_size` + salida de cada tramo— **da exactamente el mismo
+total**, `fees × acciones × 2`. Cambia solo el reparto entre filas (vosotros
+cargáis la entrada entera en el cierre final; nosotros repartimos
+proporcionalmente). El punto abierto de la semántica de FLAT se puede dar por
+cerrado: coincidimos en magnitud y en significado, y los dos hemos reetiquetado
+la UI ($/share ↔ $ por acción).
+
+**Donde SÍ divergimos: el "Quirk B"**
+
+Vosotros lo mantuvisteis a propósito (parciales sin clave `fees`). Nosotros lo
+hemos corregido, porque con comisiones por acción deja de ser cosmético: la
+comisión del tramo parcial se resta del `pnl` pero se reporta como `0`, y el
+agrupador de ejecuciones de `backtest_service` la pierde. Medido sobre 396
+trades reales a 0,003 $/acción: la columna mostraba **75 $ de los 114 $
+cobrados**, un 34 % de menos. Con comisiones fijas de céntimos era invisible; con
+las nuevas no. Tocado en `portfolio_sim_jit.py`, `portfolio_sim.py` y
+`sim_dispatch.py`. **Solo afecta al informe; el PnL siempre estuvo bien.**
+Si adoptáis nuestro cambio, vuestro `test_fees.py` habrá que actualizarlo: los
+tests que afirman "parciales sin clave `fees`" pasarían a fallar a propósito.
+
+**Otros tres bugs del motor compartido, corregidos**
+
+1. **Sortino** (`backtest_service.py`, 2 sitios): usaba `np.std` de solo los
+   retornos negativos —medidos alrededor de su propia media y sin dividir por el
+   total—, dos sesgos que lo inflan. A downside deviation canónica,
+   `sqrt(mean(min(ret,0)²))`, que es lo que ya hacía el módulo de portfolio. La
+   misma estrategia mostraba dos Sortinos distintos en dos páginas de la app.
+2. **`build_screener_query`**: `require_shortable` y `exclude_dilution` son
+   interruptores de la UI, no columnas de `daily_metrics`; pero `float(True)`
+   vale 1.0, así que se colaban por el camino numérico y generaban
+   `require_shortable >= 1.0` → `BinderException` que tumbaba la consulta
+   entera. Cualquier dataset guardado con esos filtros fallaba al recalcular sus
+   pares. Una línea: `if isinstance(v, bool): continue`.
+3. **Sondeo del backtest** (`frontend/.../backtester/page.tsx`): el registro de
+   trabajos vive en memoria; si el backend se reinicia a media corrida el
+   `job_id` desaparece y el 404 permanente se trataba como "error de red
+   pasajero", reintentando cada 500 ms **indefinidamente**. Ahora se toleran 3
+   seguidos y luego para con un mensaje claro.
+
+**Dos avisos que aplican también a producción**
+
+Los dos son el mismo patrón: una copia acelerada que se queda vieja y **el motor
+la prefiere sin avisar de nada**.
+
+1. `intraday_1m_optimized` se queda corta cuando se reprocesa un mes.
+   `gcs_cache.py` lo documenta como runbook manual («regenerate the optimized
+   copy, OR delete it») y nada lo hace cumplir. Aquí costó **41 ticker-días
+   descartados en silencio**: el lago llegaba al día 20 y el backtest se cortaba
+   exactamente el 14. En local hemos descartado esa copia entera; en producción
+   merece la pena automatizar su regeneración, o el guardián.
+2. El **caché por ticker-mes** (`CACHE_DIR/{opt,raw}/<año>/<mes>/<ticker>`)
+   tiene el mismo problema un nivel más abajo: se escribe una vez y no se revisa
+   aunque el mes crezca. Nos costó otros 9 ticker-días. El runbook también lo
+   documenta como purga manual.
+
+En ambos casos, quien lo destapó fue **vuestro chivato de `data_completeness`**
+(`1ec8ce9`), que nos trajimos. Sin él los backtests seguirían devolviendo
+números tranquilamente con días enteros descartados. Muy buena pieza.
+
+**Lo local, que no os interesa adoptar**
+
+El botón de actualizar el lago (gated por `LAKE_UPDATE_ENABLED`, apagado en
+producción) ahora cierra la cadena entera: carga el Parquet en
+`local_data.duckdb` **desde el propio backend** (varias conexiones de escritura
+en el mismo proceso, sin cerrarlo), amplía la ventana `date_to` de los datasets
+que iban al día, y **añade** los días nuevos al caché por ticker en vez de
+purgarlo. Verificado: completitud 99,82 % → 100 %, último trade del 08-20 al
+08-21.
+
+Un cambio de ahí sí es genérico y no cambia comportamiento:
+`_populate_dataset_pairs` partido en `_compute_dataset_pairs` +
+`_insert_dataset_pairs` (`routers/query.py`), para poder calcular los pares una
+vez y reutilizarlos entre datasets con los mismos filtros.
+
+---
+
+## 2026-08-21 (Sailor) — Módulo Portfolio: página nueva `/portfolio`
+
+> Entrada escrita por Sailor (Jaume + Claude). Guía completa de integración en
+> **`docs/MODULO_PORTFOLIO_GUIA_INTEGRACION.md`** — leedla antes de tocar nada.
+
+**Qué es**
+
+Página nueva para estudiar varias estrategias **como una sola cartera**: cuánto
+rinden juntas, cuánto se solapan, qué drawdown esperar del conjunto, cuánto
+riesgo asignar a cada una, y cómo se compara con la operativa real del trader.
+
+Mismo principio que Robustez: **trabaja sobre las corridas ya guardadas**, no
+re-ejecuta backtests (salvo la Monitorización, que lo hace bajo petición
+explícita). Normaliza cada estrategia a R por trade sin costes y desde ahí
+combina, correlaciona y re-aplica costes por reconstrucción.
+
+Tres pestañas: **Baúl** (inventario + cuadros portfolio/incubadora, con todas
+las condiciones de cada estrategia al desplegar), **Portfolio** (imagen general
+lineal / modelos de escalado y pesos / comparativa) y **Monitorización**
+(últimos 6 meses re-ejecutados por estrategia + control en tiempo real con
+importación del CSV del bróker).
+
+**Está APAGADO por defecto.** Si no tocáis las variables, esta rama se comporta
+igual que antes del commit:
+
+```bash
+backend/.env         PORTFOLIO_LAB_ENABLED=true
+frontend/.env.local  NEXT_PUBLIC_PORTFOLIO_ENABLED=true
+```
+
+**Qué toca de vuestro código** (mínimo imprescindible)
+
+- `backend/app/main.py`: +4 líneas (import + `include_router`). Prefijo
+  **`/api/portfolio-lab`** — ojo, `/api/portfolio` (sin `-lab`) es vuestro
+  módulo de producción y **no se toca**.
+- `frontend/src/components/Sidebar.tsx`: +15 líneas, entrada gated. **El Baúl
+  se queda como está**: la de Portfolio se añade *además*.
+- `robustez/StrategyPicker.tsx` y `robustez/charts/MonteCarloCharts.tsx`:
+  cambios **puramente aditivos** (4 funciones pasan a `export`, y
+  `SpaghettiChart` acepta un prop opcional `xLabel` con valor por defecto). No
+  cambian el comportamiento de Robustez.
+- Tres tablas nuevas en `users.duckdb`, creadas de forma perezosa y solo con el
+  módulo activo: `portfolio_lab_assignments`, `portfolio_lab_monitor`,
+  `portfolio_lab_real_pnl`. No se toca `init_db.py`.
+
+Todo lo demás son ficheros nuevos (4 en backend, 14 en frontend). Reutiliza
+`robustness_service`, `robustness_mc`, `optimization_service` y
+`backtest_orchestrator`, que ya están en esta rama — verificado, y `tsc
+--noEmit` pasa sin errores **contra el código de staging**.
+
+**Qué NO se ha traído a propósito**
+
+1. **El borrado del Baúl.** En la rama de Sailor, Portfolio lo reemplaza y se
+   eliminó `/database`. Aquí el Baúl sigue intacto — decidid vosotros.
+2. **El fix de comisiones PERCENT** (`abs(gross_pnl)*fees` → % del nocional por
+   lado). Vosotros ya tenéis vuestro modelo por fill (`77236d2`), así que no se
+   pisa nada. Ver el punto (a) de abajo.
+
+**Puntos que hay que acordar entre las dos ramas**
+
+- **(a) FLAT.** Vosotros lo redefinisteis como `fees × acciones` ($/acción);
+  Sailor mantiene `fees × 2` ($/trade). En PERCENT los dos modelos coinciden en
+  el total; **en FLAT no**. Habrá conflicto al mergear: hay que elegir
+  convención.
+- **(b) El fallback silencioso de `data_service.py`** que documentasteis en
+  `INFORME_FIX_NODETERMINISMO_BACKTEST_2026-08-21.md`: en la rama de Sailor no
+  se dispara (allí `daily_metrics` es tabla persistente), pero **el código está
+  igual de presente**. Cuando la migración GCS→parquet llegue a esa rama, el
+  fail-fast (`1ec8ce9`) tiene que viajar CON ella.
+- **(c) Sortino y (d) anualización del Sharpe.** El módulo Portfolio usa la
+  downside deviation canónica y anualiza con la frecuencia efectiva de la serie
+  (el calendario solo tiene días con operaciones, y con 252 fijo el Sharpe sale
+  inflado ~1/√fracción_activa). `backtest_service.py:1240-1242` mantiene el
+  cálculo anterior — **no se ha tocado** por ser motor compartido. Decidid si se
+  unifica.
+
+**Sobre la diferencia 133 R (Sailor) vs 137 R (vosotros)**
+
+Investigada por nuestro lado. **No es un bug de motor.** El lago local de Sailor
+llegaba hasta **2026-08-14** (verificado en `/api/market/available-date-range`),
+así que un backtest pedido hasta el 19-20 de agosto perdía 3 sesiones enteras
+(~1,3 R a su media de agosto). El resto encaja con el residual de cobertura que
+vosotros mismos documentáis en §6.2 de vuestro informe. Su universo es estable
+(7.809 trades en todos los runs), lo que confirma vuestra predicción de que el
+no-determinismo 70R↔137R no le afectaba.
+
+**Cómo se ha verificado el módulo**
+
+- Paridad **exacta a 6 decimales** entre el motor de escalado y la imagen
+  general en los dos casos ancla (`fixed $100` → 304,420878%; `percent 3%`
+  diario → 699.805,793146%).
+- Validación cruzada de la normalización: corridas sucias reconstruidas dan
+  305,14% vs 304,42% de copias re-corridas limpias — el 0,24% es el margen
+  esperado de la reconstrucción aproximada del slippage.
+- Revisión adversaria multi-agente (4 lentes + un escéptico por hallazgo): 7
+  hallazgos confirmados y corregidos, 3 refutados.
+
+---
+
+## 2026-08-21 (noche) — Fix no-determinismo del backtester (70R ↔ 137R)
+
+**Qué pasaba**
+- El MISMO backtest daba ~70% o ~137% de return según el run (y local vs prod
+  descuadraban hasta 6×). El motor NO estaba roto; variaba **qué candidatos**
+  llegaban a él.
+
+**Causa raíz (dos cosas)**
+1. **Fallback silencioso del qualifying** (`data_service.py`): si la vía
+   autoritativa (bygap/`daily_metrics`) fallaba, caía EN SILENCIO al hot-cache en
+   RAM (`gap_pct>=10`, universo distinto: 4.013 vs 4.902). Disparador: error
+   transitorio `Table daily_metrics does not exist`, porque `_establish_connection`
+   devuelve una conexión sin las vistas del lago. ⚠️ **Este fallback está latente
+   IGUAL en `jaumen-rama-desarrollo`** — no se manifiesta ahí porque en esa rama
+   `daily_metrics` es una **tabla persistente** (pre-migración). En la de Álvaro
+   son **vistas perezosas sobre parquet** (migración GCS→local) que sí pueden
+   fallar → el bug se activa. **El bug lo despierta la migración, no es de Álvaro.**
+2. **Caché intradía por-ticker-mes desfasado** (`gcs_cache.py`): se congela en el
+   primer fetch y no se refresca cuando el lago crece en el mes en curso → 20
+   ticker-días de 2026-08-10→14 (AKAN, STKH, OFAL…) desaparecían aunque el lago
+   los tenía.
+
+**Qué hicimos**
+- **Committeado `1ec8ce9`**: `data_service.py` FAIL-FAST (propaga error, nunca
+  sirve el hot-cache no equivalente) + `backtest_orchestrator.py` guardián de
+  completitud (`data_completeness` en el payload; `BACKTEST_STRICT_COMPLETENESS=true`
+  rechaza runs parciales con 503).
+- **Sin commitear** (entrelazados con el refactor de migración, no de Álvaro):
+  `database.py` (reintento+verificación de vistas) y `gcs_cache.py` (refresh de
+  caché desfasado). Activos en runtime.
+- Borrado `.cache/intraday/raw/2026/08` (derivado) como fix inmediato del caché.
+- Informe completo: `docs/INFORME_FIX_NODETERMINISMO_BACKTEST_2026-08-21.md`
+  (commit `78a6b82`).
+
+**Verificado end-to-end** (2 backtests reales al backend 8010): idénticos,
+completitud 100%, 0 missing. Local vs prod ahora coinciden dentro del ~2%.
+
+**Para el equipo (NO tocar la rama de Jaume)**: cuando la migración GCS→local-parquet
+suba a staging/main, el fail-fast (y los refuerzos) **deben viajar CON ella**, o
+todos heredan el 70R↔137R. Es prerrequisito de la migración, no limpieza de rama.
+
+**Pendiente**: endurecer `_establish_connection` (chip de tarea creado); residual
+~6% de trades local vs prod (cobertura de datos, no motor); métrica `DAYS`
+cosmética entre versiones; config drift de "Definitiva 2.3" ya resuelto.
+
+---
+
+## 2026-08-21 (tarde 2) — Rama handoff a producción con PRDs para Edgecute
+
+**Qué hicimos**
+- Álvaro pidió rama para entregar al developer de Edgecute (vía develop→main,
+  ese salto es de Adrian) las dos mejoras apremiantes: fees por ejecución y
+  calendario/retorno real. Creada **`alvaro/handoff-produccion`** (commit
+  `7f65d83`) **basada en `origin/develop` @ `e368839`**, por worktree temporal
+  (el working tree de esta rama no se tocó). Es un **canal permanente**: sin
+  fecha en el nombre; cada tanda de mejoras va en una carpeta fechada dentro.
+- **Solo documentación**: `docs/handoff-produccion/` con README índice vivo +
+  tanda `2026-08-21-fees-y-calendario/` (PRD_01 fees, PRD_02 calendario,
+  `reference/` con parches + `test_fees.py` copiable tal cual).
+  Todas las anclas `fichero:línea` verificadas contra develop@e368839.
+
+**Hechos verificados (importan para el futuro)**
+- Cherry-pick de `77236d2` (fees) sobre develop **NO aplica limpio**:
+  conflictúa en `portfolio_sim.py` (construido sobre trailing+locates+
+  parciales fade de mi rama). Con `59a869d`+`77236d2` el trailing sí aplica,
+  fees sigue conflictuando. → Handoff por PRD, no por código. `test_fees.py`
+  sí es copiable (archivo nuevo, sin dependencias de features mías).
+- `origin/alvaro-rama-desarrollo` == local (0 commits sin push): la nota
+  "sin push" de las entradas anteriores quedó desactualizada.
+- Clasificación del working tree sin commitear: **paquete calendario/retorno
+  (6 ficheros: CalendarTab, PerformanceTab, EquityCurveTab, ChartsTab,
+  MetricsCard, page.tsx)** = el fix que el usuario quiere en producción;
+  `sl_dist_pct_*` (api_backtester, tradesCsv, MetricsCard, backend) y
+  `activation_pct` (strategy.ts) = features aparte, fuera del handoff.
+  El parche de referencia del calendario se generó de este diff.
+
+**Decisiones**
+- Handoff **docs-only**: nada de mi montaje local (bygap, migración GCS/lago,
+  MEMORIA/PROXIMOS) puede colarse. README lista explícitamente lo excluido +
+  candidatos futuros (fix locates `2a51b94..de14125`, OOS DD$ `5741202`).
+- El fix del calendario sigue **sin commitear** en esta rama (trabajo de la
+  sesión paralela); el PRD es autocontenido y el parche documenta el
+  comportamiento exacto. Pendiente: validarlo (tsc + visual) y commitearlo
+  aquí con su propio commit.
+
+**Continuación (misma tarde)**
+- Álvaro pidió mensaje + PRD de orientación para Adri (que sepa qué subir a
+  main sin liarse). Añadido **`PRD_00_PLAN_DE_SUBIDA_A_MAIN.md`** a la tanda
+  (commit `9f7e22c`, en la rama handoff): resumen simple, 2 PRs pedidos,
+  orden recomendado (PRD_02 primero), checklist de verificación antes de
+  main (incluye smoke de identidad con fees=0), guarda-raíles (no mergear
+  mis ramas, no git apply, quirks intactos) y nota de release sugerida.
+  README del handoff actualizado con su fila. Mensaje corto para Adri
+  entregado en la conversación (no en el repo).
+
+**Continuación 2 (tarde) — PRD_03 trades vs ejecuciones (mea culpa)**
+- Álvaro corrigió: el fix apremiante nº 1 NO era el de fees — era el de
+  **trades listados como ejecuciones** (1 trade ≥ 2 ejecuciones; con
+  parciales 3+). Lo arreglamos ~08-17/20 (¿sesión con otra IA?): commits
+  `39a2d80` (función `_group_partial_exits`, backtest_service.py:992, +
+  badge calendario), `3dcd7d0` (n_executions/legs en API+CSV+TradesTab),
+  `1249ca1` (EXIT), `93656e0` (chart). Yo lo había clasificado como
+  "botón export CSV" y no lo vi. Evidencia de esa sesión en el working
+  tree: `backend/.audit_replay.py`, `backend/.audit_all_trades.csv`
+  (columna `n_executions`).
+- **Verificado contra develop**: el motor hace `trades.append` POR
+  EJECUCIÓN (parcial :302, cierres :250/357/404/447/569) y NO existe
+  agrupación → develop TIENE el bug (total_trades inflado, win rate
+  contaminado).
+- Añadido **`PRD_03_trades_vs_ejecuciones.md`** a la tanda (commit
+  `33713af`, sin push al escribir esto): portar `_group_partial_exits`
+  (copiada íntegra a `reference/group_partial_exits.py.txt`) envolviendo
+  `_enrich_trades` (:756 único call-site en develop). PRD_00 y README
+  actualizados a **3 PRs** (orden: PRD_02 → PRD_03 → PRD_01). Mensaje para
+  Adri reescrito con 3 items.
+
+**Continuación 3 (tarde) — Commiteado el trabajo aprobado que estaba vivo en el working tree + CSV fuera del handoff**
+- **Queja de Álvaro (procede):** trabajo YA aprobado seguía sin commitear en
+  la rama (ni MEMORIA). Commit `588588b` recoge los 9 ficheros frontend del
+  working tree (tsc --noEmit limpio), en 3 bloques: (1) fix
+  calendario/retorno real — el que va a producción vía handoff PRD_02;
+  (2) métricas `sl_dist_pct_*` — feature LOCAL, no va al handoff; su
+  cálculo backend sigue sin commitear (mezclado con migración GCS en
+  `backtest_service.py`) → sin él las filas muestran 0; (3) tipo
+  `activation_pct` — resto del ITEM 1 (`59a869d`) que quedó sin commitear.
+- **Regla a partir de ahora:** cuando Álvaro aprueba algo, SE COMMITEA en la
+  misma sesión (su rama + entrada MEMORIA). Nada aprobado queda vivo en el
+  working tree. Lo no aprobado se declara en MEMORIA como pendiente.
+- **Decisión de Álvaro — handoff solo fixes flagrantes, SIN export CSV** (los
+  trades viven dentro del backtester, nada se externaliza): PRD_03 amendado
+  (`6185254`) quitando el CSV del T4 y dejándolo dicho; README del handoff
+  lo explicita. Sigue pendiente: merge a `staging` (requiere orden
+  explícita de Álvaro; Sailor comparte esa rama).
+- Pendiente de decisión: extraer algún día los hunks `sl_dist` de
+  `backtest_service.py` para completar la feature (hoy bloqueado por la
+  migración GCS sin commitear).
+
+**Dónde lo dejamos (final de sesión)**
+- `alvaro/handoff-produccion`: PRD_03 (`6185254`) **sin push** al escribir
+  esto — pusheado a continuación con OK de Álvaro.
+- `alvaro-rama-desarrollo`: `588588b` (trabajo aprobado) + commit de esta
+  MEMORIA, **sin push** al escribir esto — pusheados a continuación.
+- Working tree: queda SOLO el WIP no aprobado (migración GCS backend +
+  renames staged + analisis/ + untracked varios).
+
+---
+
+## 2026-08-21 (noche 5) — RETRACTACIÓN: el "bug de clic" del picker de robustez NO existe
+
+**Qué pasó**
+- La entrada "noche 2" reportaba un bug de selección por clic (off-by-one) en
+  el picker de estrategias del módulo de robustez, y el mensaje para Sailor
+  lo incluía. **Era falso**: fue un artefacto de mi automatización.
+- Sesión de diagnóstico exhaustiva: repro "limpia" en pestaña nueva seguía
+  fallando, PERO los resultados eran incoherentes entre sí (a veces 1 arriba,
+  a veces 2, a veces "teleporta" a la primera tarjeta, a veces clic muerto) —
+  ningún patrón compatible con un bug real de la página. El Enter (sin
+  coordenadas) SIEMPRE selecciona correcto. El código React revisado línea a
+  línea es correcto (`onSelect(s.id)` directo, keys estables, sin CSS
+          solapado/absolute/transform). Y el propio Álvaro confirma que con su
+  ratón real funciona bien.
+- **Causa del artefacto:** el pipeline de input del navegador integrado que
+  uso para probar despacha los clics con desfase/contaminación (además la
+  pestaña estaba visible en la pantalla de Álvaro → clics suyos simultáneos
+  posibles en algunos tests).
+
+**Correcciones**
+- El mensaje para Sailor: quitar la sección del bug (versión corregida
+  entregada en la conversación). **No hay nada que arreglar en robustez.**
+- Lección para futuras sesiones (regla): los clics automatizados del
+  navegador integrado NO son evidencia válida de bugs de UI en este repo;
+  usar teclado (`press("Enter")`) para probar selección, o pedir a Álvaro
+  que clique él. Verificar siempre con el código antes de reportar.
+
+---
+
+## 2026-08-21 (noche 4) — Cierre: staging mergeado + robustez listo para usar en local
+
+**Subido todo (con OK de Álvaro)**
+- Pushes: `alvaro-rama-desarrollo` → `e2e084d` y `alvaro/handoff-produccion`
+  → `e850d56` (F4).
+- **Merge rama→`staging`**: fast-forward limpio `d423046..e2e084d` (47
+  ficheros, +3.696/−291) y pusheado. Sailor ya tiene TODO el inventario
+  priorizado; su mensajito de handoff está en la conversación (incluye el
+  reporte del bug de clic del picker).
+
+**Robustez listo en local (para que Álvaro lo use ya)**
+- `backend/.env`: `ROBUSTNESS_ENABLED=true` (gitignored).
+- `frontend/.env.local`: `NEXT_PUBLIC_ROBUSTNESS_ENABLED=true` (gitignored,
+  añadido sin tocar lo existente) → link "Robustez" visible en el sidebar
+  (verificado en navegador).
+- Servidores arrancados con `arrancar_local.bat` (ventanas propias); el
+  backend responde los 11 endpoints de robustez con las estrategias reales.
+- Recordatorio del bug: clic de ratón en el picker selecciona la estrategia
+  de ARRIBA (usar teclado o clic en la de abajo mientras Sailor lo arregla).
+
+---
+
+## 2026-08-21 (noche 3) — Revisión externa del handoff+sync: 4 correcciones aplicadas (F1–F4)
+
+**Contexto**
+- La IA arquitecta de Álvaro revisó el trabajo contra el repo real: confirma
+  handoff docs-only (9 ficheros, +1.740, 100% en docs/handoff-produccion/),
+  anclas de los 4 PRDs exactas contra `origin/develop@e368839`,
+  independencia de los 3 PRDs verificada (interacción fees↔agrupación
+  segura en cualquier orden) y reference copiable. 4 correcciones, ninguna
+  bloqueante — **todas aplicadas**.
+
+**F1 (🔴) — Baseline de tests backend (la importante de cara a main)**
+- Suite completa: `pytest tests/ -q --continue-on-collection-errors` →
+  **108 failed / 337 passed / 15 errors** (2:39). Requiere el flag: 2
+  módulos con imports muertos abortan la recolección (Backlog #4).
+- Baseline registrada en **`docs/BASELINE_TESTS_BACKEND.md`** (123 rojos,
+  agrupados y categorizados: entorno/datos vs Backlog #3/#4 vs conocidos).
+- **Regla:** antes de cualquier salto `staging→develop→main`, correr la
+  suite y comparar contra esa lista: rojo NUEVO = regresión → parar.
+
+**F2 (🟡) — develop local desfasado**
+- El branch local `develop` estaba en `d4065b9` (por detrás de
+  `origin/develop@e368839`) → `git branch -f develop origin/develop`.
+- **Regla:** las anclas de los PRDs se verifican SIEMPRE contra
+  `origin/develop`, nunca contra el branch local.
+
+**F3 (🟡) — 588588b mal etiquetado**
+- El inventario lo listaba como 🔴 puro; es **MIXTO** (calendario→prod +
+  sl_dist local + activation_pct). Corregido arriba en el inventario.
+
+**F4 (🟡) — PRD_03 sobrevendía portabilidad**
+- `_group_partial_exits` tiene 8 subíndices duros (`pnl`, `size`,
+  `entry_price`, `exit_idx`, `exit_time`, `exit_time_epoch`, `exit_price`,
+  `exit_reason`) → KeyError si develop los toca, no None silencioso.
+  PRD_03 §3-T1 corregido (commit `e850d56` en la rama handoff, sin push
+  al escribir esto).
+
+**Dónde lo dejamos**
+- Pendiente push: `alvaro/handoff-produccion` (`e850d56`) y esta rama.
+  El merge rama→`staging` sigue esperando OK de Álvaro (la revisión no lo
+  bloquea).
+
+---
+
+## 2026-08-21 (noche 2) — Prueba runtime del módulo de robustez: FUNCIONA, con 1 bug de selección
+
+**Montaje**
+- El backend que corría era **pre-merge** (sin endpoints de robustez):
+  reiniciado con el código del merge (puerto 8010, queda corriendo en
+  background de esta sesión). Frontend ya corría (Next dev recompila solo).
+- `ROBUSTNESS_ENABLED=true` añadido a `backend/.env` (local, gitignored; el
+  módulo viene apagado por defecto — regla R7). El link del sidebar sigue
+  oculto sin `NEXT_PUBLIC_ROBUSTNESS_ENABLED`, pero `/robustez` entra por
+  URL directa.
+
+**Verificado ✓**
+- Página carga; lista las 4 estrategias reales con sus métricas; auto-análisis
+  de la primera al abrir (drawdown, rachas, 5 peores hundimientos, ulcer).
+- 11 endpoints del router responden 200; el análisis recalcula al cambiar de
+  estrategia; `tsc` limpio (ya verificado en el merge).
+
+**🐛 Bug encontrado (presente en staging; reportado a Sailor)**
+- **Clic con ratón en la tarjeta N selecciona la estrategia N−1**: clic en
+  "Definitiva 2.3" (4ª) → cargó "Sailor RTH 1" (3ª); clic en "RTH 2" (2ª) →
+  cargó "Investigar contextos AH" (1ª). Patrón consistente (verificado en el
+  log del backend: los `/run` pedidos no coinciden con la tarjeta clicada).
+- **Con teclado (Enter) selecciona la CORRECTA** → el código React está bien
+  (`StrategyPicker.tsx` pasa `s.id` directo; `page.tsx:72` también): es un
+  problema de **área de clic / hit-testing solapado** entre tarjetas
+  (probablemente CSS del header clicable). Un usuario real con ratón lo
+  sufrirá igual.
+
+**Dónde lo dejamos**
+- Backend corriendo con código del merge + robustez activo (local).
+- Merge rama → `staging` sigue **pendiente de OK** de Álvaro.
+
+---
+
+## 2026-08-21 (noche) — Sync con staging (opción A): merge limpio + inventario priorizado para subir
+
+**Qué hicimos**
+- Revisión de divergencia con `origin/staging`: ellos +6 / nosotros +28.
+- **Merge `38298f1`** (origin/staging → alvaro-rama-desarrollo), **0 conflictos**.
+  Truco necesario: los renames STAGED del WIP (backend/scripts → _archive)
+  bloqueaban el merge por estado de índice; se des-stagearon, se mergeó y se
+  re-stagearon idénticos (12 entradas A/R intactas, disco sin tocar).
+- **Nos trae** (33 ficheros, +10.280 líneas): módulo de **robustez** de
+  Sailor completo (useLocates/useMonteCarlo/useWfo + api_robustez + analytics,
+  30 ficheros nuevos), su aplicación del fix de locates, copia del PRD y
+  carpeta `ALVARO_CAMBIOS/` (MEMORIA+PROXIMOS para el equipo).
+
+**Verificado**
+- Fix de locates de Sailor = **idéntico al nuestro**: el merge dejó nuestros
+  `portfolio_sim.py`/`sim_dispatch.py`/`test_locates.py`/PRD.md byte a byte
+  iguales (diff vacío). Nada que reemplazar.
+- `test_locates.py` + `test_sim_jit_equivalence.py`: **12/12 verde**.
+- `tsc --noEmit`: **limpio** con el módulo de robustez incluido.
+
+**Inventario priorizado de NUESTROS commits para staging (28, decisión de
+Álvaro: subir TODOS, con esta prioridad)**
+
+🔴 **Urgente — bug** (van también a main vía handoff):
+- `77236d2` fees por ejecución (fill) · `588588b` **MIXTO**: calendario/retorno
+  real (→prod vía PRD_02) + métricas `sl_dist_pct_*` (local, NO handoff) +
+  tipo `activation_pct` (resto ITEM 1) · `5741202` OOS MAX DD $ ·
+  `2a51b94+8896ece+de14125` locates (ya en staging
+  por Sailor, duplicado idéntico) · `1249ca1` EXIT parciales invisibles ·
+  `6c37f94` hidratación rango dataset · `e42d34b` logging translate_strategy
+
+🟡 **Feature validada** (Sailor decide si las toma):
+- `59a869d` trailing break-even (activation_pct) + tests · parciales fade
+  1A/1B (`ddba140`,`e251727`,`d334aff`,`1e18432`,`d6a2fab`) · `6631056`
+  Current Gap (%) · `447612c` regla/línea chart · `93656e0` ejecuciones
+  señaladas al precio · `3dcd7d0` export CSV (interno; NO va a main)
+
+🟢 **Infra/DX**:
+- `9f39a17` bygap vía rápida (env-gated, inerte sin `.env`) · arranque 1-clic
+  (dentro de `6c37f94`)
+
+📄 **Docs** (nuestro kanban real para el equipo, complementa ALVARO_CAMBIOS):
+- `f8a7bd7`, `c779560`, `75f4bee`, `2e431ac`, `478ce55`, `8176d83`,
+  `1a04176` + este · `23bd2e1` merge previo (histórico)
+
+**Pendiente**
+- Push de `alvaro-rama-desarrollo` (merge + docs) → hecho tras este commit.
+- **Merge de nuestra rama → `staging`**: pendiente OK explícito de Álvaro.
+  Se haría por worktree (el working tree principal está sucio con el WIP
+  GCS). Con eso Sailor recibe TODO el inventario de arriba.
+
+---
+
 ## 2026-08-21 — Ejecutados ITEM 3 e ITEM 1 (PROXIMOS_ITEMS); spec ITEM 2 corregida
 
 **Contexto**

@@ -18,7 +18,12 @@
 > **2026-08-21:** ejecutados los 3 items de la auditoría — ITEM 3 (fix MAX
 > DD $ OOS, commit `5741202`), ITEM 1 (trailing break-even + tests, commit
 > `59a869d`) e ITEM 2 (fees por-fill con spec corregida A/B/C; ver MEMORIA del
-> día). Este doc queda solo con el Backlog congelado.
+> día).
+>
+> **2026-08-22:** ejecutado el ITEM 4 (bug fees: cierre 100% vía parciales no
+> pagaba el lado de entrada; detectado al cotejar el reporte de Sailor) —
+> commit `cd455ae`, diseño de mínima superficie dirigido por el revisor. Este
+> doc queda solo con el Backlog congelado.
 
 ---
 

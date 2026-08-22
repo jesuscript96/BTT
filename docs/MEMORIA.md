@@ -30,6 +30,52 @@
 
 ---
 
+## 2026-08-22 — ITEM 4 fees (reporte de Sailor) + merge Portfolio de Jaume
+
+**Qué pasó**
+- Sailor reportó por WhatsApp (07:28): "tus comisiones se calculan por shares,
+  debería ser 2×shares porque compra Y venta cobran". Cotejo contra el código:
+  el modelo por-fill del ITEM 2 **ya cobra los dos lados** en el camino normal
+  (round trip = 2×rate×shares, testeado), pero el reporte destapó un **agujero
+  real**: si la posición cierra **100% por parciales**, el bloque de cierre
+  final nunca corre y **la entrada no se cobra** (1.000 acc FLAT $0.01 →
+  pagaba $10 en vez de $20; verificado empíricamente).
+- Además: la nota de Sailor en staging (`ff276ef`) **cierra el desacuerdo
+  FLAT** ("coincidimos") y avisa de que él corrigió el quirk B (parciales sin
+  clave `fees`) **en su rama** — no en staging. Decisión: NO duplicar su
+  corrección aquí (evitar conflicto); se adopta cuando su rama llegue.
+
+**El fix (ITEM 4, commit `cd455ae`)**
+- Diseño de **mínima superficie bit-preserving** (dirigido por el revisor en
+  directiva escrita): el bloque de cierre final queda **intacto** (fórmula
+  combinada `(original_size + size)`); solo el parcial que **liquida la
+  posición** (`(size − pt_size) <= 0.0001`) añade el lado de entrada UNA vez
+  (flag `entry_fee_charged`, reset por apertura). Orden FP fijo: salida
+  primero, luego `+=` entrada. Aplicado a los 5 bloques de parciales en
+  `portfolio_sim.py` + espejo exacto en `portfolio_sim_jit.py`.
+- Tests: T-A (1 parcial 100%) y T-B (50+50) rojo→verde; T-C/T-D
+  (anti-doble-cobro, valores **bit-idénticos** a hoy en los caminos que ya
+  funcionaban) verdes; paridad JIT del caso nuevo. 17+54 passed, 0 rojos
+  nuevos.
+- Vestigio `entry_fee_amount` eliminado.
+
+**⚠️ Interacción con el quirk B de Sailor (dejar avisado)**
+Con este fix, cuando el cierre es 100% por parciales, el fee de entrada vive
+dentro del `pnl` de la leg que cierra pero NO en su clave `fees` (que no
+existe — quirk B). Cuando la corrección del quirk B de Sailor llegue a
+staging y exponga `fees` por leg, esa leg deberá reflejar salida + entrada
+absorbida, o su `fees` no reconciliará con su `pnl`. Avisado en
+`ALVARO_CAMBIOS/README.md`.
+
+**También en la sesión**
+- FF-merge de `origin/staging` ×2: `9d24781` (módulo **Portfolio** de Jaume —
+  baúl, escalado, monitorización, página `/portfolio`) y `ff276ef` (nota de
+  Sailor en MEMORIA, commiteada por Jaume).
+- Push a staging de este fix: gate de confirmación de Álvaro al cierre de la
+  sesión (regla de oro #3).
+
+---
+
 ## 2026-08-22 (Sailor) — Actualización del lago en un botón + FLAT por acción (coincidimos) + 4 bugs del motor
 
 > Entrada informativa: **no se ha subido código a `staging`**, solo esta nota.

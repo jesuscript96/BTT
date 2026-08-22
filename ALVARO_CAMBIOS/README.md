@@ -5,6 +5,29 @@
 > tengas visibilidad de qué está haciendo. **No cambia nada del código de
 > `staging`** — es solo documentación. El código real vive en su rama.
 
+## Sesión 2026-08-22 — ITEM 4 fees: cierre 100% vía parciales (commit `cd455ae`)
+
+Tu reporte de las comisiones (22/08 07:28) cotejado contra el código: el
+modelo por-fill del ITEM 2 **ya cobraba los dos lados** en el camino normal
+(round trip = `fees × acciones × 2`, como el tuyo — me alegra que lo demos por
+cerrado). Pero destapó un **agujero real que ya está fixeado**: si la posición
+se cerraba **entera por parciales** (p. ej. dos slots de 50%, o un parcial que
+liquida todo), el bloque de cierre final nunca corría y **el lado de entrada
+no se cobraba nunca** — 1.000 acciones a $0.01 pagaban $10 en vez de $20.
+
+El fix es de mínima superficie: el cierre final queda intacto (fórmula
+combinada); solo el parcial que liquida la posición añade la entrada UNA vez
+(flag por posición). Sin parciales y con parciales que no cierran todo, los
+resultados son **bit-idénticos** a antes (tests T-C/T-D lo congelan). Paridad
+Python↔JIT verificada. Tests: 17+54 passed.
+
+**⚠️ Aviso para cuando tu fix del quirk B llegue a staging**
+Con este ITEM 4, cuando el cierre es 100% por parciales el fee de entrada
+queda **dentro del `pnl` de la leg que cierra** pero no en su clave `fees`
+(que no existe — quirk B). Cuando tu corrección exponga `fees` por leg, esa
+leg de cierre tendrá que reflejar **salida + entrada absorbida**, o su `fees`
+no reconciliará con su `pnl`. Está también anotado en `MEMORIA.md` del día.
+
 ## Sesión 2026-08-21 — 3 fixes del backtester ejecutados
 
 Todo el trabajo está en la rama **`alvaro-rama-desarrollo`** (commits
