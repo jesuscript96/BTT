@@ -30,6 +30,97 @@
 
 ---
 
+## 2026-08-22 (Sailor) — Actualización del lago en un botón + FLAT por acción (coincidimos) + 4 bugs del motor
+
+> Entrada informativa: **no se ha subido código a `staging`**, solo esta nota.
+> Todo está en `sailor-rama-desarrollo`, commit `9c76e6b`. El resumen técnico
+> para decidir qué adoptar está en `docs/CAMBIOS_SAILOR_PARA_STAGING.md` de esa
+> rama.
+
+**Comisiones FLAT: hemos llegado al mismo sitio por caminos distintos**
+
+Sailor pidió que FLAT fuera **$ por acción, cobrado en la compra y en la venta**
+(su ejemplo: 0,003 con 100 acciones = 0,30 € + 0,30 € = 0,60 €). Nuestra rama
+tenía todavía `fees × 2` — cantidad fija por operación que ignoraba el tamaño.
+Cambiado a `fees × acciones × 2` en los cuatro motores (14 puntos).
+
+**Esto ya no choca con vuestro ITEM 2 del 08-21**: vuestro modelo por fill
+—entrada de `original_size` + salida de cada tramo— **da exactamente el mismo
+total**, `fees × acciones × 2`. Cambia solo el reparto entre filas (vosotros
+cargáis la entrada entera en el cierre final; nosotros repartimos
+proporcionalmente). El punto abierto de la semántica de FLAT se puede dar por
+cerrado: coincidimos en magnitud y en significado, y los dos hemos reetiquetado
+la UI ($/share ↔ $ por acción).
+
+**Donde SÍ divergimos: el "Quirk B"**
+
+Vosotros lo mantuvisteis a propósito (parciales sin clave `fees`). Nosotros lo
+hemos corregido, porque con comisiones por acción deja de ser cosmético: la
+comisión del tramo parcial se resta del `pnl` pero se reporta como `0`, y el
+agrupador de ejecuciones de `backtest_service` la pierde. Medido sobre 396
+trades reales a 0,003 $/acción: la columna mostraba **75 $ de los 114 $
+cobrados**, un 34 % de menos. Con comisiones fijas de céntimos era invisible; con
+las nuevas no. Tocado en `portfolio_sim_jit.py`, `portfolio_sim.py` y
+`sim_dispatch.py`. **Solo afecta al informe; el PnL siempre estuvo bien.**
+Si adoptáis nuestro cambio, vuestro `test_fees.py` habrá que actualizarlo: los
+tests que afirman "parciales sin clave `fees`" pasarían a fallar a propósito.
+
+**Otros tres bugs del motor compartido, corregidos**
+
+1. **Sortino** (`backtest_service.py`, 2 sitios): usaba `np.std` de solo los
+   retornos negativos —medidos alrededor de su propia media y sin dividir por el
+   total—, dos sesgos que lo inflan. A downside deviation canónica,
+   `sqrt(mean(min(ret,0)²))`, que es lo que ya hacía el módulo de portfolio. La
+   misma estrategia mostraba dos Sortinos distintos en dos páginas de la app.
+2. **`build_screener_query`**: `require_shortable` y `exclude_dilution` son
+   interruptores de la UI, no columnas de `daily_metrics`; pero `float(True)`
+   vale 1.0, así que se colaban por el camino numérico y generaban
+   `require_shortable >= 1.0` → `BinderException` que tumbaba la consulta
+   entera. Cualquier dataset guardado con esos filtros fallaba al recalcular sus
+   pares. Una línea: `if isinstance(v, bool): continue`.
+3. **Sondeo del backtest** (`frontend/.../backtester/page.tsx`): el registro de
+   trabajos vive en memoria; si el backend se reinicia a media corrida el
+   `job_id` desaparece y el 404 permanente se trataba como "error de red
+   pasajero", reintentando cada 500 ms **indefinidamente**. Ahora se toleran 3
+   seguidos y luego para con un mensaje claro.
+
+**Dos avisos que aplican también a producción**
+
+Los dos son el mismo patrón: una copia acelerada que se queda vieja y **el motor
+la prefiere sin avisar de nada**.
+
+1. `intraday_1m_optimized` se queda corta cuando se reprocesa un mes.
+   `gcs_cache.py` lo documenta como runbook manual («regenerate the optimized
+   copy, OR delete it») y nada lo hace cumplir. Aquí costó **41 ticker-días
+   descartados en silencio**: el lago llegaba al día 20 y el backtest se cortaba
+   exactamente el 14. En local hemos descartado esa copia entera; en producción
+   merece la pena automatizar su regeneración, o el guardián.
+2. El **caché por ticker-mes** (`CACHE_DIR/{opt,raw}/<año>/<mes>/<ticker>`)
+   tiene el mismo problema un nivel más abajo: se escribe una vez y no se revisa
+   aunque el mes crezca. Nos costó otros 9 ticker-días. El runbook también lo
+   documenta como purga manual.
+
+En ambos casos, quien lo destapó fue **vuestro chivato de `data_completeness`**
+(`1ec8ce9`), que nos trajimos. Sin él los backtests seguirían devolviendo
+números tranquilamente con días enteros descartados. Muy buena pieza.
+
+**Lo local, que no os interesa adoptar**
+
+El botón de actualizar el lago (gated por `LAKE_UPDATE_ENABLED`, apagado en
+producción) ahora cierra la cadena entera: carga el Parquet en
+`local_data.duckdb` **desde el propio backend** (varias conexiones de escritura
+en el mismo proceso, sin cerrarlo), amplía la ventana `date_to` de los datasets
+que iban al día, y **añade** los días nuevos al caché por ticker en vez de
+purgarlo. Verificado: completitud 99,82 % → 100 %, último trade del 08-20 al
+08-21.
+
+Un cambio de ahí sí es genérico y no cambia comportamiento:
+`_populate_dataset_pairs` partido en `_compute_dataset_pairs` +
+`_insert_dataset_pairs` (`routers/query.py`), para poder calcular los pares una
+vez y reutilizarlos entre datasets con los mismos filtros.
+
+---
+
 ## 2026-08-21 (Sailor) — Módulo Portfolio: página nueva `/portfolio`
 
 > Entrada escrita por Sailor (Jaume + Claude). Guía completa de integración en
