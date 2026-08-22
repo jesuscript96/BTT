@@ -76,6 +76,48 @@ absorbida, o su `fees` no reconciliará con su `pnl`. Avisado en
 
 ---
 
+## 2026-08-22 (Sailor, 2ª) — Indicador nuevo: Darvas Box (código incluido en esta rama)
+
+**Esta vez sí entra CÓDIGO en `staging`**, a petición explícita de Sailor: el
+indicador **Darvas Box** completo (backend + builder de condiciones + dibujo en
+el gráfico). Es aditivo: no toca ningún comportamiento existente — añade un
+indicador al catálogo y nada más. El motor no se modifica: entra por el path
+legacy de `strategy_engine` (el gate de `_RAW_INDICATOR_DISPATCH`), como
+cualquier indicador no-nativo.
+
+**Qué es:** máquina de 3 estados (buscar techo → buscar suelo → caja
+consolidada) según la especificación clásica de Darvas. Las MECHAS construyen y
+validan los niveles; solo un CIERRE fuera destruye la caja. Devuelve un NIVEL
+por vela (como Donchian): `period` = velas de confirmación, `band_line` =
+Upper (resistencia) / Lower (soporte) / Basis. NaN mientras no hay caja; la
+vela que rompe aún emite el nivel para que el cruce sea detectable ahí. Causal,
+sin lookahead.
+
+**Dónde tocarlo si hace falta:**
+- `backend/app/services/indicators.py` — `_darvas_box_core` (njit) + rama
+  "Darvas Box" en `_compute_raw` + alias en `INDICATOR_NAME_MAP`.
+- `frontend/src/lib/indicators.ts` — `calculateDarvasBox` (serie causal) y
+  `calculateDarvasBoxes` (rectángulos para dibujar). ⚠️ **PARIDAD OBLIGADA**
+  entre esta versión TS y la de Python: una decide señales, la otra se dibuja.
+  Si se toca una, tocar la otra (verificada: 0 diferencias en 400 velas ×
+  N=2/3/5).
+- `frontend/src/components/backtester/Chart.tsx` — el `case "DARVAS"`: dibuja
+  el rectángulo completo de cada caja (formación atenuada, tramo operativo
+  sólido), una serie de 2 puntos por línea. Ojo: el *whitespace* de
+  lightweight-charts NO corta una línea (lección pagada: salían los techos de
+  todas las cajas unidos en diagonal).
+- `ConditionBuilder.tsx`, `indicatorValidation.ts`, `types/strategy.ts`,
+  `indicatorRegistry.ts` — catálogo, cruces permitidos (está en
+  `ALL_INDICATORS`: cruzable contra cualquier variable) y parámetros.
+
+**Verificación hecha en la rama de Sailor:** 5 escenarios de la especificación
+en tests a mano (incluido «mecha fuera no rompe, cierre fuera sí»), backtest
+real de cruce con 704 trades, y 23/23 rectángulos de un día real conteniendo
+todas sus velas. En esta rama: `py_compile` + smoke del indicador + `tsc` sin
+errores en `src/`.
+
+---
+
 ## 2026-08-22 (Sailor) — Actualización del lago en un botón + FLAT por acción (coincidimos) + 4 bugs del motor
 
 > Entrada informativa: **no se ha subido código a `staging`**, solo esta nota.
