@@ -20,49 +20,67 @@ no se pierde, se **re-etiqueta** cruzando `old→new` por **email**.
 
 ---
 
-## 🟢 BLOQUE 1 — Código + config (sin depender de re-registros)
+## 🟢 BLOQUE 1 — Código + config (sin depender de re-registros) — ✅ COMPLETO 2026-08-21
 
-### 1.1 [Claude] Admins por email
-Mismo patrón que la cortesía por email, con **revocación instantánea** (al quitar un email deja
-de ser admin al momento). Tabla/lista `admin_emails` + CLI, resuelto vía el email verificado del
-JWT. Precedencia: admin > cortesía > store.
+### 1.1 [Claude] ✅ Admins + preferenciales por email (develop `d7d9c36`)
+Mismo patrón que la cortesía por email, con **revocación instantánea**. Tablas `admin_emails` y
+`trial_override_emails` en el store; `_reconcile_identity_email` (admin > cortesía, único grant
+por user_id, idempotente) + `_reconcile_trial_override_email` (siembra one-shot UNA vez, nunca
+re-arma → el trial preferencial no recicla). Resuelto vía el email verificado del JWT. Precedencia
+admin > cortesía > store. **Mejora:** los preferenciales ahora son por email (antes user_id) →
+migration-proof, se re-siembran solos bajo el nuevo user_id (elimina el re-seed del Bloque 2).
+CLIs: `scripts/admin_emails.py`, `scripts/pref_trial_emails.py --days`, `scripts/comp_emails.py`.
+16 tests + suite billing 100/100.
 
-### 1.2 [Adrian/Jesús] Claims en Clerk (instancia ACTUAL)
-*Sessions → Customize session token* → añadir:
+### 1.2 [Adrian] ✅ Claims en Clerk (instancia ACTUAL)
+*Sessions → Customize session token* (Name `__session`) → añadido y **guardado**:
 ```json
 { "email": "{{user.primary_email_address}}", "email_verified": "{{user.email_verified}}" }
 ```
-+ exigir verificación de email al registro. Sin esto, admin/cortesía por email quedan **inertes**
-(fail-closed). Prerequisito para 1.3.
+Preview user confirmó `email_verified: true` (booleano). Backend `_claim_is_true` acepta bool/str.
 
-### 1.3 [Claude] Sembrar + validar en STAGING
-- Preferenciales 14d (lista de Adrian): `python -m scripts.set_trial_override --user-ids … --days 14`
-- Admin emails + comped emails (`scripts/comp_emails.py`, y el equivalente de admin).
-- Validar e2e: admin sin gate, cortesía "Gratis", preferencial 14d en Checkout.
+### 1.3 [Claude] ✅ Validado e2e en STAGING (store real `/data/btt_staging_billing/…`)
+Sembrado con dummies vía servicio desplegado + limpieza total: admin-email → Admin/admin (gate
+resolve_tier=Admin), comped-email → Pro/comped (gate=Pro), pref-email → override 14d, revocar →
+Locked+grant borrado. Listas REALES se siembran en el CUTOVER (Bloque 3.5), no antes.
 
 ---
 
 ## 🟠 BLOQUE 2 — Migración Clerk a producción (mientras los colegas se re-registran)
 
-### 2.1 [Adrian/Jesús] Crear instancia Clerk PROD
-- *Go to prod → Clone development instance* (copia auth/tema, NO usuarios).
-- **Dominio**: CNAME para el Frontend API (ej. `clerk.edgecute.com`) → esperar verificación+SSL.
-- **OAuth propio**: crear apps OAuth de Google y Discord (en dev eran las compartidas de Clerk),
-  meter client id/secret en Clerk, configurar redirect URIs.
+### 2.1 [Adrian/Jesús] Crear instancia Clerk PROD  — decisiones: **app.edgecute.com** + **Google & Discord**
+- *Create production instance → Clone from development* (copia auth/tema, NO usuarios).
+- **Dominio = `app.edgecute.com`**: Clerk da varios CNAME (`clerk.`, `accounts.`, `clkmail.`,
+  `clk._domainkey…`) bajo `edgecute.com` → crearlos en el proveedor DNS → esperar verificación+SSL
+  (propaga, minutos-horas). La landing `www.edgecute.com` (repo aparte) no se toca.
+- **OAuth propio (obligatorio en prod):**
+  - **Google**: Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web) →
+    pegar Client ID/Secret en Clerk prod + añadir el **Authorized redirect URI** que Clerk muestra.
+  - **Discord**: Discord Developer Portal → New Application → OAuth2 → Client ID/Secret a Clerk +
+    añadir el redirect URI de Clerk.
 - Obtener `pk_live` / `sk_live` + issuer/JWKS de la instancia prod.
-- Repetir los claims JWT (`email`/`email_verified`) en la instancia PROD.
+- **Repetir los claims JWT** (`email`/`email_verified`) en la instancia PROD (NO se heredan).
 
 ### 2.2 [colegas] Re-registro en prod
-Cada usuario existente se registra en la instancia nueva (mismo email) → obtiene `user_id` nuevo.
+Cada usuario existente se registra en la instancia nueva (**mismo email**) → obtiene `user_id` nuevo.
+El email es la clave del remapeo, así que debe coincidir exactamente.
 
-### 2.3 [Claude] Script de re-etiquetado por email
-- Exportar `(old_user_id, email)` de la instancia dev (Clerk API).
-- Obtener `(new_user_id, email)` de la instancia prod (Clerk API).
-- Cruzar por email → mapa `old→new`.
-- `UPDATE` en `users.duckdb` de las columnas owner (estrategias, backtests, saved_queries,
-  datasets) `old→new`.
-- Re-sembrar `trial_overrides` (preferenciales) por el nuevo `user_id`.
+### 2.3 [Claude] Re-etiquetado por email — `scripts/clerk_remap.py` (LISTO, probado e2e)
+```bash
+# en el contenedor de prod (backend/), keys por env, NUNCA hardcodeadas:
+python -m scripts.clerk_remap dump --clerk-secret "$CLERK_DEV_SECRET"  --out dev.json   # instancia actual
+python -m scripts.clerk_remap dump --clerk-secret "$CLERK_PROD_SECRET" --out prod.json  # instancia nueva
+python -m scripts.clerk_remap build-map --old dev.json --new prod.json --out map.json    # reporta no-emparejados
+python -m scripts.clerk_remap apply --map map.json --dry-run     # contar sin escribir
+python -m scripts.clerk_remap apply --map map.json               # ejecutar
+```
+- `apply` introspecciona el esquema y actualiza `user_id` en **toda** tabla que la tenga
+  (strategies, saved_queries, datasets, backtest_results, feature_votes/suggestions, …).
+- **NO** hace falta re-sembrar preferenciales: al ser por email se re-siembran solos en el 1er /me.
 - Admin/cortesía por email **NO** requieren remapeo (sobreviven por email).
+- ⚠️ **users.duckdb se sube a GCS al apagar** → correr el `apply` con la app parada, o forzar la
+  subida después, para que el cambio persista. Los emails no re-registrados quedan en el reporte
+  (su data sigue bajo el user_id viejo hasta que se registren).
 
 ### 2.4 [Adrian/Jesús] Swap de keys Clerk en env PROD
 - Backend (Coolify): `CLERK_SECRET_KEY=sk_live`, `CLERK_PUBLISHABLE_KEY=pk_live`,
@@ -94,9 +112,11 @@ Todo el código de billing Fase 2/3 pasa a main (prod despliega de main).
 - `NEXT_PUBLIC_BILLING_ENABLED=true`
 - `NEXT_PUBLIC_API_URL` → backend de prod
 
-### 3.5 [Claude] Sembrar prod
-- admin_emails + comped_emails (CLI, en el store de prod).
-- preferenciales 14d por el nuevo `user_id`.
+### 3.5 [Claude] Sembrar prod (todo por EMAIL → sin depender de user_id)
+- admin_emails (`scripts/admin_emails.py --add … --granted-by adrian`).
+- comped_emails (`scripts/comp_emails.py --add …`).
+- preferenciales 14d (`scripts/pref_trial_emails.py --add … --days 14`). Se materializan solos en
+  el 1er /me de cada usuario (no hay que conocer su user_id).
 - (migración de usuarios actuales a "en prueba" según se decida.)
 
 ### 3.6 [Claude + Adrian] Global sign-out + e2e
