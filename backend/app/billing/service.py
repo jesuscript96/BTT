@@ -162,35 +162,83 @@ class BillingService:
         return count
 
     # ── Billing summary for the UI (GET /api/billing/me) ─────────────────────
-    def _reconcile_comped_email(self, user_id: str, email: Optional[str]) -> None:
-        """Materialize/revoke courtesy access from the email list (Fase 3).
+    def _reconcile_identity_email(self, user_id: str, email: Optional[str]) -> None:
+        """Materialize/revoke ADMIN or COURTESY access from the email lists (Fase 3).
 
-        With a TRUSTED email (Clerk JWT): if listed and the user has no grant yet,
-        seed a perpetual Pro grant (reason='comped') keyed by user_id so the
-        product gate honors it too. If the user has a comped grant but is no longer
-        listed, delete it (revoke on next /me). No-op without a trusted email, so
-        we never revoke a grant we can't verify.
+        With a TRUSTED email (Clerk JWT), drive the user's single entitlement grant
+        from the two email allowlists, admin winning over comped:
+          - listed as admin  -> Admin grant (reason='admin', perpetual)
+          - else listed comped -> Pro grant (reason='comped', perpetual)
+          - on neither list  -> delete ONLY an identity grant (reason in
+                                admin/comped); never touch a migration-trial or
+                                subscription-derived grant.
+        Keyed by user_id so the product gate (resolve_tier) honors it too, and it
+        auto-applies the moment an invited colleague/admin registers. Idempotent:
+        only writes when the current grant differs from the target, so it does not
+        churn the store on every /me. No-op without a trusted email, so we never
+        grant or revoke something we can't verify.
         """
         if not email:
             return
-        listed = self._store.has_comped_email(email)
         grant = self._store.get_grant(user_id)
-        is_comped_grant = grant is not None and grant.reason == "comped"
-        if listed and grant is None:
-            self._store.upsert_grant(user_id, "Pro", reason="comped", expires_at=None)
-        elif not listed and is_comped_grant:
+        is_identity_grant = grant is not None and grant.reason in ("admin", "comped")
+
+        if self._store.has_admin_email(email):
+            already = (
+                grant is not None
+                and grant.grant_tier == "Admin"
+                and grant.reason == "admin"
+            )
+            if not already:
+                self._store.upsert_grant(user_id, "Admin", reason="admin", expires_at=None)
+        elif self._store.has_comped_email(email):
+            already = (
+                grant is not None
+                and grant.grant_tier == "Pro"
+                and grant.reason == "comped"
+            )
+            if not already:
+                self._store.upsert_grant(user_id, "Pro", reason="comped", expires_at=None)
+        elif is_identity_grant:
+            # No longer on either list: revoke on next /me.
             self._store.delete_grant(user_id)
+
+    def _reconcile_trial_override_email(self, user_id: str, email: Optional[str]) -> None:
+        """Seed a preferential trial length from the email list (Fase 3).
+
+        With a TRUSTED email: if the email carries a preferential trial and the user
+        has NO override yet, seed a one-shot trial_override keyed by user_id. Seed
+        ONCE only — never re-arm from the list, so a consumed preferential trial
+        cannot recycle on every login. Migration-proof: after a Clerk-instance
+        change the same email re-seeds under the new user_id automatically. No-op
+        without a trusted email or if the user already has an override (pending or
+        consumed)."""
+        if not email:
+            return
+        row = self._store.get_trial_override_email(email)
+        if row is None:
+            return
+        if self._store.get_trial_override(user_id) is None:
+            days, reason, granted_by = row
+            self._store.set_trial_override(
+                user_id, days, reason=reason, granted_by=granted_by
+            )
 
     def get_billing_summary(self, user_id: str, email: Optional[str] = None) -> dict:
         """Read-only snapshot for the billing section (no Stripe call): resolved
         tier + subscription + default payment method + invoices + the trial
         countdown source (subscription.trial_end or a migration grant) + a single
         `stage` string that tells the frontend which screen to render (Fase 3)."""
-        # Courtesy-by-email reconciliation first (may seed/revoke a comped grant).
-        self._reconcile_comped_email(user_id, email)
-        # Admin/comped allowlists win over subscription state (same precedence as
-        # get_tier), so neither ever sees the card gate. Without this the summary
-        # would resolve_tier() → Locked for them (no grant/sub).
+        # Identity-by-email reconciliation first (may seed/revoke an admin or
+        # comped grant, and seed a preferential trial). These materialize grants
+        # keyed by user_id so resolve_tier + the product gate honor them too.
+        self._reconcile_identity_email(user_id, email)
+        self._reconcile_trial_override_email(user_id, email)
+        # Admin/comped allowlists (env, user_id-based) win over subscription state
+        # (same precedence as get_tier), so neither ever sees the card gate. The
+        # email path above feeds resolve_tier via a materialized grant; these env
+        # lists remain as a user_id-based override. Without this the summary would
+        # resolve_tier() → Locked for an env-listed user with no grant/sub.
         is_comped = bool(user_id and user_id in config.billing_comped_user_ids())
         if user_id and user_id in config.billing_admin_ids():
             tier = "Admin"

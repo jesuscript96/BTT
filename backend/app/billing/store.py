@@ -225,6 +225,31 @@ class Store:
                     granted_by   TEXT,
                     created_at   REAL NOT NULL
                 );
+
+                -- Admins by EMAIL (Fase 3, decision #1). Same mechanism as
+                -- comped_emails but materializes an ADMIN grant (reason='admin')
+                -- keyed by user_id, so the product gate + /me both see "Admin".
+                -- Migration-proof: the email survives a Clerk-instance change,
+                -- the user_id doesn't. Admin > comped in the reconcile.
+                CREATE TABLE IF NOT EXISTS admin_emails (
+                    email        TEXT PRIMARY KEY,   -- normalized (lower/trim)
+                    granted_by   TEXT,
+                    created_at   REAL NOT NULL
+                );
+
+                -- Preferential trial length by EMAIL (Fase 3 improvement over the
+                -- user_id-keyed trial_overrides). On login the /me summary seeds a
+                -- ONE-SHOT trial_override for the user_id (only if they have none
+                -- yet — never re-arms, so the preferential trial can't recycle).
+                -- Migration-proof: the same email re-seeds under the new user_id
+                -- after a Clerk-instance change, so no manual re-seed is needed.
+                CREATE TABLE IF NOT EXISTS trial_override_emails (
+                    email        TEXT PRIMARY KEY,   -- normalized (lower/trim)
+                    days         INTEGER NOT NULL,   -- 1..30 (validated on write)
+                    reason       TEXT,
+                    granted_by   TEXT,
+                    created_at   REAL NOT NULL
+                );
                 """
             )
             self._con.commit()
@@ -667,6 +692,91 @@ class Store:
                 "SELECT email FROM comped_emails ORDER BY created_at DESC"
             ).fetchall()
         return [r["email"] for r in rows]
+
+    # ── Admin emails (Fase 3 — admins by email, decision #1) ─────────────────
+    def add_admin_email(self, email: str, granted_by: Optional[str] = None) -> None:
+        """Add (or refresh) an email to the admin list. Idempotent."""
+        with self._lock:
+            self._con.execute(
+                "INSERT INTO admin_emails (email, granted_by, created_at) VALUES (?,?,?)"
+                " ON CONFLICT(email) DO UPDATE SET granted_by=excluded.granted_by",
+                (self._norm_email(email), granted_by, _now()),
+            )
+            self._con.commit()
+
+    def remove_admin_email(self, email: str) -> None:
+        with self._lock:
+            self._con.execute(
+                "DELETE FROM admin_emails WHERE email = ?", (self._norm_email(email),)
+            )
+            self._con.commit()
+
+    def has_admin_email(self, email: str) -> bool:
+        with self._lock:
+            row = self._con.execute(
+                "SELECT 1 FROM admin_emails WHERE email = ?", (self._norm_email(email),)
+            ).fetchone()
+        return row is not None
+
+    def list_admin_emails(self) -> list[str]:
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT email FROM admin_emails ORDER BY created_at DESC"
+            ).fetchall()
+        return [r["email"] for r in rows]
+
+    # ── Trial-override emails (Fase 3 — preferential trial by email) ──────────
+    def add_trial_override_email(
+        self,
+        email: str,
+        days: int,
+        reason: Optional[str] = None,
+        granted_by: Optional[str] = None,
+    ) -> None:
+        """Add (or refresh) an email → preferential trial length. Idempotent.
+        Validates days 1..30 (same bound as set_trial_override) so a bad value
+        never reaches Stripe's trial_period_days."""
+        days = int(days)
+        if not (MIN_TRIAL_OVERRIDE_DAYS <= days <= MAX_TRIAL_OVERRIDE_DAYS):
+            raise ValueError(
+                f"days must be {MIN_TRIAL_OVERRIDE_DAYS}..{MAX_TRIAL_OVERRIDE_DAYS}, got {days}"
+            )
+        with self._lock:
+            self._con.execute(
+                "INSERT INTO trial_override_emails (email, days, reason, granted_by, created_at)"
+                " VALUES (?,?,?,?,?)"
+                " ON CONFLICT(email) DO UPDATE SET"
+                "   days=excluded.days,"
+                "   reason=excluded.reason,"
+                "   granted_by=excluded.granted_by",
+                (self._norm_email(email), days, reason, granted_by, _now()),
+            )
+            self._con.commit()
+
+    def remove_trial_override_email(self, email: str) -> None:
+        with self._lock:
+            self._con.execute(
+                "DELETE FROM trial_override_emails WHERE email = ?",
+                (self._norm_email(email),),
+            )
+            self._con.commit()
+
+    def get_trial_override_email(self, email: str) -> Optional[tuple[int, Optional[str], Optional[str]]]:
+        """Return (days, reason, granted_by) for a listed email, or None."""
+        with self._lock:
+            r = self._con.execute(
+                "SELECT days, reason, granted_by FROM trial_override_emails WHERE email = ?",
+                (self._norm_email(email),),
+            ).fetchone()
+        return (int(r["days"]), r["reason"], r["granted_by"]) if r else None
+
+    def list_trial_override_emails(self) -> list[tuple[str, int]]:
+        """(email, days) pairs for the admin CLI --list / audit."""
+        with self._lock:
+            rows = self._con.execute(
+                "SELECT email, days FROM trial_override_emails ORDER BY created_at DESC"
+            ).fetchall()
+        return [(r["email"], int(r["days"])) for r in rows]
 
     def close(self) -> None:
         with self._lock:
