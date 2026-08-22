@@ -64,15 +64,31 @@
 
 ---
 
-## Paso 2 — Env PROD backend (Coolify)
+## Paso 2a — Mount persistente DEDICADO del store de billing (IMPRESCINDIBLE)
+
+> Igual que en staging (Paso 2b de `RUNBOOK_CUTOVER_BILLING_STAGING.md`), pero con
+> **carpeta PROPIA y DISTINTA** de la de staging — el store de prod NUNCA comparte
+> carpeta/fichero con el de staging (aislamiento datos reales/test,
+> `ARQUITECTURA_BILLING.md` §12.5). El default cae en el CWD efímero → sin mount el
+> store se borra en cada redeploy.
+
+En el host de prod:
+```bash
+mkdir -p /data/btt_prod_billing && chmod 750 /data/btt_prod_billing
+```
+En Coolify → app de **prod** → **Storages** → Add (Bind mount / Directory):
+- **Source (host):** `/data/btt_prod_billing`
+- **Destination (contenedor):** `/data/btt_prod_billing`
+
+## Paso 2b — Env PROD backend (Coolify)
 
 | Variable | Valor |
 |---|---|
-| `BILLING_ENABLED` | `true` |
+| `BILLING_ENABLED` | `true` **(el ÚLTIMO en encenderse — tras sembrar, Paso 5)** |
 | `STRIPE_SECRET_KEY` | `sk_live_…` |
 | `STRIPE_PRICE_ID_MONTHLY_EUR` | `price_…` (live) |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_…` (live) |
-| `EDGECUTE_BILLING_DB_PATH` | ruta en **volumen persistente** (mount), p.ej. `/data/btt_billing/edgecute_billing.sqlite` |
+| `EDGECUTE_BILLING_DB_PATH` | `/data/btt_prod_billing/edgecute_billing.sqlite` (**dentro** del mount 2a, distinto de staging) |
 | `BILLING_SUCCESS_URL` | `https://app.edgecute.com/billing?session_id={CHECKOUT_SESSION_ID}` (fallback; el front envía el suyo) |
 | `BILLING_CANCEL_URL` | `https://app.edgecute.com/billing?checkout=cancel` (fallback) |
 | `BILLING_PORTAL_RETURN_URL` | `https://app.edgecute.com/billing` |
@@ -81,9 +97,11 @@
 | `CLERK_SECRET_KEY` | `sk_live_…` (Clerk prod) |
 | `CLERK_PUBLISHABLE_KEY` / issuer / JWKS | de la instancia Clerk prod |
 
-> ⚠️ `EDGECUTE_BILLING_DB_PATH` **debe** estar en un mount persistente (como en staging).
-> Si se pierde, se reconstruye de Stripe (reconciliación), pero los admin/cortesía/
-> preferenciales por email (tablas locales) habría que re-sembrarlos con los CLIs.
+> ⚠️ **Orden estricto:** pon TODAS las envs salvo `BILLING_ENABLED`, siembra las
+> listas (Paso 5), y SOLO ENTONCES `BILLING_ENABLED=true`. Si enciendes el flag
+> antes de sembrar, los usuarios ya migrados caen a `Locked` de golpe.
+> ⚠️ Si el store se pierde se reconstruye de Stripe (reconciliación), pero las
+> tablas locales (admin/cortesía/preferenciales por email) hay que re-sembrarlas.
 
 ---
 
