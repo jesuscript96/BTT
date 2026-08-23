@@ -82,6 +82,13 @@ def simulate(
     # ORIGINAL (decision del usuario: el stop no se mueve al piramidar).
     avg_entry_price = 0.0
     pyramid_mode = bool(pyramid_levels)
+    pyr_exec = []
+    # Base de los TP parciales: la posicion que "hay" en el trade = inicial mas
+    # lo añadido menos lo reducido por piramide. NO baja con los parciales ya
+    # tomados, para que 50%+50% siga cerrando el 100% cuando no se piramida.
+    pyr_base = 0.0
+    # Estado de la señal de cada nivel DENTRO del trade (se rearma al entrar).
+    pyr_prev_sig: list = []
     pyr_fired: list = []   # contador de disparos por nivel (int)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
@@ -158,7 +165,14 @@ def simulate(
                             trail_extreme = max(trail_extreme, high[i])
                             trail_sl_price = trail_extreme - (entry_price * trail_pct)
                             
-                            if price_for_sl <= trail_sl_price + 1e-9:
+                            # Si el STOP FIJO ya ha disparado en esta misma barra,
+                            # manda el fijo: quita todas las ordenes si o si y
+                            # esta por encima del trailing en importancia (regla
+                            # del usuario, 2026-08-23). Antes el trailing lo
+                            # pisaba usando el MAXIMO de la propia barra, y una
+                            # vela que tocaba el stop podia acabar registrada
+                            # como salida en beneficio.
+                            if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
@@ -180,7 +194,8 @@ def simulate(
                             trail_extreme = min(trail_extreme, low[i])
                             trail_sl_price = trail_extreme + (entry_price * trail_pct)
                             
-                            if price_for_sl >= trail_sl_price - 1e-9:
+                            # Mismo criterio que en long: el stop fijo manda.
+                            if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
@@ -243,7 +258,7 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                            pt_size = (size if pyramid_mode else original_size) * cap_frac
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 if is_long:
@@ -264,7 +279,8 @@ def simulate(
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(avg_entry_price, 6),
+                                    "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -298,7 +314,7 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                            pt_size = (size if pyramid_mode else original_size) * cap_frac
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 if is_long:
@@ -319,7 +335,8 @@ def simulate(
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(avg_entry_price, 6),
+                                    "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -356,7 +373,7 @@ def simulate(
                                 
                                 slip = pt_exit_price * slippage
                                 net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                                pt_size = (size if pyramid_mode else original_size) * cap_frac
+                                pt_size = pyr_base * cap_frac
                                 pt_size = min(pt_size, size)
                                 if pt_size > 0:
                                     if is_long:
@@ -376,7 +393,8 @@ def simulate(
                                     trades.append({
                                         "entry_idx": entry_idx,
                                         "exit_idx": i,
-                                        "entry_price": round(avg_entry_price, 6),
+                                        "entry_price": round(entry_price, 6),
+                                        "avg_entry_price": round(avg_entry_price, 6),
                                         "exit_price": round(net_pt_exit, 6),
                                         "pnl": round(pnl, 4),
                                         "return_pct": round(ret_pct, 4),
@@ -409,7 +427,7 @@ def simulate(
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
                             # Close cap_frac of original position
-                            pt_size = (size if pyramid_mode else original_size) * cap_frac
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)  # Can't close more than remaining
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
@@ -426,7 +444,8 @@ def simulate(
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(avg_entry_price, 6),
+                                    "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -455,7 +474,7 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
-                            pt_size = (size if pyramid_mode else original_size) * cap_frac
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)
                             if pt_size > 0:
                                 gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
@@ -472,7 +491,8 @@ def simulate(
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
-                                    "entry_price": round(avg_entry_price, 6),
+                                    "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -492,6 +512,11 @@ def simulate(
                                     break
                 # If all position was closed via partials, skip the rest of exit logic
                 if not in_position:
+                    # La posicion se vacio por parciales: la bitacora de la
+                    # piramide se cuelga de la ultima leg para no perderse.
+                    if pyramid_mode and pyr_exec and trades:
+                        trades[-1]["pyr_executions"] = pyr_exec
+                        pyr_exec = []
                     equity[i] = init_cash + realized_pnl
                     prev_signal = bool(entries[i])
                     continue
@@ -602,7 +627,8 @@ def simulate(
                 trades.append({
                     "entry_idx": entry_idx,
                     "exit_idx": eff_exit_idx,
-                    "entry_price": round(avg_entry_price, 6),
+                    "entry_price": round(entry_price, 6),
+                    "avg_entry_price": round(avg_entry_price, 6),
                     "exit_price": round(net_exit, 6),
                     "pnl": round(pnl, 4),
                     "fees": round(fee_amount, 4),
@@ -615,6 +641,9 @@ def simulate(
                     "mfe": round(mfe, 4),
                     "stop_loss": round(trade_sl_price, 6),
                 })
+                if pyramid_mode and pyr_exec:
+                    trades[-1]["pyr_executions"] = pyr_exec
+                    pyr_exec = []
                 in_position = False
                 size = 0.0
 
@@ -636,16 +665,56 @@ def simulate(
         # barra) el flanco es identico al comportamiento anterior. Todo se
         # rearma con cada entrada nueva; TP/SL/parciales corren en paralelo.
         if pyramid_mode and in_position and i > entry_idx:
+            # SECUENCIAL: la piramide avanza EN LINEA y no vuelve atras. Solo
+            # vigila el primer nivel que aun no haya agotado sus veces; cuando
+            # las agota se pasa al siguiente y el anterior ya no dispara mas en
+            # este trade. Una reentrada rearma la secuencia entera.
+            # INDIVIDUAL: `nivel_activo` es None y todos vigilan a la vez, como
+            # entradas independientes.
+            nivel_activo = None
+            if pyramid_sequential:
+                nivel_activo = next(
+                    (k for k in range(len(pyramid_levels))
+                     if pyr_fired[k] < pyramid_levels[k]["max_fires"]),
+                    -1,
+                )
             for lv_idx, lv in enumerate(pyramid_levels):
                 if pyr_fired[lv_idx] >= lv["max_fires"]:
                     continue
-                # flanco: señal True que en la barra anterior estaba False
-                if not lv["signals"][i] or (i > 0 and lv["signals"][i - 1]):
+                # Mientras un nivel no tiene el turno NO se actualiza su estado
+                # de señal, para que al llegarle pueda disparar aunque su
+                # condicion llevara rato cumpliendose. Antes el flanco se
+                # consumia estando desarmado y el nivel quedaba muerto.
+                if nivel_activo is not None and lv_idx != nivel_activo:
                     continue
-                if pyramid_sequential and lv_idx > 0 and pyr_fired[lv_idx - 1] < 1:
+                # El disparo es en el paso de "no se cumple" a "se cumple", pero
+                # medido DENTRO del trade: `pyr_prev_sig` arranca en False en
+                # cada entrada, asi que una condicion que YA se cumplia al entrar
+                # dispara en la primera barra. Antes se miraba la barra anterior
+                # del array completo y esa condicion no disparaba jamas.
+                sig_now = bool(lv["signals"][i])
+                dispara = sig_now and not pyr_prev_sig[lv_idx]
+                pyr_prev_sig[lv_idx] = sig_now
+                if not dispara:
                     continue
-                pyr_fired[lv_idx] += 1
-                px = close[i]
+                # El disparo se contabiliza SOLO si llega a ejecutarse (mas
+                # abajo). Contarlo aqui gastaba una de las "veces" aunque el
+                # add/reduce se descartara por precio o por caja, dejando el
+                # nivel inutilizado para el resto del trade con el default
+                # veces=1.
+                # Norma fija del usuario: si se cumple una condicion, se opera en
+                # la vela INMEDIATAMENTE SIGUIENTE. Vale para las entradas y
+                # tambien para la piramide; antes los add/reduce se ejecutaban al
+                # cierre de la propia vela de la señal (lookahead e incoherente
+                # con las entradas).
+                if look_ahead_prevention:
+                    if i >= n - 1:
+                        continue          # no hay vela siguiente donde operar
+                    px = open_[i + 1]
+                    exec_idx = i + 1
+                else:
+                    px = close[i]
+                    exec_idx = i
                 if px <= 0:
                     continue
                 slip = px * slippage
@@ -660,19 +729,73 @@ def simulate(
                     cash_now = init_cash + realized_pnl
                     if cash_now <= 0:
                         continue
-                    add_size = (cash_now * lv["capital_frac"]) / add_px
-                    add_size = min(add_size, max(0.0, cash_now / add_px - size))
+                    # 'pct' -> % del EQUITY de la cuenta; 'usd' -> una cantidad
+                    # fija en dolares. En ambos casos se convierte a acciones al
+                    # precio de la barra.
+                    if lv.get("unit") == "usd":
+                        add_cash = float(lv.get("amount_usd", 0.0))
+                    else:
+                        add_cash = cash_now * lv["capital_frac"]
+                    if add_cash <= 0:
+                        continue
+                    # TOPE DE CAJA (regla del usuario, 2026-08-23): entrada mas
+                    # añadidos NUNCA pueden comprometer mas capital del que hay
+                    # en la cuenta, contado SIN el flotante y valorando lo que ya
+                    # se tiene AL PRECIO AL QUE SE COMPRO (`avg_entry_price`), no
+                    # al de ahora. Si no cabe entero, se RECORTA hasta el limite
+                    # en vez de anularse.
+                    #   fijo: apuesto 99 y añado 1 -> cabe; pido 2 -> añade 1.
+                    #   %:    entro al 90% y añado 10% -> cabe; el segundo 10% no.
+                    # El tope anterior contaba las acciones vivas al precio
+                    # ACTUAL, asi que el margen se encogia justo cuando el trade
+                    # iba GANANDO, y con la entrada al 100% del equity ningun
+                    # añadido llegaba a ejecutarse nunca, en silencio.
+                    comprometido = avg_entry_price * size
+                    disponible = cash_now - comprometido
+                    if disponible <= 0:
+                        continue
+                    add_cash_pedido = add_cash
+                    add_cash = min(add_cash, disponible)
+                    add_size = add_cash / add_px
                     if add_size <= 0:
                         continue
+                    recortado = add_cash < add_cash_pedido - 1e-9
                     avg_entry_price = (avg_entry_price * size + add_px * add_size) / (size + add_size)
                     size += add_size
+                    # La base de los TP parciales sigue a la posicion: crece con
+                    # los añadidos y baja con las reducciones, pero NO con los
+                    # parciales ya tomados. Asi 50%+50% cierra el 100% sin
+                    # piramidar, y con 1000+1000 el 50% cierra 1000 (regla del
+                    # usuario, 2026-08-23).
+                    pyr_base += add_size
+                    pyr_fired[lv_idx] += 1
+                    pyr_exec.append({
+                        "kind": "add",
+                        "idx": exec_idx,
+                        # timestamps va en nanosegundos; el grafico usa epoch en
+                        # segundos, igual que entry_time_epoch/exit_time_epoch.
+                        "time_epoch": int(timestamps[exec_idx] // 1_000_000_000) if timestamps is not None else None,
+                        "price": round(add_px, 6),
+                        "size": round(add_size, 6),
+                        "level": lv_idx + 1,
+                        "position_size": round(size, 6),
+                        # Queda anotado cuando el tope de caja recorta, para que
+                        # un añadido a medias no parezca uno normal.
+                        **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
+                    })
                     if not is_long:
                         max_short_size_today = max(max_short_size_today, size)
                 else:
                     # REDUCIR: % de la posicion FLOTANTE actual (coherente con
                     # los parciales en modo piramide). Es una leg de cierre
                     # normal: su pnl, sus fees por los dos lados y su registro.
-                    red_size = min(size, size * lv["capital_frac"])
+                    # 'pct' -> % de la posicion FLOTANTE; 'usd' -> el nocional en
+                    # dolares que se quiere cerrar, convertido a acciones al
+                    # precio de la barra. Nunca mas de lo que queda vivo.
+                    if lv.get("unit") == "usd":
+                        red_size = min(size, float(lv.get("amount_usd", 0.0)) / px)
+                    else:
+                        red_size = min(size, size * lv["capital_frac"])
                     if red_size <= 0:
                         continue
                     net_red = (px - slip) if is_long else (px + slip)
@@ -690,8 +813,13 @@ def simulate(
                     ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                     trades.append({
                         "entry_idx": entry_idx,
-                        "exit_idx": i,
-                        "entry_price": round(avg_entry_price, 6),
+                        "exit_idx": exec_idx,
+                        # entry_price = el fill REAL de la entrada (ancla); el
+                        # precio medio ponderado va aparte. Antes aqui iba la
+                        # media, asi que el grafico etiquetaba la vela de entrada
+                        # con un precio que esa vela nunca toco.
+                        "entry_price": round(entry_price, 6),
+                        "avg_entry_price": round(avg_entry_price, 6),
                         "exit_price": round(net_red, 6),
                         "pnl": round(pnl, 4),
                         "return_pct": round(ret_pct, 4),
@@ -705,7 +833,24 @@ def simulate(
                         "stop_loss": round(trade_sl_price, 6),
                     })
                     size -= red_size
+                    pyr_base -= red_size
+                    pyr_fired[lv_idx] += 1
+                    pyr_exec.append({
+                        "kind": "reduce",
+                        "idx": exec_idx,
+                        "time_epoch": int(timestamps[exec_idx] // 1_000_000_000) if timestamps is not None else None,
+                        "price": round(net_red, 6),
+                        "size": round(red_size, 6),
+                        "level": lv_idx + 1,
+                        "position_size": round(size, 6),
+                        "pnl": round(pnl, 4),
+                    })
                     if size <= 0.0001:
+                        # La posicion se ha vaciado con esta reduccion: no
+                        # habra trade de cierre, asi que la bitacora se cuelga
+                        # de esta ultima leg.
+                        trades[-1]["pyr_executions"] = pyr_exec
+                        pyr_exec = []
                         in_position = False
                         size = 0.0
                         break
@@ -823,6 +968,13 @@ def simulate(
                     # La piramide va SIEMPRE asociada a la entrada: cada
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
+                    pyr_prev_sig = [False] * len(pyramid_levels) if pyramid_mode else []
+                    pyr_base = size
+                    # Bitacora de las ejecuciones de piramide de ESTA posicion.
+                    # Viaja pegada al trade de cierre (`pyr_executions`) para
+                    # poder pintarlas en el grafico: un `add` no genera trade
+                    # propio, asi que sin esto no deja ningun rastro.
+                    pyr_exec = []
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
                     total_trades += 1
                 else:

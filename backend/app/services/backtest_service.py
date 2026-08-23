@@ -982,6 +982,10 @@ def _enrich_trades(
             "entry_time_epoch": int(ts_epoch[ei]),
             "exit_time_epoch": int(ts_epoch[xi]),
             "entry_price": t["entry_price"],
+            # Precio medio ponderado de la posicion. Sin piramidar coincide con
+            # entry_price; con piramide es el que gobierna el PnL, mientras que
+            # entry_price es el fill REAL de la entrada (lo que se pinta).
+            "avg_entry_price": t.get("avg_entry_price", t["entry_price"]),
             "exit_price": t["exit_price"],
             "pnl": t["pnl"],
             "fees": t.get("fees", 0.0),
@@ -1000,8 +1004,70 @@ def _enrich_trades(
             "entry_weekday": entry_ts.weekday(),
             "gap_pct": float(gap_pct) if gap_pct is not None else None,
             "stop_loss": t.get("stop_loss", 0.0),
+            # Bitácora de la piramidación (añadidos y reducciones con su hora y
+            # precio). El agrupador la convierte en `executions[]` y luego se
+            # borra. Sin propagarla aquí se perdía justo antes de llegar: los
+            # añadidos existían —el tamaño de la posición crecía— pero no
+            # dejaban ni un rastro visible.
+            **({"pyr_executions": t["pyr_executions"]} if t.get("pyr_executions") else {}),
         })
     return result
+
+
+def _build_executions(run: list[dict]) -> list[dict]:
+    """Detalle cronológico de TODAS las ejecuciones de una posición.
+
+    El gráfico de «Análisis por trade» solo podía pintar una entrada y una
+    salida porque la fusión de legs descartaba el resto. Aquí se reconstruye la
+    secuencia real: la entrada, cada añadido de pirámide (que no genera trade
+    propio y viaja en `pyr_executions`), cada parcial o reducción, y el cierre.
+
+    Es puramente informativo: no altera ningún total ni ninguna métrica.
+    """
+    if not run:
+        return []
+    first = run[0]
+    execs: list[dict] = [{
+        "kind": "entry",
+        "time_epoch": first.get("entry_time_epoch"),
+        "price": first.get("entry_price"),
+        "size": first.get("size"),
+        "label": "Entrada",
+    }]
+    # Los añadidos/reducciones de pirámide van colgados de alguna de las legs.
+    for leg in run:
+        for pe in (leg.get("pyr_executions") or []):
+            execs.append({
+                "kind": pe.get("kind"),          # add | reduce
+                "time_epoch": pe.get("time_epoch"),
+                "price": pe.get("price"),
+                "size": pe.get("size"),
+                "pnl": pe.get("pnl"),
+                "label": (f"Pirámide {pe.get('level')}: "
+                          f"{'añade' if pe.get('kind') == 'add' else 'reduce'}"),
+            })
+    # Una reducción de pirámide sale por PARTIDA DOBLE: como leg (el simulador
+    # le emite un trade propio) y en `pyr_executions`. Se queda la segunda, que
+    # dice de qué pirámide viene; sin esto el gráfico pintaba dos marcadores
+    # encima del mismo evento.
+    ya = {(e["time_epoch"], e["price"]) for e in execs if e["kind"] == "reduce"}
+    # Cada leg aporta su salida (parcial, reducción o cierre final).
+    for leg in run:
+        if (leg.get("exit_time_epoch"), leg.get("exit_price")) in ya:
+            continue
+        execs.append({
+            "kind": "exit",
+            "time_epoch": leg.get("exit_time_epoch"),
+            "price": leg.get("exit_price"),
+            "size": leg.get("size"),
+            "pnl": leg.get("pnl"),
+            "label": leg.get("exit_reason"),
+        })
+    # Sin marca de tiempo no se puede pintar; y el orden es el cronológico.
+    execs = [e for e in execs if e.get("time_epoch") is not None]
+    execs.sort(key=lambda e: e["time_epoch"])
+    # Si no hubo nada mas que entrada + cierre, no aporta nada nuevo.
+    return execs if len(execs) > 2 else []
 
 
 def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
@@ -1020,6 +1086,11 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
     ejecución, exit (hora/precio/razón) de la última, mae/mfe toman el máximo.
     """
     if len(trades_records) < 2:
+        for t in trades_records:
+            execs = _build_executions([t])
+            if execs:
+                t["executions"] = execs
+            t.pop("pyr_executions", None)
         return trades_records
 
     grouped: list[dict] = []
@@ -1030,14 +1101,22 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         if not run:
             return
         if len(run) == 1:
-            grouped.append(run[0])
+            solo = run[0]
+            execs = _build_executions(run)
+            if execs:
+                solo["executions"] = execs
+            solo.pop("pyr_executions", None)
+            grouped.append(solo)
             return
         first, last = run[0], run[-1]
         pnl = round(sum(t["pnl"] for t in run), 4)
         fees = round(sum(t.get("fees", 0.0) or 0.0 for t in run), 4)
         pnl_with_locates = round(sum(t.get("pnl_with_locates", t["pnl"]) for t in run), 4)
         size = round(sum(t["size"] for t in run), 6)
-        capital = first["entry_price"] * size
+        # El capital comprometido se mide con el precio MEDIO (que es el que
+        # gobierna el PnL). Con entry_price, que ahora es el fill real de la
+        # entrada, el return_pct de un trade piramidado salia sesgado.
+        capital = first.get("avg_entry_price", first["entry_price"]) * size
         ret_pct = round((pnl / capital) * 100, 4) if capital > 0 else 0.0
         r_values = [t.get("r_multiple") for t in run if t.get("r_multiple") is not None]
         trade = dict(first)
@@ -1057,6 +1136,13 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             "r_multiple": round(sum(r_values), 2) if r_values else None,
             "n_executions": len(run),
         })
+        # Detalle de cada ejecucion (entrada, añadidos de piramide, parciales,
+        # reducciones y cierre) para poder pintarlas TODAS en el grafico. Antes
+        # la fusion tiraba estos datos y solo dejaba el recuento `n_executions`.
+        execs = _build_executions(run)
+        if execs:
+            trade["executions"] = execs
+        trade.pop("pyr_executions", None)
         grouped.append(trade)
 
     for t in trades_records:

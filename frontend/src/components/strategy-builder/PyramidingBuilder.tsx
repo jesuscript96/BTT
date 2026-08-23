@@ -56,13 +56,21 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
     // quitado. Los añadidos se suman en % del equity. Las quitas son % de la
     // posición FLOTANTE y se encadenan: dos quitas del 50% dejan el 25%, así
     // que lo honesto es mostrar el total efectivo 1 - prod(1 - pct).
-    const adds = config.levels.filter(l => l.action === 'add');
-    const reduces = config.levels.filter(l => l.action === 'reduce');
+    // Los niveles en % y los niveles en $ NO se pueden sumar entre si, asi que
+    // cada unidad lleva su propio total y solo se muestra la que exista.
+    const isUsd = (l: PyramidLevel) => (l.unit ?? 'pct') === 'usd';
+    const adds = config.levels.filter(l => l.action === 'add' && !isUsd(l));
+    const reduces = config.levels.filter(l => l.action === 'reduce' && !isUsd(l));
+    const addsUsd = config.levels.filter(l => l.action === 'add' && isUsd(l));
+    const reducesUsd = config.levels.filter(l => l.action === 'reduce' && isUsd(l));
     // cada nivel puede disparar `times` veces: los añadidos se multiplican y
     // las quitas se encadenan tambien por sus repeticiones
     const totalAddPct = adds.reduce((s, l) => s + (l.capital_pct || 0) * Math.max(1, l.times || 1), 0);
     const totalReducePct = (1 - reduces.reduce(
         (p, l) => p * Math.pow(1 - Math.min(100, l.capital_pct || 0) / 100, Math.max(1, l.times || 1)), 1)) * 100;
+    // en dolares si se suman: son cantidades fijas
+    const totalAddUsd = addsUsd.reduce((s, l) => s + (l.capital_pct || 0) * Math.max(1, l.times || 1), 0);
+    const totalReduceUsd = reducesUsd.reduce((s, l) => s + (l.capital_pct || 0) * Math.max(1, l.times || 1), 0);
 
     return (
         <div style={{
@@ -161,8 +169,16 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                 fontWeight: 600,
                                 color: 'var(--color-ec-copper)',
                             }}>
-                                Añadidos: +{totalAddPct.toFixed(1)}% del equity
-                                {' · '}Quitas: −{totalReducePct.toFixed(1)}% de la posición
+                                {'Añadidos: '}
+                                {[
+                                    totalAddPct > 0 ? `+${totalAddPct.toFixed(1)}% del equity` : null,
+                                    totalAddUsd > 0 ? `+$${totalAddUsd.toFixed(0)}` : null,
+                                ].filter(Boolean).join(' y ') || '+0'}
+                                {' · Quitas: '}
+                                {[
+                                    reduces.length > 0 ? `−${totalReducePct.toFixed(1)}% de la posición` : null,
+                                    totalReduceUsd > 0 ? `−$${totalReduceUsd.toFixed(0)} de posición` : null,
+                                ].filter(Boolean).join(' y ') || '−0'}
                                 {totalReducePct < 100 ? ' (el resto lo cierra TP/SL/EOD)' : ''}
                             </span>
                         )}
@@ -179,11 +195,33 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                             flexDirection: 'column',
                             gap: 10,
                         }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            {/* Cabecera: el título y el botón de eliminar en su
+                                propia línea. Antes iba todo en una sola fila y
+                                en un panel estrecho el `wrap` descolocaba el
+                                campo "Veces" a la línea de abajo, desalineado. */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <span style={{
                                     fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 700,
                                     color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
                                 }}>Pirámide {idx + 1}</span>
+                                <button
+                                    type="button"
+                                    onClick={() => removeLevel(idx)}
+                                    style={{
+                                        marginLeft: 'auto',
+                                        background: 'transparent',
+                                        border: 'none',
+                                        color: 'var(--color-ec-loss)',
+                                        cursor: 'pointer',
+                                        fontSize: 11,
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        padding: 0,
+                                    }}
+                                    title="Eliminar esta pirámide"
+                                >✕ eliminar</button>
+                            </div>
+                            {/* Controles, todos en una fila que sí cabe. */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <select
                                     value={lv.action}
                                     onChange={(e) => setLevel(idx, { ...lv, action: e.target.value as 'add' | 'reduce' })}
@@ -199,15 +237,32 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     value={lv.capital_pct ?? ''}
                                     onChange={(e) => setLevel(idx, { ...lv, capital_pct: e.target.value === '' ? 0 : Number(e.target.value) })}
                                     onFocus={(e) => e.target.select()}
-                                    style={{ ...selectStyle, width: 72, cursor: 'text' }}
-                                    title={lv.action === 'add'
-                                        ? '% del equity de la cuenta que se añade a la posición'
-                                        : '% de la posición flotante que se cierra'}
+                                    style={{ ...selectStyle, width: 62, cursor: 'text' }}
+                                    title={(lv.unit ?? 'pct') === 'usd'
+                                        ? (lv.action === 'add'
+                                            ? 'Dólares fijos que se añaden a la posición, convertidos a acciones al precio de la barra'
+                                            : 'Dólares de posición que se cierran, convertidos a acciones al precio de la barra')
+                                        : (lv.action === 'add'
+                                            ? '% del equity de la cuenta que se añade a la posición'
+                                            : '% de la posición flotante que se cierra')}
                                 />
-                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>
-                                    {lv.action === 'add' ? '% del equity' : '% de la posición'}
+                                <select
+                                    value={lv.unit ?? 'pct'}
+                                    onChange={(e) => setLevel(idx, { ...lv, unit: e.target.value as 'pct' | 'usd' })}
+                                    style={selectStyle}
+                                    title="Si la cantidad es un porcentaje o una cifra fija en dólares"
+                                >
+                                    <option value="pct">%</option>
+                                    <option value="usd">$</option>
+                                </select>
+                                {/* Texto corto: el detalle completo está en el
+                                    tooltip del campo de la cantidad. */}
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>
+                                    {(lv.unit ?? 'pct') === 'usd'
+                                        ? (lv.action === 'add' ? 'fijos' : 'de posición')
+                                        : (lv.action === 'add' ? 'del equity' : 'de la posición')}
                                 </span>
-                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', marginLeft: 6 }}>Veces:</span>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', marginLeft: 4, whiteSpace: 'nowrap' }}>Veces:</span>
                                 <input
                                     type="number"
                                     min={1}
@@ -216,23 +271,9 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     value={lv.times ?? 1}
                                     onChange={(e) => setLevel(idx, { ...lv, times: e.target.value === '' ? 1 : Math.max(1, Math.floor(Number(e.target.value))) })}
                                     onFocus={(e) => e.target.select()}
-                                    style={{ ...selectStyle, width: 52, cursor: 'text' }}
+                                    style={{ ...selectStyle, width: 48, cursor: 'text' }}
                                     title="Cuántas veces puede disparar esta pirámide por trade (cada cumplimiento nuevo de la condición cuenta una vez)"
                                 />
-                                <button
-                                    type="button"
-                                    onClick={() => removeLevel(idx)}
-                                    style={{
-                                        marginLeft: 'auto',
-                                        background: 'transparent',
-                                        border: 'none',
-                                        color: 'var(--color-ec-loss)',
-                                        cursor: 'pointer',
-                                        fontSize: 11,
-                                        fontFamily: 'var(--color-ec-sans)',
-                                    }}
-                                    title="Eliminar esta pirámide"
-                                >✕ eliminar</button>
                             </div>
                             {/* El MISMO editor de grupos que entrada/salida: AND/OR,
                                 anidados, todos los indicadores y comparadores. */}

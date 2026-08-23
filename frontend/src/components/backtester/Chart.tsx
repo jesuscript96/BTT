@@ -408,6 +408,38 @@ export default function Chart({
               });
             }
           }
+
+          // --- Ejecuciones intermedias -------------------------------------
+          // Añadidos y reducciones de piramidación y take profits parciales.
+          // La entrada y el cierre final ya llevan su marcador arriba, así que
+          // aquí solo se pinta lo que ocurre EN MEDIO — que antes era
+          // invisible: un `add` no genera trade propio y la fusión de legs se
+          // llevaba por delante los parciales.
+          for (const ex of (t.executions || [])) {
+            if (ex.kind === "entry") continue;
+            if (ex.time_epoch === t.exit_time_epoch) continue; // es el cierre
+            // El mismo criterio de día que la entrada y la salida (comparar
+            // fechas UTC aquí desalinearía el día de sesión); y `snapToCandle`
+            // descarta solo lo que no caiga en una vela del gráfico.
+            if (dayDateStr && entryDate !== dayDateStr && exitDate !== dayDateStr) continue;
+            const snap = snapToCandle(ex.time_epoch, candleTimes);
+            if (!snap || !candleTimeSet.has(snap)) continue;
+            const isAdd = ex.kind === "add";
+            const isLong = t.direction.toLowerCase().includes("long");
+            rawMarkers.push({
+              time: snap,
+              position: isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar",
+              // Cobre para los añadidos (aumentan la posición) y ámbar para
+              // las salidas parciales, para no confundirlos con la entrada ni
+              // con el cierre.
+              color: isAdd ? "#c87941" : "#d9a441",
+              shape: isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square",
+              text: isAdd
+                ? `+${(ex.size ?? 0).toFixed(0)} @ $${ex.price.toFixed(2)}`
+                : `−${(ex.size ?? 0).toFixed(0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
+              isEntry: false,
+            });
+          }
         }
 
         // Group markers by time

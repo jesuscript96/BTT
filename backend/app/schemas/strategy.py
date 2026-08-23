@@ -337,6 +337,12 @@ class StrategyCreate(BaseModel):
     market_sessions: Optional[List[str]] = None
     custom_start_time: Optional[str] = None
     custom_end_time: Optional[str] = None
+    # Piramidacion. Dict opaco (mismo criterio que `strategy_definition` en
+    # BacktestRequest): el arbol de condiciones de cada nivel es el mismo que el
+    # de entrada/salida y ya lo normaliza strategy_engine. Sin este campo,
+    # pydantic lo descartaba en SILENCIO (extra="ignore" por defecto) y una
+    # estrategia guardada no podia conservar su piramidacion.
+    pyramiding: Optional[dict] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

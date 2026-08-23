@@ -361,9 +361,18 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             veces = int(lv.get("times", 1))
         except (TypeError, ValueError):
             veces = 1
+        # Unidad de la cantidad. 'pct' (por defecto) = el comportamiento de
+        # siempre: % del equity al añadir, % de la posición flotante al quitar.
+        # 'usd' = una cantidad FIJA en dólares, que se convierte a acciones al
+        # precio de la barra. El default 'pct' mantiene la regla nº1: una
+        # definición sin `unit` se compila exactamente igual que antes.
+        unit = "usd" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "pct"
         pyr_levels_def.append({
             "root_condition": root,
             "action": "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add",
+            "unit": unit,
+            # En 'usd' el numero son dolares tal cual, no un porcentaje.
+            "amount_usd": pct if unit == "usd" else 0.0,
             # La UI manda % (1 = 1%); el motor trabaja en fracción.
             "capital_frac": pct / 100.0,
             # Cuantas veces puede disparar este nivel por trade (flancos de su
@@ -640,6 +649,11 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 "action": lv["action"],
                 "capital_frac": lv["capital_frac"],
                 "max_fires": lv.get("max_fires", 1),
+                # Sin estos dos, la unidad en dolares se perdia aqui y el motor
+                # trataba la cantidad como PORCENTAJE: un nivel de "500 $"
+                # pedia el 500% del equity.
+                "unit": lv.get("unit", "pct"),
+                "amount_usd": lv.get("amount_usd", 0.0),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel
@@ -867,13 +881,22 @@ def _build_closed_bar_alignment(abs_min_arr, labels, period_mins):
     return np.where(valid, idx_c, 0), valid
 
 
-def _align_native_to_1m(res_tf, ctx, n_bars):
-    """Lleva un array booleano a nivel tf a la malla 1m con semántica closed-bar."""
+def _align_native_to_1m(res_tf, ctx, n_bars, solo_primera_barra: bool = False):
+    """Lleva un array booleano a nivel tf a la malla 1m con semántica closed-bar.
+
+    `solo_primera_barra` replica el mismo criterio del camino clásico
+    (`_align_signals_to_1m`): un CRUCE es un evento puntual y solo vale en la
+    primera barra de 1m posterior al cierre de su vela, no durante todo el tramo.
+    """
     if ctx is None:
         return np.zeros(n_bars, dtype=bool)
     gather_idx, valid = ctx
     out = np.zeros(n_bars, dtype=bool)
     out[valid] = np.asarray(res_tf, dtype=bool)[gather_idx[valid]]
+    if solo_primera_barra:
+        cambia = np.ones(n_bars, dtype=bool)
+        cambia[1:] = (gather_idx[1:] != gather_idx[:-1]) | (valid[1:] != valid[:-1])
+        out &= cambia
     return out
 
 
@@ -900,7 +923,9 @@ def _evaluate_group_native(group: dict, results: dict, n_bars: int,
             tf = cond.get("timeframe") or parent_tf or "1m"
             res = _eval_comparison_native(cond, results, tf)
             if res is not None and _TF_MINUTES.get(tf, 1) > 1:
-                res = _align_native_to_1m(res, align_ctx.get(tf), n_bars)
+                es_cruce = str(cond.get("comparator", "")).startswith("CROSSES_")
+                res = _align_native_to_1m(res, align_ctx.get(tf), n_bars,
+                                          solo_primera_barra=es_cruce)
         elif cond_type == "price_level_distance":
             tf = cond.get("timeframe") or parent_tf or "1m"
             res = _eval_distance_native(cond, results, tf)
@@ -1031,7 +1056,15 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 def _align_signals_to_1m(
     signals_tf: pd.Series, df_1m: pd.DataFrame, timeframe: str,
+    solo_primera_barra: bool = False,
 ) -> pd.Series:
+    """Baja una señal de timeframe superior al indice de 1m.
+
+    Para cada barra de 1m toma la vela del timeframe superior que YA ha cerrado
+    (`T_closed`), asi que no hay lookahead. Con `solo_primera_barra=True` la
+    señal se limita a la PRIMERA barra de 1m posterior a ese cierre: es lo
+    correcto para los CRUCES, que son eventos puntuales y no estados.
+    """
     if timeframe == "1m":
         return signals_tf
     ts_1m = pd.to_datetime(df_1m["timestamp"])
@@ -1042,7 +1075,24 @@ def _align_signals_to_1m(
     t_floored = t_shifted.dt.floor(freq)
     T_closed = t_floored - delta
     result = T_closed.map(signals_tf).fillna(False).astype(bool)
+    if solo_primera_barra:
+        # primera barra de 1m de cada tramo: aquella en la que cambia la vela
+        # de referencia respecto a la barra anterior.
+        primera = T_closed.ne(T_closed.shift(1))
+        primera.iloc[0] = True
+        result = result & primera.values
     result.index = df_1m.index
+    # Una condicion en timeframe DIARIO sobre un dia intradia no tiene ninguna
+    # vela diaria cerrada dentro del frame: `T_closed` apunta al dia anterior,
+    # que no existe aqui, y la condicion sale SIEMPRE falsa. Antes eso mataba la
+    # estrategia entera (0 entradas) sin decir nada.
+    if not bool(result.any()) and timeframe == "1d":
+        logger.error(
+            "[TIMEFRAME 1d] Una condicion en temporalidad DIARIA no se puede "
+            "evaluar dentro de una sesion intradia: no hay ninguna vela diaria "
+            "cerrada en el rango, asi que la condicion nunca se cumple y la "
+            "estrategia no generara entradas. Usa una temporalidad intradia."
+        )
     return result
 
 
@@ -1101,7 +1151,14 @@ def _evaluate_single_condition(
         res_tf = pd.Series(False, index=cond_df.index)
 
     if tf != "1m":
-        res_1m = _align_signals_to_1m(res_tf, df_1m, tf)
+        # Un CRUCE es un instante, no un estado. Al bajar de 5m a 1m, la señal
+        # de la vela de 5m vale para las 5 barras de 1m siguientes: correcto
+        # para "el precio esta por debajo de la EMA" (un estado que dura), pero
+        # NO para "cruza por debajo de la EMA", que permitiria entrar hasta 4
+        # minutos despues del cruce, con el precio ya movido. Los cruces se
+        # limitan a la primera barra tras el cierre de su vela.
+        es_cruce = str(cond.get("comparator", "")).startswith("CROSSES_")
+        res_1m = _align_signals_to_1m(res_tf, df_1m, tf, solo_primera_barra=es_cruce)
     else:
         res_1m = res_tf
     return res_1m
@@ -1217,13 +1274,29 @@ def _apply_comparator(
     op = _COMPARATOR_OPS.get(comparator)
     if op is not None:
         return op(source, target)
-    if comparator in ("DISTANCE_GREATER_THAN", "DISTANCE_LESS_THAN"):
+    # Los comparadores de DISTANCIA necesitan el tipo de condicion
+    # `price_level_distance` (con su value_pct). Si llegan aqui, la condicion
+    # esta mal formada. Se aceptan tambien los alias CORTOS, que son los que
+    # emite la interfaz: antes solo se reconocian los largos y un DISTANCE_GT
+    # caia al fallback de abajo.
+    if comparator in ("DISTANCE_GREATER_THAN", "DISTANCE_LESS_THAN",
+                      "DISTANCE_GT", "DISTANCE_LT"):
         logger.warning(
             f"{comparator} used in indicator_comparison — this comparator "
             "requires 'price_level_distance' condition type with value_pct. Returning False."
         )
         return pd.Series(False, index=source.index)
-    return source > target
+    # NUNCA inventarse un comparador. Antes, cualquier palabra desconocida caia
+    # en `source > target`: una condicion que decia "menor que" podia acabar
+    # ejecutandose como "mayor que" —entrando justo en los maximos— sin error,
+    # sin aviso y sin dejar rastro. Ahora la condicion se apaga (False en todas
+    # las barras, que no dispara nada) y queda registrado con nivel ERROR.
+    logger.error(
+        f"[COMPARADOR DESCONOCIDO] '{comparator}' no esta en la lista del motor "
+        f"({', '.join(sorted(_COMPARATOR_OPS))}). La condicion queda DESACTIVADA "
+        "(no dispara). Revisa la definicion de la estrategia."
+    )
+    return pd.Series(False, index=source.index)
 
 
 # ── Risk management (unchanged) ──────────────────────────────────────────

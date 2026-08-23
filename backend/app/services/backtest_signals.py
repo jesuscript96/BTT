@@ -869,6 +869,9 @@ def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_do
             "entry_time_epoch": int(ts_epoch[ei]),
             "exit_time_epoch": int(ts_epoch[xi]),
             "entry_price": t["entry_price"],
+            # En paridad con _enrich_trades (backtest_service.py): sin
+            # piramidar coincide con entry_price.
+            "avg_entry_price": t.get("avg_entry_price", t["entry_price"]),
             "exit_price": t["exit_price"],
             "pnl": pnl,
             "fees": t.get("fees", 0.0),

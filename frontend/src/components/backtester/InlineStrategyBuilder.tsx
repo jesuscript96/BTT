@@ -145,7 +145,7 @@ export interface Draft {
   dataset_id?: string;
   universe_filters?: any;
   // Solo presente si la piramidación está activa con niveles (regla nº1).
-  pyramiding?: { timeframe: string; levels: any[] };
+  pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[] };
 }
 
 function getGroupSummaryText(group: ConditionGroup): string {
@@ -418,6 +418,10 @@ export default function InlineStrategyBuilder({
       custom_end_time: stratObj.custom_end_time,
       dataset_id: stratObj.dataset_id,
       universe_filters: stratObj.universe_filters,
+      // Sin esto, dos estrategias que solo se diferencian en la piramidacion
+      // se consideran "la misma" y el bloque no se repuebla al cambiar de una
+      // a otra.
+      pyramiding: stratObj.pyramiding,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;

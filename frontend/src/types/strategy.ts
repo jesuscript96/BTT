@@ -334,7 +334,13 @@ export const initialExitLogic: ExitLogic = {
 export interface PyramidLevel {
     root_condition: ConditionGroup;
     action: 'add' | 'reduce';
-    capital_pct: number;   // % en unidades de UI (1 = 1%)
+    // Que significa `capital_pct`:
+    //   'pct' (por defecto) -> % del equity al añadir, % de la posicion
+    //                          flotante al quitar
+    //   'usd'               -> una cantidad FIJA en dolares, convertida a
+    //                          acciones al precio de la barra
+    unit: 'pct' | 'usd';
+    capital_pct: number;   // % en unidades de UI (1 = 1%), o $ si unit='usd'
     // Cuantas veces puede disparar por trade (flancos de su señal). 1 = el
     // clasico "una vez"; con Darvas, 3 = hasta tres cajas seguidas.
     times: number;
@@ -355,6 +361,7 @@ export interface PyramidingConfig {
 export const emptyPyramidLevel = (): PyramidLevel => ({
     root_condition: { type: "group", operator: "AND", conditions: [] },
     action: 'add',
+    unit: 'pct',
     capital_pct: 1.0,
     times: 1,
 });

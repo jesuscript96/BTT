@@ -350,7 +350,12 @@ def simulate_jit(
         if rc in _PARTIAL_REASONS:
             rec = {
                 "entry_idx": rec["entry_idx"], "exit_idx": rec["exit_idx"],
-                "entry_price": rec["entry_price"], "exit_price": rec["exit_price"],
+                "entry_price": rec["entry_price"],
+                # El JIT no piramida, asi que el precio medio es el de entrada.
+                # Va igualmente para mantener la paridad de claves con el motor
+                # Python (test_sim_jit_equivalence compara los dicts enteros).
+                "avg_entry_price": rec["entry_price"],
+                "exit_price": rec["exit_price"],
                 "pnl": rec["pnl"], "return_pct": rec["return_pct"],
                 "direction": rec["direction"], "status": rec["status"],
                 "size": rec["size"], "exit_reason": rec["exit_reason"],
@@ -360,7 +365,9 @@ def simulate_jit(
         else:
             rec = {
                 "entry_idx": rec["entry_idx"], "exit_idx": rec["exit_idx"],
-                "entry_price": rec["entry_price"], "exit_price": rec["exit_price"],
+                "entry_price": rec["entry_price"],
+                "avg_entry_price": rec["entry_price"],
+                "exit_price": rec["exit_price"],
                 "pnl": rec["pnl"], "fees": fee_t,
                 "return_pct": rec["return_pct"], "direction": rec["direction"],
                 "status": rec["status"], "size": rec["size"],

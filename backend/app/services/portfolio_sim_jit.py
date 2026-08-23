@@ -205,7 +205,10 @@ def _core_simulate_jit(
                         if trail_activated:
                             trail_extreme = max(trail_extreme, high[i])
                             trail_sl_price = trail_extreme - (entry_price * trail_pct)
-                            if price_for_sl <= trail_sl_price + 1e-9:
+                            # El STOP FIJO manda: si ya disparo en esta barra, el
+                            # trailing no lo pisa. EN PARIDAD con portfolio_sim.py
+                            # (regla del usuario, 2026-08-23).
+                            if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
                                 else:
@@ -222,7 +225,8 @@ def _core_simulate_jit(
                         if trail_activated:
                             trail_extreme = min(trail_extreme, low[i])
                             trail_sl_price = trail_extreme + (entry_price * trail_pct)
-                            if price_for_sl >= trail_sl_price - 1e-9:
+                            # Mismo criterio que en long: el stop fijo manda.
+                            if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
                                 else:

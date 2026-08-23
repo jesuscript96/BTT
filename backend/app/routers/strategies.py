@@ -39,6 +39,9 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
                 "market_sessions": strategy.market_sessions,
                 "custom_start_time": strategy.custom_start_time,
                 "custom_end_time": strategy.custom_end_time,
+                # Solo se escribe la clave si la estrategia piramida, para que
+                # una definicion sin piramide quede byte-identica a las de antes.
+                **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
             })
 
             con.execute(
@@ -99,6 +102,9 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                 "market_sessions": strategy.market_sessions,
                 "custom_start_time": strategy.custom_start_time,
                 "custom_end_time": strategy.custom_end_time,
+                # Solo se escribe la clave si la estrategia piramida, para que
+                # una definicion sin piramide quede byte-identica a las de antes.
+                **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
             })
 
             con.execute(

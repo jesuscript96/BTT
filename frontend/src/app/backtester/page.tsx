@@ -244,6 +244,7 @@ export default function Home() {
         market_sessions: draftStrategy.market_sessions || activeSessions,
         custom_start_time: draftStrategy.custom_start_time || activeCustomStartTime,
         custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
+        ...((draftStrategy as any).pyramiding ? { pyramiding: (draftStrategy as any).pyramiding } : {}),
       });
 
       if (isExisting) {
@@ -481,6 +482,9 @@ export default function Home() {
         custom_end_time: draft.custom_end_time,
         dataset_id: activeDatasetId,
         universe_filters: (draft as any).universe_filters,
+        // La clave solo viaja si el draft la trae: sin piramidar, la definicion
+        // queda byte-identica a la de siempre (regla nº1).
+        ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
       }
     });
 
@@ -524,6 +528,10 @@ export default function Home() {
           custom_end_time: draft.custom_end_time,
           dataset_id: activeDatasetId,
           universe_filters: (draft as any).universe_filters,
+          // Sin esto la piramidacion configurada en el builder nunca llegaba al
+          // backend: strategy_engine hace strategy_def.get("pyramiding") y se
+          // quedaba vacio, apagando pyramid_mode en SILENCIO (sin error).
+          ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
         },
         init_cash: p?.init_cash ?? 10000,
         risk_r: p?.risk_r ?? 100,
@@ -671,6 +679,7 @@ export default function Home() {
             market_sessions: def.market_sessions || params.market_sessions || ["rth"],
             custom_start_time: def.custom_start_time || params.custom_start_time,
             custom_end_time: def.custom_end_time || params.custom_end_time,
+            ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           } as any;
           await handleRunWithDraft(draft);
           return;
@@ -711,6 +720,9 @@ export default function Home() {
         market_sessions: targetDraft.definition?.market_sessions || targetDraft.market_sessions || params.market_sessions || ["rth"],
         custom_start_time: targetDraft.definition?.custom_start_time || targetDraft.custom_start_time || params.custom_start_time,
         custom_end_time: targetDraft.definition?.custom_end_time || targetDraft.custom_end_time || params.custom_end_time,
+        ...((targetDraft.definition?.pyramiding || targetDraft.pyramiding)
+          ? { pyramiding: targetDraft.definition?.pyramiding || targetDraft.pyramiding }
+          : {}),
       } as any;
       await handleRunWithDraft(draft);
       return;
@@ -1662,6 +1674,7 @@ export default function Home() {
                           market_sessions: strategyToSave.market_sessions,
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
+                          ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -1724,6 +1737,7 @@ export default function Home() {
                           market_sessions: def.market_sessions || ["rth"],
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
+                          ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
                         } as any;
                         setBuilderDraft(savedDraft);
 
@@ -1844,6 +1858,7 @@ export default function Home() {
                           market_sessions: strategyToSave.market_sessions,
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
+                          ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
                         } as any);
 
                         // Persist backtest results linked to this strategy

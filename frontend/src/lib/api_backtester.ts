@@ -119,6 +119,24 @@ export interface TradeRecord {
   entry_weekday: number;
   gap_pct?: number | null;
   n_executions?: number;
+  // Precio medio ponderado de la posición. Sin piramidar coincide con
+  // entry_price; con piramidación, entry_price es el fill REAL de la entrada
+  // (lo que se pinta en el gráfico) y este es el que gobierna el PnL.
+  avg_entry_price?: number;
+  // Detalle cronológico de cada ejecución de la posición: la entrada, los
+  // añadidos y reducciones de piramidación, los take profit parciales y el
+  // cierre. Solo viene cuando hubo MÁS que entrada + cierre; el gráfico lo usa
+  // para pintar un marcador por ejecución.
+  executions?: TradeExecution[];
+}
+
+export interface TradeExecution {
+  kind: 'entry' | 'add' | 'reduce' | 'exit';
+  time_epoch: number;
+  price: number;
+  size?: number;
+  pnl?: number | null;
+  label?: string;
 }
 
 export interface CandleData {
