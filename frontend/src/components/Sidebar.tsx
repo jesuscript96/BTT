@@ -11,7 +11,6 @@ import {
     Flame,
     BarChart3,
     ShieldCheck,
-    Layers,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -247,20 +246,9 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                 )}
 
 
-                {/* Baúl */}
-                <Link
-                    href="/database"
-                    style={{
-                        ...linkBase(isCollapsed),
-                        ...linkActive("/database"),
-                    }}
-                >
-                    <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                    <span style={labelFade(isCollapsed)}>Baúl</span>
-                </Link>
-
                 {/* Portfolio — solo local: gated por NEXT_PUBLIC_PORTFOLIO_ENABLED,
-                    apagado por defecto para que produccion no vea la entrada. */}
+                    apagado por defecto para que produccion no vea la entrada.
+                    Reemplaza a la antigua pagina Baul (/database). */}
                 {process.env.NEXT_PUBLIC_PORTFOLIO_ENABLED === "true" && (
                     <Link
                         href="/portfolio"
@@ -269,7 +257,7 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                             ...linkActive("/portfolio"),
                         }}
                     >
-                        <Layers style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Portfolio</span>
                     </Link>
                 )}

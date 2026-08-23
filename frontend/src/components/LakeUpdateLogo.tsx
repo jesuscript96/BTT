@@ -26,6 +26,10 @@ type Estado = {
   error?: string | null;
   disponible?: boolean;
   ultima_linea?: string;
+  // Que ha cambiado de verdad: hasta que dia llegan los datos, cuantas filas
+  // entraron y cuantos datasets se ampliaron. Un "Datos actualizados" a secas
+  // no distingue entre haber traido 10 dias y no haber traido nada.
+  resumen?: string | null;
 };
 
 const TITULO_STYLE: React.CSSProperties = {
@@ -53,8 +57,8 @@ export default function LakeUpdateLogo({ texto = "Backtester" }: { texto?: strin
         clearInterval(timer.current);
         timer.current = null;
         if (d.status === "done") {
-          setAviso("Datos actualizados");
-          setTimeout(() => setAviso(null), 6000);
+          setAviso(d.resumen || "Datos actualizados");
+          setTimeout(() => setAviso(null), 15000);
         } else if (d.status === "error") {
           setAviso(d.error ? `Error: ${d.error}` : "Error al actualizar");
           setTimeout(() => setAviso(null), 12000);

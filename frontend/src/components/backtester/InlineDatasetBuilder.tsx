@@ -108,21 +108,15 @@ export default function InlineDatasetBuilder({
   }));
   */
 
-  // Iniciales fijas (sin reloj): el HTML inicial debe ser idéntico en servidor y
-  // navegador o React lanza error de hidratación (p. ej. al pasar de medianoche
-  // con el dev server arrancado). El rango por defecto real y el de la BD se
-  // aplican en el efecto de montaje, que ya no se compara al hidratar.
-  const [dateFrom, setDateFrom] = useState("2024-01-01");
-  const [dateTo, setDateTo] = useState("2026-12-31");
+  const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
+  const [dateTo, setDateTo] = useState(MAX_DATE);
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [dbDateRange, setDbDateRange] = useState<any>({
     min_date: "2022-01-01",
-    max_date: "2026-12-31"
+    max_date: new Date().toISOString().split("T")[0]
   });
 
   useEffect(() => {
-    setDateFrom(TWO_YEARS_AGO);
-    setDateTo(MAX_DATE);
     fetchAvailableDateRange().then(range => {
       if (range) {
         setDbDateRange(range);

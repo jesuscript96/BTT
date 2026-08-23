@@ -27,26 +27,7 @@
    - Backend: `routers/portfolio.py`, `services/portfolio_service.py` (+ tests).
    - Frontend: `components/database/PortfolioBuilder.tsx`, `lib/api.ts`.
 
-4. **Indicador "Current Gap (%)" en Entrada lógica.** Gap vivo del precio
-   (close de la vela) vs cierre de ayer, evaluado vela a vela durante todo el
-   día (PM y RTH) — a diferencia de "PM High Gap (%)" (máximo acumulado del
-   premarket, que se congela al cerrar el PM). Comparadores >=, <=, >, <.
-   Misma cadena de fallback de `prev_close` que PM High Gap. Paridad
-   legacy↔nativa cubierta en `tests/test_current_gap_semantics.py`.
-
-5. **Parciales con disparador dual (1A/1B) + MAE/MFE desde máximo previo.**
-   Cada parcial % puede llevar, además del "% desde entrada" de siempre (1B),
-   un fade desde el máximo previo del día (1A: nivel = máx × (1−G%)), con
-   **ganancia mínima** exigida a 1A y **prioridad** configurable para el
-   empate en misma vela (OCO: una sola ejecución con SU capital, nunca suman).
-   Si al entrar el nivel 1A ya está cruzado o deja menos del mínimo, se salta
-   y queda marcado en el trade (`partials_skipped`). En la tabla de trades,
-   toggle de referencia para MAE%/MFE% (entrada ↔ máximo previo) y campos de
-   auditoría (`prev_max_ref`, `fade_at_entry_pct`). Implementado en
-   `portfolio_sim` (especificación) y `portfolio_sim_jit` con paridad;
-   tests en `tests/test_fade_partials.py` (ejemplo 10$→20$ incluido).
-
-6. **Ajustes menores:** indicadores (`indicators.py`), `CalendarTab`,
+4. **Ajustes menores:** indicadores (`indicators.py`), `CalendarTab`,
    `ConditionBuilder`, caché GCS, tipos de estrategia.
 
 ## 🔧 Flujo de trabajo

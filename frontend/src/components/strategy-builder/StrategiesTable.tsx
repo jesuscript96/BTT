@@ -163,8 +163,8 @@ export const StrategiesTable = ({ refreshTrigger }: Props) => {
         if (cond.type === 'indicator_comparison') {
             const sourceStr = formatIndicator(cond.source);
             const compStr = COMPARATOR_LABELS[cond.comparator] || cond.comparator || "=";
-            const targetStr = typeof cond.target === 'number'
-                ? ((cond.source.name === IndicatorType.PM_HIGH_GAP || cond.source.name === IndicatorType.CURRENT_GAP) ? `${cond.target}%` : cond.target.toString())
+            const targetStr = typeof cond.target === 'number' 
+                ? (cond.source.name === IndicatorType.PM_HIGH_GAP ? `${cond.target}%` : cond.target.toString()) 
                 : formatIndicator(cond.target);
             const tfStr = cond.timeframe ? `[${cond.timeframe}] ` : "";
             return `${tfStr}${sourceStr} ${compStr} ${targetStr}`;

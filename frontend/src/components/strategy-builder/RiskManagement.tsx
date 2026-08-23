@@ -48,25 +48,11 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
         });
     };
 
-    // Parcial de fade: fila propia con su línea de respaldo debajo.
-    const isFadeRow = (p: PartialTakeProfit) =>
-        p.fade_from_high_pct != null && p.distance_pct == null;
-
     const updatePartial = (index: number, field: keyof PartialTakeProfit, value: any) => {
         onChange({
             ...risk,
             partial_take_profits: (risk.partial_take_profits || []).map((p, i) =>
                 i === index ? { ...p, [field]: value } : p
-            )
-        });
-    };
-
-    // Actualiza varios campos de un parcial en un solo onChange (add/clear del fade 1A).
-    const updatePartialFields = (index: number, fields: Partial<PartialTakeProfit>) => {
-        onChange({
-            ...risk,
-            partial_take_profits: (risk.partial_take_profits || []).map((p, i) =>
-                i === index ? { ...p, ...fields } : p
             )
         });
     };
@@ -428,85 +414,38 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
 
                 {/* Body */}
                 {risk.trailing_stop.active && (
-                    <div className="flex flex-col animate-in fade-in duration-200" style={{ marginTop: 12, gap: 8 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 24, flexWrap: 'wrap' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
-                                <div className="relative" style={{ width: '120px' }}>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        min="0"
-                                        value={risk.trailing_stop.buffer_pct ?? ''}
-                                        onChange={(e) => setTrailingField('buffer_pct', e.target.value === '' ? '' : e.target.value)}
-                                        onBlur={() => {
-                                            const val = parseFloat(String(risk.trailing_stop.buffer_pct));
-                                            setTrailingField('buffer_pct', isNaN(val) ? 0.5 : Math.max(0, val));
-                                        }}
-                                        onFocus={(e) => e.target.select()}
-                                        style={{
-                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                            border: '0.5px solid var(--color-ec-border)',
-                                            borderRadius: 5,
-                                            padding: '7px 24px 7px 10px',
-                                            fontSize: 13,
-                                            fontWeight: 600,
-                                            color: 'var(--color-ec-text-primary)',
-                                            fontFamily: 'var(--color-ec-sans)',
-                                            outline: 'none',
-                                            width: '100%',
-                                            height: '36px',
-                                            textAlign: 'center',
-                                        }}
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
-                                </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Activación:</span>
-                                <div className="relative" style={{ width: '120px' }}>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        min="0"
-                                        placeholder="= distancia"
-                                        value={risk.trailing_stop.activation_pct ?? ''}
-                                        onChange={(e) => setTrailingField('activation_pct', e.target.value === '' ? '' : e.target.value)}
-                                        onBlur={() => {
-                                            const raw = String(risk.trailing_stop.activation_pct ?? '');
-                                            if (raw === '') return; // vacío = sin umbral propio (usa la distancia)
-                                            const val = parseFloat(raw);
-                                            setTrailingField('activation_pct', isNaN(val) ? '' : Math.max(0, val));
-                                        }}
-                                        onFocus={(e) => e.target.select()}
-                                        style={{
-                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                            border: '0.5px solid var(--color-ec-border)',
-                                            borderRadius: 5,
-                                            padding: '7px 24px 7px 10px',
-                                            fontSize: 13,
-                                            fontWeight: 600,
-                                            color: 'var(--color-ec-text-primary)',
-                                            fontFamily: 'var(--color-ec-sans)',
-                                            outline: 'none',
-                                            width: '100%',
-                                            height: '36px',
-                                            textAlign: 'center',
-                                        }}
-                                    />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
-                                </div>
+                    <div className="flex items-center justify-center animate-in fade-in duration-200" style={{ marginTop: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Distancia Trailing:</span>
+                            <div className="relative" style={{ width: '120px' }}>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={risk.trailing_stop.buffer_pct ?? ''}
+                                    onChange={(e) => setTrailingField('buffer_pct', e.target.value === '' ? '' : e.target.value)}
+                                    onBlur={() => {
+                                        const val = parseFloat(String(risk.trailing_stop.buffer_pct));
+                                        setTrailingField('buffer_pct', isNaN(val) ? 0.5 : val);
+                                    }}
+                                    onFocus={(e) => e.target.select()}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 24px 7px 10px',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '100%',
+                                        height: '36px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
                             </div>
                         </div>
-                        <span style={{
-                            fontFamily: 'var(--color-ec-sans)',
-                            fontSize: 10,
-                            fontWeight: 400,
-                            color: 'var(--color-ec-text-muted)',
-                            textAlign: 'center',
-                        }}>
-                            Distancia 0% = stop fijo en break-even · Activación = % a favor necesario para activar (vacío = la propia distancia)
-                        </span>
                     </div>
                 )}
             </div>
@@ -727,53 +666,49 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             <div className="space-y-3 animate-in fade-in zoom-in-95 duration-200" style={{ marginTop: 12 }}>
                                 <div className="space-y-2">
                                     {(risk.partial_take_profits || []).map((partial, idx) => (
-                                        <div key={idx} className="group relative" style={{ borderBottom: '0.5px dotted var(--color-ec-border)' }}>
-                                        <div
+                                        <div key={idx} className="group relative"
                                             style={{
                                                 backgroundColor: 'transparent',
+                                                borderBottom: '0.5px dotted var(--color-ec-border)',
                                                 padding: '8px 0',
                                                 display: 'flex',
                                                 alignItems: 'center',
                                                 gap: 12,
-                                                flexWrap: 'wrap',
                                             }}
                                         >
                                             {/* Partial Tag */}
                                             <span style={{
                                                 fontSize: 9,
                                                 fontWeight: 800,
-                                                color: isFadeRow(partial) ? 'var(--color-ec-copper)' : 'var(--color-ec-profit)',
+                                                color: 'var(--color-ec-profit)',
                                                 textTransform: 'uppercase',
                                                 letterSpacing: '0.05em',
                                                 width: 65,
                                                 flexShrink: 0
                                             }}>
-                                                {`Parcial #${idx + 1}`}
+                                                Parcial #{idx + 1}
                                             </span>
 
                                             {/* Distance Input */}
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                                                 {(() => {
                                                     const valStr = String(partial.distance_pct);
-                                                    const mode = (partial.distance_pct == null && partial.fade_from_high_pct != null) ? 'FADE'
-                                                        : valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : valStr.startsWith('HOUR:') ? 'HOUR' : 'PCT';
-
+                                                    const mode = valStr === 'EOD' ? 'EOD' : valStr.startsWith('TIME:') ? 'TIME' : valStr.startsWith('HOUR:') ? 'HOUR' : 'PCT';
+                                                    
                                                     return (
                                                         <>
                                                             <select
                                                                 value={mode}
                                                                 onChange={(e) => {
                                                                     const newMode = e.target.value;
-                                                                    if (newMode === 'FADE') {
-                                                                        updatePartialFields(idx, { distance_pct: undefined, fade_from_high_pct: 50, fallback_entry_pct: 5, priority: 'fade' });
-                                                                    } else if (newMode === 'EOD') {
-                                                                        updatePartialFields(idx, { distance_pct: 'EOD', fade_from_high_pct: undefined, fallback_entry_pct: undefined, min_gain_pct: undefined, priority: undefined });
+                                                                    if (newMode === 'EOD') {
+                                                                        updatePartial(idx, 'distance_pct', 'EOD');
                                                                     } else if (newMode === 'TIME') {
-                                                                        updatePartialFields(idx, { distance_pct: 'TIME:30', fade_from_high_pct: undefined, fallback_entry_pct: undefined, min_gain_pct: undefined, priority: undefined });
+                                                                        updatePartial(idx, 'distance_pct', 'TIME:30');
                                                                     } else if (newMode === 'HOUR') {
-                                                                        updatePartialFields(idx, { distance_pct: 'HOUR:15:30', fade_from_high_pct: undefined, fallback_entry_pct: undefined, min_gain_pct: undefined, priority: undefined });
+                                                                        updatePartial(idx, 'distance_pct', 'HOUR:15:30');
                                                                     } else {
-                                                                        updatePartialFields(idx, { distance_pct: 3.0, fade_from_high_pct: undefined, fallback_entry_pct: undefined, min_gain_pct: undefined, priority: undefined });
+                                                                        updatePartial(idx, 'distance_pct', 3.0);
                                                                     }
                                                                 }}
                                                                 style={{
@@ -790,43 +725,12 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                                 }}
                                                             >
                                                                 <option value="PCT">% Distancia</option>
-                                                                <option value="FADE">Fade desde máx. (condicional)</option>
                                                                 <option value="TIME">Tiempo (minutos)</option>
                                                                 <option value="HOUR">Hora específica</option>
                                                                 <option value="EOD">Fin del Día (EOD)</option>
                                                             </select>
-
-                                                            {mode === 'FADE' ? (
-                                                                <div className="relative" style={{ width: 65 }}
-                                                                    title="Caida desde el maximo del dia (anterior a tu entrada) que dispara este parcial"
-                                                                >
-                                                                    <input
-                                                                        type="number"
-                                                                        step="0.5"
-                                                                        min="0"
-                                                                        value={partial.fade_from_high_pct ?? ''}
-                                                                        onChange={(e) => updatePartial(idx, 'fade_from_high_pct', e.target.value === '' ? 0 : Number(e.target.value))}
-                                                                        onBlur={() => {
-                                                                            const val = parseFloat(String(partial.fade_from_high_pct));
-                                                                            updatePartial(idx, 'fade_from_high_pct', isNaN(val) || val <= 0 ? 50 : val);
-                                                                        }}
-                                                                        onFocus={(e) => e.target.select()}
-                                                                        style={{
-                                                                            width: '100%',
-                                                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                                            border: '0.5px solid var(--color-ec-border)',
-                                                                            borderRadius: 4,
-                                                                            padding: '4px 16px 4px 6px',
-                                                                            fontSize: 11,
-                                                                            fontWeight: 700,
-                                                                            color: 'var(--color-ec-text-primary)',
-                                                                            outline: 'none',
-                                                                            textAlign: 'right',
-                                                                        }}
-                                                                    />
-                                                                    <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">%</span>
-                                                                </div>
-                                                            ) : mode === 'EOD' ? (
+                                                            
+                                                            {mode === 'EOD' ? (
                                                                 <div style={{
                                                                     width: 65,
                                                                     border: '0.5px solid var(--color-ec-border)',
@@ -958,68 +862,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                     <Trash2 className="w-3.5 h-3.5" />
                                                 </button>
                                             )}
-
-                                            {isFadeRow(partial) && (
-                                                <div style={{ flexBasis: '100%', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, paddingLeft: 77, marginTop: 2 }}>
-                                                    <span
-                                                        style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}
-                                                        title="Si al entrar el nivel de fade esta muy cerca (o ya cruzado), este parcial se ejecuta por el % desde tu entrada en su lugar."
-                                                    >
-                                                        Si entraste muy cerca →
-                                                    </span>
-                                                    <label
-                                                        title="Disparador de respaldo: % de movimiento desde tu precio de entrada que ejecuta este parcial cuando el fade no procede."
-                                                        style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}
-                                                    >
-                                                        % desde entrada
-                                                        <div className="relative" style={{ width: 52 }}>
-                                                            <input
-                                                                type="number" step="0.5" min="0"
-                                                                value={partial.fallback_entry_pct ?? ''}
-                                                                onChange={(e) => updatePartial(idx, 'fallback_entry_pct', e.target.value === '' ? undefined : Number(e.target.value))}
-                                                                onFocus={(e) => e.target.select()}
-                                                                style={{ width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 4, padding: '4px 12px 4px 6px', fontSize: 11, fontWeight: 700, color: 'var(--color-ec-text-primary)', outline: 'none', textAlign: 'right' }}
-                                                            />
-                                                            <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">%</span>
-                                                        </div>
-                                                    </label>
-                                                    <label
-                                                        title="Ganancia minima (%, desde tu entrada) exigida al fade. Si al entrar su nivel dejaria menos de eso -o ya esta cruzado-, se salta y queda marcado en el trade. Vacio = sin minimo: solo se salta si ya esta cruzado."
-                                                        style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}
-                                                    >
-                                                        Ganancia mín.
-                                                        <div className="relative" style={{ width: 52 }}>
-                                                            <input
-                                                                type="number" step="0.5" min="0" placeholder="—"
-                                                                value={partial.min_gain_pct ?? ''}
-                                                                onChange={(e) => updatePartial(idx, 'min_gain_pct', e.target.value === '' ? undefined : Number(e.target.value))}
-                                                                onFocus={(e) => e.target.select()}
-                                                                style={{ width: '100%', backgroundColor: 'var(--color-ec-bg-sidebar)', border: '0.5px solid var(--color-ec-border)', borderRadius: 4, padding: '4px 12px 4px 6px', fontSize: 11, fontWeight: 700, color: 'var(--color-ec-text-primary)', outline: 'none', textAlign: 'right' }}
-                                                            />
-                                                            <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[8px] font-bold text-muted-foreground/40">%</span>
-                                                        </div>
-                                                    </label>
-                                                    <div
-                                                        title="Si en una misma vela el precio toca a la vez el nivel del fade y el % desde entrada, manda el elegido y el otro queda cancelado (una sola ejecucion). En velas distintas gana el que llegue antes."
-                                                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-                                                    >
-                                                        <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Manda</span>
-                                                        <div style={{ display: 'inline-flex', border: '0.5px solid var(--color-ec-border)', borderRadius: 4, overflow: 'hidden' }}>
-                                                            {(['fade', 'entry'] as const).map((opt) => {
-                                                                const active = (partial.priority ?? 'fade') === opt;
-                                                                return (
-                                                                    <button key={opt} onClick={() => updatePartial(idx, 'priority', opt)}
-                                                                        style={{ padding: '4px 8px', fontSize: 9, fontWeight: 700, cursor: 'pointer', border: 'none', fontFamily: 'var(--color-ec-sans)', backgroundColor: active ? 'var(--color-ec-copper)' : 'transparent', color: active ? '#fff' : 'var(--color-ec-text-muted)', transition: 'background-color 120ms ease, color 120ms ease' }}>
-                                                                        {opt === 'fade' ? 'Máx.' : 'Entrada'}
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-
                                         </div>
                                     ))}
                                 </div>

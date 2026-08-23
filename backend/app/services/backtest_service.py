@@ -25,10 +25,6 @@ from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_c
 
 logger = logging.getLogger("backtester.engine")
 
-# Errores de translate_strategy ya logueados en la vida del proceso (ver el
-# except del stream loop: antes se tragaban en silencio → "0 trades" sin rastro).
-_translate_err_logged = 0
-
 # Pre-computed time boundaries for patch mask (avoid recreating per iteration)
 _PATCH_START = datetime.time(8, 0)
 _PATCH_END = datetime.time(8, 45)
@@ -297,6 +293,11 @@ def run_backtest(
     global_realized_pnl = 0.0
     current_date = None
     daily_pnl = 0.0
+    # Locates fee per calendar date, summed across tickers. Not attached to any
+    # single trade's pnl (see portfolio_sim.py) — netted into the aggregate
+    # totals in _compute_global_equity_and_drawdown / _aggregate_metrics so
+    # dollar totals stay unchanged while no trade's win/loss is skewed by it.
+    locates_fee_by_date: dict[str, float] = {}
 
     # ── Fase 1-slab: stream desde slabs locales (refs mmap) + señales ───────
     # Sustituye fetch+ensamblado pandas por slices numpy del slab store. Los meses
@@ -334,8 +335,10 @@ def run_backtest(
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
         }
         with PhaseTimer("simulate", mode="slab") as _pt_sim:
-            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            all_trades, all_equity, day_results, _locates_by_date = _bsig.simulate_and_accumulate(signals_sorted, _params)
             _pt_sim.pairs = len(signals_sorted)
+        for _d, _fee in _locates_by_date.items():
+            locates_fee_by_date[_d] = locates_fee_by_date.get(_d, 0.0) + _fee
         days_with_entries = len(day_results)
         scanned = len(signals_sorted)
         logger.info(
@@ -382,8 +385,10 @@ def run_backtest(
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
         }
         with PhaseTimer("simulate") as _pt_sim:
-            all_trades, all_equity, day_results = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            all_trades, all_equity, day_results, _locates_by_date = _bsig.simulate_and_accumulate(signals_sorted, _params)
             _pt_sim.pairs = len(signals_sorted)
+        for _d, _fee in _locates_by_date.items():
+            locates_fee_by_date[_d] = locates_fee_by_date.get(_d, 0.0) + _fee
         days_with_entries = len(day_results)
         logger.info(
             f"[PARALLEL] pipeline done: {len(signals_sorted)} con señales, "
@@ -543,6 +548,8 @@ def run_backtest(
             sig_direction = cached["direction"]
             sig_accept_reentries = cached["accept_reentries"]
             sig_max_reentries = cached.get("max_reentries", -1)
+            sig_pyramid_levels = cached.get("pyramid_levels") or []
+            sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
 
             if not np.any(entries_arr):
                 del mini_df
@@ -555,16 +562,7 @@ def run_backtest(
         else:
             try:
                 signals = translate_strategy(mini_df, strategy_def, daily_stats, compiled=compiled_strategy)
-            except Exception as e:
-                # Nunca tragarse el error en silencio: un indicador roto aquí se
-                # ve como "0 trades" sin ningún log (bug cazado el 2026-08-18).
-                if _translate_err_logged < 3:
-                    logger.error(
-                        f"[SIGNALS] translate_strategy falló para {ticker} {date}: "
-                        f"{type(e).__name__}: {e}",
-                        exc_info=True,
-                    )
-                    _translate_err_logged += 1
+            except Exception:
                 del mini_df
                 continue
             if not signals["entries"].any():
@@ -582,6 +580,8 @@ def run_backtest(
             sig_tp_time_limit = signals.get("tp_time_limit")
             sig_trail_pct = signals.get("trail_pct")
             sig_partial_tps = signals.get("partial_take_profits")
+            sig_pyramid_levels = signals.get("pyramid_levels") or []
+            sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -591,6 +591,10 @@ def run_backtest(
                     "direction": sig_direction,
                     "accept_reentries": sig_accept_reentries,
                     "max_reentries": sig_max_reentries,
+                    "pyramid_levels": [
+                        {**lv, "signals": lv["signals"].copy()} for lv in sig_pyramid_levels
+                    ],
+                    "pyramid_sequential": sig_pyramid_sequential,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -635,6 +639,10 @@ def run_backtest(
             session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
+            if sig_pyramid_levels:
+                sig_pyramid_levels = [
+                    {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
+                ]
 
         # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays ---
         if compiled_strategy:
@@ -717,6 +725,8 @@ def run_backtest(
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
                 partial_take_profits=sig_partial_tps,
+                pyramid_levels=sig_pyramid_levels,
+                pyramid_sequential=sig_pyramid_sequential,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,
@@ -740,14 +750,21 @@ def run_backtest(
 
         eq_vals = sim_result["equity"]
         raw_trades = sim_result["trades"]
+        ticker_locates_fee = float(sim_result.get("locates_fee", 0.0) or 0.0)
 
         if not raw_trades:
             del sim_result
             continue
 
-        # Track today's PnL to roll over into tomorrow's compounding base
+        # Track today's PnL to roll over into tomorrow's compounding base.
+        # The day's locates fee is real cash spent but isn't attached to any single
+        # trade's pnl (see portfolio_sim.py) — subtract it here so compounding_cash
+        # for the next day stays exactly what it was before that change.
         for t in raw_trades:
             daily_pnl += t["pnl"]
+        if ticker_locates_fee > 0:
+            daily_pnl -= ticker_locates_fee
+            locates_fee_by_date[date] = locates_fee_by_date.get(date, 0.0) + ticker_locates_fee
 
         # Avoid pd.to_datetime parsing if array is already datetime kind natively
         ts_arr = arrays["timestamp"]
@@ -773,7 +790,9 @@ def run_backtest(
 
         equity = _extract_equity_from_values(eq_vals, timestamps)
 
-        stats = _extract_day_stats_from_values(eq_vals, ticker, date, trades_records, daily_stats.get("gap_pct"))
+        stats = _extract_day_stats_from_values(
+            eq_vals, ticker, date, trades_records, daily_stats.get("gap_pct"), ticker_locates_fee
+        )
 
         all_equity.append({"ticker": ticker, "date": date, "equity": equity})
         all_trades.extend(trades_records)
@@ -811,10 +830,11 @@ def run_backtest(
     t4 = time.time()
     # Logic: global_eq is pure trades, global_eq_exp is trades - monthly_expenses
     global_eq, global_dd, global_eq_exp = _compute_global_equity_and_drawdown(
-        all_trades, init_cash, monthly_expenses
+        all_trades, init_cash, monthly_expenses, locates_fee_by_date
     )
     aggregate = _aggregate_metrics(
-        day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses
+        day_results, all_trades, global_eq, global_dd, init_cash, risk_r, monthly_expenses,
+        locates_fee_by_date,
     )
     logger.info(f"[AGG] aggregate+equity done ({round(time.time()-t4, 2)}s)")
     _log_phase("aggregate", (time.time() - t4) * 1000, pairs=len(day_results),
@@ -962,9 +982,16 @@ def _enrich_trades(
             "entry_time_epoch": int(ts_epoch[ei]),
             "exit_time_epoch": int(ts_epoch[xi]),
             "entry_price": t["entry_price"],
+            # Precio medio ponderado de la posicion. Sin piramidar coincide con
+            # entry_price; con piramide es el que gobierna el PnL, mientras que
+            # entry_price es el fill REAL de la entrada (lo que se pinta).
+            "avg_entry_price": t.get("avg_entry_price", t["entry_price"]),
             "exit_price": t["exit_price"],
             "pnl": t["pnl"],
             "fees": t.get("fees", 0.0),
+            # Robustness-only (Monte Carlo / WFO curve reconstruction) — see
+            # portfolio_sim.py. Not used for display, win rate, or r_multiple.
+            "pnl_with_locates": t.get("pnl_with_locates", t["pnl"]),
             "return_pct": t["return_pct"],
             "direction": t["direction"],
             "status": t["status"],
@@ -972,19 +999,75 @@ def _enrich_trades(
             "exit_reason": t["exit_reason"],
             "mae": t["mae"],
             "mfe": t.get("mfe", 0.0),
-            # Referencia "máximo previo del día" (fade del movimiento completo)
-            "mae_prev_max": t.get("mae_prev_max", 0.0),
-            "mfe_prev_max": t.get("mfe_prev_max", 0.0),
-            "prev_max_ref": t.get("prev_max_ref"),
-            "fade_at_entry_pct": t.get("fade_at_entry_pct"),
-            "partials_skipped": t.get("partials_skipped", []),
             "r_multiple": r_multiple,
             "entry_hour": entry_ts.hour,
             "entry_weekday": entry_ts.weekday(),
             "gap_pct": float(gap_pct) if gap_pct is not None else None,
             "stop_loss": t.get("stop_loss", 0.0),
+            # Bitácora de la piramidación (añadidos y reducciones con su hora y
+            # precio). El agrupador la convierte en `executions[]` y luego se
+            # borra. Sin propagarla aquí se perdía justo antes de llegar: los
+            # añadidos existían —el tamaño de la posición crecía— pero no
+            # dejaban ni un rastro visible.
+            **({"pyr_executions": t["pyr_executions"]} if t.get("pyr_executions") else {}),
         })
     return result
+
+
+def _build_executions(run: list[dict]) -> list[dict]:
+    """Detalle cronológico de TODAS las ejecuciones de una posición.
+
+    El gráfico de «Análisis por trade» solo podía pintar una entrada y una
+    salida porque la fusión de legs descartaba el resto. Aquí se reconstruye la
+    secuencia real: la entrada, cada añadido de pirámide (que no genera trade
+    propio y viaja en `pyr_executions`), cada parcial o reducción, y el cierre.
+
+    Es puramente informativo: no altera ningún total ni ninguna métrica.
+    """
+    if not run:
+        return []
+    first = run[0]
+    execs: list[dict] = [{
+        "kind": "entry",
+        "time_epoch": first.get("entry_time_epoch"),
+        "price": first.get("entry_price"),
+        "size": first.get("size"),
+        "label": "Entrada",
+    }]
+    # Los añadidos/reducciones de pirámide van colgados de alguna de las legs.
+    for leg in run:
+        for pe in (leg.get("pyr_executions") or []):
+            execs.append({
+                "kind": pe.get("kind"),          # add | reduce
+                "time_epoch": pe.get("time_epoch"),
+                "price": pe.get("price"),
+                "size": pe.get("size"),
+                "pnl": pe.get("pnl"),
+                "label": (f"Pirámide {pe.get('level')}: "
+                          f"{'añade' if pe.get('kind') == 'add' else 'reduce'}"),
+            })
+    # Una reducción de pirámide sale por PARTIDA DOBLE: como leg (el simulador
+    # le emite un trade propio) y en `pyr_executions`. Se queda la segunda, que
+    # dice de qué pirámide viene; sin esto el gráfico pintaba dos marcadores
+    # encima del mismo evento.
+    ya = {(e["time_epoch"], e["price"]) for e in execs if e["kind"] == "reduce"}
+    # Cada leg aporta su salida (parcial, reducción o cierre final).
+    for leg in run:
+        if (leg.get("exit_time_epoch"), leg.get("exit_price")) in ya:
+            continue
+        execs.append({
+            "kind": "exit",
+            "time_epoch": leg.get("exit_time_epoch"),
+            "price": leg.get("exit_price"),
+            "size": leg.get("size"),
+            "pnl": leg.get("pnl"),
+            "label": leg.get("exit_reason"),
+        })
+    # Sin marca de tiempo no se puede pintar; y el orden es el cronológico.
+    execs = [e for e in execs if e.get("time_epoch") is not None]
+    execs.sort(key=lambda e: e["time_epoch"])
+    # Si no hubo nada mas que entrada + cierre, no aporta nada nuevo.
+    return execs if len(execs) > 2 else []
 
 
 def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
@@ -1003,6 +1086,11 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
     ejecución, exit (hora/precio/razón) de la última, mae/mfe toman el máximo.
     """
     if len(trades_records) < 2:
+        for t in trades_records:
+            execs = _build_executions([t])
+            if execs:
+                t["executions"] = execs
+            t.pop("pyr_executions", None)
         return trades_records
 
     grouped: list[dict] = []
@@ -1013,30 +1101,29 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         if not run:
             return
         if len(run) == 1:
-            rec = dict(run[0])
-            rec["legs"] = [
-                {
-                    "exit_time": rec.get("exit_time"),
-                    "exit_time_epoch": rec.get("exit_time_epoch"),
-                    "exit_price": rec.get("exit_price"),
-                    "exit_reason": rec.get("exit_reason"),
-                    "size": rec.get("size"),
-                    "pnl": rec.get("pnl"),
-                }
-            ]
-            grouped.append(rec)
+            solo = run[0]
+            execs = _build_executions(run)
+            if execs:
+                solo["executions"] = execs
+            solo.pop("pyr_executions", None)
+            grouped.append(solo)
             return
         first, last = run[0], run[-1]
         pnl = round(sum(t["pnl"] for t in run), 4)
         fees = round(sum(t.get("fees", 0.0) or 0.0 for t in run), 4)
+        pnl_with_locates = round(sum(t.get("pnl_with_locates", t["pnl"]) for t in run), 4)
         size = round(sum(t["size"] for t in run), 6)
-        capital = first["entry_price"] * size
+        # El capital comprometido se mide con el precio MEDIO (que es el que
+        # gobierna el PnL). Con entry_price, que ahora es el fill real de la
+        # entrada, el return_pct de un trade piramidado salia sesgado.
+        capital = first.get("avg_entry_price", first["entry_price"]) * size
         ret_pct = round((pnl / capital) * 100, 4) if capital > 0 else 0.0
         r_values = [t.get("r_multiple") for t in run if t.get("r_multiple") is not None]
         trade = dict(first)
         trade.update({
             "pnl": pnl,
             "fees": fees,
+            "pnl_with_locates": pnl_with_locates,
             "size": size,
             "return_pct": ret_pct,
             "exit_idx": last["exit_idx"],
@@ -1044,32 +1131,18 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             "exit_time_epoch": last["exit_time_epoch"],
             "exit_price": last["exit_price"],
             "exit_reason": last["exit_reason"],
-            # Cadena completa de razones de las legs (el parcial es intermedia y
-            # exit_reason solo conserva la última — PRD reporte parciales fade).
-            "exit_reasons": [t.get("exit_reason") for t in run],
             "mae": max(t.get("mae", 0.0) or 0.0 for t in run),
             "mfe": max(t.get("mfe", 0.0) or 0.0 for t in run),
-            "mae_prev_max": max(t.get("mae_prev_max", 0.0) or 0.0 for t in run),
-            "mfe_prev_max": max(t.get("mfe_prev_max", 0.0) or 0.0 for t in run),
-            "prev_max_ref": first.get("prev_max_ref"),
-            "fade_at_entry_pct": first.get("fade_at_entry_pct"),
-            "partials_skipped": first.get("partials_skipped", []),
             "r_multiple": round(sum(r_values), 2) if r_values else None,
             "n_executions": len(run),
-            # Ejecuciones individuales de la posición (parciales + cierre) para
-            # poder señalar cada una en el chart a su precio exacto.
-            "legs": [
-                {
-                    "exit_time": t.get("exit_time"),
-                    "exit_time_epoch": t.get("exit_time_epoch"),
-                    "exit_price": t.get("exit_price"),
-                    "exit_reason": t.get("exit_reason"),
-                    "size": t.get("size"),
-                    "pnl": t.get("pnl"),
-                }
-                for t in run
-            ],
         })
+        # Detalle de cada ejecucion (entrada, añadidos de piramide, parciales,
+        # reducciones y cierre) para poder pintarlas TODAS en el grafico. Antes
+        # la fusion tiraba estos datos y solo dejaba el recuento `n_executions`.
+        execs = _build_executions(run)
+        if execs:
+            trade["executions"] = execs
+        trade.pop("pyr_executions", None)
         grouped.append(trade)
 
     for t in trades_records:
@@ -1126,12 +1199,17 @@ def _extract_equity_from_values(eq_vals: np.ndarray, timestamps: pd.Series) -> l
 def _compute_global_equity_and_drawdown(
     all_trades: list[dict],
     init_cash: float,
-    monthly_expenses: float = 0.0
+    monthly_expenses: float = 0.0,
+    locates_fee_by_date: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Build equity curve as cumulative P&L per calendar day.
 
     Logic: start at init_cash, group trades by date, sum daily P&L,
     accumulate.  equity[day] = equity[prev_day] + sum(pnl of trades on day).
+
+    `locates_fee_by_date` (optional) nets in the per-date locates cost, which
+    is no longer baked into any single trade's pnl (see portfolio_sim.py) —
+    without it the curve would be short by exactly that amount.
     """
     if not all_trades:
         return [], [], []
@@ -1143,6 +1221,11 @@ def _compute_global_equity_and_drawdown(
         if not date_str:
             continue
         daily_pnl[date_str] = daily_pnl.get(date_str, 0.0) + trade.get("pnl", 0.0)
+
+    if locates_fee_by_date:
+        for date_str, fee in locates_fee_by_date.items():
+            if date_str in daily_pnl:
+                daily_pnl[date_str] -= fee
 
     if not daily_pnl:
         return [], [], []
@@ -1209,7 +1292,8 @@ def _extract_day_stats_from_values(
     ticker: str,
     date: str,
     trades_records: list[dict],
-    gap_pct: float | None = None
+    gap_pct: float | None = None,
+    locates_fee: float = 0.0,
 ) -> dict:
     empty = {
         "ticker": ticker, "date": date,
@@ -1218,6 +1302,7 @@ def _extract_day_stats_from_values(
         "sortino_ratio": 0, "expectancy": 0, "best_trade_pct": 0,
         "worst_trade_pct": 0, "init_value": 0, "end_value": 0,
         "gap_pct": float(gap_pct) if gap_pct is not None else None,
+        "locates_fee": _safe_float(locates_fee),
     }
     try:
         eq_arr = np.asarray(eq_vals, dtype=np.float64)
@@ -1252,8 +1337,14 @@ def _extract_day_stats_from_values(
         mean_r = float(np.mean(bar_returns)) if len(bar_returns) > 0 else 0.0
         ann_factor = np.sqrt(252 * 390)
         sharpe = (mean_r / std * ann_factor) if std > 0 else 0.0
-        down_returns = bar_returns[bar_returns < 0]
-        down_std = float(np.std(down_returns)) if len(down_returns) > 1 else 0.0
+        # Downside deviation CANONICA: RMS de min(ret, 0) sobre TODAS las
+        # observaciones. Lo anterior era np.std de solo los retornos negativos,
+        # que los mide alrededor de SU propia media en vez de alrededor de cero
+        # y no divide por el total — dos sesgos que inflaban el Sortino y que
+        # ademas lo hacian discrepar del que calcula el modulo de portfolio
+        # (portfolio_lab_engine.py) para la misma estrategia.
+        down_std = float(np.sqrt(np.mean(np.minimum(bar_returns, 0.0) ** 2))) \
+            if len(bar_returns) > 1 else 0.0
         sortino = (mean_r / down_std * ann_factor) if down_std > 0 else 0.0
     except Exception:
         return empty
@@ -1274,6 +1365,7 @@ def _extract_day_stats_from_values(
         "init_value": _safe_float(start_val),
         "end_value": _safe_float(end_val),
         "gap_pct": float(gap_pct) if gap_pct is not None else None,
+        "locates_fee": _safe_float(locates_fee),
     }
 
 
@@ -1288,7 +1380,8 @@ def _aggregate_metrics(
     global_dd: list[dict],
     init_cash: float,
     risk_r: float = 100,
-    monthly_expenses: float = 0.0
+    monthly_expenses: float = 0.0,
+    locates_fee_by_date: dict[str, float] | None = None,
 ) -> dict:
     empty = {
         "total_days": 0, "total_trades": 0, "win_rate_pct": 0,
@@ -1317,9 +1410,17 @@ def _aggregate_metrics(
     # We find number of unique months in trades
     all_months = sorted(list(set(t.get("date", "")[:7] for t in trades if t.get("date"))))
     total_expenses = len(all_months) * monthly_expenses
-    
+
+    # Locates fee, netted separately: it's a ticker-day cost, not attached to
+    # any single trade's pnl (see portfolio_sim.py), so `pnls` below is already
+    # the clean/gross per-trade figure — win rate, profit factor, avg win/loss
+    # etc. are computed on it untouched. Only the dollar TOTALS need this added
+    # back so they match what they were before that change.
+    total_locates = float(sum(locates_fee_by_date.values())) if locates_fee_by_date else 0.0
+
     pnls = np.array([t.get("pnl", 0) for t in trades]) if trades else np.array([])
     total_pnl_trades = float(pnls.sum()) if len(pnls) else 0.0
+    total_pnl_trades -= total_locates
     total_pnl_net = total_pnl_trades - total_expenses
     winning_trades = int((pnls > 0).sum()) if len(pnls) else 0
     total_closed = len(pnls)
@@ -1327,8 +1428,7 @@ def _aggregate_metrics(
 
     # Calculate Total Return against Initial Cash
     # PnL / Init Cash gives the actual Return % for the period on the account size
-    # PnL / Init Cash gives the actual Return % for the period on the account size
-    total_pnl = float(pnls.sum()) if len(pnls) else 0.0
+    total_pnl = total_pnl_trades
     total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
 
     # Build a continuous daily equity curve for accurate annualized volatility
@@ -1344,7 +1444,11 @@ def _aggregate_metrics(
                 d = t.get("date", "")
                 if d:
                     daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
-            
+            if locates_fee_by_date:
+                for d, fee in locates_fee_by_date.items():
+                    if d in daily_pnls:
+                        daily_pnls[d] -= fee
+
             sorted_dates = sorted(daily_pnls.keys())
             first_date = pd.to_datetime(sorted_dates[0])
             last_date = pd.to_datetime(sorted_dates[-1])
@@ -1370,8 +1474,11 @@ def _aggregate_metrics(
             # Annualize (approx 365 calendar days or 252 trading days. Using 365 since frequency is 'D')
             avg_sharpe = (mean_r / std * np.sqrt(365)) if std > 0 else 0.0
             
-            down_rets = daily_rets[daily_rets < 0]
-            down_std = float(np.std(down_rets)) if len(down_rets) > 0 else 0.0
+            # Downside deviation canonica (ver la nota de la otra ocurrencia,
+            # mas arriba en este mismo fichero): RMS de min(ret, 0) sobre todas
+            # las observaciones, no la std de solo los dias perdedores.
+            down_std = float(np.sqrt(np.mean(np.minimum(daily_rets, 0.0) ** 2))) \
+                if len(daily_rets) > 0 else 0.0
             sortino_ratio = (mean_r / down_std * np.sqrt(365)) if down_std > 0 else 0.0
 
         except Exception as e:
@@ -1469,7 +1576,7 @@ def _aggregate_metrics(
         "max_drawdown_pct": round(final_max_dd, 4),
         "avg_profit_factor": round(avg_pf, 4),
         "avg_pnl": round(avg_pnl, 2),
-        "total_pnl": round(float(pnls.sum()), 2) if len(pnls) else 0,
+        "total_pnl": round(total_pnl, 2) if len(pnls) else 0,
         "sortino_ratio": round(sortino_ratio, 4),
         "calmar_ratio": round(calmar_ratio, 4),
         "dd_return_ratio": round(dd_return_ratio, 4),

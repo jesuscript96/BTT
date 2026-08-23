@@ -32,6 +32,14 @@ RISK_FIXED = 1
 RISK_HSQRT = 2   # "FIXED_RATIO" (Ryan Jones)
 
 # --- fee types ---
+# Los DOS cobran los dos lados de la operacion, entrada y salida:
+#   FEE_FLAT    -> `fees` es $ POR ACCION   -> fees * acciones * 2
+#   FEE_PERCENT -> `fees` es fraccion sobre el nocional de cada lado
+#                  -> (precio_entrada + precio_salida) * acciones * fees
+# FLAT era `fees * 2`, una cantidad fija por operacion que ignoraba el numero
+# de acciones (corregido el 2026-08-22 a peticion del usuario). Cualquier
+# cambio aqui hay que replicarlo EN PARIDAD BIT A BIT en portfolio_sim.py,
+# portfolio_lab_engine.py y portfolio_lab_scaling.py.
 FEE_PERCENT = 0
 FEE_FLAT = 1
 
@@ -53,8 +61,6 @@ REASON_SIGNAL = 4        # "Signal"
 REASON_TRAILING = 5      # "Trailing"
 REASON_PARTIAL = 6       # "Partial TP"
 REASON_PARTIAL_EOD = 7   # "Partial TP (EOD)"
-REASON_PARTIAL_FADE = 10     # "Partial TP (Fade)" — ganó el fade desde el máximo
-REASON_PARTIAL_ENTRADA = 11  # "Partial TP (Entrada)" — respaldo % desde entrada
 REASON_PARTIAL_TIME = 8  # "Partial TP (Time)"
 REASON_PARTIAL_HOUR = 9  # "Partial TP (Hour)"
 
@@ -70,16 +76,6 @@ PT_PCT = 0
 PT_EOD = 1
 PT_TIME = 2
 PT_HOUR = 3
-
-
-@njit(cache=True)
-def _fee_amount_jit(fee_type_code, fees, qty, notional):
-    # Puerto bit a bit de portfolio_sim._fee_amount (mismo orden de ops FP).
-    # FLAT: $/acción y lado → fees × qty. PERCENT: fracción del nocional
-    # (fees llega ya como fracción) → notional × fees.
-    if fee_type_code == FEE_FLAT:
-        return fees * qty
-    return notional * fees
 
 
 @njit(cache=True)
@@ -99,7 +95,6 @@ def _core_simulate_jit(
     accumulate,
     max_reentries,
     has_trail_pct, trail_pct,
-    has_trail_act, trail_act,
     look_ahead_prevention,
     hs_type_code, hs_value_code, sl_offset,
     has_hods, hods,
@@ -112,7 +107,6 @@ def _core_simulate_jit(
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
     n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
-    pt_fade, pt_min_gain, pt_priority, pt_cap_frac_a,
 ):
     n = len(close)
 
@@ -147,13 +141,7 @@ def _core_simulate_jit(
     mfe = 0.0
     trail_activated = False
     original_size = 0.0
-    # ITEM 4 (fees): ¿ya se cobró el lado de entrada de la posición abierta?
-    entry_fee_charged = False
     partial_tp_hits = np.zeros(n_pt if n_pt > 0 else 1, dtype=np.bool_)
-    # Estado 1A por trade (paridad con portfolio_sim): nivel de fade y skip.
-    pt_fade_lvl = np.full(n_pt if n_pt > 0 else 1, np.nan)
-    pt_fade_skip = np.zeros(n_pt if n_pt > 0 else 1, dtype=np.bool_)
-    pt_ref_max = 0.0
 
     risk_amount = risk_r
     max_short_size_today = 0.0
@@ -208,23 +196,19 @@ def _core_simulate_jit(
                             exit_reason_code = REASON_SL
 
                 # 2. Trailing Stop (high-water mark)
-                # activation_pct (trail_act) desacopla el umbral de activación
-                # de la distancia de trailing. trail_pct == 0 = modo break-even:
-                # tras activarse, el stop queda FIJO en el precio de entrada.
                 if sl_trail and has_trail_pct:
-                    _act_thr = trail_act if has_trail_act else trail_pct
                     if is_long:
                         if not trail_activated:
-                            if high[i] >= entry_price * (1 + _act_thr) - 1e-9:
+                            if high[i] >= entry_price * (1 + trail_pct) - 1e-9:
                                 trail_activated = True
                                 trail_extreme = max(entry_price, high[i])
                         if trail_activated:
-                            if trail_pct > 0.0:
-                                trail_extreme = max(trail_extreme, high[i])
-                                trail_sl_price = trail_extreme - (entry_price * trail_pct)
-                            else:
-                                trail_sl_price = entry_price
-                            if price_for_sl <= trail_sl_price + 1e-9:
+                            trail_extreme = max(trail_extreme, high[i])
+                            trail_sl_price = trail_extreme - (entry_price * trail_pct)
+                            # El STOP FIJO manda: si ya disparo en esta barra, el
+                            # trailing no lo pisa. EN PARIDAD con portfolio_sim.py
+                            # (regla del usuario, 2026-08-23).
+                            if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
                                 else:
@@ -235,16 +219,14 @@ def _core_simulate_jit(
                                     exit_reason_code = REASON_TRAILING
                     else:
                         if not trail_activated:
-                            if low[i] <= entry_price * (1 - _act_thr) + 1e-9:
+                            if low[i] <= entry_price * (1 - trail_pct) + 1e-9:
                                 trail_activated = True
                                 trail_extreme = min(entry_price, low[i])
                         if trail_activated:
-                            if trail_pct > 0.0:
-                                trail_extreme = min(trail_extreme, low[i])
-                                trail_sl_price = trail_extreme + (entry_price * trail_pct)
-                            else:
-                                trail_sl_price = entry_price
-                            if price_for_sl >= trail_sl_price - 1e-9:
+                            trail_extreme = min(trail_extreme, low[i])
+                            trail_sl_price = trail_extreme + (entry_price * trail_pct)
+                            # Mismo criterio que en long: el stop fijo manda.
+                            if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
                                 else:
@@ -300,20 +282,16 @@ def _core_simulate_jit(
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
                             pt_size = original_size * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 if is_long:
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # ITEM 4: cierre total por parcial → cobrar aquí la
-                                    # entrada (UNA vez). Orden FP: salida, luego += entrada
-                                    # (paridad bit a bit con portfolio_sim).
-                                    fee_amount += _fee_amount_jit(fee_type_code, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                if fee_type_code == FEE_FLAT:
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -323,7 +301,7 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
                                 r_reason[k] = REASON_PARTIAL_EOD
@@ -349,20 +327,16 @@ def _core_simulate_jit(
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
                             pt_size = original_size * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 if is_long:
                                     gross_pnl = (net_pt_exit - entry_price) * pt_size
                                 else:
                                     gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # ITEM 4: cierre total por parcial → cobrar aquí la
-                                    # entrada (UNA vez). Orden FP: salida, luego += entrada
-                                    # (paridad bit a bit con portfolio_sim).
-                                    fee_amount += _fee_amount_jit(fee_type_code, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                if fee_type_code == FEE_FLAT:
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -372,7 +346,7 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
                                 r_reason[k] = REASON_PARTIAL_TIME
@@ -399,19 +373,16 @@ def _core_simulate_jit(
                                 net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
                                 pt_size = original_size * cap_frac
                                 pt_size = min(pt_size, size)
-                                # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                                closes_position = (size - pt_size) <= 0.0001
                                 if pt_size > 0:
                                     if is_long:
                                         gross_pnl = (net_pt_exit - entry_price) * pt_size
                                     else:
                                         gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                    fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
-                                    if closes_position and not entry_fee_charged:
-                                        # ITEM 4: cierre total por parcial → cobrar aquí la
-                                        # entrada (UNA vez). Mismo orden FP que portfolio_sim.
-                                        fee_amount += _fee_amount_jit(fee_type_code, fees, original_size, entry_price * original_size)
-                                        entry_fee_charged = True
+                                    if fee_type_code == FEE_FLAT:
+                                        fee_amount = fees * pt_size * 2
+                                    else:
+                                        # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                        fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
                                     capital_at_risk = entry_price * pt_size
@@ -421,7 +392,7 @@ def _core_simulate_jit(
                                     r_entry_px[k] = entry_price
                                     r_exit_px[k] = net_pt_exit
                                     r_pnl[k] = pnl
-                                    r_fees[k] = 0.0
+                                    r_fees[k] = fee_amount
                                     r_return_pct[k] = ret_pct
                                     r_size[k] = pt_size
                                     r_reason[k] = REASON_PARTIAL_HOUR
@@ -439,40 +410,21 @@ def _core_simulate_jit(
 
                     elif is_long:
                         pt_level = entry_price * (1 + pt_value[pt_idx])
-                        # Dual 1A/1B (paridad con portfolio_sim): 1B % desde
-                        # entrada; 1A fade desde el máximo previo del día.
-                        # Prioridad decide el empate; OCO tras disparar.
-                        _fl = pt_fade_lvl[pt_idx]
-                        _hit_b = price_for_tp >= pt_level
-                        _hit_a = (_fl == _fl and (not pt_fade_skip[pt_idx])
-                                  and low[i] <= _fl)
-                        if pt_priority[pt_idx] == 0:
-                            _fire_a = _hit_a
-                        else:
-                            _fire_a = _hit_a and (not _hit_b)
-                        if _hit_b or _hit_a:
+                        if price_for_tp >= pt_level:
                             partial_tp_hits[pt_idx] = True
-                            if _fire_a:
-                                pt_exit_price = min(_fl, open_[i])
-                                pt_exit_price = max(pt_exit_price, low[i])
-                            else:
-                                pt_exit_price = max(pt_level, open_[i])
-                                pt_exit_price = min(pt_exit_price, high[i])
+                            pt_exit_price = max(pt_level, open_[i])
+                            pt_exit_price = min(pt_exit_price, high[i])
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
-                            _cap = pt_cap_frac_a[pt_idx] if _fire_a else cap_frac
-                            pt_size = original_size * _cap
+                            pt_size = original_size * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 gross_pnl = (net_pt_exit - entry_price) * pt_size
-                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # ITEM 4: cierre total por parcial → cobrar aquí la
-                                    # entrada (UNA vez). Orden FP: salida, luego += entrada.
-                                    fee_amount += _fee_amount_jit(fee_type_code, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                if fee_type_code == FEE_FLAT:
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -482,12 +434,10 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
-                                r_reason[k] = (REASON_PARTIAL_FADE if _fire_a
-                                               else (REASON_PARTIAL_ENTRADA if _fl == _fl
-                                             else REASON_PARTIAL))
+                                r_reason[k] = REASON_PARTIAL
                                 r_mae[k] = mae
                                 r_mfe[k] = mfe
                                 r_stop[k] = trade_sl_price
@@ -499,38 +449,21 @@ def _core_simulate_jit(
                                     break
                     else:
                         pt_level = entry_price * (1 - pt_value[pt_idx])
-                        # Dual 1A/1B espejo del long (cover por caída al nivel).
-                        _fl = pt_fade_lvl[pt_idx]
-                        _hit_b = price_for_tp <= pt_level
-                        _hit_a = (_fl == _fl and (not pt_fade_skip[pt_idx])
-                                  and low[i] <= _fl)
-                        if pt_priority[pt_idx] == 0:
-                            _fire_a = _hit_a
-                        else:
-                            _fire_a = _hit_a and (not _hit_b)
-                        if _hit_b or _hit_a:
+                        if price_for_tp <= pt_level:
                             partial_tp_hits[pt_idx] = True
-                            if _fire_a:
-                                pt_exit_price = min(_fl, open_[i])
-                                pt_exit_price = max(pt_exit_price, low[i])
-                            else:
-                                pt_exit_price = min(pt_level, open_[i])
-                                pt_exit_price = max(pt_exit_price, low[i])
+                            pt_exit_price = min(pt_level, open_[i])
+                            pt_exit_price = max(pt_exit_price, low[i])
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
-                            _cap = pt_cap_frac_a[pt_idx] if _fire_a else cap_frac
-                            pt_size = original_size * _cap
+                            pt_size = original_size * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                fee_amount = _fee_amount_jit(fee_type_code, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # ITEM 4: cierre total por parcial → cobrar aquí la
-                                    # entrada (UNA vez). Orden FP: salida, luego += entrada.
-                                    fee_amount += _fee_amount_jit(fee_type_code, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                if fee_type_code == FEE_FLAT:
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                                    fee_amount = (entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
                                 capital_at_risk = entry_price * pt_size
@@ -540,12 +473,10 @@ def _core_simulate_jit(
                                 r_entry_px[k] = entry_price
                                 r_exit_px[k] = net_pt_exit
                                 r_pnl[k] = pnl
-                                r_fees[k] = 0.0
+                                r_fees[k] = fee_amount
                                 r_return_pct[k] = ret_pct
                                 r_size[k] = pt_size
-                                r_reason[k] = (REASON_PARTIAL_FADE if _fire_a
-                                               else (REASON_PARTIAL_ENTRADA if _fl == _fl
-                                             else REASON_PARTIAL))
+                                r_reason[k] = REASON_PARTIAL
                                 r_mae[k] = mae
                                 r_mfe[k] = mfe
                                 r_stop[k] = trade_sl_price
@@ -633,13 +564,11 @@ def _core_simulate_jit(
                     gross_pnl = (net_exit - entry_price) * size
                 else:
                     gross_pnl = (entry_price - net_exit) * size
-                # Fee por-fill (puerto de portfolio_sim): el cierre final paga
-                # la entrada de TODO el tamaño + la salida del restante.
-                fee_amount = _fee_amount_jit(
-                    fee_type_code, fees,
-                    original_size + size,
-                    entry_price * original_size + net_exit * size,
-                )
+                if fee_type_code == FEE_FLAT:
+                    fee_amount = fees * size * 2
+                else:
+                    # % sobre el NOCIONAL de cada lado (paridad con portfolio_sim.py)
+                    fee_amount = (entry_price + net_exit) * size * fees
                 pnl = gross_pnl - fee_amount
                 realized_pnl += pnl
                 capital_at_risk = entry_price * size
@@ -750,30 +679,8 @@ def _core_simulate_jit(
                     mae = 0.0
                     mfe = 0.0
                     original_size = size
-                    entry_fee_charged = False  # ITEM 4: reset por posición
                     for x in range(n_pt):
                         partial_tp_hits[x] = False
-                    # 1A (fade desde el máximo previo del día): nivel y skip se
-                    # calculan UNA vez con los precios de entrada (misma fórmula
-                    # que portfolio_sim — paridad exigida por los tests).
-                    pt_ref_max = entry_price
-                    if has_prev_high and entry_idx < n:
-                        _pv = prev_highs[entry_idx]
-                        if _pv == _pv and _pv > 0:
-                            pt_ref_max = _pv
-                    for x in range(n_pt):
-                        if pt_fade[x] == pt_fade[x] and pt_type[x] == PT_PCT:
-                            _lvl = pt_ref_max * (1.0 - pt_fade[x])
-                            _gain = (entry_price - _lvl) / entry_price
-                            _skip = entry_price <= _lvl
-                            if (not _skip) and pt_min_gain[x] == pt_min_gain[x]:
-                                if _gain < pt_min_gain[x]:
-                                    _skip = True
-                            pt_fade_lvl[x] = _lvl
-                            pt_fade_skip[x] = _skip
-                        else:
-                            pt_fade_lvl[x] = np.nan
-                            pt_fade_skip[x] = False
                     total_trades += 1
                 else:
                     equity[i] = available_cash

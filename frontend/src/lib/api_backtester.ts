@@ -103,39 +103,40 @@ export interface TradeRecord {
   exit_price: number;
   pnl: number;
   fees?: number;
+  /** Solo para reconstrucción de Monte Carlo/WFO (robustness_service.py) —
+   * incluye el coste de locates del día; `pnl` se mantiene limpio a propósito
+   * para no distorsionar el win rate. No usar para mostrar/clasificar trades. */
+  pnl_with_locates?: number;
   return_pct: number;
   direction: string;
   status: string;
   size: number;
   exit_reason: string;
-  // Cadena de razones de todas las legs de la posición (parcial + cierre final).
-  exit_reasons?: string[];
-  // Ejecuciones individuales (parciales + cierre) con su precio exacto.
-  legs?: {
-    exit_time?: string;
-    exit_time_epoch?: number;
-    exit_price?: number;
-    exit_reason?: string;
-    size?: number;
-    pnl?: number;
-  }[];
   mae: number;
   mfe?: number;
-  // MAE/MFE medidos desde el máximo previo del día (fade del movimiento completo),
-  // referencia alternativa a la de "desde tu entrada" (mae/mfe de arriba).
-  mae_prev_max?: number;
-  mfe_prev_max?: number;
-  // Precio del stop activo al cerrar (incluye trailing actualizado). Llega en el
-  // JSON del backend aunque antes no estuviera declarado aquí.
-  stop_loss?: number | null;
-  prev_max_ref?: number | null;      // precio del máximo previo usado como referencia
-  fade_at_entry_pct?: number | null; // % de fade ya recorrido en el momento de tu entrada
-  partials_skipped?: { index: number; reason: 'min_gain' | 'crossed' }[];
   r_multiple: number | null;
   entry_hour: number;
   entry_weekday: number;
   gap_pct?: number | null;
   n_executions?: number;
+  // Precio medio ponderado de la posición. Sin piramidar coincide con
+  // entry_price; con piramidación, entry_price es el fill REAL de la entrada
+  // (lo que se pinta en el gráfico) y este es el que gobierna el PnL.
+  avg_entry_price?: number;
+  // Detalle cronológico de cada ejecución de la posición: la entrada, los
+  // añadidos y reducciones de piramidación, los take profit parciales y el
+  // cierre. Solo viene cuando hubo MÁS que entrada + cierre; el gráfico lo usa
+  // para pintar un marcador por ejecución.
+  executions?: TradeExecution[];
+}
+
+export interface TradeExecution {
+  kind: 'entry' | 'add' | 'reduce' | 'exit';
+  time_epoch: number;
+  price: number;
+  size?: number;
+  pnl?: number | null;
+  label?: string;
 }
 
 export interface CandleData {
@@ -181,6 +182,10 @@ export interface DayResult {
   init_value: number | null;
   end_value: number | null;
   gap_pct?: number | null;
+  /** Coste de locates de ese ticker ese día. No está incluido en el pnl de
+   * ningún trade individual (ver backend/app/services/portfolio_sim.py) —
+   * consumidores que sumen trade.pnl para totales en $ deben restarlo aparte. */
+  locates_fee?: number | null;
 }
 
 export interface AggregateMetrics {
@@ -199,14 +204,6 @@ export interface AggregateMetrics {
   dd_return_ratio: number;
   r_squared: number;
   max_mae: number;
-  // Distancia % del stop al entry por trade (abs(stop − entry) / entry × 100).
-  // Con stops de Market Structure la distancia varía en cada trade: media,
-  // mediana y cuartiles sobre los trades con stop válido (excluye > 200%,
-  // splits/datos malos). Opcionales: resultados guardados previos no los traen.
-  sl_dist_pct_mean?: number;
-  sl_dist_pct_median?: number;
-  sl_dist_pct_p25?: number;
-  sl_dist_pct_p75?: number;
   max_profit_pct: number;
   avg_win: number;
   avg_loss: number;

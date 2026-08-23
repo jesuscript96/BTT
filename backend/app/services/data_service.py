@@ -8,7 +8,6 @@ Data access layer for the backtester.
 
 import base64
 import gc
-import glob
 import hashlib
 import io
 import json
@@ -652,55 +651,6 @@ def _deserialize_qualifying_df(payload: str) -> pd.DataFrame:
     return pd.read_feather(io.BytesIO(base64.b64decode(payload)))
 
 
-# FIX A (PRD bygap): guardián de frescura del materializado bygap.
-# El lado Parquet se memoiza por mtime de los ficheros del glob: si no
-# cambiaron desde la última comprobación, no se relee el metadata.
-_BYGAP_FRESHNESS_MEMO = {"glob_key": None, "bygap_max": None}
-
-
-class _BygapStaleStrictError(RuntimeError):
-    """QUALIFYING_WINDOWED_STRICT=true y el bygap está desfasado: hay que
-    fallar (propagar), no degradar — por eso se re-lanza en el except del
-    branch local, que de otro modo caería al fallback hot-cache."""
-
-
-def _bygap_is_fresh(con, win_glob: str) -> bool:
-    """True si el bygap está tan fresco como daily_metrics.
-
-    Compara el max("timestamp") ESTADÍSTICO del Parquet (parquet_metadata lee
-    solo los footers de los row groups, no los datos: mucho más barato que un
-    max(timestamp) sobre read_parquet) con el de la tabla. stats_max llega como
-    VARCHAR → CAST a TIMESTAMP. Cualquier fallo degrada a la vía original.
-    """
-    try:
-        files = sorted(glob.glob(win_glob))
-        glob_key = tuple((f, os.path.getmtime(f)) for f in files)
-        if glob_key != _BYGAP_FRESHNESS_MEMO["glob_key"]:
-            row = con.execute(
-                # path_in_schema: nombre de columna en DuckDB 1.1.x (en versiones
-                # posteriores se llama stats_column_name)
-                f"SELECT max(CAST(stats_max AS TIMESTAMP)) FROM parquet_metadata('{win_glob}') "
-                f"WHERE path_in_schema = 'timestamp'"
-            ).fetchone()
-            _BYGAP_FRESHNESS_MEMO["glob_key"] = glob_key
-            _BYGAP_FRESHNESS_MEMO["bygap_max"] = row[0] if row else None
-        bygap_max = _BYGAP_FRESHNESS_MEMO["bygap_max"]
-        if bygap_max is None:
-            logger.warning("[QUALIFYING] bygap sin estadísticas de timestamp -> vía original")
-            return False
-        table_max = con.execute('SELECT max("timestamp") FROM daily_metrics').fetchone()[0]
-        if table_max is not None and bygap_max < table_max:
-            logger.warning(
-                f"[QUALIFYING] bygap desfasado respecto a daily_metrics "
-                f"(bygap {bygap_max} < tabla {table_max}) -> vía original"
-            )
-            return False
-        return True
-    except Exception as e:
-        logger.warning(f"[QUALIFYING] guardián de frescura falló ({e}) -> vía original")
-        return False
-
-
 def fetch_qualifying_data(
     dataset_id: str,
     req_start_date: str | None = None,
@@ -837,42 +787,26 @@ def _fetch_qualifying_data_uncached(
             # (proyecto del lago, carpeta scripts/); ver PRD_CONSTRUCCION_Y_OPTIMIZACION.md
             #
             # Cae a la via original (sin tocar nada) si: la env no esta puesta,
-            # el fichero no existe, hay preconditions con SMA (columnas
-            # dinamicas por periodo que el parquet no puede llevar) o el bygap
-            # esta desfasado (FIX A, guardián de frescura).
+            # el fichero no existe, o hay preconditions con SMA (columnas
+            # dinamicas por periodo que el parquet no puede llevar).
             # ⚠️ Regenerar tras cada actualizacion del lago.
             _win = os.getenv("QUALIFYING_WINDOWED_PARQUET", "").strip()
             if _win and not sma_periods:
-                if glob.glob(_win):
-                    # FIX A: guardián de frescura (parquet_metadata + memo por
-                    # mtime). Un bygap desfasado serviría números viejos sin
-                    # avisar: degrada a la vía original; con
-                    # QUALIFYING_WINDOWED_STRICT=true falla
-                    # (_BygapStaleStrictError, re-lanzada en el except de abajo).
-                    if _bygap_is_fresh(con, _win):
-                        logger.info(f"[QUALIFYING] via materializada: {_win}")
-                        df = con.execute(
-                            f'SELECT *, CAST("timestamp" AS DATE) AS date '
-                            f"FROM read_parquet('{_win.replace(chr(92), '/')}') "
-                            f"WHERE {where_clause}"
-                        ).fetchdf()
-                        if not df.empty:
-                            df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-                        if preconditions and not df.empty:
-                            df = _evaluate_postgap_preconditions(df, preconditions)
-                        if not df.empty and apply_day in ("gap_1_day", "gap_2_day"):
-                            df = _remap_trading_day(df, apply_day)
-                        return df
-                    if os.getenv("QUALIFYING_WINDOWED_STRICT", "").lower() in ("true", "1"):
-                        raise _BygapStaleStrictError(
-                            "[QUALIFYING] bygap desfasado respecto a daily_metrics "
-                            "(QUALIFYING_WINDOWED_STRICT=true)"
-                        )
-                else:
-                    logger.warning(
-                        f"[QUALIFYING] QUALIFYING_WINDOWED_PARQUET no resuelve a ningún "
-                        f"fichero ({_win}) -> vía original"
-                    )
+                import glob as _glob
+                if _glob.glob(_win):
+                    logger.info(f"[QUALIFYING] via materializada: {_win}")
+                    df = con.execute(
+                        f'SELECT *, CAST("timestamp" AS DATE) AS date '
+                        f"FROM read_parquet('{_win.replace(chr(92), '/')}') "
+                        f"WHERE {where_clause}"
+                    ).fetchdf()
+                    if not df.empty:
+                        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+                    if preconditions and not df.empty:
+                        df = _evaluate_postgap_preconditions(df, preconditions)
+                    if not df.empty and apply_day in ("gap_1_day", "gap_2_day"):
+                        df = _remap_trading_day(df, apply_day)
+                    return df
 
             stage_1_smas = []
             for P in sorted(sma_periods):
@@ -962,13 +896,51 @@ def _fetch_qualifying_data_uncached(
             if preconditions and not df.empty:
                 df = _evaluate_postgap_preconditions(df, preconditions)
 
-            # Apply date shifting — remap UNIFICADO: la misma _remap_trading_day
-            # que usa la vía materializada (extraída VERBATIM de este bloque,
-            # que quedó duplicado con fbf8757; una sola implementación para que
-            # no puedan divergir).
-            if not df.empty and apply_day in ("gap_1_day", "gap_2_day"):
-                df = _remap_trading_day(df, apply_day)
-            # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
+            # Apply date shifting
+            if not df.empty:
+                if apply_day == 'gap_1_day':
+                    df = df.dropna(subset=['lead_timestamp_1']).copy()
+                    df['timestamp'] = df['lead_timestamp_1']
+                    df['date'] = pd.to_datetime(df['lead_timestamp_1']).dt.strftime('%Y-%m-%d')
+                    # "yesterday" relative to T+1 trading day is the Gap Day itself (rth_*).
+                    # Snapshot before we overwrite rth_* below.
+                    df['yesterday_open'] = df['rth_open'] if 'rth_open' in df.columns else np.nan
+                    df['yesterday_high'] = df['rth_high'] if 'rth_high' in df.columns else np.nan
+                    df['yesterday_low'] = df['rth_low'] if 'rth_low' in df.columns else np.nan
+                    df['yesterday_close'] = df['rth_close'] if 'rth_close' in df.columns else np.nan
+                    # Trading-day metrics: re-anchor to T+1 (lead_*_1)
+                    df['rth_open']   = df['lead_rth_open_1']   if 'lead_rth_open_1'   in df.columns else np.nan
+                    df['rth_high']   = df['lead_rth_high_1']   if 'lead_rth_high_1'   in df.columns else np.nan
+                    df['rth_low']    = df['lead_rth_low_1']    if 'lead_rth_low_1'    in df.columns else np.nan
+                    df['rth_close']  = df['lead_rth_close_1']  if 'lead_rth_close_1'  in df.columns else np.nan
+                    df['rth_volume'] = df['lead_rth_volume_1'] if 'lead_rth_volume_1' in df.columns else np.nan
+                    df['pm_high']    = df['lead_pm_high_1']    if 'lead_pm_high_1'    in df.columns else np.nan
+                    df['pm_low']     = df['lead_pm_low_1']     if 'lead_pm_low_1'     in df.columns else np.nan
+                    df['gap_pct']    = df['lead_gap_pct_1']    if 'lead_gap_pct_1'    in df.columns else np.nan
+                    df['pm_volume']  = df['lead_pm_volume_1']  if 'lead_pm_volume_1'  in df.columns else np.nan
+                    df['open']       = df['lead_open_1']       if 'lead_open_1'       in df.columns else np.nan
+                elif apply_day == 'gap_2_day':
+                    df = df.dropna(subset=['lead_timestamp_2']).copy()
+                    df['timestamp'] = df['lead_timestamp_2']
+                    df['date'] = pd.to_datetime(df['lead_timestamp_2']).dt.strftime('%Y-%m-%d')
+                    # "yesterday" relative to T+2 trading day is T+1 (lead_rth_*_1).
+                    # Snapshot before we overwrite rth_* below.
+                    df['yesterday_open'] = df['lead_rth_open_1'] if 'lead_rth_open_1' in df.columns else np.nan
+                    df['yesterday_high'] = df['lead_rth_high_1'] if 'lead_rth_high_1' in df.columns else np.nan
+                    df['yesterday_low'] = df['lead_rth_low_1'] if 'lead_rth_low_1' in df.columns else np.nan
+                    df['yesterday_close'] = df['lead_rth_close_1'] if 'lead_rth_close_1' in df.columns else np.nan
+                    # Trading-day metrics: re-anchor to T+2 (lead_*_2)
+                    df['rth_open']   = df['lead_rth_open_2']   if 'lead_rth_open_2'   in df.columns else np.nan
+                    df['rth_high']   = df['lead_rth_high_2']   if 'lead_rth_high_2'   in df.columns else np.nan
+                    df['rth_low']    = df['lead_rth_low_2']    if 'lead_rth_low_2'    in df.columns else np.nan
+                    df['rth_close']  = df['lead_rth_close_2']  if 'lead_rth_close_2'  in df.columns else np.nan
+                    df['rth_volume'] = df['lead_rth_volume_2'] if 'lead_rth_volume_2' in df.columns else np.nan
+                    df['pm_high']    = df['lead_pm_high_2']    if 'lead_pm_high_2'    in df.columns else np.nan
+                    df['pm_low']     = df['lead_pm_low_2']     if 'lead_pm_low_2'     in df.columns else np.nan
+                    df['gap_pct']    = df['lead_gap_pct_2']    if 'lead_gap_pct_2'    in df.columns else np.nan
+                    df['pm_volume']  = df['lead_pm_volume_2']  if 'lead_pm_volume_2'  in df.columns else np.nan
+                    df['open']       = df['lead_open_2']       if 'lead_open_2'       in df.columns else np.nan
+                # gap_day: rth_*/pm_*/gap_pct already correct; keep lag_rth_*_1 fallback in indicators.py
 
             print(f"[LOCAL DB] qualifying from local DuckDB: {len(df)} rows")
             return df
@@ -998,8 +970,14 @@ def _fetch_qualifying_data_uncached(
                 reset_connection()
             except Exception:
                 pass
-            if isinstance(e, _BygapStaleStrictError):
-                raise
+            # NOTA DE ADAPTACION (Sailor, 2026-08-21): el original de staging
+            # re-lanzaba aqui _BygapStaleStrictError tal cual. Esa clase viene
+            # de su guardian de frescura del bygap (FIX A del PRD bygap), que
+            # esta rama NO tiene: referenciarla daria NameError justo en el
+            # camino de error. Como sin ese guardian no existe tal excepcion,
+            # la comprobacion sobra y todo fallo cae en el RuntimeError de
+            # abajo, que es el comportamiento deseado igualmente. Si algun dia
+            # se trae el guardian bygap, hay que restaurar estas dos lineas.
             raise RuntimeError(
                 "Qualifying por la vía autoritativa (DuckDB local / bygap) falló. "
                 "Se RECHAZA el backtest en vez de caer al fallback hot-cache, que "

@@ -104,7 +104,6 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.TRIANGLE_ASCENDING, IndicatorType.TRIANGLE_DESCENDING,
         IndicatorType.TRIANGLE_SYMMETRIC,
         IndicatorType.PM_HIGH_GAP,
-        IndicatorType.CURRENT_GAP,
     ],
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
@@ -169,7 +168,6 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.TRIANGLE_DESCENDING]: "▼ Triangle Descending",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "◇ Triangle Symmetric",
     [IndicatorType.PM_HIGH_GAP]: "PM High Gap (%)",
-    [IndicatorType.CURRENT_GAP]: "Current Gap (%)",
     // Indicators
     [IndicatorType.SMA]: "SMA",
     [IndicatorType.EMA]: "EMA",
@@ -233,7 +231,6 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
     [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
-    [IndicatorType.CURRENT_GAP]: "Gap vivo del precio respecto al cierre de ayer: % de diferencia entre el precio actual (cierre de la vela que se evalúa) y el cierre del día anterior. A diferencia del PM High Gap, sigue al precio durante todo el día (PM y RTH) y baja si el precio baja.",
     
     // Technical Indicators
     [IndicatorType.SMA]: "Media Móvil Simple.",
@@ -1023,7 +1020,7 @@ export const TargetInput = ({
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
     const isVol = isFixed && isVolumeIndicator(sourceIndicatorName);
-    const isPercent = isFixed && (sourceIndicatorName === IndicatorType.PM_HIGH_GAP || sourceIndicatorName === IndicatorType.CURRENT_GAP);
+    const isPercent = isFixed && sourceIndicatorName === IndicatorType.PM_HIGH_GAP;
 
     const [localText, setLocalText] = React.useState("");
     const [isFocused, setIsFocused] = React.useState(false);
@@ -1273,7 +1270,7 @@ export const ConditionRow = ({
                     comparator: Comparator.LT,
                     target: 30
                 });
-            } else if (newSource.name === IndicatorType.PM_HIGH_GAP || newSource.name === IndicatorType.CURRENT_GAP) {
+            } else if (newSource.name === IndicatorType.PM_HIGH_GAP) {
                 const isValidComp = [Comparator.LT, Comparator.GT, Comparator.LTE, Comparator.GTE].includes(condition.comparator);
                 onChange({
                     ...condition,
@@ -1386,7 +1383,7 @@ export const ConditionRow = ({
                                     {Object.values(Comparator)
                                         .filter(c => {
                                             if (c.includes('DISTANCE')) return false;
-                                            if (condition.source.name === IndicatorType.PM_HIGH_GAP || condition.source.name === IndicatorType.CURRENT_GAP) {
+                                            if (condition.source.name === IndicatorType.PM_HIGH_GAP) {
                                                 return c === Comparator.LT || c === Comparator.GT || c === Comparator.LTE || c === Comparator.GTE;
                                             }
                                             if (c === Comparator.CROSSES_ABOVE || c === Comparator.CROSSES_BELOW) {
@@ -1609,7 +1606,7 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
         if (typeof c.target === 'number') {
             if (isVolumeIndicator(c.source.name)) {
                 targetStr = `${(c.target / 1000000).toString()}M`;
-            } else if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
+            } else if (c.source.name === IndicatorType.PM_HIGH_GAP) {
                 targetStr = `${c.target}%`;
             } else {
                 targetStr = String(c.target);

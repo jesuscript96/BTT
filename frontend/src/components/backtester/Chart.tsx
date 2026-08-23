@@ -8,7 +8,6 @@ import {
   HistogramSeries,
   ColorType,
   type IChartApi,
-  type ISeriesApi,
   type CandlestickData,
   type SeriesMarker,
   type Time,
@@ -189,84 +188,6 @@ export default function Chart({
   const subChartsRef = useRef<IChartApi[]>([]);
 
   // ---------------------------------------------------------------------------
-  // Herramientas de medición (estilo TradingView): regla y línea horizontal
-  // ---------------------------------------------------------------------------
-  type ChartTool = "none" | "ruler" | "hline";
-  const [tool, setTool] = useState<ChartTool>("none");
-  const [measure, setMeasure] = useState<{
-    x1: number; y1: number; x2: number; y2: number;
-    p1: number; p2: number; t1: number; t2: number;
-  } | null>(null);
-  const measuringRef = useRef(false);
-  const mainSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const hlinesRef = useRef<ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[]>([]);
-  const [hlineCount, setHlineCount] = useState(0);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setTool("none"); setMeasure(null); }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  // x/y del ratón (relativos al gráfico) → tiempo (snapped a vela) + precio
-  const pointFromEvent = (e: { clientX: number; clientY: number }) => {
-    const el = chartContainerRef.current;
-    if (!el || !chartRef.current || !mainSeriesRef.current) return null;
-    const r = el.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const y = e.clientY - r.top;
-    const t = chartRef.current.timeScale().coordinateToTime(x);
-    const price = mainSeriesRef.current.coordinateToPrice(y);
-    if (t == null || price == null) return null;
-    const snapped = snapToCandle(t as number, aggregatedCandles.map(c => c.time)) ?? (t as number);
-    return { x, y, t: snapped, price };
-  };
-
-  const clearHlines = () => {
-    const series = mainSeriesRef.current;
-    if (series) hlinesRef.current.forEach(l => { try { series.removePriceLine(l); } catch { /* chart rebuilt */ } });
-    hlinesRef.current = [];
-    setHlineCount(0);
-  };
-
-  const fmtP = (v: number) => v.toFixed(Math.abs(v) < 1 ? 4 : 2);
-
-  const handleOverlayDown = (e: React.MouseEvent) => {
-    if (tool === "ruler") {
-      const p = pointFromEvent(e);
-      if (!p) return;
-      e.preventDefault();
-      measuringRef.current = true;
-      setMeasure({ x1: p.x, y1: p.y, x2: p.x, y2: p.y, p1: p.price, p2: p.price, t1: p.t, t2: p.t });
-    }
-  };
-  const handleOverlayMove = (e: React.MouseEvent) => {
-    if (!measuringRef.current || tool !== "ruler") return;
-    const p = pointFromEvent(e);
-    if (!p) return;
-    setMeasure(m => (m ? { ...m, x2: p.x, y2: p.y, p2: p.price, t2: p.t } : m));
-  };
-  const handleOverlayUp = () => { measuringRef.current = false; };
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (tool !== "hline") return;
-    const p = pointFromEvent(e);
-    if (!p || !mainSeriesRef.current) return;
-    const line = mainSeriesRef.current.createPriceLine({
-      price: p.price,
-      color: "#D87A3D",
-      lineWidth: 1,
-      lineStyle: 2,
-      axisLabelVisible: true,
-      title: fmtP(p.price),
-    });
-    hlinesRef.current.push(line);
-    setHlineCount(hlinesRef.current.length);
-  };
-
-
-  // ---------------------------------------------------------------------------
   // Persistent indicator state
   // ---------------------------------------------------------------------------
   const [activeIndicators, setActiveIndicators] = useState<ActiveIndicator[]>(() => {
@@ -354,8 +275,6 @@ export default function Chart({
   useEffect(() => {
     // Cleanup of any active charts
     if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
-    mainSeriesRef.current = null;
-    hlinesRef.current = [];
     for (const sc of subChartsRef.current) { try { sc.remove(); } catch {} }
     subChartsRef.current = [];
 
@@ -401,11 +320,6 @@ export default function Chart({
         wickDownColor: "#ef4444", wickUpColor: "#10b981",
       });
       candleSeries.setData(candleData);
-      mainSeriesRef.current = candleSeries;
-      // el chart se reconstruye en cada cambio de deps: las líneas horizontales
-      // desaparecen con él — resetear el registro para no acumular huérfanas.
-      hlinesRef.current = [];
-      setHlineCount(0);
 
       // Volume on main chart
       const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -494,6 +408,38 @@ export default function Chart({
               });
             }
           }
+
+          // --- Ejecuciones intermedias -------------------------------------
+          // Añadidos y reducciones de piramidación y take profits parciales.
+          // La entrada y el cierre final ya llevan su marcador arriba, así que
+          // aquí solo se pinta lo que ocurre EN MEDIO — que antes era
+          // invisible: un `add` no genera trade propio y la fusión de legs se
+          // llevaba por delante los parciales.
+          for (const ex of (t.executions || [])) {
+            if (ex.kind === "entry") continue;
+            if (ex.time_epoch === t.exit_time_epoch) continue; // es el cierre
+            // El mismo criterio de día que la entrada y la salida (comparar
+            // fechas UTC aquí desalinearía el día de sesión); y `snapToCandle`
+            // descarta solo lo que no caiga en una vela del gráfico.
+            if (dayDateStr && entryDate !== dayDateStr && exitDate !== dayDateStr) continue;
+            const snap = snapToCandle(ex.time_epoch, candleTimes);
+            if (!snap || !candleTimeSet.has(snap)) continue;
+            const isAdd = ex.kind === "add";
+            const isLong = t.direction.toLowerCase().includes("long");
+            rawMarkers.push({
+              time: snap,
+              position: isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar",
+              // Cobre para los añadidos (aumentan la posición) y ámbar para
+              // las salidas parciales, para no confundirlos con la entrada ni
+              // con el cierre.
+              color: isAdd ? "#c87941" : "#d9a441",
+              shape: isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square",
+              text: isAdd
+                ? `+${(ex.size ?? 0).toFixed(0)} @ $${ex.price.toFixed(2)}`
+                : `−${(ex.size ?? 0).toFixed(0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
+              isEntry: false,
+            });
+          }
         }
 
         // Group markers by time
@@ -546,64 +492,6 @@ export default function Chart({
 
         markers.sort((a, b) => (a.time as number) - (b.time as number));
         createSeriesMarkers(candleSeries, markers);
-
-        // ── Líneas horizontales del trade: entrada, salida y cada parcial, al
-        // precio EXACTO de cada ejecución (legs viene del backend) ──────────
-        const legTitle = (r: string) =>
-          r.startsWith("Partial TP") ? r.replace("Partial TP", "Parcial").replace(/[()]/g, "") : r;
-        for (const tr of dayTrades) {
-          candleSeries.createPriceLine({
-            price: tr.entry_price,
-            color: "#D87A3D",
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: `Entrada ${fmtP(tr.entry_price)}`,
-          });
-          candleSeries.createPriceLine({
-            price: tr.exit_price,
-            color: tr.pnl >= 0 ? "#10b981" : "#ef4444",
-            lineWidth: 1,
-            lineStyle: 2,
-            axisLabelVisible: true,
-            title: `Salida ${fmtP(tr.exit_price)}`,
-          });
-        }
-
-        // Parciales: línea horizontal a SU precio + marcador 'P' en su vela.
-        const partialMarkers: SeriesMarker<Time>[] = [];
-        const legCandleTimes = deduped.map(c => c.time as number);
-        for (const tr of dayTrades) {
-          for (const leg of tr.legs ?? []) {
-            if (!leg || !leg.exit_reason?.startsWith("Partial TP")) continue;
-            if (leg.exit_price != null) {
-              candleSeries.createPriceLine({
-                price: leg.exit_price,
-                color: "#14b8a6",
-                lineWidth: 1,
-                lineStyle: 3,
-                axisLabelVisible: true,
-                title: legTitle(leg.exit_reason),
-              });
-            }
-            if (leg.exit_time_epoch != null) {
-              const mt = snapToCandle(leg.exit_time_epoch, legCandleTimes);
-              if (mt != null) {
-                partialMarkers.push({
-                  time: mt as unknown as Time,
-                  position: leg.exit_price != null && leg.exit_price < tr.entry_price ? "belowBar" : "aboveBar",
-                  color: "#14b8a6",
-                  shape: "square",
-                  text: "P",
-                });
-              }
-            }
-          }
-        }
-        if (partialMarkers.length > 0) {
-          partialMarkers.sort((a, b) => (a.time as number) - (b.time as number));
-          createSeriesMarkers(candleSeries, partialMarkers);
-        }
       }
 
       // ========== OVERLAY INDICATORS ==========
@@ -1088,8 +976,6 @@ export default function Chart({
       for (const sc of activeSubCharts) { try { sc.remove(); } catch {} }
       for (const c of activeCharts) { try { c.remove(); } catch {} }
       chartRef.current = null;
-      mainSeriesRef.current = null;
-      hlinesRef.current = [];
     };
   }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
 
@@ -1165,46 +1051,6 @@ export default function Chart({
               </button>
             ))}
           </div>
-          {!isMultiView && (
-            <div style={{ display: 'flex', gap: '3px', backgroundColor: 'var(--color-ec-bg-surface)', border: '1px solid var(--color-ec-border)', borderRadius: '5px', padding: '2px 3px' }}>
-              <button
-                title="Regla: arrastra sobre el gráfico para medir precio, % y velas (Esc o clic derecho para salir)"
-                onClick={() => { setTool(t => t === 'ruler' ? 'none' : 'ruler'); setMeasure(null); }}
-                style={{
-                  fontSize: '13px', padding: '2px 9px', borderRadius: '3px', fontWeight: 500, border: 'none', cursor: 'pointer',
-                  backgroundColor: tool === 'ruler' ? 'var(--color-ec-copper)' : 'transparent',
-                  color: tool === 'ruler' ? '#fff' : 'var(--color-ec-text-secondary)',
-                  transition: 'all 150ms ease',
-                }}
-              >
-                📏
-              </button>
-              <button
-                title="Línea horizontal: haz clic en el gráfico para marcar un precio (Esc o clic derecho para salir)"
-                onClick={() => { setTool(t => t === 'hline' ? 'none' : 'hline'); setMeasure(null); }}
-                style={{
-                  fontSize: '13px', padding: '2px 9px', borderRadius: '3px', fontWeight: 700, border: 'none', cursor: 'pointer',
-                  backgroundColor: tool === 'hline' ? 'var(--color-ec-copper)' : 'transparent',
-                  color: tool === 'hline' ? '#fff' : 'var(--color-ec-text-secondary)',
-                  transition: 'all 150ms ease',
-                }}
-              >
-                ━
-              </button>
-              {hlineCount > 0 && (
-                <button
-                  title="Quitar todas las líneas horizontales"
-                  onClick={clearHlines}
-                  style={{
-                    fontSize: '11px', padding: '2px 8px', borderRadius: '3px', fontWeight: 500, border: 'none', cursor: 'pointer',
-                    backgroundColor: 'transparent', color: 'var(--color-ec-text-secondary)',
-                  }}
-                >
-                  🗑 {hlineCount}
-                </button>
-              )}
-            </div>
-          )}
           {(applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive) && (
             <button
               onClick={() => setMultiDayEnabled(!multiDayEnabled)}
@@ -1249,59 +1095,7 @@ export default function Chart({
       {/* CHART CONTAINERS */}
       {!isMultiView ? (
         <>
-          <div style={{ position: 'relative' }}>
-            <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
-            {tool !== 'none' && (
-              <div
-                style={{ position: 'absolute', inset: 0, cursor: 'crosshair', zIndex: 5 }}
-                onMouseDown={handleOverlayDown}
-                onMouseMove={handleOverlayMove}
-                onMouseUp={handleOverlayUp}
-                onMouseLeave={handleOverlayUp}
-                onClick={handleOverlayClick}
-                onContextMenu={(e) => { e.preventDefault(); setTool('none'); setMeasure(null); }}
-              >
-                {tool === 'ruler' && measure && (() => {
-                  const dp = measure.p2 - measure.p1;
-                  const dpct = (dp / measure.p1) * 100;
-                  const idxOf = (t: number) => aggregatedCandles.findIndex(c => c.time === t);
-                  const bars = idxOf(measure.t2) - idxOf(measure.t1);
-                  const fmtT = (t: number) => new Date(t * 1000).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-                  const up = dp >= 0;
-                  const bx = Math.min(measure.x1, measure.x2);
-                  const by = Math.min(measure.y1, measure.y2);
-                  const bw = Math.abs(measure.x2 - measure.x1);
-                  const bh = Math.abs(measure.y2 - measure.y1);
-                  const tipLeft = Math.min(Math.max(measure.x2 + 12, 8), (chartContainerRef.current?.clientWidth ?? 400) - 200);
-                  const tipTop = Math.max(measure.y2 - 16, 8);
-                  return (
-                    <>
-                      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-                        <rect x={bx} y={by} width={bw} height={bh} fill="rgba(216,122,61,0.08)" stroke="#D87A3D" strokeWidth={1} strokeDasharray="4 3" />
-                        <line x1={measure.x1} y1={measure.y1} x2={measure.x2} y2={measure.y2} stroke="#D87A3D" strokeWidth={1.5} />
-                        <circle cx={measure.x1} cy={measure.y1} r={3.5} fill="#D87A3D" />
-                        <circle cx={measure.x2} cy={measure.y2} r={3.5} fill="#D87A3D" />
-                      </svg>
-                      <div style={{
-                        position: 'absolute', left: tipLeft, top: tipTop, pointerEvents: 'none',
-                        backgroundColor: 'var(--color-ec-bg-elevated)', border: '0.5px solid var(--color-ec-border)',
-                        borderRadius: 5, padding: '5px 9px', fontFamily: 'var(--color-ec-sans)',
-                        fontSize: 11, fontWeight: 600, lineHeight: 1.5, color: 'var(--color-ec-text-primary)',
-                        boxShadow: '0 4px 14px rgba(0,0,0,0.4)', whiteSpace: 'nowrap',
-                      }}>
-                        <div style={{ color: up ? '#10b981' : '#ef4444' }}>
-                          {up ? '+' : ''}{fmtP(dp)} ({up ? '+' : ''}{dpct.toFixed(2)}%)
-                        </div>
-                        <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-ec-text-muted)' }}>
-                          {Math.abs(bars)} velas · {fmtT(measure.t1)} → {fmtT(measure.t2)}
-                        </div>
-                      </div>
-                    </>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
+          <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
           <div ref={panelContainerRef} />
         </>
       ) : (

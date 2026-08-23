@@ -937,6 +937,20 @@ export default function BacktestPanel({
                 flexDirection: 'column',
                 gap: 8,
               }}>
+                {/* El nombre de la estrategia que se va a ejecutar. Sin él, dos
+                    estrategias distintas daban resúmenes indistinguibles y era
+                    fácil creer que se estaba corriendo otra cosa. */}
+                {(currentStrat?.name || (stratDef as any)?.name) && (
+                  <div style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: 'var(--color-ec-copper)',
+                    lineHeight: '1.3',
+                    wordBreak: 'break-word',
+                  }}>{currentStrat?.name || (stratDef as any)?.name}</div>
+                )}
+
                 {cleanDesc && (
                   <span style={{
                     fontFamily: 'var(--color-ec-sans)',
@@ -1066,13 +1080,24 @@ export default function BacktestPanel({
                       
                       const stopList: string[] = [];
                       
-                      // Stop Loss
-                      if (rm.use_hard_stop && rm.hard_stop?.value > 0) {
-                        stopList.push(`Stop Loss: ${rm.hard_stop.value}${rm.hard_stop.type === 'Percentage' ? '%' : 'R'}`);
+                      // Stop Loss. Un stop de ESTRUCTURA no lleva un número:
+                      // lleva el nivel (Previous Max, HOD/LOD...), su operador y
+                      // un margen. Antes se imprimía como si fuese un % y salía
+                      // "Stop Loss: Previous Max%".
+                      if (rm.use_hard_stop && rm.hard_stop) {
+                        const hs = rm.hard_stop;
+                        if (hs.type === 'Market Structure (HOD/LOD)') {
+                          const op = hs.operator ? ` ${hs.operator}` : '';
+                          const off = (hs.offset_pct != null && hs.offset_pct !== 0) ? ` ${hs.offset_pct > 0 ? '+' : ''}${hs.offset_pct}%` : '';
+                          stopList.push(`Stop Loss (estructura): ${hs.value}${op}${off}`);
+                        } else if (hs.value > 0) {
+                          stopList.push(`Stop Loss: ${hs.value}${hs.type === 'Percentage' ? '%' : 'R'}`);
+                        }
                       }
                       if (rm.trailing_stop?.active) {
-                        const bufferVal = rm.trailing_stop.type === 'Percentage' ? `${rm.trailing_stop.buffer_pct}%` : `${rm.trailing_stop.buffer_r}R`;
-                        stopList.push(`Trailing: ${bufferVal}`);
+                        const ts = rm.trailing_stop;
+                        const bufferVal = ts.type === 'Percentage' ? `${ts.buffer_pct}%` : `${ts.buffer_r}R`;
+                        stopList.push(`Trailing (${ts.type === 'Percentage' ? '%' : 'R'}): ${bufferVal}`);
                       }
                       if (!rm.use_hard_stop && !rm.trailing_stop?.active) {
                         stopList.push("Sin Stop Loss");
@@ -1116,12 +1141,67 @@ export default function BacktestPanel({
                         stopList.push(`Max DD Diario: ${rm.max_drawdown_daily}%`);
                       }
                       
+                      // Tamaño por stop loss
+                      if (rm.size_by_sl) {
+                        stopList.push("Tamaño por SL");
+                      }
+
+                      // Salida por tiempo
+                      if (rm.use_time_exit) {
+                        stopList.push(`Salida por tiempo: ${rm.time_exit_value ?? ''}${rm.time_exit_session ? ` (${rm.time_exit_session})` : ''}`);
+                      }
+
                       if (stopList.length === 0) return null;
-                      
+
                       return (
                         <div>
                           <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>RIESGO / STOPS: </span>
                           <span style={{ color: 'var(--color-ec-text-primary)' }}>{stopList.join(" | ")}</span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Timeframes de los bloques de lógica. */}
+                    {(() => {
+                      const te = stratDef?.entry_logic?.timeframe;
+                      const tx = stratDef?.exit_logic?.timeframe;
+                      const cd = stratDef?.entry_logic?.candle_delay;
+                      const partes: string[] = [];
+                      if (te) partes.push(`Entrada ${te}`);
+                      if (tx) partes.push(`Salida ${tx}`);
+                      if (cd) partes.push(`Retardo ${cd} velas`);
+                      if (!partes.length) return null;
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>TEMPORALIDAD: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)' }}>{partes.join(" | ")}</span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Piramidación. No aparecía en el resumen, así que una
+                        estrategia con pirámide se veía idéntica a una sin
+                        ella — justo lo que hace falta distinguir. */}
+                    {(() => {
+                      const pyr = stratDef?.pyramiding;
+                      const niveles = pyr?.levels || [];
+                      if (!niveles.length) return null;
+                      const txt = niveles.map((l: any, i: number) => {
+                        const unidad = (l.unit ?? 'pct') === 'usd' ? '$' : '%';
+                        const accion = l.action === 'reduce' ? 'Quita' : 'Añade';
+                        const base = (l.unit ?? 'pct') === 'usd'
+                          ? ''
+                          : (l.action === 'reduce' ? ' de la posición' : ' del equity');
+                        const veces = (l.times ?? 1) > 1 ? ` ×${l.times}` : '';
+                        return `${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}`;
+                      }).join(" | ");
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-copper)' }}>PIRAMIDACIÓN: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)' }}>
+                            {txt}{pyr?.mode === 'sequential' ? ' · secuencial' : ''}
+                            {pyr?.timeframe ? ` · ${pyr.timeframe}` : ''}
+                          </span>
                         </div>
                       );
                     })()}
@@ -1380,8 +1460,15 @@ export default function BacktestPanel({
                 textTransform: 'uppercase',
                 letterSpacing: '0.12em',
                 color: 'var(--color-ec-text-muted)',
-              }}>
-                Fees {feeType === "PERCENT" ? "(% notional)" : "($/share)"}
+              }}
+                // El importe se cobra DOS veces, una por operacion (compra y
+                // venta). En FLAT `fees` es ademas $ por accion, asi que el
+                // total de un trade es fees x acciones x 2.
+                title={feeType === "PERCENT"
+                  ? "Porcentaje del valor operado. Se cobra en la compra y en la venta."
+                  : "$ por acción. Se cobra en la compra y en la venta: 0,003 con 100 acciones = 0,30 € + 0,30 €."}
+              >
+                Fees {feeType === "PERCENT" ? "(%)" : "($/acc)"}
               </label>
               <select
                 value={feeType}
@@ -1397,8 +1484,13 @@ export default function BacktestPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>% notional</option>
-                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$ / share</option>
+                <option value="PERCENT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>%</option>
+                {/* El desplegable elige la UNIDAD del importe ($ o %); las dos
+                    se cobran igual en la compra y en la venta. El "$" a secas
+                    era ambiguo y ademas describia el modelo viejo, que ignoraba
+                    el numero de acciones. La explicacion completa esta en el
+                    title de la etiqueta de arriba. */}
+                <option value="FLAT" style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}>$</option>
               </select>
             </div>
             <input

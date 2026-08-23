@@ -30,6 +30,129 @@
 
 ---
 
+## 2026-08-23 (Sailor) — ⚠️ `staging` PASA A SER LA VERSIÓN DE SAILOR + piramidación y auditoría del motor
+
+> **LÉEME ENTERO ANTES DE TRABAJAR SOBRE `staging`.** Este push **sustituye el
+> contenido de `staging` por el de `sailor-rama-desarrollo`**. Decisión expresa
+> de Jaume: *«lo que manda es lo nuestro ahora mismo, porque quizás son cosas
+> antiguas — por ejemplo el tema de comisiones ya se resolvió y está bien como
+> lo tenemos nosotros»*.
+>
+> **NO se ha perdido nada del repositorio.** Se hizo con un merge que **conserva
+> todo el historial de Álvaro como ancestro**, no con un force push. Los commits
+> siguen siendo alcanzables por hash y esta nota los lista uno a uno.
+
+### 1. Qué se ha retirado del árbol (y cómo recuperarlo)
+
+Para ver cualquiera: `git show <hash>`. Para recuperar un fichero suelto:
+`git checkout <hash> -- <ruta>`.
+
+| Commit | Qué era |
+|---|---|
+| `f281a20` | nota de Sailor sobre el Darvas (documentación) |
+| `ab1480c` | Darvas Box — **ya está en la versión de Sailor**, no se pierde |
+| `1b8e3f3` | memoria + ALVARO_CAMBIOS del ITEM 4 |
+| `cd455ae` | **fix de fees ITEM 4** (entrada cobrada cuando el cierre es 100% por parciales) |
+| `ff276ef` | nota de Sailor del 22-ago (documentación) |
+| `9d24781` | módulo de Portfolio (versión de Álvaro) |
+| `2e06d94` + `78a6b82` + `1ec8ce9` | **fix del no-determinismo del universo (70R↔137R)** |
+| `c59684b` | retractación del bug del picker de robustez |
+
+**Lo que SÍ se ha conservado en el árbol** (restaurado a propósito): toda la
+documentación de Álvaro (`ALVARO_CAMBIOS/`, `docs/MEMORIA.md` —esta—,
+`BASELINE_TESTS_BACKEND.md`, los dos informes del 21-ago,
+`MODULO_PORTFOLIO_GUIA_INTEGRACION.md`, `PRD_DIVERGENCIA_*`, `PROXIMOS_ITEMS`,
+`fix-locates-attribution/PRD.md`, `mockup_parciales_fade.html`), los scripts
+`arrancar_local.bat` / `parar_local.bat`, y los tests `test_bygap_parity`,
+`test_current_gap_semantics`, `test_fade_partials`, `test_fees` y
+`test_trail_break_even`.
+
+⚠️ **Dos avisos concretos sobre lo conservado:**
+
+1. **`test_fees.py` y `test_trail_break_even.py` van a FALLAR**, y es esperado:
+   verifican comportamientos que la versión de Sailor ha cambiado a propósito
+   (§3). No están rotos; describen el modelo anterior. Decidid si adaptarlos.
+2. **`frontend/src/lib/tradesCsv.ts` se ha tenido que retirar**: usa campos de
+   `TradeRecord` que solo existen en la versión de Álvaro (`legs`,
+   `partials_skipped`, `exit_reasons`, `stop_loss`) y **rompía la compilación**
+   contra el tipo de Sailor. Está en `cd455ae` y anteriores.
+
+**También desaparece el Baúl** (`frontend/src/app/database/` y
+`components/database/`): Sailor lo borró a propósito al construir la página de
+Portfolio y su entrada de menú ya no existe. No es un descuido.
+
+**Y se limpian 28 ficheros `.parquet`** commiteados en
+`backend/app/.cache/intraday/`. Eran datos de caché que no deberían estar en el
+repo — la propia regla de esta memoria lo dice: «nunca commitear datos».
+
+### 2. Qué entra: la PIRAMIDACIÓN
+
+Bloque nuevo `pyramiding` en la definición de estrategia: permite **añadir o
+quitar posición con la operación abierta**, con el mismo editor de condiciones
+que entrada y salida.
+
+> 📄 **La especificación completa está en
+> `docs/PRD_PIRAMIDACION_Y_AUDITORIA_MOTOR.md`**, que entra con este push:
+> semántica punto por punto, contrato de datos JSON, los cuatro caminos del
+> motor que hay que mantener en paridad, los siete fallos con sus cifras
+> medidas, lo que se decidió NO tocar y **10 cifras de control** para verificar
+> una implementación propia sin compartir un byte de datos.
+
+Resumen (todas son decisiones de Jaume, no criterios de la IA):
+
+- **Añadir** = % del equity **o** cifra fija en $. **Quitar** = % de la posición
+  flotante **o** $ de nocional.
+- **Todo se ejecuta en la vela INMEDIATAMENTE SIGUIENTE** a la que cumple la
+  condición — norma fija para entradas, añadidos y reducciones.
+- **TP parciales**: base = **inicial + añadido − reducido**, sin descontar los
+  parciales ya tomados. Sin piramidar, 50%+50% cierra el 100%.
+- **SL y TP completo** se llevan **toda la posición viva**; sus NIVELES siguen
+  anclados a la entrada original, así que un trade piramidado **puede perder
+  varias R** al saltar el stop. Es deliberado.
+- **Secuencial** = lineal, del nivel 1 al 2, sin volver atrás. **Individual** =
+  cada nivel por su cuenta. Una reentrada rearma la secuencia entera.
+- **Regla nº1**: sin la clave `pyramiding`, el backtest es **bit-idéntico** al
+  de antes. Verificado.
+
+### 3. ⚠️ CUATRO CAMBIOS QUE TOCAN EL MOTOR COMPARTIDO
+
+**Esto es lo que más os afecta.** Un backtest guardado antes de hoy puede dar
+números distintos al repetirlo:
+
+| Cambio | A quién afecta |
+|---|---|
+| **El stop fijo manda sobre el trailing.** El trailing no comprobaba si el stop fijo ya había disparado en esa barra; como se mueve con el máximo de la propia vela, **una vela que tocaba el stop podía registrarse como salida EN BENEFICIO** (+1 donde correspondía −2) | cualquier estrategia con trailing **y** stop fijo |
+| **Un comparador desconocido ya no se evalúa como "mayor que".** Antes `_apply_comparator` acababa en `return source > target`: una condición que dijera "menor que" podía ejecutarse como "mayor que" —entrando justo en los máximos— sin error ni rastro. Ahora se **desactiva** y se registra | definiciones mal formadas (antes daban resultados falsos y creíbles) |
+| **Un CRUCE en timeframe superior solo vale la primera barra de 1m.** Antes duraba todo el tramo, así que un "cruza por debajo" en 5m permitía entrar hasta 4 minutos después del cruce. Los ESTADOS (`<`, `>`) siguen durando, que es lo correcto | estrategias que mezclen temporalidades **con cruces** |
+| **`entry_price` pasa a ser el fill REAL de la entrada**; el precio medio ponderado va ahora en `avg_entry_price`, que es el que gobierna el PnL | cualquier consumidor que usara `entry_price` para calcular capital o rentabilidad |
+
+Las estrategias 100% en 1m, sin trailing y sin piramidar **no se ven afectadas**.
+
+### 4. Sobre el fix de fees (`cd455ae`) que se retira
+
+Jaume lo da por resuelto: *«el tema de comisiones ya se resolvió y está bien como
+lo tenemos nosotros»*. La versión de Sailor cobra **`fees × acciones × 2`** (por
+acción, los dos lados) y **registra la comisión de los tramos parciales**, que
+era el «quirk B» que quedaba abierto entre vosotros. En magnitud total
+coincidís; lo que cambia es el reparto entre filas. Si detectáis una diferencia
+real, está `cd455ae` para comparar.
+
+### 5. Cómo se verificó que no se rompía nada
+
+La suite local sin GCS arrastra ~119 fallos preexistentes, así que **«pasan los
+tests» no significa nada**. El método que sí sirve, y que recomendamos adoptar:
+ejecutar la suite y guardar la **lista de nombres** en rojo; `git stash` de los
+ficheros tocados; ejecutar otra vez; `git stash pop` y **restar las listas**.
+
+Esa comparación delató 6 tests de equivalencia rotos a mitad del trabajo —por
+tocar solo uno de los cuatro caminos del motor— que el recuento global (125 vs
+119) habría dejado pasar como ruido. Corregidos, el resultado final es **119
+fallos con los cambios y 119 sin ellos, 0 rotos**, más 30/30 en las suites de
+paridad de motores, 600 escenarios aleatorios de trailing+stop sin divergencias
+y `tsc --noEmit` con 0 errores.
+
+---
+
 ## 2026-08-22 — ITEM 4 fees (reporte de Sailor) + merge Portfolio de Jaume
 
 **Qué pasó**

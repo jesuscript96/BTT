@@ -11,81 +11,6 @@ from datetime import datetime, timezone
 
 
 
-def _attach_prev_max_metrics(trades, high, low, prev_highs, is_long, partial_take_profits):
-    """Añade a cada trade los campos de referencia "máximo previo del día":
-
-    - prev_max_ref: máximo acumulado del día hasta la vela anterior a la
-      entrada (fallback: precio de entrada).
-    - fade_at_entry_pct: fade que ya había al entrar, (ref − entrada)/ref × 100.
-    - mae_prev_max / mfe_prev_max: excursiones con la referencia cambiada
-      (long: MFE=(high−ref)/ref, MAE=(ref−low)/ref; short espejo).
-    - partials_skipped: slots fade descartados al entrar (nivel ya cruzado o
-      ganancia mínima no alcanzada) — determinista con los precios de entrada,
-      así que se recomputa aquí en lugar de pasar estado extra por el simulador.
-    """
-    for t in trades:
-        e = int(t.get("entry_idx", 0))
-        x = int(t.get("exit_idx", e))
-        ref = t["entry_price"]
-        if prev_highs is not None and e < len(prev_highs):
-            pv = prev_highs[e]
-            if pv == pv and pv > 0:  # no NaN y positivo
-                ref = float(pv)
-        t["prev_max_ref"] = round(ref, 6)
-        t["fade_at_entry_pct"] = round((ref - t["entry_price"]) / ref * 100.0, 4)
-
-        lo = float(np.min(low[e:x + 1])) if x >= e else t["entry_price"]
-        hi = float(np.max(high[e:x + 1])) if x >= e else t["entry_price"]
-        # Recorte en la vela de salida para SL/Trailing/TP (paridad con el
-        # mae/mfe del simulador). exit_price viene neto de slippage (redondeado).
-        r = t.get("exit_reason", "")
-        ep = t.get("exit_price", 0.0)
-        if r in ("SL", "Trailing"):
-            if is_long:
-                lo = max(lo, ep)
-            else:
-                hi = min(hi, ep)
-        elif r == "TP":
-            if is_long:
-                hi = min(hi, ep)
-            else:
-                lo = max(lo, ep)
-        if is_long:
-            t["mfe_prev_max"] = round((hi - ref) / ref * 100.0, 4)
-            t["mae_prev_max"] = round((ref - lo) / ref * 100.0, 4)
-        else:
-            t["mfe_prev_max"] = round((ref - lo) / ref * 100.0, 4)
-            t["mae_prev_max"] = round((hi - ref) / ref * 100.0, 4)
-
-        skipped = []
-        for j, pt in enumerate(partial_take_profits or []):
-            fade = pt.get("fade_from_high_pct") if isinstance(pt, dict) else None
-            if fade is None or not isinstance(pt.get("distance_pct"), (int, float)):
-                continue
-            lvl = ref * (1.0 - fade)
-            gain = (t["entry_price"] - lvl) / t["entry_price"]
-            mg = pt.get("min_gain_pct")
-            if t["entry_price"] <= lvl:
-                skipped.append({"index": j, "reason": "crossed"})
-            elif mg is not None and gain < mg:
-                skipped.append({"index": j, "reason": "min_gain"})
-        t["partials_skipped"] = skipped
-
-
-def _fee_amount(fee_type: str, fees: float, qty: float, notional: float) -> float:
-    """Fee de una ejecución bajo el modelo por-fill (spec fees 2026-08-21).
-
-    FLAT: `fees` = $ por acción y lado → fee = fees × qty (acciones del fill).
-    PERCENT: `fees` = fracción del nocional por lado → fee = notional × fees
-    (`fees` llega YA como fracción: el frontend divide /100 al enviar).
-    Cierre final: qty = original_size + size y notional = entrada + salida
-    (la entrada de TODO el tamaño se cobra ahí). Parciales: solo su salida.
-    """
-    if fee_type == "FLAT":
-        return fees * qty
-    return notional * fees
-
-
 def simulate(
     close: np.ndarray,
     open_: np.ndarray,
@@ -109,11 +34,12 @@ def simulate(
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
-    trail_activation: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
     partial_take_profits: list | None = None,
+    pyramid_levels: list | None = None,
+    pyramid_sequential: bool = False,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
@@ -139,8 +65,7 @@ def simulate(
     entry_price = 0.0
     entry_idx = 0
     entry_time = 0
-    # ITEM 4 (fees): ¿ya se cobró el lado de entrada de la posición abierta?
-    entry_fee_charged = False
+    entry_fee_amount = 0.0
     size = 0.0
     trade_sl_price = 0.0
     trail_extreme = 0.0
@@ -148,20 +73,30 @@ def simulate(
     mfe = 0.0  # Maximum Favorable Excursion
     trail_activated = False
     original_size = 0.0  # Track original position size for partial TPs
+    # -- Piramidacion (2026-08-22) --
+    # avg_entry_price: precio medio ponderado de la posicion. SIN piramidar
+    # se asigna una vez (= entry_price) y no cambia: todos los calculos de
+    # PnL/fees/capital que lo usan son bit-identicos al motor anterior.
+    # entry_price queda como ANCLA DE NIVELES: SL, TP, trailing y las
+    # distancias de los parciales se siguen midiendo desde la entrada
+    # ORIGINAL (decision del usuario: el stop no se mueve al piramidar).
+    avg_entry_price = 0.0
+    pyramid_mode = bool(pyramid_levels)
+    pyr_exec = []
+    # Base de los TP parciales: la posicion que "hay" en el trade = inicial mas
+    # lo añadido menos lo reducido por piramide. NO baja con los parciales ya
+    # tomados, para que 50%+50% siga cerrando el 100% cuando no se piramida.
+    pyr_base = 0.0
+    # Estado de la señal de cada nivel DENTRO del trade (se rearma al entrar).
+    pyr_prev_sig: list = []
+    pyr_fired: list = []   # contador de disparos por nivel (int)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
-    # Estado 1A por trade (se recalcula en cada apertura):
-    pt_fade_levels: list = []   # nivel de fade (None = slot sin fade)
-    pt_fade_skipped: list = []  # fade descartado al entrar (cruzado o ganancia mínima)
-    pt_ref_max = 0.0            # máximo previo del día usado como referencia
 
     # Risk amount tracking for reporting
     risk_amount = risk_r
 
     # Locates tracking (daily maximum short size)
     max_short_size_today = 0.0
-    # PRD fix-locates-attribution §4.3: barra donde se paga el borrow (primera
-    # entrada corta del día); -1 = sin shorts todavía.
-    first_short_entry_idx = -1
 
     total_trades = 0
     prev_signal = False
@@ -217,27 +152,27 @@ def simulate(
                             exit_reason = "SL"
 
                 # 2. Trailing Stop Logic (Standard High-Water Mark)
-                # activation_pct desacopla el umbral de activación de la
-                # distancia de trailing. trail_pct == 0 = modo break-even:
-                # tras activarse, el stop queda FIJO en el precio de entrada.
                 if sl_trail and trail_pct is not None:
-                    _act_thr = trail_activation if trail_activation is not None else trail_pct
                     if is_long:
-                        # Check activation: price must go in favor by at least the activation threshold
+                        # Check activation: price must go in favor by at least trail_pct
                         if not trail_activated:
-                            if high[i] >= entry_price * (1 + _act_thr) - 1e-9:
+                            if high[i] >= entry_price * (1 + trail_pct) - 1e-9:
                                 trail_activated = True
                                 trail_extreme = max(entry_price, high[i])
 
                         # Evaluate trailing stop if active
                         if trail_activated:
-                            if trail_pct > 0.0:
-                                trail_extreme = max(trail_extreme, high[i])
-                                trail_sl_price = trail_extreme - (entry_price * trail_pct)
-                            else:
-                                trail_sl_price = entry_price
-
-                            if price_for_sl <= trail_sl_price + 1e-9:
+                            trail_extreme = max(trail_extreme, high[i])
+                            trail_sl_price = trail_extreme - (entry_price * trail_pct)
+                            
+                            # Si el STOP FIJO ya ha disparado en esta misma barra,
+                            # manda el fijo: quita todas las ordenes si o si y
+                            # esta por encima del trailing en importancia (regla
+                            # del usuario, 2026-08-23). Antes el trailing lo
+                            # pisaba usando el MAXIMO de la propia barra, y una
+                            # vela que tocaba el stop podia acabar registrada
+                            # como salida en beneficio.
+                            if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
@@ -248,21 +183,19 @@ def simulate(
                                     exit_price = max(trail_sl_price, low[i])
                                     exit_reason = "Trailing"
                     else:
-                        # Short: Check activation: price must go in favor by at least the threshold (drops)
+                        # Short: Check activation: price must go in favor by at least trail_pct (drops)
                         if not trail_activated:
-                            if low[i] <= entry_price * (1 - _act_thr) + 1e-9:
+                            if low[i] <= entry_price * (1 - trail_pct) + 1e-9:
                                 trail_activated = True
                                 trail_extreme = min(entry_price, low[i])
 
                         # Evaluate trailing stop if active
                         if trail_activated:
-                            if trail_pct > 0.0:
-                                trail_extreme = min(trail_extreme, low[i])
-                                trail_sl_price = trail_extreme + (entry_price * trail_pct)
-                            else:
-                                trail_sl_price = entry_price
-
-                            if price_for_sl >= trail_sl_price - 1e-9:
+                            trail_extreme = min(trail_extreme, low[i])
+                            trail_sl_price = trail_extreme + (entry_price * trail_pct)
+                            
+                            # Mismo criterio que en long: el stop fijo manda.
+                            if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
@@ -325,31 +258,29 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                            pt_size = original_size * cap_frac
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 if is_long:
-                                    gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                    gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                 else:
-                                    gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # Si esta leg cierra todo, el bloque de cierre final
-                                    # nunca correrá → cobrar AQUÍ el lado de entrada (UNA
-                                    # vez). Orden FP: salida primero, luego += entrada
-                                    # (paridad bit a bit con el kernel JIT).
-                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                    gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
+                                
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
                                     "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -357,6 +288,7 @@ def simulate(
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
                                     "exit_reason": "Partial TP (EOD)",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -382,31 +314,29 @@ def simulate(
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                            pt_size = original_size * cap_frac
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
                                 if is_long:
-                                    gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                    gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                 else:
-                                    gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # Si esta leg cierra todo, el bloque de cierre final
-                                    # nunca correrá → cobrar AQUÍ el lado de entrada (UNA
-                                    # vez). Orden FP: salida primero, luego += entrada
-                                    # (paridad bit a bit con el kernel JIT).
-                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                    gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
+                                
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
                                     "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
@@ -414,6 +344,7 @@ def simulate(
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
                                     "exit_reason": "Partial TP (Time)",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -442,29 +373,28 @@ def simulate(
                                 
                                 slip = pt_exit_price * slippage
                                 net_pt_exit = (pt_exit_price - slip) if is_long else (pt_exit_price + slip)
-                                pt_size = original_size * cap_frac
+                                pt_size = pyr_base * cap_frac
                                 pt_size = min(pt_size, size)
-                                # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                                closes_position = (size - pt_size) <= 0.0001
                                 if pt_size > 0:
                                     if is_long:
-                                        gross_pnl = (net_pt_exit - entry_price) * pt_size
+                                        gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
                                     else:
-                                        gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                    fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
-                                    if closes_position and not entry_fee_charged:
-                                        # ITEM 4: cierre total por parcial → cobrar aquí
-                                        # la entrada (UNA vez). Mismo orden FP que el JIT.
-                                        fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
-                                        entry_fee_charged = True
+                                        gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
+                                    
+                                    if fee_type == "FLAT":
+                                        fee_amount = fees * pt_size * 2
+                                    else:
+                                        # % sobre el NOCIONAL de cada lado (entrada + salida).
+                                        fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                     pnl = gross_pnl - fee_amount
                                     realized_pnl += pnl
-                                    capital_at_risk = entry_price * pt_size
+                                    capital_at_risk = avg_entry_price * pt_size
                                     ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                     trades.append({
                                         "entry_idx": entry_idx,
                                         "exit_idx": i,
                                         "entry_price": round(entry_price, 6),
+                                        "avg_entry_price": round(avg_entry_price, 6),
                                         "exit_price": round(net_pt_exit, 6),
                                         "pnl": round(pnl, 4),
                                         "return_pct": round(ret_pct, 4),
@@ -472,6 +402,7 @@ def simulate(
                                         "status": "Closed",
                                         "size": round(pt_size, 6),
                                         "exit_reason": "Partial TP (Hour)",
+                                        "fees": round(fee_amount, 4),
                                         "mae": round(mae, 4),
                                         "mfe": round(mfe, 4),
                                         "stop_loss": round(trade_sl_price, 6),
@@ -486,67 +417,43 @@ def simulate(
                     
                     elif is_long:
                         pt_level = entry_price * (1 + dist_frac)
-                        # Disparador dual: 1B (% desde entrada) y 1A (fade desde el
-                        # máximo previo del día, dispara cuando el precio CAE al nivel).
-                        # El que "manda" (priority) se evalúa primero; si dispara, el
-                        # otro queda cancelado (una sola ejecución por slot, nunca suman).
-                        _fade_lvl = pt_fade_levels[pt_idx] if pt_idx < len(pt_fade_levels) else None
-                        _hit_b = price_for_tp >= pt_level
-                        _hit_a = (_fade_lvl is not None
-                                  and not pt_fade_skipped[pt_idx]
-                                  and low[i] <= _fade_lvl)
-                        if pt.get("priority", 0) == 0:
-                            _fire_a = _hit_a
-                        else:
-                            _fire_a = _hit_a and not _hit_b
-                        if _hit_b or _hit_a:
+                        if price_for_tp >= pt_level:
                             # Partial exit
                             partial_tp_hits[pt_idx] = True
-                            if _fire_a:
-                                # Venta por caída al nivel de fade; si abre por debajo
-                                # (gap), fill al open. Acotado al rango de la vela.
-                                pt_exit_price = min(_fade_lvl, open_[i])
-                                pt_exit_price = max(pt_exit_price, low[i])
-                            else:
-                                # If it gapped above target at open, take the open, else the target
-                                pt_exit_price = max(pt_level, open_[i])
-                                pt_exit_price = min(pt_exit_price, high[i]) # Bound by high
+                            # If it gapped above target at open, take the open, else the target
+                            pt_exit_price = max(pt_level, open_[i])
+                            pt_exit_price = min(pt_exit_price, high[i]) # Bound by high
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price - slip
-                            # Capital de la fila ganadora (capital_pct_a si ganó el fade).
-                            _cap = (pt.get("capital_pct_a") or pt["capital_pct"]) if _fire_a else pt["capital_pct"]
-                            pt_size = original_size * _cap
+                            # Close cap_frac of original position
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)  # Can't close more than remaining
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
-                                gross_pnl = (net_pt_exit - entry_price) * pt_size
-                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # ITEM 4: cierre total por parcial → cobrar aquí la
-                                    # entrada (UNA vez). Orden FP: salida, luego += entrada.
-                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                gross_pnl = (net_pt_exit - avg_entry_price) * pt_size
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
                                     "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
                                     "direction": "Long" if is_long else "Short",
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
-                                    "exit_reason": (
-                                        "Partial TP (Fade)" if _fire_a
-                                        else "Partial TP (Entrada)" if _fade_lvl is not None
-                                        else "Partial TP"
-                                    ),
+                                    "exit_reason": "Partial TP",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -559,64 +466,41 @@ def simulate(
                                     break
                     else:
                         pt_level = entry_price * (1 - dist_frac)
-                        # Disparador dual (espejo del long): 1B % desde entrada,
-                        # 1A fade desde el máximo previo — cover cuando el precio
-                        # cae al nivel. Manda el de prioridad; OCO tras disparar.
-                        _fade_lvl = pt_fade_levels[pt_idx] if pt_idx < len(pt_fade_levels) else None
-                        _hit_b = price_for_tp <= pt_level
-                        _hit_a = (_fade_lvl is not None
-                                  and not pt_fade_skipped[pt_idx]
-                                  and low[i] <= _fade_lvl)
-                        if pt.get("priority", 0) == 0:
-                            _fire_a = _hit_a
-                        else:
-                            _fire_a = _hit_a and not _hit_b
-                        if _hit_b or _hit_a:
+                        if price_for_tp <= pt_level:
                             partial_tp_hits[pt_idx] = True
-                            if _fire_a:
-                                # Cover por caída al nivel de fade; gap por debajo
-                                # al abrir → fill al open (mejor para la compra).
-                                pt_exit_price = min(_fade_lvl, open_[i])
-                                pt_exit_price = max(pt_exit_price, low[i])
-                            else:
-                                # If it gapped below target at open, take the open, else the target
-                                pt_exit_price = min(pt_level, open_[i])
-                                pt_exit_price = max(pt_exit_price, low[i]) # Bound by low
+                            # If it gapped below target at open, take the open, else the target
+                            pt_exit_price = min(pt_level, open_[i])
+                            pt_exit_price = max(pt_exit_price, low[i]) # Bound by low
                             
                             slip = pt_exit_price * slippage
                             net_pt_exit = pt_exit_price + slip
-                            _cap = (pt.get("capital_pct_a") or pt["capital_pct"]) if _fire_a else pt["capital_pct"]
-                            pt_size = original_size * _cap
+                            pt_size = pyr_base * cap_frac
                             pt_size = min(pt_size, size)
-                            # ITEM 4 (fees): ¿liquida esta leg el 100% de la posición?
-                            closes_position = (size - pt_size) <= 0.0001
                             if pt_size > 0:
-                                gross_pnl = (entry_price - net_pt_exit) * pt_size
-                                fee_amount = _fee_amount(fee_type, fees, pt_size, net_pt_exit * pt_size)
-                                if closes_position and not entry_fee_charged:
-                                    # ITEM 4: cierre total por parcial → cobrar aquí la
-                                    # entrada (UNA vez). Orden FP: salida, luego += entrada.
-                                    fee_amount += _fee_amount(fee_type, fees, original_size, entry_price * original_size)
-                                    entry_fee_charged = True
+                                gross_pnl = (avg_entry_price - net_pt_exit) * pt_size
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * pt_size * 2
+                                else:
+                                    # % sobre el NOCIONAL de cada lado (entrada + salida),
+                                    # no sobre el PnL: un breakeven tambien paga comision.
+                                    fee_amount = (avg_entry_price + net_pt_exit) * pt_size * fees
                                 pnl = gross_pnl - fee_amount
                                 realized_pnl += pnl
-                                capital_at_risk = entry_price * pt_size
+                                capital_at_risk = avg_entry_price * pt_size
                                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
                                 trades.append({
                                     "entry_idx": entry_idx,
                                     "exit_idx": i,
                                     "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
                                     "exit_price": round(net_pt_exit, 6),
                                     "pnl": round(pnl, 4),
                                     "return_pct": round(ret_pct, 4),
                                     "direction": "Long" if is_long else "Short",
                                     "status": "Closed",
                                     "size": round(pt_size, 6),
-                                    "exit_reason": (
-                                        "Partial TP (Fade)" if _fire_a
-                                        else "Partial TP (Entrada)" if _fade_lvl is not None
-                                        else "Partial TP"
-                                    ),
+                                    "exit_reason": "Partial TP",
+                                    "fees": round(fee_amount, 4),
                                     "mae": round(mae, 4),
                                     "mfe": round(mfe, 4),
                                     "stop_loss": round(trade_sl_price, 6),
@@ -628,6 +512,11 @@ def simulate(
                                     break
                 # If all position was closed via partials, skip the rest of exit logic
                 if not in_position:
+                    # La posicion se vacio por parciales: la bitacora de la
+                    # piramide se cuelga de la ultima leg para no perderse.
+                    if pyramid_mode and pyr_exec and trades:
+                        trades[-1]["pyr_executions"] = pyr_exec
+                        pyr_exec = []
                     equity[i] = init_cash + realized_pnl
                     prev_signal = bool(entries[i])
                     continue
@@ -708,32 +597,38 @@ def simulate(
                 
                 # Gross PnL
                 if is_long:
-                    gross_pnl = (net_exit - entry_price) * size
+                    gross_pnl = (net_exit - avg_entry_price) * size
                 else:
-                    gross_pnl = (entry_price - net_exit) * size
+                    gross_pnl = (avg_entry_price - net_exit) * size
 
-                # Fee por-fill (spec 2026-08-21): el cierre final paga la
-                # entrada de TODO el tamaño (original_size) + la salida del
-                # restante (size). FLAT = $/acción; PERCENT = fracción del
-                # nocional neto (fees llega ya como fracción desde el frontend).
-                fee_amount = _fee_amount(
-                    fee_type, fees,
-                    original_size + size,
-                    entry_price * original_size + net_exit * size,
-                )
-
+                # Fee calculation depends on fee_type
+                if fee_type == "FLAT":
+                    # FLAT = $ POR ACCION, cobrado en los DOS lados (fix de
+                    # 2026-08-22). 0,003 con 100 acciones = 0,30 $ al comprar +
+                    # 0,30 $ al vender. Antes era `fees * 2`: una cantidad fija
+                    # por operacion que IGNORABA el tamaño, asi que con 10.000
+                    # acciones cobraba 1 centimo donde el broker cobra 60 $.
+                    fee_amount = fees * size * 2
+                else:
+                    # Percentage fee sobre el NOCIONAL de cada lado (entrada +
+                    # salida), como cobra un broker real. Antes se aplicaba
+                    # sobre |PnL bruto|, con lo que un trade en tablas pagaba
+                    # $0 de comision moviera las acciones que moviera.
+                    fee_amount = (avg_entry_price + net_exit) * size * fees
+                
                 # Net PnL is Gross PnL minus Fees
                 pnl = gross_pnl - fee_amount
 
                 realized_pnl += pnl
                 # For capital at risk, we just use the entry capital required
-                capital_at_risk = entry_price * size
+                capital_at_risk = avg_entry_price * size
                 ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
 
                 trades.append({
                     "entry_idx": entry_idx,
                     "exit_idx": eff_exit_idx,
                     "entry_price": round(entry_price, 6),
+                    "avg_entry_price": round(avg_entry_price, 6),
                     "exit_price": round(net_exit, 6),
                     "pnl": round(pnl, 4),
                     "fees": round(fee_amount, 4),
@@ -746,8 +641,219 @@ def simulate(
                     "mfe": round(mfe, 4),
                     "stop_loss": round(trade_sl_price, 6),
                 })
+                if pyramid_mode and pyr_exec:
+                    trades[-1]["pyr_executions"] = pyr_exec
+                    pyr_exec = []
                 in_position = False
                 size = 0.0
+
+
+        # --- Piramidacion: condiciones logicas POST-entrada (2026-08-22) ---
+        # Orden dentro de la barra: DESPUES de todas las salidas y solo si la
+        # posicion sigue viva -- una barra que toca el stop no piramida.
+        #
+        # Las piramides son INDIVIDUALES por defecto: cada una vigila su propia
+        # condicion en paralelo, sin anclaje entre ellas (la numeracion de la
+        # UI es solo orden de lista). Con pyramid_sequential=True, cada nivel
+        # solo se ARMA cuando el anterior ya ha disparado al menos una vez.
+        #
+        # Cada nivel dispara hasta `max_fires` veces por trade (decision del
+        # usuario 2026-08-22: configurable; antes era 1 fija), SOLO en FLANCOS
+        # de su señal (False->True): una condicion sostenida muchas barras es
+        # UN evento, no uno por barra — sin esto, "gana mas de X%" con 3 veces
+        # dispararia en 3 barras seguidas. Con señales de cruce (eventos de una
+        # barra) el flanco es identico al comportamiento anterior. Todo se
+        # rearma con cada entrada nueva; TP/SL/parciales corren en paralelo.
+        if pyramid_mode and in_position and i > entry_idx:
+            # SECUENCIAL: la piramide avanza EN LINEA y no vuelve atras. Solo
+            # vigila el primer nivel que aun no haya agotado sus veces; cuando
+            # las agota se pasa al siguiente y el anterior ya no dispara mas en
+            # este trade. Una reentrada rearma la secuencia entera.
+            # INDIVIDUAL: `nivel_activo` es None y todos vigilan a la vez, como
+            # entradas independientes.
+            nivel_activo = None
+            if pyramid_sequential:
+                nivel_activo = next(
+                    (k for k in range(len(pyramid_levels))
+                     if pyr_fired[k] < pyramid_levels[k]["max_fires"]),
+                    -1,
+                )
+            for lv_idx, lv in enumerate(pyramid_levels):
+                if pyr_fired[lv_idx] >= lv["max_fires"]:
+                    continue
+                # Mientras un nivel no tiene el turno NO se actualiza su estado
+                # de señal, para que al llegarle pueda disparar aunque su
+                # condicion llevara rato cumpliendose. Antes el flanco se
+                # consumia estando desarmado y el nivel quedaba muerto.
+                if nivel_activo is not None and lv_idx != nivel_activo:
+                    continue
+                # El disparo es en el paso de "no se cumple" a "se cumple", pero
+                # medido DENTRO del trade: `pyr_prev_sig` arranca en False en
+                # cada entrada, asi que una condicion que YA se cumplia al entrar
+                # dispara en la primera barra. Antes se miraba la barra anterior
+                # del array completo y esa condicion no disparaba jamas.
+                sig_now = bool(lv["signals"][i])
+                dispara = sig_now and not pyr_prev_sig[lv_idx]
+                pyr_prev_sig[lv_idx] = sig_now
+                if not dispara:
+                    continue
+                # El disparo se contabiliza SOLO si llega a ejecutarse (mas
+                # abajo). Contarlo aqui gastaba una de las "veces" aunque el
+                # add/reduce se descartara por precio o por caja, dejando el
+                # nivel inutilizado para el resto del trade con el default
+                # veces=1.
+                # Norma fija del usuario: si se cumple una condicion, se opera en
+                # la vela INMEDIATAMENTE SIGUIENTE. Vale para las entradas y
+                # tambien para la piramide; antes los add/reduce se ejecutaban al
+                # cierre de la propia vela de la señal (lookahead e incoherente
+                # con las entradas).
+                if look_ahead_prevention:
+                    if i >= n - 1:
+                        continue          # no hay vela siguiente donde operar
+                    px = open_[i + 1]
+                    exec_idx = i + 1
+                else:
+                    px = close[i]
+                    exec_idx = i
+                if px <= 0:
+                    continue
+                slip = px * slippage
+                if lv["action"] == "add":
+                    # AÑADIR: % del EQUITY de la cuenta (decision del usuario),
+                    # convertido a acciones al precio de la barra con slippage
+                    # de entrada. Tope: el coste total de la posicion no puede
+                    # superar el cash disponible (misma regla que la entrada).
+                    add_px = (px + slip) if is_long else (px - slip)
+                    if add_px <= 0:
+                        continue
+                    cash_now = init_cash + realized_pnl
+                    if cash_now <= 0:
+                        continue
+                    # 'pct' -> % del EQUITY de la cuenta; 'usd' -> una cantidad
+                    # fija en dolares. En ambos casos se convierte a acciones al
+                    # precio de la barra.
+                    if lv.get("unit") == "usd":
+                        add_cash = float(lv.get("amount_usd", 0.0))
+                    else:
+                        add_cash = cash_now * lv["capital_frac"]
+                    if add_cash <= 0:
+                        continue
+                    # TOPE DE CAJA (regla del usuario, 2026-08-23): entrada mas
+                    # añadidos NUNCA pueden comprometer mas capital del que hay
+                    # en la cuenta, contado SIN el flotante y valorando lo que ya
+                    # se tiene AL PRECIO AL QUE SE COMPRO (`avg_entry_price`), no
+                    # al de ahora. Si no cabe entero, se RECORTA hasta el limite
+                    # en vez de anularse.
+                    #   fijo: apuesto 99 y añado 1 -> cabe; pido 2 -> añade 1.
+                    #   %:    entro al 90% y añado 10% -> cabe; el segundo 10% no.
+                    # El tope anterior contaba las acciones vivas al precio
+                    # ACTUAL, asi que el margen se encogia justo cuando el trade
+                    # iba GANANDO, y con la entrada al 100% del equity ningun
+                    # añadido llegaba a ejecutarse nunca, en silencio.
+                    comprometido = avg_entry_price * size
+                    disponible = cash_now - comprometido
+                    if disponible <= 0:
+                        continue
+                    add_cash_pedido = add_cash
+                    add_cash = min(add_cash, disponible)
+                    add_size = add_cash / add_px
+                    if add_size <= 0:
+                        continue
+                    recortado = add_cash < add_cash_pedido - 1e-9
+                    avg_entry_price = (avg_entry_price * size + add_px * add_size) / (size + add_size)
+                    size += add_size
+                    # La base de los TP parciales sigue a la posicion: crece con
+                    # los añadidos y baja con las reducciones, pero NO con los
+                    # parciales ya tomados. Asi 50%+50% cierra el 100% sin
+                    # piramidar, y con 1000+1000 el 50% cierra 1000 (regla del
+                    # usuario, 2026-08-23).
+                    pyr_base += add_size
+                    pyr_fired[lv_idx] += 1
+                    pyr_exec.append({
+                        "kind": "add",
+                        "idx": exec_idx,
+                        # timestamps va en nanosegundos; el grafico usa epoch en
+                        # segundos, igual que entry_time_epoch/exit_time_epoch.
+                        "time_epoch": int(timestamps[exec_idx] // 1_000_000_000) if timestamps is not None else None,
+                        "price": round(add_px, 6),
+                        "size": round(add_size, 6),
+                        "level": lv_idx + 1,
+                        "position_size": round(size, 6),
+                        # Queda anotado cuando el tope de caja recorta, para que
+                        # un añadido a medias no parezca uno normal.
+                        **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
+                    })
+                    if not is_long:
+                        max_short_size_today = max(max_short_size_today, size)
+                else:
+                    # REDUCIR: % de la posicion FLOTANTE actual (coherente con
+                    # los parciales en modo piramide). Es una leg de cierre
+                    # normal: su pnl, sus fees por los dos lados y su registro.
+                    # 'pct' -> % de la posicion FLOTANTE; 'usd' -> el nocional en
+                    # dolares que se quiere cerrar, convertido a acciones al
+                    # precio de la barra. Nunca mas de lo que queda vivo.
+                    if lv.get("unit") == "usd":
+                        red_size = min(size, float(lv.get("amount_usd", 0.0)) / px)
+                    else:
+                        red_size = min(size, size * lv["capital_frac"])
+                    if red_size <= 0:
+                        continue
+                    net_red = (px - slip) if is_long else (px + slip)
+                    if is_long:
+                        gross_pnl = (net_red - avg_entry_price) * red_size
+                    else:
+                        gross_pnl = (avg_entry_price - net_red) * red_size
+                    if fee_type == "FLAT":
+                        fee_amount = fees * red_size * 2
+                    else:
+                        fee_amount = (avg_entry_price + net_red) * red_size * fees
+                    pnl = gross_pnl - fee_amount
+                    realized_pnl += pnl
+                    capital_at_risk = avg_entry_price * red_size
+                    ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                    trades.append({
+                        "entry_idx": entry_idx,
+                        "exit_idx": exec_idx,
+                        # entry_price = el fill REAL de la entrada (ancla); el
+                        # precio medio ponderado va aparte. Antes aqui iba la
+                        # media, asi que el grafico etiquetaba la vela de entrada
+                        # con un precio que esa vela nunca toco.
+                        "entry_price": round(entry_price, 6),
+                        "avg_entry_price": round(avg_entry_price, 6),
+                        "exit_price": round(net_red, 6),
+                        "pnl": round(pnl, 4),
+                        "return_pct": round(ret_pct, 4),
+                        "direction": "Long" if is_long else "Short",
+                        "status": "Closed",
+                        "size": round(red_size, 6),
+                        "exit_reason": "Pyramid Reduce",
+                        "fees": round(fee_amount, 4),
+                        "mae": round(mae, 4),
+                        "mfe": round(mfe, 4),
+                        "stop_loss": round(trade_sl_price, 6),
+                    })
+                    size -= red_size
+                    pyr_base -= red_size
+                    pyr_fired[lv_idx] += 1
+                    pyr_exec.append({
+                        "kind": "reduce",
+                        "idx": exec_idx,
+                        "time_epoch": int(timestamps[exec_idx] // 1_000_000_000) if timestamps is not None else None,
+                        "price": round(net_red, 6),
+                        "size": round(red_size, 6),
+                        "level": lv_idx + 1,
+                        "position_size": round(size, 6),
+                        "pnl": round(pnl, 4),
+                    })
+                    if size <= 0.0001:
+                        # La posicion se ha vaciado con esta reduccion: no
+                        # habra trade de cierre, asi que la bitacora se cuelga
+                        # de esta ultima leg.
+                        trades[-1]["pyr_executions"] = pyr_exec
+                        pyr_exec = []
+                        in_position = False
+                        size = 0.0
+                        break
 
         # --- check entries ---
         # Edge Detection: only enter when signal turns from False to True.
@@ -787,7 +893,7 @@ def simulate(
                     prev_signal = current_signal # Update for next loop
                     continue
 
-                # Fee de entrada + salida se calcula en el bloque de cierre (por-fill).
+                # Fees are now calculated purely on exit Gross PnL
                 
                 # Calculate Risk Amount ($)
                 if risk_type == "PERCENT":
@@ -847,9 +953,6 @@ def simulate(
                 if size > 0:
                     # Track Max Short Size for Locates
                     if not is_long:
-                        if first_short_entry_idx < 0:
-                            # PRD fix-locates-attribution §4.3
-                            first_short_entry_idx = eff_entry_idx
                         max_short_size_today = max(max_short_size_today, size)
 
                     in_position = True
@@ -861,30 +964,18 @@ def simulate(
                     mae = 0.0
                     mfe = 0.0
                     original_size = size
-                    entry_fee_charged = False  # ITEM 4: reset por posición
+                    avg_entry_price = entry_price
+                    # La piramide va SIEMPRE asociada a la entrada: cada
+                    # entrada (reentradas incluidas) rearma sus niveles.
+                    pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
+                    pyr_prev_sig = [False] * len(pyramid_levels) if pyramid_mode else []
+                    pyr_base = size
+                    # Bitacora de las ejecuciones de piramide de ESTA posicion.
+                    # Viaja pegada al trade de cierre (`pyr_executions`) para
+                    # poder pintarlas en el grafico: un `add` no genera trade
+                    # propio, asi que sin esto no deja ningun rastro.
+                    pyr_exec = []
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
-                    # 1A (fade desde el máximo previo del día): nivel y skip se
-                    # calculan UNA vez con los precios de entrada. ref = máximo
-                    # acumulado hasta la vela ANTERIOR a la entrada.
-                    pt_ref_max = entry_price
-                    if prev_highs is not None and entry_idx < len(prev_highs):
-                        _pv = prev_highs[entry_idx]
-                        if _pv == _pv and _pv > 0:
-                            pt_ref_max = float(_pv)
-                    pt_fade_levels = []
-                    pt_fade_skipped = []
-                    for _pt in (partial_take_profits or []):
-                        _fade = _pt.get("fade_from_high_pct") if isinstance(_pt, dict) else None
-                        if _fade is None or not isinstance(_pt.get("distance_pct"), (int, float)):
-                            pt_fade_levels.append(None)
-                            pt_fade_skipped.append(False)
-                            continue
-                        _lvl = pt_ref_max * (1.0 - _fade)
-                        _gain = (entry_price - _lvl) / entry_price
-                        _mg = _pt.get("min_gain_pct")
-                        _skip = entry_price <= _lvl or (_mg is not None and _gain < _mg)
-                        pt_fade_levels.append(_lvl)
-                        pt_fade_skipped.append(_skip)
                     total_trades += 1
                 else:
                     equity[i] = available_cash
@@ -896,15 +987,16 @@ def simulate(
         current_equity = init_cash + realized_pnl
         if in_position:
             if is_long:
-                unrealized = (close[i] - entry_price) * size
+                unrealized = (close[i] - avg_entry_price) * size
             else:
-                unrealized = (entry_price - close[i]) * size
+                unrealized = (avg_entry_price - close[i]) * size
             equity[i] = current_equity + unrealized
         else:
             equity[i] = current_equity
 
     # Deduct Daily Locates Fee
     import math
+    daily_locates_fee = 0.0
     if max_short_size_today > 0 and locates_cost > 0:
         if locate_type == "PERCENT":
             if risk_type == "PERCENT":
@@ -918,46 +1010,39 @@ def simulate(
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
         daily_locates_fee = blocks_of_100 * cost_per_100
 
-        # PRD fix-locates-attribution §4.2: repartir el fee del día entre TODOS
-        # los shorts, proporcional al size de cada registro (los parciales aún
-        # no están agrupados; _group_partial_exits suma los pnl después, así
-        # que cada posición acaba con su fracción). El TOTAL no cambia: una
-        # sola compra por ticker-día sobre max_short_size_today.
-        short_trades = [t for t in trades if t["direction"] == "Short"]
-        S = sum(t["size"] for t in short_trades)
-        if short_trades and S > 0:
-            shares = [daily_locates_fee * (t["size"] / S) for t in short_trades]
-        elif short_trades:
-            # Fallback S == 0 (no debería ocurrir con shorts reales): equitativo.
-            shares = [daily_locates_fee / len(short_trades)] * len(short_trades)
-        else:
-            shares = []
-        if shares:
-            shares = [round(s, 4) for s in shares]
-            # Cuadre de redondeo: el residuo va al short de mayor size para que
-            # la suma cierre exacta (invariante contable Σ share == fee).
-            residual = round(daily_locates_fee - sum(shares), 4)
-            if residual != 0.0:
-                biggest = max(range(len(short_trades)), key=lambda k: short_trades[k]["size"])
-                shares[biggest] = round(shares[biggest] + residual, 4)
-            for t, share in zip(short_trades, shares):
-                t["pnl"] = round(t["pnl"] - share, 4)
-                t["fees"] = round(t.get("fees", 0.0) + share, 4)
-        # Si no hay ningún short en trades, no se imputa a pnl (solo curva).
+        # Deliberately NOT attributed to any single trade's pnl/fees: it is a
+        # cost of the ticker's day as a whole (one locate covers every short of
+        # that ticker that day), not of whichever trade happened to go first.
+        # Attaching it to one trade's pnl used to flip that trade's win/loss and
+        # skew win rate / profit factor / avg win-loss for the ticker. The caller
+        # nets `daily_locates_fee` into the day/portfolio totals instead (see
+        # backend/app/services/backtest_service.py and backtest_signals.py).
+        #
+        # `pnl_with_locates` is a SEPARATE, cost-inclusive field kept only for
+        # robustness reconstruction (Monte Carlo / WFO / stress rebuild the
+        # equity curve from per-trade R-multiples, not from the real equity
+        # array, so they need a cost-inclusive value or they'd silently ignore
+        # locates). It intentionally keeps the old first-short-trade attribution
+        # — fine for a statistical reconstruction, but never used for display,
+        # win rate, or any other per-trade classification.
+        for t in trades:
+            t["pnl_with_locates"] = t["pnl"]
+        for t in trades:
+            if t["direction"] == "Short":
+                t["pnl_with_locates"] = round(t["pnl"] - daily_locates_fee, 4)
+                break
 
-        # PRD fix-locates-attribution §4.3: la curva solo baja desde la barra
-        # de la primera entrada corta (antes bajaba desde la barra 0, lo que
-        # inflaba el drawdown intradía del ticker-día).
-        start_idx = first_short_entry_idx if first_short_entry_idx >= 0 else 0
-        for i in range(start_idx, len(equity)):
+        # Update equity curve retroactively downwards so it reflects the end of day state.
+        # In a perfect world we would apply it exactly when the short is taken,
+        # but applying at EOF keeps accounting perfectly aligned with the total.
+        for i in range(len(equity)):
             equity[i] -= daily_locates_fee
 
     # Always update signal state for next bar's edge detection
     prev_signal = current_signal
 
     # Finalize result
-    _attach_prev_max_metrics(trades, high, low, prev_highs, is_long, partial_take_profits)
-    results = {"equity": equity, "trades": trades}
+    results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}
     if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:

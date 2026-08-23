@@ -1,15 +1,10 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { Download } from "lucide-react";
 import type { TradeRecord } from "@/lib/api_backtester";
-import { buildTradesCsv } from "@/lib/tradesCsv";
 
 interface TradesTabProps {
   trades: TradeRecord[];
-  // Set completo sin recortes (p.ej. sin filtro IS/OOS) para la exportación CSV.
-  // Si no llega, se exporta el mismo array `trades`.
-  exportTrades?: TradeRecord[];
   onSelectTrade?: (ticker: string, date: string) => void;
 }
 
@@ -20,19 +15,10 @@ export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   SL:           { bg: "rgba(239,68,68,0.1)",  text: "#ef4444" },
   TP:           { bg: "rgba(16,185,129,0.1)", text: "#10b981" },
   "Partial TP": { bg: "rgba(20,184,166,0.1)", text: "#14b8a6" },
-  "Partial TP (Fade)":    { bg: "rgba(20,184,166,0.14)", text: "#2dd4bf" },
-  "Partial TP (Entrada)": { bg: "rgba(20,184,166,0.08)", text: "#14b8a6" },
-  "Partial TP (Hour)":    { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
-  "Partial TP (Time)":    { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
-  "Partial TP (EOD)":     { bg: "rgba(20,184,166,0.1)",  text: "#14b8a6" },
   Trailing:     { bg: "rgba(217,119,6,0.1)",  text: "#d97706" },
   Signal:       { bg: "rgba(59,130,246,0.1)", text: "#3b82f6" },
   EOD:          { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" },
 };
-
-// Forma corta para la cadena de salidas: "Partial TP (Fade)" → "Fade", etc.
-export const shortExitReason = (r: string): string =>
-  r.startsWith("Partial TP") ? r.replace(/^Partial TP \(|\)$/g, "") : r;
 
 interface SortHeaderProps {
   label: string;
@@ -57,18 +43,13 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, exportTrades, onSelectTrade }: TradesTabProps) {
+export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   // Render en ventana: cap inicial de filas para no meter 60k <tr> en el DOM de
   // golpe (con search/sort operando sobre TODAS). "Mostrar más" agranda la ventana.
   const [visibleCount, setVisibleCount] = useState(500);
-  // Referencia de MAE%/MFE%: "entry" = desde tu entrada (histórico), "prev_max" =
-  // desde el máximo previo del día (fade del movimiento completo).
-  const [maeRef, setMaeRef] = useState<"entry" | "prev_max">("entry");
-  const maeField: SortKey = maeRef === "prev_max" ? "mae_prev_max" : "mae";
-  const mfeField: SortKey = maeRef === "prev_max" ? "mfe_prev_max" : "mfe";
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -87,8 +68,7 @@ export default function TradesTab({ trades, exportTrades, onSelectTrade }: Trade
         (t) =>
           t.ticker.toLowerCase().includes(q) ||
           t.date.includes(q) ||
-          t.exit_reason.toLowerCase().includes(q) ||
-          (t.exit_reasons ?? [t.exit_reason]).some((r) => (r ?? "").toLowerCase().includes(q))
+          t.exit_reason.toLowerCase().includes(q)
       );
     }
     return [...result].sort((a, b) => {
@@ -121,21 +101,6 @@ export default function TradesTab({ trades, exportTrades, onSelectTrade }: Trade
 
   const shown = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
-  // Exporta TODOS los trades del set completo (o del recibido si no hay otro):
-  // ignora el buscador, la ordenación y la ventana de render.
-  const handleExportCsv = () => {
-    const source = exportTrades ?? trades;
-    if (!source.length) return;
-    const { csv, filename } = buildTradesCsv(source);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-
   // Reinicia la ventana al filtrar/reordenar (no arrastrar un count enorme).
   useEffect(() => {
     setVisibleCount(500);
@@ -156,34 +121,7 @@ export default function TradesTab({ trades, exportTrades, onSelectTrade }: Trade
           className="px-2.5 py-1.5 text-[11px] font-mono border-none bg-transparent text-[var(--foreground)] focus:outline-none w-56"
           style={{ borderBottom: '1px solid var(--color-ec-border)' }}
         />
-        <div className="flex items-center gap-5 text-[10px] text-[var(--color-ec-text-secondary)] font-mono">
-          {/* Referencia MAE/MFE: desde la entrada (histórico) o desde el máximo previo del día */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[9px] uppercase tracking-wider opacity-70">MAE/MFE:</span>
-            <div style={{ display: 'inline-flex', border: '0.5px solid var(--color-ec-border)', borderRadius: 4, overflow: 'hidden' }}>
-              {([["entry", "Entrada"], ["prev_max", "Máx. previo"]] as const).map(([opt, label]) => {
-                const active = maeRef === opt;
-                return (
-                  <button
-                    key={opt}
-                    onClick={() => setMaeRef(opt)}
-                    style={{
-                      padding: '2px 7px',
-                      fontSize: 9,
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      border: 'none',
-                      backgroundColor: active ? 'var(--color-ec-copper)' : 'transparent',
-                      color: active ? '#fff' : 'var(--color-ec-text-muted)',
-                      transition: 'background-color 120ms ease, color 120ms ease',
-                    }}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        <div className="flex gap-5 text-[10px] text-[var(--color-ec-text-secondary)] font-mono">
           <span>
             total: <strong style={{ color: 'var(--color-ec-text-high)' }}>{summary.total}</strong>
           </span>
@@ -201,15 +139,6 @@ export default function TradesTab({ trades, exportTrades, onSelectTrade }: Trade
               {summary.totalPnl >= 0 ? "+" : ""}${summary.totalPnl.toFixed(2)}
             </strong>
           </span>
-          <button
-            onClick={handleExportCsv}
-            title="Descargar CSV con todos los trades del backtest (entrada, salida, triggers y resto de datos)"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--color-ec-text-high)]"
-            style={{ border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-secondary)', background: 'transparent', borderRadius: 4 }}
-          >
-            <Download className="w-3 h-3" />
-            Export CSV
-          </button>
         </div>
       </div>
 
@@ -226,8 +155,8 @@ export default function TradesTab({ trades, exportTrades, onSelectTrade }: Trade
               <SortHeader label="Size" field="size" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="PnL" field="pnl" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="R" field="r_multiple" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label={maeRef === "prev_max" ? "MAE%ᴹ" : "MAE%"} field={maeField} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label={maeRef === "prev_max" ? "MFE%ᴹ" : "MFE%"} field={mfeField} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="MAE%" field="mae" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="MFE%" field="mfe" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Exit" field="exit_reason" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
@@ -269,66 +198,21 @@ export default function TradesTab({ trades, exportTrades, onSelectTrade }: Trade
                 <td className={`px-4 py-1.5 ${(t.r_multiple || 0) >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}`}>
                   {t.r_multiple !== null ? `${t.r_multiple.toFixed(2)}R` : "—"}
                 </td>
-                {(() => {
-                  const maeVal = maeRef === "prev_max" ? t.mae_prev_max : t.mae;
-                  const mfeVal = maeRef === "prev_max" ? t.mfe_prev_max : t.mfe;
-                  return (
-                    <>
-                      <td className="px-4 py-1.5 text-[var(--danger)]">
-                        {maeVal != null ? `${maeVal.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="px-4 py-1.5 text-[var(--success)]">
-                        {mfeVal != null ? `${mfeVal.toFixed(2)}%` : "—"}
-                      </td>
-                    </>
-                  );
-                })()}
+                <td className="px-4 py-1.5 text-[var(--danger)]">
+                  {t.mae != null ? `${t.mae.toFixed(2)}%` : "—"}
+                </td>
+                <td className="px-4 py-1.5 text-[var(--success)]">
+                  {t.mfe != null ? `${t.mfe.toFixed(2)}%` : "—"}
+                </td>
                 <td className="px-4 py-1.5">
                   {(() => {
-                    const fallbackStyle = { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
-                    const skipped = t.partials_skipped ?? [];
-                    const chain = (t.exit_reasons && t.exit_reasons.length >= 2) ? t.exit_reasons : null;
-                    const chainTitle = chain ? chain.join(" → ") : t.exit_reason;
+                    const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
                     return (
-                      <span className="inline-flex items-center gap-1" title={chainTitle}>
-                        {chain ? (
-                          chain.map((r, i) => {
-                            const style = EXIT_COLORS[r] || fallbackStyle;
-                            return (
-                              <span key={i} className="inline-flex items-center gap-1">
-                                {i > 0 && <span className="text-[9px] text-[var(--color-ec-text-muted)]">→</span>}
-                                <span
-                                  className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                                  style={{ backgroundColor: style.bg, color: style.text }}
-                                >
-                                  {shortExitReason(r)}
-                                </span>
-                              </span>
-                            );
-                          })
-                        ) : (
-                          <span
-                            className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                            style={{ backgroundColor: (EXIT_COLORS[t.exit_reason] || fallbackStyle).bg, color: (EXIT_COLORS[t.exit_reason] || fallbackStyle).text }}
-                          >
-                            {t.exit_reason}
-                          </span>
-                        )}
-                        {skipped.length > 0 && (
-                          <span
-                            className="inline-block px-1 py-0.5 rounded-sm text-[9px] font-bold"
-                            style={{ backgroundColor: "rgba(239,68,68,0.12)", color: "#ef4444" }}
-                            title={
-                              "Parcial de fade no ejecutado en este trade: " +
-                              skipped
-                                .map((s) => (s.reason === "min_gain" ? "ganancia mínima no alcanzada al entrar" : "nivel ya cruzado al entrar"))
-                                .join("; ") +
-                              ". La toma de beneficio recayó en el parcial por % desde la entrada."
-                            }
-                          >
-                            ⚠ fade saltado
-                          </span>
-                        )}
+                      <span
+                        className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
+                        style={{ backgroundColor: style.bg, color: style.text }}
+                      >
+                        {t.exit_reason}
                       </span>
                     );
                   })()}

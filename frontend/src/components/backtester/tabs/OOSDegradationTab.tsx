@@ -146,24 +146,6 @@ export default function OOSDegradationTab({
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
   const [showDrawdownExpenses, setShowDrawdownExpenses] = useState(false);
 
-  // Drawdown en $ por punto de la curva (value − running max). Convertir el
-  // dd% con init_cash es incorrecto con compounding: el dd% es relativo al
-  // pico de equity del momento, no al capital inicial. (Patrón EquityCurveTab.)
-  const ddDollarByTime = useMemo(() => {
-    const m = new Map<number, number>();
-    if (!fullGlobalEquity.length) return m;
-    let peak = fullGlobalEquity[0].value;
-    for (const p of fullGlobalEquity) {
-      if (p.value > peak) peak = p.value;
-      m.set(p.time as number, p.value - peak);
-    }
-    return m;
-  }, [fullGlobalEquity]);
-  const maxDdDollar = useMemo(
-    () => (ddDollarByTime.size ? Math.min(...ddDollarByTime.values()) : 0),
-    [ddDollarByTime]
-  );
-
   const oosPercent = 100 - isPercent;
   const disabled = oosPercent < 10;
 
@@ -386,8 +368,7 @@ export default function OOSDegradationTab({
           if (viewMode === "R") {
             val = getDrawdownRValue(p.value);
           } else if (viewMode === "$") {
-            const dd = ddDollarByTime.get(p.time as number);
-            val = dd !== undefined ? dd : (p.value / 100) * initCash;
+            val = (p.value / 100) * initCash;
           }
           return { time: p.time as Time, value: val };
         })
@@ -496,7 +477,7 @@ export default function OOSDegradationTab({
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [fullGlobalEquity, fullGlobalDrawdown, isPercent, disabled, cutoffTime, viewMode, showEquityExpenses, showDrawdownExpenses, initCash, riskR, monthlyExpenses, riskType, ddDollarByTime]);
+  }, [fullGlobalEquity, fullGlobalDrawdown, isPercent, disabled, cutoffTime, viewMode, showEquityExpenses, showDrawdownExpenses, initCash, riskR, monthlyExpenses, riskType]);
 
   // ── Disabled state ──
   if (disabled) {
@@ -572,7 +553,7 @@ export default function OOSDegradationTab({
 
   const ddDisplay = (() => {
     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
-    if (viewMode === "$") return `$${maxDdDollar.toFixed(2)}`;
+    if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
     if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
     return `${maxDD.toFixed(2)}%`;
   })();

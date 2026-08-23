@@ -58,18 +58,14 @@ Misma estructura que Entry Logic. Las condiciones definen **cuándo cerrar** la 
 ### Trailing Stop
 
 - **Activo** (on/off).
-- **Tipo**: Percentage. Dos parámetros desacoplados:
-  - **Distance %** (`buffer_pct`): distancia que el stop mantiene respecto al mejor precio alcanzado una vez activo.
-  - **Activation %** (`activation_pct`, opcional): % a favor necesario para que el trailing se active. Vacío = usa la propia distancia (trailing clásico de siempre).
-- **Modo break-even**: Distance 0 con Activation > 0 → al alcanzar el umbral de activación, el stop salta al **precio de entrada** (el trade queda "gratis", salvo gap a través del stop / fees). Distance 0 **sin** activation = BE inmediato (se activa en la primera vela): válido pero sorprendente.
-- Comportamiento: el stop solo se endurece cuando el precio va a favor (no se relaja). Salida cuando el precio toca el nivel (usando high/low de la barra). El stop de trailing (incluido BE) solo ejecuta si queda por encima del hard stop en long (por debajo en short).
-- Tests de bloqueo: `backend/tests/test_trail_break_even.py` (T1-T5) y `test_sim_jit_equivalence.py::test_trail_activation_equivalence` (paridad JIT).
+- **Tipo**: Percentage (distancia % que sigue el precio a favor). La distancia se indica en **Distance %** (buffer_pct).
+- Comportamiento: el stop solo se endurece cuando el precio va a favor (no se relaja). Salida cuando el precio toca el nivel (usando high/low de la barra).
 
 ## 5. Parámetros del Backtester (Execution Panel)
 
 | Parámetro | Efecto |
 |-----------|--------|
-| **Fees ($/share o % notional)** | Comisión por ejecución (fill), un lado = entrada, otro = salida. **FLAT**: $ por acción y lado → fee del fill = fees × tamaño. **PERCENT**: % del nocional ejecutado por lado → fee del fill = precio neto × tamaño × fees (el frontend envía el % ya como fracción). Cada acción paga la entrada una vez y la salida una vez; los parciales pagan su salida y el cierre final paga la entrada completa + su salida. Los trades de parcial no exponen `fees` (quirk contractual) aunque su pnl sí la descuenta. |
+| **Commission ($/share)** | Coste por acción al abrir (y opcionalmente al cerrar). Comisión total = commission_per_share × position_size. |
 | **Locates ($/100 shares)** | Coste por cada 100 acciones (redondeo al alza). Locate fee = ceil(position_size/100) × locate_cost_per_100. |
 | **Slippage (%)** | Se aplica al precio de entrada y salida (empeora el precio en el % indicado). |
 | **Lookahead Prevention** | Si está activo, las señales de entrada y salida se desplazan 1 barra (entrada/salida en la barra siguiente a la que disparó la condición). |
@@ -92,8 +88,8 @@ Misma estructura que Entry Logic. Las condiciones definen **cuándo cerrar** la 
 - [ ] **Entry Logic**: Cada fila (indicador + comparador + valor/indicador) es una condición; AND/OR según el grupo.
 - [ ] **Exit Logic**: Misma lógica que Entry pero para cerrar.
 - [ ] **Hard Stop / Take Profit**: Distancia en % o ATR desde entrada; se pueden desactivar con los toggles.
-- [ ] **Trailing Stop**: Activation % (umbral para activar, vacío = la distancia) + Distance % que sigue el precio a favor; solo se endurece. Distance 0 = break-even.
-- [ ] **Comisiones y locates**: Fees por fill ($/share o % notional por lado); locates por cada 100 shares.
+- [ ] **Trailing Stop**: Distancia % que sigue el precio a favor; solo se endurece.
+- [ ] **Comisiones y locates**: Por share y por cada 100 shares.
 - [ ] **Slippage**: Aplicado en entrada y salida.
 - [ ] **Look-ahead**: Señales desplazadas 1 barra.
 - [ ] **Risk per trade**: R en USD por operación.

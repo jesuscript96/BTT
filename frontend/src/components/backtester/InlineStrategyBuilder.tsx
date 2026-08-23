@@ -5,11 +5,13 @@ import { createPortal } from "react-dom";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
+import { PyramidingBuilder } from "@/components/strategy-builder/PyramidingBuilder";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
   initialEntryLogic,
   initialExitLogic,
   initialRiskManagement,
+  initialPyramiding,
   IndicatorType,
   Comparator,
   Timeframe,
@@ -20,6 +22,7 @@ import type {
   RiskManagement as RiskManagementType,
   ConditionGroup,
   PostGapPrecondition,
+  PyramidingConfig,
 } from "@/types/strategy";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock, Save } from "lucide-react";
@@ -141,6 +144,8 @@ export interface Draft {
   custom_end_time?: string;
   dataset_id?: string;
   universe_filters?: any;
+  // Solo presente si la piramidación está activa con niveles (regla nº1).
+  pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[] };
 }
 
 function getGroupSummaryText(group: ConditionGroup): string {
@@ -205,7 +210,7 @@ function getLeafConditions(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
+            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);
@@ -413,6 +418,10 @@ export default function InlineStrategyBuilder({
       custom_end_time: stratObj.custom_end_time,
       dataset_id: stratObj.dataset_id,
       universe_filters: stratObj.universe_filters,
+      // Sin esto, dos estrategias que solo se diferencian en la piramidacion
+      // se consideran "la misma" y el bloque no se repuebla al cambiar de una
+      // a otra.
+      pyramiding: stratObj.pyramiding,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -429,6 +438,11 @@ export default function InlineStrategyBuilder({
     if (stratObj.entry_logic) setEntryLogic(stratObj.entry_logic);
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
+    if (stratObj.pyramiding) {
+      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) });
+    } else {
+      setPyramiding(initialPyramiding);
+    }
     if (stratObj.market_sessions) {
       setLocalMarketSessions(stratObj.market_sessions);
     } else {
@@ -562,6 +576,11 @@ export default function InlineStrategyBuilder({
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(stratObj?.entry_logic || initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(stratObj?.exit_logic || initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
+  const [pyramiding, setPyramiding] = useState<PyramidingConfig>(
+    stratObj?.pyramiding
+      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) }
+      : initialPyramiding
+  );
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
   const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap'>('cierre');
@@ -674,8 +693,20 @@ export default function InlineStrategyBuilder({
       custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
       dataset_id: resolvedDatasetId,
       universe_filters: universeFilters,
+      ...pyramidingForPayload(),
     });
-  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
+
+  // La clave `pyramiding` solo viaja si el toggle está ON y hay niveles con
+  // condiciones: sin piramidar, el draft queda EXACTAMENTE como siempre.
+  const pyramidingForPayload = () =>
+    pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
+      ? { pyramiding: {
+            timeframe: pyramiding.timeframe,
+                        mode: pyramiding.mode || 'individual',
+            levels: pyramiding.levels.filter(l => l.root_condition.conditions.length > 0 && l.capital_pct > 0),
+          } }
+      : {};
 
   const resetForm = () => {
     setName("Nueva Estrategia");
@@ -688,6 +719,7 @@ export default function InlineStrategyBuilder({
     setEntryLogic(initialEntryLogic);
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
+    setPyramiding(initialPyramiding);
     setTempFromTime("09:30");
     setTempToTime("16:00");
   };
@@ -714,6 +746,7 @@ export default function InlineStrategyBuilder({
       custom_end_time: localMarketSessions.includes("custom") ? localCustomEndTime : undefined,
       dataset_id: resolvedDatasetId,
       universe_filters: universeFilters,
+      ...pyramidingForPayload(),
     } as any;
   };
 
@@ -2290,6 +2323,8 @@ export default function InlineStrategyBuilder({
         </div>
 
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
+        {/* Piramidación: entre la salida lógica y el stop loss fijo (petición del usuario) */}
+        <PyramidingBuilder config={pyramiding} onChange={setPyramiding} />
         <div data-helper="st-risk" style={{ display: 'contents' }}>
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
         </div>

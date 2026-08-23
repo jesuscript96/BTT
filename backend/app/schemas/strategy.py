@@ -106,7 +106,6 @@ class IndicatorType(str, Enum):
     TRIANGLE_DESCENDING = "Triangle Descending"
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
     PM_HIGH_GAP = "PM High Gap (%)"
-    CURRENT_GAP = "Current Gap (%)"
     
     # Time / Others
     TIME_OF_DAY = "Time of Day"
@@ -311,7 +310,7 @@ class RiskManagement(BaseModel):
     hard_stop: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 2.0})
     take_profit: Optional[dict] = Field(default_factory=lambda: {"type": RiskType.PERCENTAGE, "value": 6.0})
     partial_take_profits: Optional[List[PartialTakeProfit]] = Field(default_factory=list)
-    trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5, "activation_pct": None})
+    trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
     swing_option: Optional[dict] = Field(default_factory=lambda: {"active": False, "target_day": "gap_1_day"})
     max_drawdown_daily: Optional[float] = None  # Circuit breaker
 
@@ -338,6 +337,12 @@ class StrategyCreate(BaseModel):
     market_sessions: Optional[List[str]] = None
     custom_start_time: Optional[str] = None
     custom_end_time: Optional[str] = None
+    # Piramidacion. Dict opaco (mismo criterio que `strategy_definition` en
+    # BacktestRequest): el arbol de condiciones de cada nivel es el mismo que el
+    # de entrada/salida y ya lo normaliza strategy_engine. Sin este campo,
+    # pydantic lo descartaba en SILENCIO (extra="ignore" por defecto) y una
+    # estrategia guardada no podia conservar su piramidacion.
+    pyramiding: Optional[dict] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

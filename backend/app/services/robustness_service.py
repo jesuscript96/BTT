@@ -26,6 +26,10 @@ TRADE_FIELDS = (
     "entry_price", "exit_price", "pnl", "fees", "return_pct",
     "direction", "size", "exit_reason", "mae", "mfe",
     "r_multiple", "entry_hour", "entry_weekday", "gap_pct", "stop_loss",
+    # Cost-inclusive pnl (locates), used only by attach_precise_r below to
+    # reconstruct the equity curve for Monte Carlo / WFO / stress. Falls back
+    # to `pnl` when absent (runs saved before this field existed).
+    "pnl_with_locates",
 )
 
 
@@ -146,12 +150,20 @@ def attach_precise_r(
     La R exacta se puede recuperar, porque se sabe como dimensiona el motor:
     arriesga `risk_pct` del balance de APERTURA del dia, asi que
 
-        R = pnl / (risk_pct * equity_al_empezar_el_dia)
+        R = pnl_con_locates / (risk_pct * equity_al_empezar_el_dia)
 
     y ese balance es el punto anterior de la curva diaria, que viene en el
     payload. Verificado contra la corrida real: reconstruir la curva con esta R
     da 68.167,2441 $ frente a los 68.167,25 $ reales — 0,000009% de desvio,
     frente al 0,44% de la R redondeada.
+
+    Usa `pnl_with_locates` (no `pnl`) porque Monte Carlo/WFO recomponen la
+    curva desde estos R-multiplos — no leen `global_equity` salvo para el
+    capital inicial — asi que si el R no lleva el coste de locates, cada curva
+    simulada sale optimista en el total de locates pagado (`pnl` esta limpio a
+    proposito para que no distorsione el win rate en la tabla de trades, ver
+    portfolio_sim.py). Corridas guardadas antes de que existiera ese campo caen
+    a `pnl` via el .get() de abajo, que es lo que habia siempre.
 
     Si no hay curva o el riesgo no es porcentual se cae a `r_multiple`.
     """
@@ -174,7 +186,7 @@ def attach_precise_r(
     for t in trades:
         e0 = start_of_day.get(str(t.get("date") or ""))
         if e0 and e0 > 0:
-            t["r_precise"] = float(t.get("pnl") or 0.0) / (risk_frac * e0)
+            t["r_precise"] = float(t.get("pnl_with_locates", t.get("pnl")) or 0.0) / (risk_frac * e0)
         else:
             t["r_precise"] = float(t.get("r_multiple") or 0.0)
             exact = False

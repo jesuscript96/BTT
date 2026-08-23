@@ -173,24 +173,6 @@ export default function EquityCurveTab({
       return riskR > 0 ? ((ddPct / 100) * initCash) / riskR : 0;
     }
   };
-
-  // Drawdown en $ por punto de la curva (value − running max). Convertir el
-  // dd% con init_cash es incorrecto con compounding: el dd% es relativo al
-  // pico de equity del momento, no al capital inicial.
-  const ddDollarByTime = useMemo(() => {
-    const m = new Map<number, number>();
-    if (!globalEquity.length) return m;
-    let peak = globalEquity[0].value;
-    for (const p of globalEquity) {
-      if (p.value > peak) peak = p.value;
-      m.set(p.time as number, p.value - peak);
-    }
-    return m;
-  }, [globalEquity]);
-  const maxDdDollar = useMemo(
-    () => (ddDollarByTime.size ? Math.min(...ddDollarByTime.values()) : 0),
-    [ddDollarByTime]
-  );
   const [activeMainTab, setActiveMainTab] = useState<"equity" | "oos_degradation">("equity");
 
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
@@ -462,8 +444,7 @@ export default function EquityCurveTab({
           if (viewMode === "R") {
             val = getDrawdownRValue(p.value);
           } else if (viewMode === "$") {
-            const dd = ddDollarByTime.get(p.time as number);
-            val = dd !== undefined ? dd : (p.value / 100) * initCash;
+            val = (p.value / 100) * initCash;
           }
           return { time: p.time as Time, value: val };
         })
@@ -634,7 +615,7 @@ export default function EquityCurveTab({
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType, ddDollarByTime]);
+  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType]);
 
   if (!trades || trades.length === 0) {
     return (
@@ -698,7 +679,7 @@ export default function EquityCurveTab({
 
   const ddDisplay = (() => {
     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
-    if (viewMode === "$") return `$${maxDdDollar.toFixed(2)}`;
+    if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
     if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
     return `${maxDD.toFixed(2)}%`;
   })();

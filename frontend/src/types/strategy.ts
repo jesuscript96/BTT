@@ -45,7 +45,6 @@ export enum IndicatorType {
     TRIANGLE_DESCENDING = "Triangle Descending",
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
     PM_HIGH_GAP = "PM High Gap (%)",
-    CURRENT_GAP = "Current Gap (%)",
 
     // Indicators
     SMA = "SMA",
@@ -216,21 +215,8 @@ export interface RiskSettings {
 }
 
 export interface PartialTakeProfit {
-    // % desde entrada, 'EOD', 'TIME:min', 'HOUR:hh:mm' — o undefined si la fila
-    // es un condicional de fade (anidado bajo el parcial % anterior).
-    distance_pct?: number | 'EOD' | string;
+    distance_pct: number | 'EOD' | string;
     capital_pct: number;
-    // Fila condicional: % de caída desde el máximo previo del día que ejecuta
-    // este parcial (ej. 50 = al 50% del recorrido desde el máximo).
-    fade_from_high_pct?: number;
-    // Respaldo del fade: % desde tu entrada por el que se ejecuta este parcial
-    // cuando al entrar el nivel de fade está muy cerca (o ya cruzado).
-    fallback_entry_pct?: number;
-    // Ganancia mínima (%, desde tu entrada) exigida al fade. Si al entrar su
-    // nivel dejaría menos (o ya está cruzado), no se ejecuta y queda marcado.
-    min_gain_pct?: number;
-    // Empate en la misma vela: 'fade' = manda el fade (default), 'entry' = el %.
-    priority?: 'fade' | 'entry';
 }
 
 export interface TrailingStopSettings {
@@ -238,9 +224,6 @@ export interface TrailingStopSettings {
     type: string;
     buffer_pct: number;
     buffer_r?: number;
-    // Umbral de activación (% a favor) desacoplado de la distancia de trailing.
-    // Con buffer_pct = 0 el stop se fija en break-even al activarse.
-    activation_pct?: number | '';
 }
 
 export interface RiskManagement {
@@ -284,6 +267,8 @@ export interface Strategy {
     entry_logic: EntryLogic;
     exit_logic?: ExitLogic;
     risk_management: RiskManagement;
+    // Solo presente si la piramidación está activa y con niveles válidos.
+    pyramiding?: { timeframe: Timeframe; mode?: 'individual' | 'sequential'; levels: PyramidLevel[] };
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
@@ -337,4 +322,53 @@ export const initialExitLogic: ExitLogic = {
         operator: "AND",
         conditions: []
     }
+};
+
+// ── Piramidación (2026-08-22) ────────────────────────────────────────────
+// Gestión dinámica de la posición: niveles con el MISMO árbol de condiciones
+// que entrada/salida, evaluados por el backend con la misma maquinaria (todos
+// los indicadores y grupos AND/OR funcionan sin lista aparte). Cada nivel
+// añade (% del EQUITY de la cuenta) o quita (% de la posición FLOTANTE) y
+// dispara UNA sola vez por trade; la reentrada los rearma. TP/SL corren en
+// paralelo y se llevan lo que las reducciones no quiten.
+export interface PyramidLevel {
+    root_condition: ConditionGroup;
+    action: 'add' | 'reduce';
+    // Que significa `capital_pct`:
+    //   'pct' (por defecto) -> % del equity al añadir, % de la posicion
+    //                          flotante al quitar
+    //   'usd'               -> una cantidad FIJA en dolares, convertida a
+    //                          acciones al precio de la barra
+    unit: 'pct' | 'usd';
+    capital_pct: number;   // % en unidades de UI (1 = 1%), o $ si unit='usd'
+    // Cuantas veces puede disparar por trade (flancos de su señal). 1 = el
+    // clasico "una vez"; con Darvas, 3 = hasta tres cajas seguidas.
+    times: number;
+}
+
+export interface PyramidingConfig {
+    active: boolean;       // toggle de la UI; si está OFF, la definición NO
+                           // lleva la clave `pyramiding` (regla nº1: sin
+                           // piramidar, nada cambia en el backend)
+    timeframe: Timeframe;
+    // individual (por defecto): cada piramide vigila su condicion en paralelo,
+    // sin anclaje entre ellas. sequential: cada una se ARMA solo cuando la
+    // anterior ya ha disparado al menos una vez.
+    mode: 'individual' | 'sequential';
+    levels: PyramidLevel[];
+}
+
+export const emptyPyramidLevel = (): PyramidLevel => ({
+    root_condition: { type: "group", operator: "AND", conditions: [] },
+    action: 'add',
+    unit: 'pct',
+    capital_pct: 1.0,
+    times: 1,
+});
+
+export const initialPyramiding: PyramidingConfig = {
+    active: false,
+    timeframe: Timeframe.M1,
+    mode: 'individual',
+    levels: [],
 };

@@ -47,9 +47,13 @@ backtest no arranca o tarda horas:
 | `BACKTEST_NUMBA_SIM` | `1` | kernel compilado del simulador |
 | `QUALIFYING_CACHE_TTL` | `86400` | el TTL de 300s caducaba antes de re-ejecutar |
 | `QUALIFYING_DATE_PRUNE` | `true` | ver §4 |
+| `ROBUSTNESS_ENABLED` | `true` | pagina de Robustez; **default OFF**, en prod no existe |
+| `PORTFOLIO_LAB_ENABLED` | `true` | pagina de Portfolio (laboratorio); **default OFF**, en prod no existe |
 
-`frontend/.env.local`: `NEXT_PUBLIC_API_URL=http://localhost:8010` y
-`NEXT_PUBLIC_LOCAL_AUTH_BYPASS=true` (sin claves de Clerk, no hacen falta).
+`frontend/.env.local`: `NEXT_PUBLIC_API_URL=http://localhost:8010`,
+`NEXT_PUBLIC_LOCAL_AUTH_BYPASS=true` (sin claves de Clerk, no hacen falta),
+`NEXT_PUBLIC_ROBUSTNESS_ENABLED=true` (entrada de menu de Robustez) y
+`NEXT_PUBLIC_PORTFOLIO_ENABLED=true` (entrada de menu de Portfolio).
 
 ## 4. Cambios en el código del repo (2, ambos sin commitear aún)
 
@@ -65,6 +69,74 @@ backtest no arranca o tarda horas:
    IDÉNTICAS. Con margen 15d, 3 de 4.899 filas tenían lag/lead distintos
    (tickers con suspensión larga); con 45d el riesgo residual afecta solo a
    `gap±1/±2` o `preconditions` en esos tickers-frontera.
+
+## 4bis. Pagina de Robustez (anadida 2026-08-20)
+
+Modulo aparte para analizar estrategias ya backtesteadas: analisis basico,
+Monte Carlo bootstrap, walk-forward (rapido y completo), y matriz
+locates x slippage. Ruta `/robustez`, endpoints bajo `/api/robustness`.
+
+**Apagado por defecto** (R7). En el repo solo cambian 3 lineas de `main.py`
+(montar el router) y el bloque de menu de `Sidebar.tsx`; todo lo demas son
+ficheros nuevos. Sin las variables de entorno, el router responde **503** y la
+entrada del menu no se pinta.
+
+**No se ha tocado** `what_if_service.py` ni `montecarlo_service.py` pese a que
+ambos tienen problemas para estrategias con `risk_type=PERCENT` (suman PnL en
+dolares, lo que produce equity negativa). El modulo lleva sus propios motores.
+Detalle y numeros en `MEMORIA.md` §4.2 y §4.4.
+
+**Dos cosas del repo que conviene saber** (documentadas, no corregidas):
+- `slippage` NO usa la misma unidad en las dos vias del simulador:
+  `portfolio_sim_jit` lo trata como **fraccion**, `backtester/engine.py` como
+  **porcentaje**. El campo de la UI se titula "Slippage (%)" pero va por la
+  primera via, asi que un `0.001` son **0,1% reales**.
+- `total_return_pct` se calcula **sin restar** `monthly_expenses`; los gastos
+  solo aparecen en `total_pnl_net`.
+
+**Un solo trabajo pesado a la vez:** los barridos llevan guardian; un segundo
+lanzamiento devuelve 409.
+
+**Cuidado al editar el backend mientras corre un barrido:** el `--reload` de
+uvicorn SI funciona en esta maquina (lo contrario de lo que decia MEMORIA hasta
+el 2026-08-20), asi que cualquier cambio en un `.py` reinicia el proceso y
+**mata el trabajo en curso**. Esperar a que termine.
+
+## 4ter. Pagina de Portfolio (añadida 2026-08-21) — y BORRADO del Baul
+
+Modulo nuevo `/portfolio` (laboratorio local de carteras): baul generico +
+cuadros Portfolio/Incubadora, imagen general lineal de N estrategias (curvas,
+drawdown, calendario de PnL, metricas, correlacion, VaR/CVaR, Monte Carlo por
+dia). Backend en **`/api/portfolio-lab`** — OJO: `/api/portfolio` (sin -lab)
+es el modulo de PRODUCCION del equipo (PRD_portfolio_ANTIGRAVITY) y no se toca.
+
+**Apagado por defecto** (R7). Ficheros nuevos: `routers/portfolio_lab.py`,
+`services/portfolio_lab_service.py`, `services/portfolio_lab_engine.py`,
+`app/portfolio/` y `components/portfolio/` en el frontend. Compartidos tocados:
+`main.py` (+3 lineas), `Sidebar.tsx` (entrada gated).
+
+**⚠️ La pagina Baul (`/database`) esta BORRADA en local** (decision explicita
+del usuario, 2026-08-21): `src/app/database/` y `src/components/database/`
+enteros, incluido el PortfolioBuilder viejo. Los endpoints de backend que
+usaba siguen intactos. Este borrado ES visible para el equipo cuando se suba —
+coordinarlo en el push. El flujo "Guardar estrategia en el baul" del Backtester
+no dependia de la pagina y sigue funcionando.
+
+Asignaciones de cuadros en tabla propia `portfolio_lab_assignments`
+(users.duckdb), creada perezosamente solo con el flag activo.
+
+Las TRES fases estan construidas y verificadas: F1 (baul + imagen general),
+F2 (escalado: fijo/% lineal/fix ratio/kelly/combinatoria; ponderacion:
+iguales/HRP/momentum/EV/drawdown; rebalanceo D/W/M; topes; conclusion "AHORA";
+comparativa) y F3 (monitorizacion 6 meses + zona de PnL real). Tablas
+perezosas nuevas en users.duckdb: `portfolio_lab_assignments`,
+`portfolio_lab_monitor`, `portfolio_lab_real_pnl`. Detalle en MEMORIA.md §6.
+
+⚠️ **Fix del motor compartido (2026-08-21, MEMORIA §6.10)**: las comisiones
+PERCENT pasan de `|PnL| × fees` a `% del NOCIONAL por lado` en
+`portfolio_sim.py` y `portfolio_sim_jit.py` (paridad verificada, tolerancia
+0). CAMBIA resultados de backtests con fees % — coordinar con el equipo al
+subir, junto con el borrado del Baul.
 
 ## 5. Arrancar en local
 

@@ -9,7 +9,7 @@
 // (fase 3). Reemplaza a la antigua pagina /database.
 
 import { useCallback, useEffect, useState } from "react";
-import { Layers } from "lucide-react";
+import { Briefcase } from "lucide-react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
 import { SubTabs } from "@/components/robustez/help";
@@ -60,7 +60,7 @@ export default function PortfolioPage() {
     <div style={{ padding: "26px 30px 60px", maxWidth: 1680, margin: "0 auto" }}>
       {/* ── Cabecera ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 6 }}>
-        <Layers style={{ width: 19, height: 19, color: color.copper, strokeWidth: 1.5 }} />
+        <Briefcase style={{ width: 19, height: 19, color: color.copper, strokeWidth: 1.5 }} />
         <h1 style={{ fontSize: 24, fontFamily: font.serif, color: color.textHigh, margin: 0, fontWeight: 400 }}>
           Portfolio
         </h1>

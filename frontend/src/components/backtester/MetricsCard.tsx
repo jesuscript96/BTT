@@ -12,16 +12,12 @@ interface MetricsCardProps {
 export default function MetricsCard({ metrics, vertical = false }: MetricsCardProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const rows = [
-    { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Días de calendario únicos en los que hubo operaciones. Varios tickers el mismo día cuentan como un solo día (no es el número de pares ticker-día)." },
+    { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Número total de días que abarca el período del backtest." },
     { label: "Trades", value: String(metrics.total_trades ?? 0), tooltip: "Cantidad total de operaciones ejecutadas." },
     { label: "Win Rate", value: `${(metrics.win_rate_pct ?? 0).toFixed(1)}%`, tooltip: "Porcentaje de operaciones ganadas sobre el total de trades. Ej: 55% significa que ganas 55 de cada 100 operaciones." },
     { label: "PF", value: (metrics.avg_profit_factor ?? 0).toFixed(3), tooltip: "Profit Factor. Relación de beneficio bruto / pérdida bruta. Ej: PF de 1.8 significa que por cada $1 que pierdes, ganas $1.80. Valores > 1.0 son rentables." },
     { label: "Return", value: `${(metrics.total_return_pct ?? 0).toFixed(2)}%`, tooltip: "Rentabilidad porcentual total acumulada en base al capital inicial." },
     { label: "Max MAE", value: `${(metrics.max_mae ?? 0).toFixed(2)}%`, tooltip: "Mínima excursión adversa máxima. La mayor pérdida flotante porcentual que llegó a registrar una sola operación antes de cerrarse." },
-    { label: "SL Dist Med", value: `${(metrics.sl_dist_pct_median ?? 0).toFixed(1)}%`, tooltip: "Mediana de la distancia porcentual entre el precio de entrada y su stop (|stop − entry| / entry). Con stops de Market Structure la distancia varía en cada trade: la mediana es la cifra representativa (la media se dispara con outliers). Excluye trades sin stop válido y distancias > 200% (splits/datos malos)." },
-    { label: "SL Dist P25", value: `${(metrics.sl_dist_pct_p25 ?? 0).toFixed(1)}%`, tooltip: "Percentil 25 de la distancia porcentual al stop: el 25% de los trades entró con el stop más cerca que esto." },
-    { label: "SL Dist P75", value: `${(metrics.sl_dist_pct_p75 ?? 0).toFixed(1)}%`, tooltip: "Percentil 75 de la distancia porcentual al stop: el 25% de los trades entró con el stop más lejos que esto." },
-    { label: "SL Dist Avg", value: `${(metrics.sl_dist_pct_mean ?? 0).toFixed(1)}%`, tooltip: "Media de la distancia porcentual al stop. Sensible a outliers: para stops de Market Structure, la mediana (SL Dist Med) refleja mejor el riesgo típico." },
     { label: "Avg Ret/Day", value: `${(metrics.avg_return_per_day_pct ?? 0).toFixed(3)}%`, tooltip: "Retorno porcentual promedio por día." },
     { label: "Avg R/Day", value: `${(metrics.avg_r_per_day ?? 0).toFixed(3)}R`, tooltip: "Resultado promedio por día medido en múltiplos de tu riesgo inicial por operación (R)." },
     { label: "Sharpe", value: (metrics.avg_sharpe ?? 0).toFixed(3), tooltip: "Ratio de Sharpe. Muestra el rendimiento en relación al riesgo asumido (volatilidad). Cuanto más alto, más estable y seguro es el retorno. Sharpe > 1.0 es bueno, > 1.5 es excelente." },

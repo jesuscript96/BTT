@@ -31,7 +31,20 @@ def _numba_sim_enabled() -> bool:
 
 
 def simulate(**kwargs) -> dict:
-    """Punto único de entrada del simulador (misma firma/retorno que portfolio_sim)."""
+    """Punto único de entrada del simulador (misma firma/retorno que portfolio_sim).
+
+    Piramidación (2026-08-22): el kernel JIT NO la soporta — una estrategia con
+    niveles de pirámide se rutea SIEMPRE al motor Python, que es LA
+    especificación. Es la vía de mínimo riesgo: el JIT queda intacto (bit a bit)
+    para todo lo demás, y las estrategias piramidadas pagan el motor lento hasta
+    que se porte con su suite de paridad. Sin niveles, el kwarg se retira antes
+    de llamar al JIT (no conoce el parámetro).
+    """
+    pyramid_levels = kwargs.get("pyramid_levels")
+    if pyramid_levels:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("pyramid_levels", None)
+    kwargs.pop("pyramid_sequential", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)
@@ -70,11 +83,9 @@ _REASON_STR = {
     7: "Partial TP (EOD)",
     8: "Partial TP (Time)",
     9: "Partial TP (Hour)",
-    10: "Partial TP (Fade)",
-    11: "Partial TP (Entrada)",
 }
 # partial reasons whose trade dict has NO "fees" key (matches original)
-_PARTIAL_REASONS = (6, 7, 8, 9, 10, 11)
+_PARTIAL_REASONS = (6, 7, 8, 9)
 
 
 def simulate_jit(
@@ -100,7 +111,6 @@ def simulate_jit(
     accumulate: bool = False,
     max_reentries: int = -1,
     trail_pct: float | None = None,
-    trail_activation: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
     look_ahead_prevention: bool = True,
@@ -204,8 +214,6 @@ def simulate_jit(
     tp_stop_v = float(tp_stop) if has_tp_stop else 0.0
     has_trail_pct = trail_pct is not None
     trail_pct_v = float(trail_pct) if has_trail_pct else 0.0
-    has_trail_act = trail_activation is not None
-    trail_act_v = float(trail_activation) if has_trail_act else 0.0
 
     # --- optional arrays -> (flag, zeros-or-array) ---
     def _opt(arr):
@@ -236,23 +244,9 @@ def simulate_jit(
     pt_cap_frac = np.zeros(_sz, dtype=np.float64)
     pt_hour = np.zeros(_sz, dtype=np.int64)
     pt_min = np.zeros(_sz, dtype=np.int64)
-    # 1A: fade desde el máximo previo (NaN = sin fade), ganancia mínima y prioridad.
-    pt_fade = np.full(_sz, np.nan, dtype=np.float64)
-    pt_min_gain = np.full(_sz, np.nan, dtype=np.float64)
-    pt_priority = np.zeros(_sz, dtype=np.int64)
-    pt_cap_frac_a = np.zeros(_sz, dtype=np.float64)
     for idx, pt in enumerate(pt_list):
         dist = pt["distance_pct"]
         pt_cap_frac[idx] = pt["capital_pct"]
-        _cap_a = pt.get("capital_pct_a") if isinstance(pt, dict) else None
-        pt_cap_frac_a[idx] = float(_cap_a) if _cap_a is not None else pt["capital_pct"]
-        _fade = pt.get("fade_from_high_pct") if isinstance(pt, dict) else None
-        if _fade is not None:
-            pt_fade[idx] = float(_fade)
-        _mg = pt.get("min_gain_pct") if isinstance(pt, dict) else None
-        if _mg is not None:
-            pt_min_gain[idx] = float(_mg)
-        pt_priority[idx] = 1 if (isinstance(pt, dict) and pt.get("priority") == 1) else 0
         if dist == "EOD":
             pt_type[idx] = _pjit.PT_EOD
         elif isinstance(dist, str) and dist.startswith("TIME:"):
@@ -309,7 +303,6 @@ def simulate_jit(
         bool(accumulate),
         int(max_reentries),
         has_trail_pct, trail_pct_v,
-        has_trail_act, trail_act_v,
         bool(look_ahead_prevention),
         hs_type_code, hs_value_code, sl_offset,
         has_hods, hods_a,
@@ -322,7 +315,6 @@ def simulate_jit(
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
-        pt_fade, pt_min_gain, pt_priority, pt_cap_frac_a,
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---
@@ -345,15 +337,38 @@ def simulate_jit(
             "mfe": round(r_mfe[t], 4),
             "stop_loss": round(r_stop[t], 6),
         }
-        if rc not in _PARTIAL_REASONS:
-            # el trade de cierre final SÍ lleva fees; los parciales NO (quirk contractual)
-            rec_final = dict(rec)
-            rec_final["fees"] = round(r_fees[t], 4)
-            # preservar el ORDEN de claves del original (pnl, fees, return_pct, ...)
+        # Los DOS tipos de registro llevan `fees`. Los parciales la omitían —
+        # su comisión iba restada en `pnl` pero se reportaba como cero, y el
+        # agrupador de ejecuciones (backtest_service._agrupar) la perdía: con
+        # comisiones por acción, la columna mostraba 75 $ de los 114 $ que el
+        # motor había cobrado de verdad. Corregido el 2026-08-22 EN PARIDAD con
+        # portfolio_sim.py, que ahora también la registra.
+        # El ORDEN de claves se conserva distinto en cada caso, calcado del que
+        # produce portfolio_sim.py: en el cierre final va tras `pnl`, en el
+        # parcial tras `exit_reason`.
+        fee_t = round(r_fees[t], 4)
+        if rc in _PARTIAL_REASONS:
             rec = {
                 "entry_idx": rec["entry_idx"], "exit_idx": rec["exit_idx"],
-                "entry_price": rec["entry_price"], "exit_price": rec["exit_price"],
-                "pnl": rec["pnl"], "fees": rec_final["fees"],
+                "entry_price": rec["entry_price"],
+                # El JIT no piramida, asi que el precio medio es el de entrada.
+                # Va igualmente para mantener la paridad de claves con el motor
+                # Python (test_sim_jit_equivalence compara los dicts enteros).
+                "avg_entry_price": rec["entry_price"],
+                "exit_price": rec["exit_price"],
+                "pnl": rec["pnl"], "return_pct": rec["return_pct"],
+                "direction": rec["direction"], "status": rec["status"],
+                "size": rec["size"], "exit_reason": rec["exit_reason"],
+                "fees": fee_t, "mae": rec["mae"], "mfe": rec["mfe"],
+                "stop_loss": rec["stop_loss"],
+            }
+        else:
+            rec = {
+                "entry_idx": rec["entry_idx"], "exit_idx": rec["exit_idx"],
+                "entry_price": rec["entry_price"],
+                "avg_entry_price": rec["entry_price"],
+                "exit_price": rec["exit_price"],
+                "pnl": rec["pnl"], "fees": fee_t,
                 "return_pct": rec["return_pct"], "direction": rec["direction"],
                 "status": rec["status"], "size": rec["size"],
                 "exit_reason": rec["exit_reason"], "mae": rec["mae"],
@@ -361,15 +376,8 @@ def simulate_jit(
             }
         trades.append(rec)
 
-    # Campos de referencia "máximo previo del día" (paridad con portfolio_sim).
-    from app.services.portfolio_sim import _attach_prev_max_metrics
-    _attach_prev_max_metrics(
-        trades, high, low,
-        prev_high_a if has_prev_high else None,
-        is_long, partial_take_profits,
-    )
-
     # --- Deduct Daily Locates Fee (verbatim from the original; runs once) ---
+    daily_locates_fee = 0.0
     if max_short_size_today > 0 and locates_cost > 0:
         if locate_type == "PERCENT":
             if risk_type == "PERCENT":
@@ -383,37 +391,26 @@ def simulate_jit(
         blocks_of_100 = math.ceil(max_short_size_today / 100.0)
         daily_locates_fee = blocks_of_100 * cost_per_100
 
-        # PRD fix-locates-attribution §4.2: mismo reparto proporcional que
-        # portfolio_sim (paridad). El kernel no devuelve la barra de la
-        # primera entrada corta, así que se deriva de los trades
-        # reconstruidos: min(entry_idx de los shorts) == primera entrada.
-        short_trades = [t for t in trades if t["direction"] == "Short"]
-        S = sum(t["size"] for t in short_trades)
-        if short_trades and S > 0:
-            shares = [daily_locates_fee * (t["size"] / S) for t in short_trades]
-        elif short_trades:
-            shares = [daily_locates_fee / len(short_trades)] * len(short_trades)
-        else:
-            shares = []
-        if shares:
-            shares = [round(s, 4) for s in shares]
-            # Cuadre de redondeo: el residuo va al short de mayor size.
-            residual = round(daily_locates_fee - sum(shares), 4)
-            if residual != 0.0:
-                biggest = max(range(len(short_trades)), key=lambda k: short_trades[k]["size"])
-                shares[biggest] = round(shares[biggest] + residual, 4)
-            for t, share in zip(short_trades, shares):
-                t["pnl"] = round(t["pnl"] - share, 4)
-                t["fees"] = round(t.get("fees", 0.0) + share, 4)
+        # NOT assigned to any single trade (see portfolio_sim.py for why) —
+        # returned separately as `locates_fee` for the caller to net into
+        # day/portfolio totals without skewing any one trade's win/loss.
+        #
+        # `pnl_with_locates`: cost-inclusive field for robustness reconstruction
+        # only (Monte Carlo / WFO rebuild the curve from R-multiples, not from
+        # the real equity array — see portfolio_sim.py for the full rationale).
+        for t in trades:
+            t["pnl_with_locates"] = t["pnl"]
+        for t in trades:
+            if t["direction"] == "Short":
+                t["pnl_with_locates"] = round(t["pnl"] - daily_locates_fee, 4)
+                break
 
-        # PRD fix-locates-attribution §4.3: curva desde la 1a entrada corta.
-        short_entry_idxs = [t["entry_idx"] for t in short_trades]
-        start_idx = min(short_entry_idxs) if short_entry_idxs else 0
-        for i in range(start_idx, len(equity)):
+        # reflect it on the equity curve
+        for i in range(len(equity)):
             equity[i] -= daily_locates_fee
 
     # --- finalize ---
-    results = {"equity": equity, "trades": trades}
+    results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}
     if risk_type == "PERCENT":
         results["last_risk_amount"] = last_risk_amount
     else:

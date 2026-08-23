@@ -184,29 +184,6 @@ def test_edge_cases_exact():
                           f"edge n={n_bars} p={ent_p} dir={direction}")
 
 
-def test_trail_activation_equivalence():
-    """ITEM 1 (T6): paridad Python↔JIT con `trail_activation` informado.
-
-    Cubre el modo BE (trail_pct=0 + activation) y el mixto (activation +
-    distancia), que el grid masivo de arriba NO ejercita porque nunca muestrea
-    trail_activation. Mismas exigencias: trades idénticos, equity bit a bit.
-    """
-    total_trailing = 0
-    for ci in range(60):
-        rng = np.random.default_rng(90_000 + ci)
-        cfg = _sample_config(rng)
-        cfg["sl_trail"] = True
-        cfg["trail_pct"] = float(rng.choice([0.0, 0.02, 0.05]))
-        cfg["trail_activation"] = float(rng.choice([0.005, 0.01, 0.03]))
-        pair = _mk_pair(rng, int(rng.choice([390, 700])))
-        kwargs = {**pair, **cfg}
-        res_py = sim_py(**kwargs)
-        res_jit = simulate_jit(**kwargs)
-        _assert_equal(res_py, res_jit, f"trail-act cfg={ci}")
-        total_trailing += sum(1 for t in res_py["trades"] if t["exit_reason"] == "Trailing")
-    assert total_trailing > 0, "el grid no ejercitó salidas Trailing"
-
-
 def test_dispatcher_selects_engine(monkeypatch):
     from app.services import sim_dispatch
     rng = np.random.default_rng(3)

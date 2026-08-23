@@ -244,6 +244,7 @@ export default function Home() {
         market_sessions: draftStrategy.market_sessions || activeSessions,
         custom_start_time: draftStrategy.custom_start_time || activeCustomStartTime,
         custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
+        ...((draftStrategy as any).pyramiding ? { pyramiding: (draftStrategy as any).pyramiding } : {}),
       });
 
       if (isExisting) {
@@ -276,19 +277,41 @@ export default function Home() {
     setEquityCache(new Map()); // fresh run → drop the previous run's equity cache
     const final = await new Promise<{ status: string; error?: string | null }>((resolve) => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+      // El registro de trabajos del backend vive EN MEMORIA: si el proceso se
+      // reinicia mientras corre un backtest, el job desaparece y este sondeo
+      // recibe un 404 permanente. Antes se trataba como "error de red pasajero"
+      // y reintentaba cada 500 ms indefinidamente, escupiendo dos errores por
+      // segundo a la consola y dejando la barra de progreso colgada para
+      // siempre. Se tolera algún 404 suelto (carrera entre crear el job y
+      // registrarlo) pero no una racha.
+      let faltantes = 0;
+      const parar = () => {
+        if (pollTimerRef.current) {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      };
       pollTimerRef.current = setInterval(async () => {
         try {
           const s = await fetchBacktestJobStatus(job_id);
+          faltantes = 0;
           setBacktestProgress(s);
           if (s.status === "succeeded" || s.status === "failed" || s.status === "cancelled") {
-            if (pollTimerRef.current) {
-              clearInterval(pollTimerRef.current);
-              pollTimerRef.current = null;
-            }
+            parar();
             resolve(s);
           }
         } catch (err) {
-          // transient network error → keep polling
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status === 404 && ++faltantes >= 3) {
+            parar();
+            resolve({
+              status: "failed",
+              error:
+                "El backtest se ha perdido: el backend se reinició mientras corría. Vuelve a lanzarlo.",
+            });
+            return;
+          }
+          // resto de errores → de verdad pueden ser pasajeros, se sigue sondeando
           console.warn("Could not fetch backtest job status:", err);
         }
       }, 500);
@@ -396,13 +419,9 @@ export default function Home() {
   }, [builderDraft, activeStrategy]);
 
 
-  const handleRunWithDraft = async (draft: Draft, paramsOverride?: any) => {
+  const handleRunWithDraft = async (draft: Draft) => {
     setDraftStrategy(draft);
-    // paramsOverride = parámetros que el panel pasó a handleRun al lanzar la
-    // corrida. Sin él (wizard/builder) se usa el último estado del panel,
-    // como antes. Este camino llegaba al backend con defaults (10000/FIXED)
-    // ignorando lo tecleado, porque solo leía panelParamsRef.
-    const p = paramsOverride ?? panelParamsRef.current;
+    const p = panelParamsRef.current;
     
     let activeDatasetId = (draft as any).dataset_id;
     
@@ -463,6 +482,9 @@ export default function Home() {
         custom_end_time: draft.custom_end_time,
         dataset_id: activeDatasetId,
         universe_filters: (draft as any).universe_filters,
+        // La clave solo viaja si el draft la trae: sin piramidar, la definicion
+        // queda byte-identica a la de siempre (regla nº1).
+        ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
       }
     });
 
@@ -506,6 +528,10 @@ export default function Home() {
           custom_end_time: draft.custom_end_time,
           dataset_id: activeDatasetId,
           universe_filters: (draft as any).universe_filters,
+          // Sin esto la piramidacion configurada en el builder nunca llegaba al
+          // backend: strategy_engine hace strategy_def.get("pyramiding") y se
+          // quedaba vacio, apagando pyramid_mode en SILENCIO (sin error).
+          ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
         },
         init_cash: p?.init_cash ?? 10000,
         risk_r: p?.risk_r ?? 100,
@@ -515,8 +541,8 @@ export default function Home() {
         fees: p?.fees ?? 0.01,
         fee_type: p?.fee_type ?? "PERCENT",
         slippage: p?.slippage ?? 0.01,
-        start_date: p?.start_date || (draft as any).universe_filters?.date_from || undefined,
-        end_date: p?.end_date || (draft as any).universe_filters?.date_to || undefined,
+        start_date: (draft as any).universe_filters?.date_from || undefined,
+        end_date: (draft as any).universe_filters?.date_to || undefined,
         market_sessions: draft.market_sessions || p?.market_sessions,
         custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time || undefined) : undefined,
         custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
@@ -653,8 +679,9 @@ export default function Home() {
             market_sessions: def.market_sessions || params.market_sessions || ["rth"],
             custom_start_time: def.custom_start_time || params.custom_start_time,
             custom_end_time: def.custom_end_time || params.custom_end_time,
+            ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           } as any;
-          await handleRunWithDraft(draft, params);
+          await handleRunWithDraft(draft);
           return;
         }
       } catch (err) {
@@ -693,8 +720,11 @@ export default function Home() {
         market_sessions: targetDraft.definition?.market_sessions || targetDraft.market_sessions || params.market_sessions || ["rth"],
         custom_start_time: targetDraft.definition?.custom_start_time || targetDraft.custom_start_time || params.custom_start_time,
         custom_end_time: targetDraft.definition?.custom_end_time || targetDraft.custom_end_time || params.custom_end_time,
+        ...((targetDraft.definition?.pyramiding || targetDraft.pyramiding)
+          ? { pyramiding: targetDraft.definition?.pyramiding || targetDraft.pyramiding }
+          : {}),
       } as any;
-      await handleRunWithDraft(draft, params);
+      await handleRunWithDraft(draft);
       return;
     }
 
@@ -895,17 +925,6 @@ export default function Home() {
         const saved = JSON.parse(stored);
         if (saved.result) setResult(saved.result);
         if (saved.jobId) jobIdRef.current = saved.jobId;
-        // Restaurar la base de la corrida: los refs no sobreviven a la
-        // recarga y quedaban en los defaults (10000/100) aunque el result
-        // restaurado correspondiera a otra configuración.
-        const ge0 = saved.result?.global_equity?.[0]?.value;
-        if (typeof ge0 === "number" && ge0 > 0) initCashRef.current = ge0;
-        if (saved.backtestParams) {
-          backtestParamsRef.current = saved.backtestParams;
-          if (typeof saved.backtestParams.risk_r === "number") {
-            riskRRef.current = saved.backtestParams.risk_r;
-          }
-        }
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
           if (saved.activeStrategy.id && !saved.activeStrategy.id.startsWith("draft") && !saved.activeStrategy.id.startsWith("wizard_draft")) {
@@ -929,7 +948,6 @@ export default function Home() {
     const resultsState = {
       result: lightweightResult,
       jobId: jobIdRef.current, // keep so equity can be re-fetched after a reload (within the 1h job TTL)
-      backtestParams: backtestParamsRef.current, // risk_type/monthly_expenses/is_percent tras recargar
       activeStrategy,
       selectedDay,
       mode,
@@ -1035,43 +1053,14 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, selectedDay, equityKey]);
 
-  // ── Base $ de esta corrida (fuente de verdad) ──
-  // El primer punto de global_equity SIEMPRE es el init_cash con el que corrió
-  // el backend. initCashRef puede quedar desincronizado (recarga de página,
-  // resultado restaurado de sessionStorage), así que los paneles usan esto.
-  const runInitCash = useMemo(
-    () => (result?.global_equity?.length ? result.global_equity[0].value : initCashRef.current),
-    [result]
-  );
-
   // ── IS/OOS filtering ──
   const currentIsPercent = (panelParamsRef.current?.is_percent as number) ?? 100;
 
   const isFilteredResult = useMemo(() => {
-    if (!result) return result;
-
-    // "Days" en días de calendario únicos: el backend reporta total_days como
-    // pares (ticker, día). Con IS=100 el filtro de abajo no corre y el valor
-    // crudo llegaba a la UI, así que la corrección se aplica también aquí
-    // (mismo criterio que el bloque IS de abajo, evita el salto al mover el slider).
-    const uniqueDaysAll = result.trades?.length
-      ? new Set(result.trades.map(t => t.date)).size
-      : (result.aggregate_metrics?.total_days ?? 0);
-    const sumRAll = result.trades?.length
-      ? result.trades.reduce((sum, t) => sum + (t.r_multiple ?? 0), 0)
-      : 0;
+    if (!result || currentIsPercent >= 100) return result;
 
     const eq = result.global_equity || [];
-    if (currentIsPercent >= 100 || eq.length < 2) {
-      return {
-        ...result,
-        aggregate_metrics: {
-          ...result.aggregate_metrics,
-          total_days: uniqueDaysAll,
-          avg_r_per_day: uniqueDaysAll > 0 ? sumRAll / uniqueDaysAll : 0,
-        },
-      };
-    }
+    if (eq.length < 2) return result;
 
     // Find the IS cutoff index based on percentage of equity points
     const cutoffIdx = Math.max(1, Math.floor(eq.length * currentIsPercent / 100));
@@ -1099,7 +1088,13 @@ export default function Home() {
       return dateEpoch <= cutoffTime;
     });
 
-    // Recompute aggregate metrics from IS trades
+    // Recompute aggregate metrics from IS trades.
+    // trade.pnl is the trade's own gross pnl — no ticker's locates fee is baked
+    // into any single trade (see backend/app/services/portfolio_sim.py), so
+    // win/loss classification below is already correct. The locates fee is a
+    // ticker-day cost tracked separately on day_results; it must be added back
+    // only into the $ TOTALS (totalPnl/totalReturnPct/dailyPnls), not into
+    // wins/losses/profitFactor, or it would reintroduce the same distortion.
     const totalTrades = isTrades.length;
     const wins = isTrades.filter(t => t.pnl > 0);
     const losses = isTrades.filter(t => t.pnl < 0);
@@ -1107,14 +1102,22 @@ export default function Home() {
     const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
     const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
-    const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0);
-    const initCash = runInitCash;
+    const isLocatesFee = isDayResults.reduce((s, d) => s + (d.locates_fee || 0), 0);
+    const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0) - isLocatesFee;
+    const initCash = initCashRef.current;
     const totalReturnPct = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
 
     // Daily returns for Sharpe/Sortino
+    const dailyLocatesFee = new Map<string, number>();
+    isDayResults.forEach(d => {
+      if (d.locates_fee) dailyLocatesFee.set(d.date, (dailyLocatesFee.get(d.date) || 0) + d.locates_fee);
+    });
     const dailyPnls = new Map<string, number>();
     isTrades.forEach(t => {
       dailyPnls.set(t.date, (dailyPnls.get(t.date) || 0) + t.pnl);
+    });
+    dailyLocatesFee.forEach((fee, date) => {
+      dailyPnls.set(date, (dailyPnls.get(date) || 0) - fee);
     });
     const dailyReturns = Array.from(dailyPnls.values()).map(p => p / initCash);
     const meanRet = dailyReturns.length > 0 ? dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length : 0;
@@ -1493,7 +1496,7 @@ export default function Home() {
                     globalDrawdown={isFilteredResult!.global_drawdown}
                     trades={isFilteredResult!.trades}
                     metrics={isFilteredResult!.aggregate_metrics}
-                    initCash={runInitCash}
+                    initCash={initCashRef.current}
                     riskR={riskRRef.current}
                     monthlyExpenses={backtestParamsRef.current.monthly_expenses as number | undefined}
                     isPercent={currentIsPercent}
@@ -1555,8 +1558,7 @@ export default function Home() {
 
               <ResultsTabs
                 result={isFilteredResult!}
-                fullTrades={result.trades}
-                initCash={runInitCash}
+                initCash={initCashRef.current}
                 riskR={riskRRef.current}
                 dayCandles={dayCandles}
                 multiDayCandles={multiDayCandles}
@@ -1672,6 +1674,7 @@ export default function Home() {
                           market_sessions: strategyToSave.market_sessions,
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
+                          ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -1734,6 +1737,7 @@ export default function Home() {
                           market_sessions: def.market_sessions || ["rth"],
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
+                          ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
                         } as any;
                         setBuilderDraft(savedDraft);
 
@@ -1854,6 +1858,7 @@ export default function Home() {
                           market_sessions: strategyToSave.market_sessions,
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
+                          ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
                         } as any);
 
                         // Persist backtest results linked to this strategy

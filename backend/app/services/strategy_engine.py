@@ -164,15 +164,6 @@ def _ri_pm_high_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
         pm_high_val = ds.get("pm_high")
         running = np.full(len(c), _safe_float(pm_high_val if pm_high_val is not None else np.nan))
     return (running - float(yest_close)) / float(yest_close) * 100.0
-def _ri_current_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
-    # Réplica de indicators."Current Gap (%)": gap vivo del close de la barra
-    # vs cierre de ayer (misma cadena de fallback que PM High Gap).
-    yest_close = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))
-    if yest_close is None or pd.isna(yest_close):
-        yest_close = float(c[0]) if len(c) > 0 else np.nan
-    if pd.isna(yest_close) or yest_close == 0:
-        return np.full(len(c), np.nan)
-    return (np.asarray(c, dtype=np.float64) - float(yest_close)) / float(yest_close) * 100.0
 def _rth_running_native(vals, mins, o, which):
     """Réplica numpy de indicators._rth_running_series (RTH causal).
     None si no hay minutos o no hay barras RTH (el caller aplica el mismo
@@ -253,7 +244,6 @@ _RAW_INDICATOR_DISPATCH = {
     "Day Open": _ri_day_open, "Current Open": _ri_open,
     "Pre-Market High": _ri_pm_high, "Pre-Market Low": _ri_pm_low,
     "PM High Gap (%)": _ri_pm_high_gap,
-    "Current Gap (%)": _ri_current_gap,
     "High of Day": _ri_hod, "Low of Day": _ri_lod,
     "Prev. Close Bar": _ri_prev_close_bar, "Prev. Bar Close": _ri_prev_close_bar,
     "Prev. Open Bar": _ri_prev_open_bar, "Prev. Bar Open": _ri_prev_open_bar,
@@ -348,6 +338,49 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     _normalize_tree(entry_logic.get("root_condition", {}))
     _normalize_tree(exit_logic.get("root_condition", {}))
 
+    # ── Piramidación (2026-08-22) ──
+    # Bloque opcional `pyramiding` en la definición: lista de niveles, cada uno
+    # con el MISMO árbol de condiciones que entrada/salida, más la acción
+    # (add | reduce) y el % de capital. Los nombres se normalizan igual que en
+    # los árboles de entrada/salida. Sin bloque → lista vacía → todo lo demás
+    # queda inerte (prioridad nº1 del usuario: cero cambios si no se piramida).
+    pyramiding = strategy_def.get("pyramiding") or {}
+    pyr_levels_def = []
+    for lv in (pyramiding.get("levels") or []):
+        root = lv.get("root_condition") or {}
+        if not root.get("conditions"):
+            continue
+        _normalize_tree(root)
+        try:
+            pct = float(lv.get("capital_pct", 0.0))
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct <= 0:
+            continue
+        try:
+            veces = int(lv.get("times", 1))
+        except (TypeError, ValueError):
+            veces = 1
+        # Unidad de la cantidad. 'pct' (por defecto) = el comportamiento de
+        # siempre: % del equity al añadir, % de la posición flotante al quitar.
+        # 'usd' = una cantidad FIJA en dólares, que se convierte a acciones al
+        # precio de la barra. El default 'pct' mantiene la regla nº1: una
+        # definición sin `unit` se compila exactamente igual que antes.
+        unit = "usd" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "pct"
+        pyr_levels_def.append({
+            "root_condition": root,
+            "action": "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add",
+            "unit": unit,
+            # En 'usd' el numero son dolares tal cual, no un porcentaje.
+            "amount_usd": pct if unit == "usd" else 0.0,
+            # La UI manda % (1 = 1%); el motor trabaja en fracción.
+            "capital_frac": pct / 100.0,
+            # Cuantas veces puede disparar este nivel por trade (flancos de su
+            # señal). 1 es el clasico; el tope de 100 es un cinturon contra
+            # valores absurdos, no un limite de diseño.
+            "max_fires": max(1, min(100, veces)),
+        })
+
     compiled = {
         "bias": bias,
         "direction": "longonly" if bias == "long" else "shortonly",
@@ -363,10 +396,22 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         "entry_time_windows": entry_logic.get("entry_time_windows", []),
         "entry_candle_delay": entry_logic.get("candle_delay"),
         "exit_candle_delay": exit_logic.get("candle_delay"),
+        "pyramid_tf": pyramiding.get("timeframe", "1m"),
+        # individual (por defecto): cada piramide vigila su condicion en
+        # paralelo. sequential: cada una se arma cuando la anterior disparo.
+        "pyramid_sequential": str(pyramiding.get("mode", "individual")).lower() == "sequential",
+        "pyramid_levels_def": pyr_levels_def,
     }
 
     # N2a: generate indicator plan for native evaluation
     compiled["_indicator_plan"] = _extract_indicator_plan(compiled)
+
+    # Con piramidación, TODA la estrategia va por el camino clásico: el path
+    # nativo no evalúa los niveles de pirámide, y aquí se aplica la misma regla
+    # que ya rige ese gate — mejor «correcto por el path clásico» que un nivel
+    # ignorado en silencio.
+    if pyr_levels_def:
+        compiled["_indicator_plan"]["has_special"] = True
 
     return compiled
 
@@ -556,7 +601,7 @@ def translate_strategy(
     )
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
-    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, trail_activation, partial_tps = \
+    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps = \
         _parse_risk_management(risk, df, daily_stats, risk_cache)
 
     return {
@@ -568,11 +613,53 @@ def translate_strategy(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
-        "trail_activation": trail_activation,
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
+        "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache),
+        "pyramid_sequential": compiled.get("pyramid_sequential", False),
     }
+
+
+def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
+                             daily_stats: dict | None, entry_cache: dict) -> list:
+    """Señales de los niveles de piramidación (2026-08-22).
+
+    Cada nivel se evalúa con EXACTAMENTE la misma maquinaria que la entrada y
+    la salida (`_evaluate_condition_group`), sobre el timeframe del bloque.
+    Devuelve la lista que espera el simulador: `signals` (bool por vela 1m),
+    `action` y `capital_frac`. Sin niveles → lista vacía, y el simulador ni se
+    entera (el dispatcher retira el kwarg antes del JIT).
+
+    Se comparte la caché de indicadores de la entrada cuando el timeframe
+    coincide: un Darvas usado en la entrada y en un nivel se calcula una vez.
+    """
+    levels_def = compiled.get("pyramid_levels_def") or []
+    if not levels_def:
+        return []
+    tf = compiled.get("pyramid_tf", "1m")
+    cache = entry_cache if tf == compiled.get("entry_tf") else {}
+    out = []
+    for lv in levels_def:
+        try:
+            sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
+            sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
+            out.append({
+                "signals": sig_arr.astype(bool),
+                "action": lv["action"],
+                "capital_frac": lv["capital_frac"],
+                "max_fires": lv.get("max_fires", 1),
+                # Sin estos dos, la unidad en dolares se perdia aqui y el motor
+                # trataba la cantidad como PORCENTAJE: un nivel de "500 $"
+                # pedia el 500% del equity.
+                "unit": lv.get("unit", "pct"),
+                "amount_usd": lv.get("amount_usd", 0.0),
+            })
+        except Exception as e:
+            # Un nivel que no se pueda evaluar NO puede convertirse en un nivel
+            # ignorado en silencio a medias: se registra y se omite entero.
+            logger.error(f"[PYRAMID] nivel no evaluable, se omite: {e}")
+    return out
 
 
 # ── N2a: Native numpy translate (fast path) ─────────────────────────────
@@ -701,7 +788,6 @@ def translate_strategy_native(
     tp_stop = None
     tp_time_limit = None
     trail_pct = None
-    trail_activation = None
     partial_tps = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
@@ -723,19 +809,11 @@ def translate_strategy_native(
             first_close = float(C[0]) if n_bars > 0 else 1.0
             sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
 
-    # Paridad exacta con _parse_risk_management (incluido el modo BE con buffer 0).
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
         sl_trail = True
-        if trailing.get("type") == "Percentage":
-            _buf = trailing.get("buffer_pct")
-            if isinstance(_buf, (int, float)) and _buf >= 0:
-                trail_pct = float(_buf) / 100.0
-            _act = trailing.get("activation_pct")
-            if isinstance(_act, (int, float)) and _act > 0:
-                trail_activation = float(_act) / 100.0
-                if trail_pct is None:
-                    trail_pct = 0.0  # activación sin distancia → BE tras el umbral
+        if trailing.get("type") == "Percentage" and trailing.get("buffer_pct"):
+            trail_pct = trailing["buffer_pct"] / 100.0
 
     if risk.get("use_take_profit") is not False:
         tp_mode = risk.get("take_profit_mode", "Full")
@@ -760,7 +838,6 @@ def translate_strategy_native(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
-        "trail_activation": trail_activation,
         "accept_reentries": compiled.get("accept_reentries", False),
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -804,13 +881,22 @@ def _build_closed_bar_alignment(abs_min_arr, labels, period_mins):
     return np.where(valid, idx_c, 0), valid
 
 
-def _align_native_to_1m(res_tf, ctx, n_bars):
-    """Lleva un array booleano a nivel tf a la malla 1m con semántica closed-bar."""
+def _align_native_to_1m(res_tf, ctx, n_bars, solo_primera_barra: bool = False):
+    """Lleva un array booleano a nivel tf a la malla 1m con semántica closed-bar.
+
+    `solo_primera_barra` replica el mismo criterio del camino clásico
+    (`_align_signals_to_1m`): un CRUCE es un evento puntual y solo vale en la
+    primera barra de 1m posterior al cierre de su vela, no durante todo el tramo.
+    """
     if ctx is None:
         return np.zeros(n_bars, dtype=bool)
     gather_idx, valid = ctx
     out = np.zeros(n_bars, dtype=bool)
     out[valid] = np.asarray(res_tf, dtype=bool)[gather_idx[valid]]
+    if solo_primera_barra:
+        cambia = np.ones(n_bars, dtype=bool)
+        cambia[1:] = (gather_idx[1:] != gather_idx[:-1]) | (valid[1:] != valid[:-1])
+        out &= cambia
     return out
 
 
@@ -837,7 +923,9 @@ def _evaluate_group_native(group: dict, results: dict, n_bars: int,
             tf = cond.get("timeframe") or parent_tf or "1m"
             res = _eval_comparison_native(cond, results, tf)
             if res is not None and _TF_MINUTES.get(tf, 1) > 1:
-                res = _align_native_to_1m(res, align_ctx.get(tf), n_bars)
+                es_cruce = str(cond.get("comparator", "")).startswith("CROSSES_")
+                res = _align_native_to_1m(res, align_ctx.get(tf), n_bars,
+                                          solo_primera_barra=es_cruce)
         elif cond_type == "price_level_distance":
             tf = cond.get("timeframe") or parent_tf or "1m"
             res = _eval_distance_native(cond, results, tf)
@@ -968,7 +1056,15 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 def _align_signals_to_1m(
     signals_tf: pd.Series, df_1m: pd.DataFrame, timeframe: str,
+    solo_primera_barra: bool = False,
 ) -> pd.Series:
+    """Baja una señal de timeframe superior al indice de 1m.
+
+    Para cada barra de 1m toma la vela del timeframe superior que YA ha cerrado
+    (`T_closed`), asi que no hay lookahead. Con `solo_primera_barra=True` la
+    señal se limita a la PRIMERA barra de 1m posterior a ese cierre: es lo
+    correcto para los CRUCES, que son eventos puntuales y no estados.
+    """
     if timeframe == "1m":
         return signals_tf
     ts_1m = pd.to_datetime(df_1m["timestamp"])
@@ -979,7 +1075,24 @@ def _align_signals_to_1m(
     t_floored = t_shifted.dt.floor(freq)
     T_closed = t_floored - delta
     result = T_closed.map(signals_tf).fillna(False).astype(bool)
+    if solo_primera_barra:
+        # primera barra de 1m de cada tramo: aquella en la que cambia la vela
+        # de referencia respecto a la barra anterior.
+        primera = T_closed.ne(T_closed.shift(1))
+        primera.iloc[0] = True
+        result = result & primera.values
     result.index = df_1m.index
+    # Una condicion en timeframe DIARIO sobre un dia intradia no tiene ninguna
+    # vela diaria cerrada dentro del frame: `T_closed` apunta al dia anterior,
+    # que no existe aqui, y la condicion sale SIEMPRE falsa. Antes eso mataba la
+    # estrategia entera (0 entradas) sin decir nada.
+    if not bool(result.any()) and timeframe == "1d":
+        logger.error(
+            "[TIMEFRAME 1d] Una condicion en temporalidad DIARIA no se puede "
+            "evaluar dentro de una sesion intradia: no hay ninguna vela diaria "
+            "cerrada en el rango, asi que la condicion nunca se cumple y la "
+            "estrategia no generara entradas. Usa una temporalidad intradia."
+        )
     return result
 
 
@@ -1038,7 +1151,14 @@ def _evaluate_single_condition(
         res_tf = pd.Series(False, index=cond_df.index)
 
     if tf != "1m":
-        res_1m = _align_signals_to_1m(res_tf, df_1m, tf)
+        # Un CRUCE es un instante, no un estado. Al bajar de 5m a 1m, la señal
+        # de la vela de 5m vale para las 5 barras de 1m siguientes: correcto
+        # para "el precio esta por debajo de la EMA" (un estado que dura), pero
+        # NO para "cruza por debajo de la EMA", que permitiria entrar hasta 4
+        # minutos despues del cruce, con el precio ya movido. Los cruces se
+        # limitan a la primera barra tras el cierre de su vela.
+        es_cruce = str(cond.get("comparator", "")).startswith("CROSSES_")
+        res_1m = _align_signals_to_1m(res_tf, df_1m, tf, solo_primera_barra=es_cruce)
     else:
         res_1m = res_tf
     return res_1m
@@ -1154,13 +1274,29 @@ def _apply_comparator(
     op = _COMPARATOR_OPS.get(comparator)
     if op is not None:
         return op(source, target)
-    if comparator in ("DISTANCE_GREATER_THAN", "DISTANCE_LESS_THAN"):
+    # Los comparadores de DISTANCIA necesitan el tipo de condicion
+    # `price_level_distance` (con su value_pct). Si llegan aqui, la condicion
+    # esta mal formada. Se aceptan tambien los alias CORTOS, que son los que
+    # emite la interfaz: antes solo se reconocian los largos y un DISTANCE_GT
+    # caia al fallback de abajo.
+    if comparator in ("DISTANCE_GREATER_THAN", "DISTANCE_LESS_THAN",
+                      "DISTANCE_GT", "DISTANCE_LT"):
         logger.warning(
             f"{comparator} used in indicator_comparison — this comparator "
             "requires 'price_level_distance' condition type with value_pct. Returning False."
         )
         return pd.Series(False, index=source.index)
-    return source > target
+    # NUNCA inventarse un comparador. Antes, cualquier palabra desconocida caia
+    # en `source > target`: una condicion que decia "menor que" podia acabar
+    # ejecutandose como "mayor que" —entrando justo en los maximos— sin error,
+    # sin aviso y sin dejar rastro. Ahora la condicion se apaga (False en todas
+    # las barras, que no dispara nada) y queda registrado con nivel ERROR.
+    logger.error(
+        f"[COMPARADOR DESCONOCIDO] '{comparator}' no esta en la lista del motor "
+        f"({', '.join(sorted(_COMPARATOR_OPS))}). La condicion queda DESACTIVADA "
+        "(no dispara). Revisa la definicion de la estrategia."
+    )
+    return pd.Series(False, index=source.index)
 
 
 # ── Risk management (unchanged) ──────────────────────────────────────────
@@ -1170,71 +1306,14 @@ def _parse_partial_tps(risk: dict) -> list | None:
     para compartirlo con el path nativo — no toca df, es puro parsing de config)."""
     raw_pts = risk["partial_take_profits"]
     partial_tps = []
-    def _fade_of(pt):
-        fade = pt.get("fade_from_high_pct")
-        return (float(fade) / 100.0) if isinstance(fade, (int, float)) and fade > 0 else None
-
-    def _ming_of(pt):
-        ming = pt.get("min_gain_pct")
-        return (float(ming) / 100.0) if isinstance(ming, (int, float)) and ming >= 0 else None
-
     for pt in raw_pts:
         dist = pt.get("distance_pct", 0)
         cap = pt.get("capital_pct", 0)
-        fade = _fade_of(pt)
         is_eod_val = isinstance(dist, str) and dist.upper() == "EOD"
         is_time_val = isinstance(dist, str) and dist.startswith("TIME:")
         is_hour_val = isinstance(dist, str) and dist.startswith("HOUR:")
-        is_pct = isinstance(dist, (int, float)) and dist > 0
-
-        # Fila de fade (sin % de entrada propio). Con fallback_entry_pct es un
-        # slot AUTOCONTENIDO: fade + su % de respaldo, un solo capital (el de
-        # esta fila) para cualquiera de los dos disparos. Sin fallback, se
-        # empareja con el último slot % previo (formato de dos filas) o queda
-        # como slot fade puro (1B inalcanzable, 99%).
-        if fade is not None and not (is_eod_val or is_time_val or is_hour_val or is_pct):
-            if cap <= 0:
-                continue
-            fb = pt.get("fallback_entry_pct")
-            prio = 1 if pt.get("priority") == "entry" else 0
-            if isinstance(fb, (int, float)) and fb > 0:
-                partial_tps.append({
-                    "distance_pct": fb,
-                    "capital_pct": cap / 100.0, "capital_pct_a": cap / 100.0,
-                    "fade_from_high_pct": fade, "min_gain_pct": _ming_of(pt),
-                    "priority": prio,
-                })
-                continue
-            last_pct = next((s for s in reversed(partial_tps)
-                             if isinstance(s["distance_pct"], (int, float))
-                             and s["distance_pct"] < 90.0  # % crudo: excluye huérfanos (99)
-                             and s.get("fade_from_high_pct") is None), None)
-            if last_pct is not None:
-                last_pct["fade_from_high_pct"] = fade
-                last_pct["min_gain_pct"] = _ming_of(pt)
-                last_pct["priority"] = prio
-                last_pct["capital_pct_a"] = cap / 100.0
-            else:
-                partial_tps.append({
-                    "distance_pct": 99,  # 1B inalcanzable de facto (±99% intraday): slot fade puro
-                    "capital_pct": cap / 100.0, "capital_pct_a": cap / 100.0,
-                    "fade_from_high_pct": fade, "min_gain_pct": _ming_of(pt),
-                    "priority": prio,
-                })
-            continue
-
-        if (is_eod_val or is_time_val or is_hour_val or is_pct) and cap > 0:
-            partial_tps.append({
-                "distance_pct": dist,
-                "capital_pct": cap / 100.0,
-                # Fade declarado en la MISMA fila (formato inline original).
-                "fade_from_high_pct": fade if (fade is not None and is_pct) else None,
-                "min_gain_pct": _ming_of(pt),
-                # 0 = manda el fade (default), 1 = manda el % desde entrada (empate en vela).
-                "priority": 1 if pt.get("priority") == "entry" else 0,
-                # Capital del disparo por fade (inline: el mismo de la fila).
-                "capital_pct_a": (cap / 100.0) if fade is not None else None,
-            })
+        if (is_eod_val or is_time_val or is_hour_val or (isinstance(dist, (int, float)) and dist > 0)) and cap > 0:
+            partial_tps.append({"distance_pct": dist, "capital_pct": cap / 100.0})
 
     def _pt_sort_key(x):
         d = x["distance_pct"]
@@ -1269,7 +1348,6 @@ def _parse_risk_management(
     tp_stop = None
     tp_time_limit = None
     trail_pct = None
-    trail_activation = None
     partial_tps = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
@@ -1289,22 +1367,11 @@ def _parse_risk_management(
         elif hs_type == "Market Structure (HOD/LOD)":
             sl_stop = None
 
-    # Trailing: buffer_pct = distancia (0 = break-even: stop fijo en entrada
-    # tras activarse). activation_pct (opcional) desacopla el umbral de
-    # activación; si se fija sin buffer, la distancia cae a 0 (BE tras +T%).
-    # isinstance(...) rechaza ""/None y admite 0.0 (antes 0 era falsy → inerte).
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
         sl_trail = True
-        if trailing.get("type") == "Percentage":
-            _buf = trailing.get("buffer_pct")
-            if isinstance(_buf, (int, float)) and _buf >= 0:
-                trail_pct = float(_buf) / 100.0
-            _act = trailing.get("activation_pct")
-            if isinstance(_act, (int, float)) and _act > 0:
-                trail_activation = float(_act) / 100.0
-                if trail_pct is None:
-                    trail_pct = 0.0
+        if trailing.get("type") == "Percentage" and trailing.get("buffer_pct"):
+            trail_pct = trailing["buffer_pct"] / 100.0
 
     if risk.get("use_take_profit") is not False:
         tp_mode = risk.get("take_profit_mode", "Full")
@@ -1320,4 +1387,4 @@ def _parse_risk_management(
             elif tp_type == "Hour":
                 tp_time_limit = f"HOUR:{tp.get('value', '15:30')}"
 
-    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, trail_activation, partial_tps
+    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps

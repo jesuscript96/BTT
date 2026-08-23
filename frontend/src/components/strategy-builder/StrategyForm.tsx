@@ -8,6 +8,8 @@ import {
     initialEntryLogic,
     initialExitLogic,
     initialRiskManagement,
+    initialPyramiding,
+    PyramidingConfig,
     EntryLogic,
     ExitLogic,
     RiskManagement,
@@ -19,6 +21,7 @@ import {
 } from '@/types/strategy';
 import { EntryLogicBuilder } from './EntryLogic';
 import { ExitLogicBuilder } from './ExitLogic';
+import { PyramidingBuilder } from './PyramidingBuilder';
 import { RiskManagementComponent } from './RiskManagement';
 import { Save, Loader2, Code, FlaskConical, Database, X } from 'lucide-react';
 import { getQueries, createStrategy } from '@/lib/api';
@@ -75,6 +78,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
     const [entryLogic, setEntryLogic] = useState<EntryLogic>(initialEntryLogic);
     const [exitLogic, setExitLogic] = useState<ExitLogic>(initialExitLogic);
     const [riskManagement, setRiskManagement] = useState<RiskManagement>(initialRiskManagement);
+    const [pyramiding, setPyramiding] = useState<PyramidingConfig>(initialPyramiding);
 
     // Preconditions builder temp state
     const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
@@ -160,6 +164,15 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             entry_logic: entryLogic,
             exit_logic: exitLogic,
             risk_management: riskManagement,
+            // Solo viaja si esta activa Y hay niveles con condiciones: sin
+            // piramidar, la definicion queda EXACTAMENTE como siempre.
+            ...(pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
+                ? { pyramiding: {
+                        timeframe: pyramiding.timeframe,
+                        mode: pyramiding.mode || 'individual',
+                        levels: pyramiding.levels.filter(l => l.root_condition.conditions.length > 0 && l.capital_pct > 0),
+                    } }
+                : {}),
             dataset_id: selectedDatasetId || null,
             is_wizard: false
         };
@@ -193,6 +206,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             setPostgapPreconditions([]);
             setEntryLogic(initialEntryLogic);
             setExitLogic(initialExitLogic);
+            setPyramiding(initialPyramiding);
 
             if (onStrategySaved) onStrategySaved();
         } catch (error) {
@@ -976,6 +990,20 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                             <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Salida Lógica</h2>
                         </div>
                         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
+                    </section>
+
+                    {/* FULL-WIDTH: Piramidacion — entre salida logica y stop loss (peticion del usuario) */}
+                    <section style={{
+                        backgroundColor: 'var(--color-ec-bg-surface)',
+                        border: '0.5px solid var(--color-ec-border)',
+                        borderRadius: 7,
+                        padding: '16px 20px'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                            <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
+                            <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Piramidación</h2>
+                        </div>
+                        <PyramidingBuilder config={pyramiding} onChange={setPyramiding} />
                     </section>
 
                     {/* FULL-WIDTH: Risk Management */}

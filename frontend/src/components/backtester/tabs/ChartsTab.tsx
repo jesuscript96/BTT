@@ -1273,12 +1273,6 @@ function WhatIfEquityChart({
     );
   }
 
-  // "Días totales" del SIM en días de calendario únicos, para comparar con el
-  // ORIG (total_days del backend cuenta pares ticker-día, no días reales).
-  const simUniqueDays = simResult?.trades?.length
-    ? new Set(simResult.trades.map(t => t.date)).size
-    : (simResult?.aggregate_metrics?.total_days ?? 0);
-
   return (
     <div className="relative">
       <div className="flex items-center justify-between mb-3.5">
@@ -1349,12 +1343,12 @@ function WhatIfEquityChart({
             </thead>
             <tbody>
               {[
-                {
-                  label: "Días totales",
-                  orig: metrics?.total_days ?? 0,
-                  sim: simUniqueDays,
+                { 
+                  label: "Días totales", 
+                  orig: metrics?.total_days ?? 0, 
+                  sim: simResult.aggregate_metrics.total_days ?? 0,
                   origColor: getRowColor(metrics?.total_days, false),
-                  simColor: getRowColor(simUniqueDays, true)
+                  simColor: getRowColor(simResult.aggregate_metrics.total_days, true)
                 },
                 { 
                   label: "Trades", 

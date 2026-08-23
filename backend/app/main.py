@@ -313,9 +313,8 @@ app.include_router(portfolio.router)
 app.include_router(lake_update.router, prefix="/api", tags=["Lake"])
 # Robustez: gated por ROBUSTNESS_ENABLED (apagado por defecto, ver el router).
 app.include_router(robustness.router, prefix="/api/robustness", tags=["Robustness"])
-# Portfolio (laboratorio de carteras): gated por PORTFOLIO_LAB_ENABLED (apagado
-# por defecto). OJO con el prefijo: /api/portfolio (sin -lab) es el modulo de
-# produccion de arriba y este NO lo toca.
+# Portfolio (laboratorio local): gated por PORTFOLIO_LAB_ENABLED (apagado por
+# defecto, ver el router). No confundir con /api/portfolio, que es de produccion.
 app.include_router(portfolio_lab.router, prefix="/api/portfolio-lab", tags=["Portfolio Lab"])
 
 @app.get("/health")

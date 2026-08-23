@@ -254,7 +254,7 @@ def run_pipeline(qualifying, n_months, stream_mode="legacy", sim_mode="py"):
         "elapsed_limit": -1.0, "elapsed_operator": "GREATER_THAN_OR_EQUAL",
     }
     t0 = time.perf_counter()
-    all_trades, all_equity, day_results = simulate_and_accumulate(signals, params)
+    all_trades, all_equity, day_results, _locates_by_date = simulate_and_accumulate(signals, params)
     phases["simulate_accum_ms"] = (time.perf_counter() - t0) * 1000
 
     # ── métricas agregadas ──────────────────────────────────────────────────
