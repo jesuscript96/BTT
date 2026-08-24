@@ -53,6 +53,12 @@ def simulate(
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
+    # Cortacircuitos de perdida diaria. Ambos en NANOSEGUNDOS epoch, igual que
+    # `timestamps`; 0 = desactivado. Quien decide el instante T es el bucle del
+    # dia (backtest_signals), que es el unico que ve el PnL de TODOS los tickers
+    # de la sesion; aqui solo se obedece.
+    no_new_risk_after: int = 0,
+    force_close_at: int = 0,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -107,6 +113,17 @@ def simulate(
         # Kept as constants so the (now inert) restriction branches below fold away.
         is_restricted = False
         skip_exits = False
+
+        # Cortacircuitos diario: pasado T no entra riesgo NUEVO de ningun tipo
+        # —ni entradas, ni reentradas, ni añadidos de piramide—. Se compara con
+        # >= y no con >: si el limite salta en el mismo minuto, la operacion
+        # nueva no llega a existir. En un limite de riesgo se redondea a favor
+        # de no operar.
+        riesgo_bloqueado = (
+            no_new_risk_after > 0
+            and timestamps is not None
+            and timestamps[i] >= no_new_risk_after
+        )
 
         # ... existing logic ...
         # --- check exits before entries ---
@@ -585,6 +602,20 @@ def simulate(
                     exit_price = close[i]
                 exit_reason = "Signal"
 
+            # cierre forzado por el cortacircuitos de perdida diaria. Va
+            # ANTES del de fin de dia y DESPUES de stop, TP y señal: si la
+            # operacion iba a cerrar sola en esta misma barra, manda su motivo
+            # real — el corte no debe robarle la autoria a un stop.
+            if (
+                not exit_triggered
+                and force_close_at > 0
+                and timestamps is not None
+                and timestamps[i] >= force_close_at
+            ):
+                exit_triggered = True
+                exit_price = close[i]
+                exit_reason = "Daily Limit"
+
             # end-of-day forced close
             if not exit_triggered and i == n - 1:
                 exit_triggered = True
@@ -672,13 +703,22 @@ def simulate(
             # INDIVIDUAL: `nivel_activo` es None y todos vigilan a la vez, como
             # entradas independientes.
             nivel_activo = None
+            if riesgo_bloqueado:
+                # Cortado el dia, un añadido es riesgo nuevo sobre una posicion
+                # viva: se bloquea igual que una entrada. `pyr_prev_sig` NO se
+                # actualiza aqui a proposito — si el dia no estuviera cortado el
+                # flanco seguiria intacto, y asi el bloqueo no altera el estado
+                # de los niveles, solo impide ejecutar.
+                pyramid_levels_iter = []
+            else:
+                pyramid_levels_iter = pyramid_levels
             if pyramid_sequential:
                 nivel_activo = next(
                     (k for k in range(len(pyramid_levels))
                      if pyr_fired[k] < pyramid_levels[k]["max_fires"]),
                     -1,
                 )
-            for lv_idx, lv in enumerate(pyramid_levels):
+            for lv_idx, lv in enumerate(pyramid_levels_iter):
                 if pyr_fired[lv_idx] >= lv["max_fires"]:
                     continue
                 # Mientras un nivel no tiene el turno NO se actualiza su estado
@@ -861,7 +901,7 @@ def simulate(
         current_signal = bool(entries[i])
         is_signal_trigger = current_signal and not prev_signal
         
-        if not in_position and is_signal_trigger and i < n - 1 and not is_restricted:
+        if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado:
             # Re-entry logic:
             can_enter = True
             if max_reentries >= 0:

@@ -225,6 +225,21 @@ export interface DrawdownPoint {
   value: number;
 }
 
+/** Una sesion cortada por el limite de perdida diaria. */
+export interface DailyLimitHit {
+  date: string;
+  /** Umbral vigente ese dia, ya resuelto a dolares. */
+  limit_usd: number;
+  /** Perdida realizada en el instante del corte (negativa). */
+  loss_at_cut: number;
+  /** PnL con el que acabo la sesion despues de aplicar el corte. */
+  day_pnl: number;
+  /** Cuanto se paso del limite dentro de una sola operacion. 0 = no se paso. */
+  overshoot: number;
+  policy: "LET_RUN" | "CLOSE_ALL";
+  cut_time_epoch: number;
+}
+
 export interface BacktestResult {
   aggregate_metrics: AggregateMetrics;
   day_results: DayResult[];
@@ -233,6 +248,8 @@ export interface BacktestResult {
   global_equity: GlobalEquityPoint[];
   global_equity_expenses?: GlobalEquityPoint[];
   global_drawdown: DrawdownPoint[];
+  /** Sesiones cortadas por el limite diario. Vacio o ausente si esta apagado. */
+  daily_limit_log?: DailyLimitHit[];
 }
 
 export interface WhatIfResult {

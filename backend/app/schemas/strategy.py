@@ -313,6 +313,18 @@ class RiskManagement(BaseModel):
     trailing_stop: Optional[dict] = Field(default_factory=lambda: {"active": False, "type": "Percentage", "buffer_pct": 0.5})
     swing_option: Optional[dict] = Field(default_factory=lambda: {"active": False, "target_day": "gap_1_day"})
     max_drawdown_daily: Optional[float] = None  # Circuit breaker
+    # OJO: `max_drawdown_daily` de arriba NO lo lee ningun motor — la interfaz lo
+    # pinta ("Max DD Diario") pero no hace nada. Se deja por compatibilidad y
+    # para no cambiar en silencio el resultado de estrategias ya guardadas.
+    #
+    # El cortacircuitos de verdad es este (2026-08-24). Bloque y no un float
+    # porque necesita tres cosas: unidad, valor y que hacer con las posiciones
+    # abiertas al saltar.
+    #   {"enabled": bool,
+    #    "unit": "CASH" | "PCT",          # PCT = % del capital de apertura del dia
+    #    "value": float,
+    #    "on_open_positions": "LET_RUN" | "CLOSE_ALL"}
+    daily_loss_limit: Optional[dict] = None
 
 class PostGapPrecondition(BaseModel):
     id: str

@@ -11,6 +11,18 @@ interface Props {
 
 const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDay = 'gap_day' }) => {
 
+    // Cortacircuitos de perdida diaria. Se lee con defaults para que una
+    // estrategia guardada antes de que esto existiera no rompa nada.
+    const tope = {
+        enabled: false,
+        unit: 'CASH' as 'CASH' | 'PCT',
+        value: 1000,
+        on_open_positions: 'LET_RUN' as 'LET_RUN' | 'CLOSE_ALL',
+        ...(risk.daily_loss_limit || {}),
+    };
+    const setTope = (patch: Partial<typeof tope>) =>
+        onChange({ ...risk, daily_loss_limit: { ...tope, ...patch } });
+
     const updateRiskSetting = (key: 'hard_stop' | 'take_profit', field: keyof RiskSettings, value: any) => {
         onChange({
             ...risk,
@@ -347,6 +359,184 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 lineHeight: '1.3',
                             }}>
                                 Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
+                            </span>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+
+            {/* ── Cortacircuitos de pérdida diaria ──────────────────────────
+                No es un stop: es un gobernador de riesgo de la SESIÓN entera.
+                Va aquí, debajo del stop fijo, porque es donde el usuario lo
+                busca, pero con tarjeta propia para que no se confunda con la
+                tolerancia por operación. */}
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                padding: '20px 0',
+                backgroundColor: 'transparent',
+                // borderBottom, no borderTop: es la convencion del resto de
+                // tarjetas de este panel. Con borderTop salia linea doble
+                // arriba (la de Stop Loss Fijo mas la mia) y ninguna abajo.
+                borderBottom: '0.5px solid var(--color-ec-border)',
+            }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 3, height: 14, borderRadius: 1, backgroundColor: 'var(--color-ec-loss)' }} />
+                            <h2 style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--color-ec-text-high)',
+                                margin: 0,
+                            }}>Límite de pérdida diaria</h2>
+                        </div>
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 400,
+                            color: 'var(--color-ec-text-muted)',
+                            marginTop: 2,
+                        }}>Si la sesión acumula esta pérdida, deja de operar hasta el día siguiente</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{tope.enabled ? 'ON' : 'OFF'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${tope.enabled ? 'bg-ec-loss/70' : 'bg-muted'}`}
+                            onClick={() => setTope({ enabled: !tope.enabled })}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${tope.enabled ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+
+                {tope.enabled && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <select
+                                value={tope.unit}
+                                onChange={(e) => setTope({ unit: e.target.value as 'CASH' | 'PCT' })}
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '7px 10px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    height: '36px',
+                                    width: '150px',
+                                }}
+                            >
+                                <option value="CASH">$ fijos</option>
+                                <option value="PCT">% del capital</option>
+                            </select>
+
+                            <div style={{ position: 'relative', width: '120px' }}>
+                                <input
+                                    type="number"
+                                    step={tope.unit === 'PCT' ? 0.1 : 50}
+                                    min={0}
+                                    value={tope.value ?? ''}
+                                    onChange={(e) => setTope({ value: e.target.value === '' ? ('' as unknown as number) : parseFloat(e.target.value) })}
+                                    onBlur={() => {
+                                        const v = parseFloat(String(tope.value));
+                                        setTope({ value: isNaN(v) || v < 0 ? 0 : v });
+                                    }}
+                                    onFocus={(e) => e.target.select()}
+                                    style={{
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '7px 24px 7px 10px',
+                                        fontSize: 13,
+                                        fontWeight: 600,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        width: '100%',
+                                        height: '36px',
+                                        textAlign: 'center',
+                                    }}
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                                    {tope.unit === 'PCT' ? '%' : '$'}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                fontWeight: 700,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                color: 'var(--color-ec-text-secondary)',
+                            }}>
+                                Posiciones abiertas al saltar
+                            </span>
+                            <select
+                                value={tope.on_open_positions}
+                                onChange={(e) => setTope({ on_open_positions: e.target.value as 'LET_RUN' | 'CLOSE_ALL' })}
+                                style={{
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '7px 10px',
+                                    fontSize: 12,
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                    height: '36px',
+                                    width: '100%',
+                                }}
+                            >
+                                <option value="LET_RUN">Dejarlas correr hasta su salida normal</option>
+                                <option value="CLOSE_ALL">Cerrarlas en el momento del corte</option>
+                            </select>
+                        </div>
+
+                        <div style={{
+                            marginTop: 2,
+                            paddingTop: 10,
+                            borderTop: '0.5px dotted var(--color-ec-border)',
+                            display: 'flex',
+                            gap: 6,
+                            alignItems: 'flex-start',
+                        }}>
+                            <Info size={12} style={{ color: 'var(--color-ec-copper)', flexShrink: 0, marginTop: 1 }} />
+                            <span style={{
+                                fontFamily: 'var(--color-ec-sans)',
+                                fontSize: 10,
+                                lineHeight: 1.5,
+                                color: 'var(--color-ec-text-muted)',
+                            }}>
+                                Cuenta la pérdida <strong>ya realizada</strong> de la sesión, según van cerrando
+                                las operaciones. Al cruzar el límite no se abre nada más ese día: ni entradas
+                                nuevas, ni reentradas, ni añadidos de pirámide.
+                                {tope.unit === 'PCT' && ' El % se mide sobre el capital con el que abrió el día.'}
+                                <br />
+                                <strong style={{ color: 'var(--color-ec-warning)' }}>No puede evitar que una sola
+                                operación se pase del límite de golpe</strong> — sólo impide la siguiente. Y si en
+                                ese día todas las posiciones cierran a la vez (p. ej. una estrategia que aguanta al
+                                cierre de sesión), no queda nada abierto que cortar y el día puede acabar por debajo
+                                del límite. Los días en que eso ocurra salen marcados en los resultados.
                             </span>
                         </div>
                     </div>

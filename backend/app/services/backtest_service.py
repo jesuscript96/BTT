@@ -286,6 +286,8 @@ def run_backtest(
     all_trades: list[dict] = []
     all_equity: list[dict] = []
     day_results: list[dict] = []
+    # Dias en que salto el cortacircuitos de perdida diaria (§ risk_management).
+    daily_limit_log: list[dict] = []
     days_with_entries = 0
     scanned = 0
     t1 = time.time()
@@ -333,9 +335,12 @@ def run_backtest(
             "look_ahead_prevention": look_ahead_prevention,
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
+            # Cortacircuitos de perdida diaria (bloque nuevo de risk_management).
+            "daily_loss_limit": (strategy_def or {}).get("risk_management", {}).get("daily_loss_limit"),
         }
         with PhaseTimer("simulate", mode="slab") as _pt_sim:
-            all_trades, all_equity, day_results, _locates_by_date = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            all_trades, all_equity, day_results, _locates_by_date, _dll = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            daily_limit_log.extend(_dll)
             _pt_sim.pairs = len(signals_sorted)
         for _d, _fee in _locates_by_date.items():
             locates_fee_by_date[_d] = locates_fee_by_date.get(_d, 0.0) + _fee
@@ -383,9 +388,12 @@ def run_backtest(
             "look_ahead_prevention": look_ahead_prevention,
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
+            # Cortacircuitos de perdida diaria (bloque nuevo de risk_management).
+            "daily_loss_limit": (strategy_def or {}).get("risk_management", {}).get("daily_loss_limit"),
         }
         with PhaseTimer("simulate") as _pt_sim:
-            all_trades, all_equity, day_results, _locates_by_date = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            all_trades, all_equity, day_results, _locates_by_date, _dll = _bsig.simulate_and_accumulate(signals_sorted, _params)
+            daily_limit_log.extend(_dll)
             _pt_sim.pairs = len(signals_sorted)
         for _d, _fee in _locates_by_date.items():
             locates_fee_by_date[_d] = locates_fee_by_date.get(_d, 0.0) + _fee
@@ -853,6 +861,9 @@ def run_backtest(
         "global_equity": global_eq,
         "global_equity_expenses": global_eq_exp,
         "global_drawdown": global_dd,
+        # Sesiones cortadas por el limite de perdida diaria. Lista vacia cuando
+        # el limite esta apagado, que es el default.
+        "daily_limit_log": daily_limit_log,
     }
 
 

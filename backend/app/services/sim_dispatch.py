@@ -83,6 +83,7 @@ _REASON_STR = {
     7: "Partial TP (EOD)",
     8: "Partial TP (Time)",
     9: "Partial TP (Hour)",
+    10: "Daily Limit",
 }
 # partial reasons whose trade dict has NO "fees" key (matches original)
 _PARTIAL_REASONS = (6, 7, 8, 9)
@@ -128,6 +129,9 @@ def simulate_jit(
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
+    # Cortacircuitos de perdida diaria (ns epoch, 0 = apagado).
+    no_new_risk_after: int = 0,
+    force_close_at: int = 0,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -315,6 +319,7 @@ def simulate_jit(
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
+        int(no_new_risk_after or 0), int(force_close_at or 0),
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---

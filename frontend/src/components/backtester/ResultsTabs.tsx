@@ -109,6 +109,11 @@ export default function ResultsTabs({
     }
   }, [candlesLoading]);
 
+  // Sesiones cortadas por el limite diario y, de ellas, las que ademas se
+  // pasaron del tope dentro de una sola operacion (el corte no puede evitarlo).
+  const dll = result.daily_limit_log || [];
+  const dllRebasados = dll.filter((d) => d.overshoot > 0);
+
   return (
     <div className="transition-colors">
       <div style={{
@@ -168,6 +173,55 @@ export default function ResultsTabs({
           ))}
         </nav>
       </div>
+
+      {/* ── Limite de perdida diaria ──────────────────────────────────
+          Va FUERA de las pestañas, justo bajo la barra, a proposito: es un
+          dato que cambia la lectura de todo lo demas y el usuario no deberia
+          tener que ir a buscarlo a una pestaña concreta. Solo aparece si el
+          limite llego a saltar alguna vez. */}
+      {dll.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            flexWrap: 'wrap',
+            gap: '4px 16px',
+            padding: '7px 2px 0',
+            fontFamily: 'var(--color-ec-sans)',
+            fontSize: 11,
+            color: 'var(--color-ec-text-muted)',
+          }}
+          title={dllRebasados
+            .slice(0, 12)
+            .map((d) => `${d.date}: perdio ${Math.round(d.loss_at_cut)}$ con el limite en ${Math.round(-d.limit_usd)}$`)
+            .join(String.fromCharCode(10))}
+        >
+          <span style={{ color: 'var(--color-ec-copper)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', fontSize: 9.5 }}>
+            Limite diario
+          </span>
+          <span>
+            saltó en <strong style={{ color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-mono)' }}>{dll.length}</strong>{' '}
+            {dll.length === 1 ? 'sesión' : 'sesiones'}
+          </span>
+          {dllRebasados.length > 0 ? (
+            <span style={{ color: 'var(--color-ec-warning)' }}>
+              rebasado en{' '}
+              <strong style={{ fontFamily: 'var(--color-ec-mono)' }}>{dllRebasados.length}</strong>{' '}
+              — el peor se pasó{' '}
+              <strong style={{ fontFamily: 'var(--color-ec-mono)' }}>
+                ${Math.round(Math.max(...dllRebasados.map((d) => d.overshoot))).toLocaleString('es-ES')}
+              </strong>{' '}
+              del tope en una sola operación
+            </span>
+          ) : (
+            <span style={{ color: 'var(--color-ec-profit)' }}>ninguna sesión se pasó del tope</span>
+          )}
+          <span style={{ opacity: 0.7 }}>
+            (pasa el ratón para ver las fechas · posiciones abiertas:{' '}
+            {dll[0].policy === 'CLOSE_ALL' ? 'cerradas al cortar' : 'dejadas correr'})
+          </span>
+        </div>
+      )}
 
       <div className="pb-2">
         <div style={{ display: activeTab === "performance" ? "block" : "none" }}>

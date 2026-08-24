@@ -63,6 +63,7 @@ REASON_PARTIAL = 6       # "Partial TP"
 REASON_PARTIAL_EOD = 7   # "Partial TP (EOD)"
 REASON_PARTIAL_TIME = 8  # "Partial TP (Time)"
 REASON_PARTIAL_HOUR = 9  # "Partial TP (Hour)"
+REASON_DAILY_LIMIT = 10  # "Daily Limit" — cortacircuitos de perdida diaria
 
 # --- elapsed-time comparator codes ---
 ELAPSED_GTE = 0
@@ -107,6 +108,9 @@ def _core_simulate_jit(
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
     n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
+    # Cortacircuitos de perdida diaria, en NANOSEGUNDOS epoch (0 = apagado).
+    # Paridad exacta con portfolio_sim.py, incluido el uso de >=.
+    no_new_risk_after, force_close_at,
 ):
     n = len(close)
 
@@ -152,6 +156,11 @@ def _core_simulate_jit(
         # Misprint patch removed (data NBBO-clipped at source): no bar restriction.
         # Constants keep the inert restriction branches below (const-folded by numba).
         is_restricted = False
+        riesgo_bloqueado = (
+            no_new_risk_after > 0
+            and has_timestamps
+            and timestamps[i] >= no_new_risk_after
+        )
         skip_exits = False
 
         if in_position:
@@ -551,6 +560,19 @@ def _core_simulate_jit(
                     exit_price = close[i]
                 exit_reason_code = REASON_SIGNAL
 
+            # cierre forzado por el cortacircuitos diario. Antes del de fin de
+            # dia y despues de stop/TP/señal: si la operacion cerraba sola en
+            # esta barra, manda su motivo real.
+            if (
+                (not exit_triggered)
+                and force_close_at > 0
+                and has_timestamps
+                and timestamps[i] >= force_close_at
+            ):
+                exit_triggered = True
+                exit_price = close[i]
+                exit_reason_code = REASON_DAILY_LIMIT
+
             # end-of-day forced close
             if (not exit_triggered) and i == n - 1:
                 exit_triggered = True
@@ -594,7 +616,7 @@ def _core_simulate_jit(
         current_signal = entries[i]
         is_signal_trigger = current_signal and not prev_signal
 
-        if (not in_position) and is_signal_trigger and i < n - 1 and (not is_restricted):
+        if (not in_position) and is_signal_trigger and i < n - 1 and (not is_restricted) and (not riesgo_bloqueado):
             can_enter = True
             if max_reentries >= 0:
                 if total_trades > max_reentries:

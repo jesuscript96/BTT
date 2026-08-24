@@ -916,7 +916,7 @@ def _extract_equity_arr(eq_vals, ts_epoch):
 def simulate_and_accumulate(signals_sorted, params):
     """Procesa las señales en orden de (date, ticker) ejecutando simulate +
     acumulación con compounding. Devuelve
-    (all_trades, all_equity, day_results, locates_fee_by_date).
+    (all_trades, all_equity, day_results, locates_fee_by_date, daily_limit_log).
 
     `params` es un dict con: init_cash, risk_r, risk_type, fixed_ratio_delta,
     size_by_sl, fees, fee_type, slippage, locates_cost, locate_type,
@@ -954,56 +954,56 @@ def simulate_and_accumulate(signals_sorted, params):
     current_date = None
     daily_pnl = 0.0
 
-    for sig in signals_sorted:
-        date = sig["date"]
-        ticker = sig["ticker"]
-        arrays = sig["arrays"]
-        entries_arr = sig["entries_arr"]
-        exits_arr = sig["exits_arr"]
-        timestamps_arr = sig["timestamps_arr"]
-        sig_direction = sig["sig_direction"]
-        sig_accept_reentries = sig["sig_accept_reentries"]
-        sig_max_reentries = sig["sig_max_reentries"]
-        sig_sl_stop = sig["sig_sl_stop"]
-        sig_sl_trail = sig["sig_sl_trail"]
-        sig_tp_stop = sig["sig_tp_stop"]
-        sig_tp_time_limit = sig["sig_tp_time_limit"]
-        sig_trail_pct = sig["sig_trail_pct"]
-        sig_partial_tps = sig["sig_partial_tps"]
-        sig_pyramid_levels = sig.get("sig_pyramid_levels") or []
-        sig_pyramid_sequential = bool(sig.get("sig_pyramid_sequential"))
-        gap_pct = sig["gap_pct"]
+    # ── Cortacircuitos de perdida diaria ──────────────────────────────────
+    #
+    # POR QUE ESTA AQUI Y NO EN EL SIMULADOR: el simulador ve UN ticker-dia. El
+    # unico sitio que ve el PnL de TODOS los tickers de una sesion es este bucle,
+    # asi que aqui se decide el instante T del corte y el simulador solo lo
+    # obedece (`no_new_risk_after` / `force_close_at`).
+    #
+    # POR QUE ES EXACTO Y NO UNA APROXIMACION: dentro de un dia el motor
+    # dimensiona TODAS las posiciones sobre el balance de apertura de la sesion
+    # (`compounding_cash` solo se mueve al cambiar de dia) y cada ticker-dia se
+    # simula con su propio efectivo derivado de esa misma base — no compiten
+    # entre si. Por tanto descartar un ticker NO cambia el tamaño de los demas,
+    # ni siquiera con `size_by_sl`, donde cada trade tiene una exposicion
+    # distinta segun su distancia al stop.
+    #
+    # OJO CON EL ORDEN: `signals_sorted` va por (fecha, ticker), o sea que
+    # dentro de un dia los tickers van ALFABETICAMENTE. Cortar "a partir del
+    # ticker N del bucle" daria un resultado falso. Por eso T se calcula
+    # ordenando los cierres por hora real de salida.
+    tope = params.get("daily_loss_limit") or {}
+    tope_valor = float(tope.get("value") or 0.0)
+    tope_on = bool(tope.get("enabled")) and tope_valor > 0
+    tope_unidad = str(tope.get("unit") or "CASH").upper()
+    tope_cierra = str(tope.get("on_open_positions") or "LET_RUN").upper() == "CLOSE_ALL"
 
-        # When moving to a new day, add the previous day's PnL to the global pool (349-355)
-        if current_date is None:
-            current_date = date
-        elif date != current_date:
-            global_realized_pnl += daily_pnl
-            daily_pnl = 0.0
-            current_date = date
+    # Bitacora de dias en que salto el limite. La consume backtest_service para
+    # los agregados y de ahi sale la tarjeta de la UI.
+    daily_limit_log: list[dict] = []
 
-        # Base cash for this sim run is initial + accumulated global PnL (357-358)
-        compounding_cash = init_cash + global_realized_pnl
+    def _corre_uno(sig, cash, cut_after=0, cut_close=0):
+        """Simula UN ticker-dia. Devuelve None si no produjo trades.
 
+        `cut_after` / `cut_close` son el instante T en nanosegundos (0 = sin
+        corte). Se pasan tal cual al simulador.
+        """
         # Parse hard stop configuration (554-561)
         risk = strategy_def.get("risk_management", {}) if strategy_def else {}
         use_hs = risk.get("use_hard_stop", True)
         hs = risk.get("hard_stop", {}) if use_hs else {}
-        hs_type = hs.get("type")
-        hs_value = hs.get("value")
-        hs_operator = hs.get("operator", ">=")
-        hs_offset_pct = float(hs.get("offset_pct", 0.0))
 
         try:
             sim_result = simulate(
-                close=arrays["close"],
-                open_=arrays["open"],
-                high=arrays["high"],
-                low=arrays["low"],
-                entries=entries_arr,
-                exits=exits_arr,
-                direction=sig_direction,
-                init_cash=compounding_cash,
+                close=sig["arrays"]["close"],
+                open_=sig["arrays"]["open"],
+                high=sig["arrays"]["high"],
+                low=sig["arrays"]["low"],
+                entries=sig["entries_arr"],
+                exits=sig["exits_arr"],
+                direction=sig["sig_direction"],
+                init_cash=cash,
                 risk_r=risk_r,
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
@@ -1014,83 +1014,183 @@ def simulate_and_accumulate(signals_sorted, params):
                 locates_cost=locates_cost,
                 locate_type=locate_type,
                 look_ahead_prevention=look_ahead_prevention,
-                sl_stop=sig_sl_stop,
-                sl_trail=sig_sl_trail,
-                tp_stop=sig_tp_stop,
-                tp_time_limit=sig_tp_time_limit,
-                trail_pct=sig_trail_pct,
-                accumulate=sig_accept_reentries,
-                max_reentries=sig_max_reentries,
-                partial_take_profits=sig_partial_tps,
-                pyramid_levels=sig_pyramid_levels,
-                pyramid_sequential=sig_pyramid_sequential,
-                hs_type=hs_type,
-                hs_value=hs_value,
-                hs_operator=hs_operator,
-                hs_offset_pct=hs_offset_pct,
-                hods=arrays.get("hod"),
-                lods=arrays.get("lod"),
-                pm_highs=arrays.get("pm_high"),
-                pm_lows=arrays.get("pm_low"),
-                prev_highs=arrays.get("prev_high"),
-                prev_lows=arrays.get("prev_low"),
-                timestamps=timestamps_arr,
+                sl_stop=sig["sig_sl_stop"],
+                sl_trail=sig["sig_sl_trail"],
+                tp_stop=sig["sig_tp_stop"],
+                tp_time_limit=sig["sig_tp_time_limit"],
+                trail_pct=sig["sig_trail_pct"],
+                accumulate=sig["sig_accept_reentries"],
+                max_reentries=sig["sig_max_reentries"],
+                partial_take_profits=sig["sig_partial_tps"],
+                pyramid_levels=sig.get("sig_pyramid_levels") or [],
+                pyramid_sequential=bool(sig.get("sig_pyramid_sequential")),
+                hs_type=hs.get("type"),
+                hs_value=hs.get("value"),
+                hs_operator=hs.get("operator", ">="),
+                hs_offset_pct=float(hs.get("offset_pct", 0.0)),
+                hods=sig["arrays"].get("hod"),
+                lods=sig["arrays"].get("lod"),
+                pm_highs=sig["arrays"].get("pm_high"),
+                pm_lows=sig["arrays"].get("pm_low"),
+                prev_highs=sig["arrays"].get("prev_high"),
+                prev_lows=sig["arrays"].get("prev_low"),
+                timestamps=sig["timestamps_arr"],
                 elapsed_limit=elapsed_limit,
                 elapsed_operator=elapsed_operator,
+                no_new_risk_after=cut_after,
+                force_close_at=cut_close,
             )
         except Exception as exc:
-            logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")
-            continue
+            logger.warning(f"[STREAM] day {sig['ticker']} {sig['date']} failed: {exc}")
+            return None
 
-        eq_vals = sim_result["equity"]
-        raw_trades = sim_result["trades"]
-        ticker_locates_fee = float(sim_result.get("locates_fee", 0.0) or 0.0)
+        if not sim_result["trades"]:
+            return None
+        return sim_result
 
-        if not raw_trades:
-            continue
+    def _instante_de_corte(corridas, limite_usd):
+        """Momento en que la perdida realizada del dia cruza el limite.
 
-        # Track today's PnL to roll over into tomorrow's compounding base (627-629).
-        # The day's locates fee is real cash spent but isn't attached to any single
-        # trade's pnl (see portfolio_sim.py) — subtract it here so compounding_cash
-        # for the next day stays exactly what it was before that change.
-        for t in raw_trades:
-            daily_pnl += t["pnl"]
-        if ticker_locates_fee > 0:
-            daily_pnl -= ticker_locates_fee
-            locates_fee_by_date[date] = locates_fee_by_date.get(date, 0.0) + ticker_locates_fee
+        Devuelve el timestamp (ns) de la salida que lo cruza, o None. Los cierres
+        se ordenan por HORA REAL de salida, no por ticker: es la unica lectura
+        que se parece a lo que habria pasado en vivo.
+        """
+        cierres = []
+        for sig, res in corridas:
+            ts = sig["timestamps_arr"]
+            tope_idx = len(ts) - 1
+            for t in res["trades"]:
+                xi = min(t["exit_idx"], tope_idx)
+                cierres.append((int(ts[xi]), float(t["pnl"])))
+        cierres.sort(key=lambda c: c[0])
+        acumulado = 0.0
+        for ts_ns, pnl in cierres:
+            acumulado += pnl
+            if acumulado <= -limite_usd:
+                return ts_ns
+        return None
 
-        # Avoid pd.to_datetime parsing if array is already datetime kind natively (631-638)
-        # (sin pd.Series por par: ndarrays directos — mismos valores, mismos dicts)
-        ts_arr = arrays["timestamp"]
-        if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
-            ts_dt64 = ts_arr
-        else:
-            ts_dt64 = pd.to_datetime(ts_arr).values
-        ts_epoch = ts_dt64.astype("datetime64[s]").astype("int64")
+    i0 = 0
+    n_sigs = len(signals_sorted)
+    while i0 < n_sigs:
+        date = signals_sorted[i0]["date"]
+        i1 = i0
+        while i1 < n_sigs and signals_sorted[i1]["date"] == date:
+            i1 += 1
+        dia = signals_sorted[i0:i1]
+        i0 = i1
 
-        # --- Calculate Risk Unit for "R" reporting (640-646) ---
-        if risk_type == "FIXED":
-            risk_unit_dollar = risk_r
-        elif risk_type == "PERCENT":
-            risk_unit_dollar = compounding_cash * (risk_r / 100.0)
-        else:
-            risk_unit_dollar = risk_r
+        # Cierre del dia anterior: su PnL entra en la base de composicion (349-355)
+        if current_date is None:
+            current_date = date
+        elif date != current_date:
+            global_realized_pnl += daily_pnl
+            daily_pnl = 0.0
+            current_date = date
 
-        trades_records = _enrich_trades_arr(
-            raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct,
-        )
+        # Base de este dia para TODOS sus tickers (357-358)
+        compounding_cash = init_cash + global_realized_pnl
 
-        equity = _extract_equity_arr(eq_vals, ts_epoch)
+        # ── Pase 1: la sesion tal cual ────────────────────────────────────
+        corridas = []
+        for sig in dia:
+            res = _corre_uno(sig, compounding_cash)
+            if res is not None:
+                corridas.append((sig, res))
 
-        stats = _extract_day_stats_from_values(
-            eq_vals, ticker, date, trades_records, gap_pct, ticker_locates_fee
-        )
+        # ── Pase 2: si el limite salta, re-simular lo afectado ────────────
+        if tope_on and corridas:
+            limite_usd = (
+                compounding_cash * tope_valor / 100.0 if tope_unidad == "PCT" else tope_valor
+            )
+            T = _instante_de_corte(corridas, limite_usd)
+            if T is not None:
+                perdida_antes = sum(
+                    float(t["pnl"])
+                    for _sig, _res in corridas
+                    for t in _res["trades"]
+                    if int(_sig["timestamps_arr"][min(t["exit_idx"], len(_sig["timestamps_arr"]) - 1)]) <= T
+                )
+                nuevas = []
+                for sig, res in corridas:
+                    ts = sig["timestamps_arr"]
+                    tope_idx = len(ts) - 1
+                    # Solo se re-simula lo que puede cambiar: un ticker cuyos
+                    # trades cerraron TODOS antes de T da exactamente lo mismo
+                    # con corte que sin el.
+                    afectado = any(
+                        int(ts[min(t["exit_idx"], tope_idx)]) > T for t in res["trades"]
+                    )
+                    if not afectado:
+                        nuevas.append((sig, res))
+                        continue
+                    res2 = _corre_uno(sig, compounding_cash, cut_after=T, cut_close=T if tope_cierra else 0)
+                    if res2 is not None:
+                        nuevas.append((sig, res2))
+                corridas = nuevas
 
-        all_equity.append({"ticker": ticker, "date": date, "equity": equity})
-        all_trades.extend(trades_records)
-        day_results.append(stats)
+                pnl_final = sum(
+                    float(t["pnl"]) for _sig, _res in corridas for t in _res["trades"]
+                )
+                daily_limit_log.append({
+                    "date": date,
+                    "limit_usd": round(limite_usd, 2),
+                    # Perdida ya realizada en el instante del corte. Si supera al
+                    # limite en valor absoluto, la sesion se paso de largo dentro
+                    # de una sola operacion y el corte no pudo evitarlo.
+                    "loss_at_cut": round(perdida_antes, 2),
+                    "day_pnl": round(pnl_final, 2),
+                    "overshoot": round(max(0.0, -perdida_antes - limite_usd), 2),
+                    "policy": "CLOSE_ALL" if tope_cierra else "LET_RUN",
+                    "cut_time_epoch": int(T // 1_000_000_000),
+                })
+
+        # ── Emitir la sesion ya resuelta ──────────────────────────────────
+        for sig, sim_result in corridas:
+            ticker = sig["ticker"]
+            arrays = sig["arrays"]
+            gap_pct = sig["gap_pct"]
+            eq_vals = sim_result["equity"]
+            raw_trades = sim_result["trades"]
+            ticker_locates_fee = float(sim_result.get("locates_fee", 0.0) or 0.0)
+
+            # Track today's PnL to roll over into tomorrow's compounding base (627-629).
+            for t in raw_trades:
+                daily_pnl += t["pnl"]
+            if ticker_locates_fee > 0:
+                daily_pnl -= ticker_locates_fee
+                locates_fee_by_date[date] = locates_fee_by_date.get(date, 0.0) + ticker_locates_fee
+
+            ts_arr = arrays["timestamp"]
+            if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
+                ts_dt64 = ts_arr
+            else:
+                ts_dt64 = pd.to_datetime(ts_arr).values
+            ts_epoch = ts_dt64.astype("datetime64[s]").astype("int64")
+
+            # --- Calculate Risk Unit for "R" reporting (640-646) ---
+            if risk_type == "FIXED":
+                risk_unit_dollar = risk_r
+            elif risk_type == "PERCENT":
+                risk_unit_dollar = compounding_cash * (risk_r / 100.0)
+            else:
+                risk_unit_dollar = risk_r
+
+            trades_records = _enrich_trades_arr(
+                raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct,
+            )
+
+            equity = _extract_equity_arr(eq_vals, ts_epoch)
+
+            stats = _extract_day_stats_from_values(
+                eq_vals, ticker, date, trades_records, gap_pct, ticker_locates_fee
+            )
+
+            all_equity.append({"ticker": ticker, "date": date, "equity": equity})
+            all_trades.extend(trades_records)
+            day_results.append(stats)
 
     # Final sweep of daily_pnl if the last day generated trades (671-672)
     global_realized_pnl += daily_pnl
 
-    return all_trades, all_equity, day_results, locates_fee_by_date
+    return all_trades, all_equity, day_results, locates_fee_by_date, daily_limit_log
