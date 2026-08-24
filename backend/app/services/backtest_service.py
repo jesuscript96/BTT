@@ -403,6 +403,130 @@ def run_backtest(
             f"{days_with_entries} con trades"
         )
 
+    # ── Cortacircuitos de perdida diaria en el camino SECUENCIAL ──────────
+    # Estaba SOLO en simulate_and_accumulate (SLAB/PARALLEL). Este bucle es el
+    # que corre por defecto sin BTT_SLAB_STREAM_ENABLED ni
+    # BACKTEST_PARALLEL_WORKERS, asi que el ajuste no hacia nada. Mismo patron
+    # que la piramidacion (MEMORIA §10.2).
+    _rm_tope = (strategy_def or {}).get("risk_management", {}) if strategy_def else {}
+    _tope = _rm_tope.get("daily_loss_limit") or {}
+    _tope_valor = float(_tope.get("value") or 0.0)
+    _tope_on = bool(_tope.get("enabled")) and _tope_valor > 0
+    _tope_pct = str(_tope.get("unit") or "CASH").upper() == "PCT"
+    _tope_cierra = str(_tope.get("on_open_positions") or "LET_RUN").upper() == "CLOSE_ALL"
+    _pend: list[dict] = []
+
+    def _emitir(e):
+        """Vuelca un ticker-dia ya resuelto. Codigo identico al de siempre."""
+        nonlocal daily_pnl, days_with_entries
+        ticker_e, date_e = e["ticker"], e["date"]
+        sim_r = e["sim_result"]
+        eq_vals = sim_r["equity"]
+        raw_trades = sim_r["trades"]
+        ticker_locates_fee = float(sim_r.get("locates_fee", 0.0) or 0.0)
+        if not raw_trades:
+            return
+
+        # Track today's PnL to roll over into tomorrow's compounding base.
+        for t in raw_trades:
+            daily_pnl += t["pnl"]
+        if ticker_locates_fee > 0:
+            daily_pnl -= ticker_locates_fee
+            locates_fee_by_date[date_e] = locates_fee_by_date.get(date_e, 0.0) + ticker_locates_fee
+
+        ts_arr = e["ts_arr"]
+        if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
+            timestamps = pd.Series(ts_arr)
+        else:
+            timestamps = pd.Series(pd.to_datetime(ts_arr))
+
+        if risk_type == "FIXED":
+            risk_unit_dollar = risk_r
+        elif risk_type == "PERCENT":
+            risk_unit_dollar = e["cash"] * (risk_r / 100.0)
+        else:
+            risk_unit_dollar = risk_r
+
+        trades_records = _group_partial_exits(_enrich_trades(
+            raw_trades, timestamps, ticker_e, date_e, strategy_def, risk_unit_dollar,
+            gap_pct=e["gap_pct"],
+        ))
+        equity = _extract_equity_from_values(eq_vals, timestamps)
+        stats = _extract_day_stats_from_values(
+            eq_vals, ticker_e, date_e, trades_records, e["gap_pct"], ticker_locates_fee
+        )
+        all_equity.append({"ticker": ticker_e, "date": date_e, "equity": equity})
+        all_trades.extend(trades_records)
+        day_results.append(stats)
+        days_with_entries += 1
+
+    def _flush_dia():
+        """Aplica el cortacircuitos al dia bufferizado y lo vuelca.
+
+        Misma semantica que en simulate_and_accumulate: el instante T sale de
+        ordenar los cierres por HORA REAL de salida (no por ticker, que aqui
+        vienen alfabeticos), y solo se re-simulan los tickers que pueden
+        cambiar.
+        """
+        if not _pend:
+            return
+        cash_dia = _pend[0]["cash"]
+        limite = cash_dia * _tope_valor / 100.0 if _tope_pct else _tope_valor
+
+        cierres = []
+        for e in _pend:
+            ts = e["sim_kwargs"]["timestamps"]
+            tope_idx = len(ts) - 1
+            for t in e["sim_result"]["trades"]:
+                cierres.append((int(ts[min(t["exit_idx"], tope_idx)]), float(t["pnl"])))
+        cierres.sort(key=lambda c: c[0])
+        acc, T = 0.0, None
+        for ts_ns, pnl in cierres:
+            acc += pnl
+            if acc <= -limite:
+                T = ts_ns
+                break
+
+        if T is not None:
+            perdida_antes = sum(
+                float(t["pnl"]) for e in _pend
+                for t in e["sim_result"]["trades"]
+                if int(e["sim_kwargs"]["timestamps"][
+                    min(t["exit_idx"], len(e["sim_kwargs"]["timestamps"]) - 1)]) <= T
+            )
+            for e in _pend:
+                ts = e["sim_kwargs"]["timestamps"]
+                tope_idx = len(ts) - 1
+                afectado = any(
+                    int(ts[min(t["exit_idx"], tope_idx)]) > T
+                    for t in e["sim_result"]["trades"]
+                )
+                if not afectado:
+                    continue
+                kw = dict(e["sim_kwargs"])
+                kw["no_new_risk_after"] = T
+                kw["force_close_at"] = T if _tope_cierra else 0
+                try:
+                    e["sim_result"] = simulate(**kw)
+                except Exception as exc:
+                    logger.warning(f"[LIMITE] re-sim fallo {e['ticker']} {e['date']}: {exc}")
+            pnl_final = sum(
+                float(t["pnl"]) for e in _pend for t in e["sim_result"]["trades"]
+            )
+            daily_limit_log.append({
+                "date": _pend[0]["date"],
+                "limit_usd": round(limite, 2),
+                "loss_at_cut": round(perdida_antes, 2),
+                "day_pnl": round(pnl_final, 2),
+                "overshoot": round(max(0.0, -perdida_antes - limite), 2),
+                "policy": "CLOSE_ALL" if _tope_cierra else "LET_RUN",
+                "cut_time_epoch": int(T // 1_000_000_000),
+            })
+
+        for e in _pend:
+            _emitir(e)
+        _pend.clear()
+
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
         if progress_callback is not None:
@@ -476,6 +600,9 @@ def run_backtest(
         if current_date is None:
             current_date = date
         elif date != current_date:
+            # El dia que se cierra debe pasar por el cortacircuitos ANTES de que
+            # su PnL entre en la base de composicion del siguiente.
+            _flush_dia()
             global_realized_pnl += daily_pnl
             daily_pnl = 0.0
             current_date = date
@@ -705,8 +832,9 @@ def run_backtest(
         else:
             timestamps_arr = pd.to_datetime(ts_arr).values.astype("datetime64[ns]").astype(np.int64)
 
-        try:
-            sim_result = simulate(
+        # Los kwargs van en un dict para poder RE-simular este mismo
+        # ticker-dia con el corte del cortacircuitos diario (ver _flush_dia).
+        _sim_kwargs = dict(
                 close=arrays["close"],
                 open_=arrays["open"],
                 high=arrays["high"],
@@ -748,7 +876,9 @@ def run_backtest(
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,
                 elapsed_operator=elapsed_operator,
-            )
+        )
+        try:
+            sim_result = simulate(**_sim_kwargs)
         except Exception as exc:
             logger.warning(f"[STREAM] day {ticker} {date} failed: {exc}")
             del mini_df
@@ -756,58 +886,25 @@ def run_backtest(
 
         del mini_df
 
-        eq_vals = sim_result["equity"]
-        raw_trades = sim_result["trades"]
-        ticker_locates_fee = float(sim_result.get("locates_fee", 0.0) or 0.0)
-
-        if not raw_trades:
+        if not sim_result["trades"]:
             del sim_result
             continue
 
-        # Track today's PnL to roll over into tomorrow's compounding base.
-        # The day's locates fee is real cash spent but isn't attached to any single
-        # trade's pnl (see portfolio_sim.py) — subtract it here so compounding_cash
-        # for the next day stays exactly what it was before that change.
-        for t in raw_trades:
-            daily_pnl += t["pnl"]
-        if ticker_locates_fee > 0:
-            daily_pnl -= ticker_locates_fee
-            locates_fee_by_date[date] = locates_fee_by_date.get(date, 0.0) + ticker_locates_fee
-
-        # Avoid pd.to_datetime parsing if array is already datetime kind natively
-        ts_arr = arrays["timestamp"]
-        if getattr(ts_arr.dtype, "kind", "") in ("M", "m"):
-            timestamps = pd.Series(ts_arr)
-            ts_epoch = ts_arr.astype("datetime64[s]").astype("int64")
+        _entrada = {
+            "ticker": ticker, "date": date, "sim_result": sim_result,
+            "sim_kwargs": _sim_kwargs, "ts_arr": arrays["timestamp"],
+            "gap_pct": daily_stats.get("gap_pct"),
+            "cash": compounding_cash,
+        }
+        if _tope_on:
+            # Con el cortacircuitos activo no se puede emitir todavia: el corte
+            # depende del PnL de TODOS los tickers de la sesion, y aqui solo se
+            # ha visto uno. Se vuelca en _flush_dia, al cambiar de dia.
+            _pend.append(_entrada)
         else:
-            timestamps = pd.Series(pd.to_datetime(ts_arr))
-            ts_epoch = timestamps.values.astype("datetime64[s]").astype("int64")
+            _emitir(_entrada)
 
-        # --- Calculate Risk Unit for "R" reporting ---
-        if risk_type == "FIXED":
-            risk_unit_dollar = risk_r
-        elif risk_type == "PERCENT":
-            risk_unit_dollar = compounding_cash * (risk_r / 100.0)
-        else:
-            risk_unit_dollar = risk_r
-
-        trades_records = _group_partial_exits(_enrich_trades(
-            raw_trades, timestamps, ticker, date, strategy_def, risk_unit_dollar,
-            gap_pct=daily_stats.get("gap_pct"),
-        ))
-
-        equity = _extract_equity_from_values(eq_vals, timestamps)
-
-        stats = _extract_day_stats_from_values(
-            eq_vals, ticker, date, trades_records, daily_stats.get("gap_pct"), ticker_locates_fee
-        )
-
-        all_equity.append({"ticker": ticker, "date": date, "equity": equity})
-        all_trades.extend(trades_records)
-        day_results.append(stats)
-        days_with_entries += 1
-
-        del sim_result, eq_vals, raw_trades, arrays, daily_stats
+        del sim_result, arrays, daily_stats
 
         if days_with_entries % 200 == 0:
             gc.collect()
@@ -817,6 +914,7 @@ def run_backtest(
             )
 
     # Final sweep of daily_pnl if the last day generated trades
+    _flush_dia()
     global_realized_pnl += daily_pnl
 
     del qual_lookup
@@ -1505,8 +1603,23 @@ def _aggregate_metrics(
     day_max_dds = np.array([d.get("max_drawdown_pct", 0) or 0 for d in day_results])
     worst_day_dd = float(day_max_dds.min()) if len(day_max_dds) else 0.0
     
-    # The absolute Max DD is the worst between global closed-equity DD and any intraday DD
-    final_max_dd = min(global_max_dd, worst_day_dd)
+    # NO se mezclan (2026-08-24). Antes esto era `min(global_max_dd,
+    # worst_day_dd)` y producia una incoherencia visible: la TARJETA enseñaba un
+    # numero que el GRAFICO de drawdown no dibujaba nunca, porque el grafico
+    # pinta `global_drawdown` (la curva de la cuenta) y la tarjeta podia estar
+    # enseñando el peor bache INTRADIA de un ticker-dia.
+    #
+    # Los dos son a escala de cuenta (cada ticker-dia se simula con el capital
+    # completo), pero miden cosas distintas: uno es la caida de la equity de
+    # cierre y el otro la peor excursion dentro de una sola sesion. Mezclarlos
+    # con un min() daba un Max DD que no correspondia a ningun punto de la curva
+    # y ademas contaminaba Calmar y DD/Return.
+    #
+    # Se hace mas grave cuanto mas pequeña es la cuenta frente al riesgo por
+    # trade: con riesgo FIJO de 1.200$ sobre 10.000$ cada operacion es un 12%,
+    # y un dia con varias reentradas hunde la cuenta intradia mucho mas que la
+    # curva de cierres. Por eso saltaba en ventanas largas que empiezan pronto.
+    final_max_dd = global_max_dd
 
     # True Global Profit Factor
     gross_profit = sum(t["pnl"] for t in trades if t["pnl"] > 0)
@@ -1585,6 +1698,10 @@ def _aggregate_metrics(
         "total_return_pct": round(total_return, 4),
         "avg_sharpe": round(avg_sharpe, 4),
         "max_drawdown_pct": round(final_max_dd, 4),
+        # Peor excursion INTRADIA dentro de una sola sesion (escala de cuenta).
+        # Antes se fundia con el de arriba; ahora viaja aparte para que se pueda
+        # enseñar sin falsear el Max DD de la curva.
+        "worst_intraday_dd_pct": round(worst_day_dd, 4),
         "avg_profit_factor": round(avg_pf, 4),
         "avg_pnl": round(avg_pnl, 2),
         "total_pnl": round(total_pnl, 2) if len(pnls) else 0,
