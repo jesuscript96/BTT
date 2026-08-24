@@ -86,13 +86,66 @@ docker exec $C sh -c 'cd /app && /opt/venv/bin/python -m scripts.comp_emails --a
 
 ---
 
+## ⭐ Días de prueba: ¿la persona YA está suscrita o no? (los 2 casos)
+
+Esta es la parte que más confunde. La **lista de preferenciales** solo decide los
+días **en el momento en que el usuario pone su tarjeta** (el "checkout"). Por eso:
+
+**Caso 1 — TODAVÍA no ha puesto tarjeta** (no se ha suscrito)
+- Basta con **añadirlo a la lista** de preferenciales con los días que quieras.
+- Cuando ponga su tarjeta, Stripe le dará esos días automáticamente.
+- **En Stripe no hay que hacer nada.**
+- *Ejemplo real:* `sebasocampo2104@gmail.com` no estaba suscrito → lo metimos a la
+  lista de 14 días y listo.
+
+**Caso 2 — YA se suscribió / ya está dentro de su prueba**
+- La lista **ya no le sirve** (su checkout ya ocurrió con los 7 días por defecto).
+- Para darle más días hay que **extender su prueba directamente en Stripe**
+  (mover la fecha de fin de prueba). Esto **lo hacemos nosotros con un comando**.
+- Extender = **mover hacia adelante la fecha del primer cobro**. Si le quedaban
+  3 días y sumas 7, pasa a tener 10; no se reinicia, no rompe nada, la tarjeta
+  sigue igual y el usuario ve la fecha nueva en su panel.
+- *Ejemplo real:* `david573tapia@gmail.com` ya se había suscrito con 7 días → **le
+  extendimos la prueba +7 días en Stripe** (queda en 14, hasta el 7-sep). **Ya está
+  resuelto; no hay nada pendiente para él.**
+
+**Regla rápida:** ¿aún no puso tarjeta? → **lista**. ¿ya está en la prueba? →
+**extender en Stripe** (comando de abajo).
+
+### Cómo extender una prueba EN CURSO (Caso 2)
+
+Se hace desde el contenedor de prod, verificando SIEMPRE el email del cliente antes
+de tocar su suscripción. Ejemplo (extender +7 días la sub de un usuario):
+```bash
+C=$(docker ps --format '{{.Names}}' | grep '^kvcfvkb' | head -1)
+docker exec -i $C /opt/venv/bin/python - <<'PY'
+import os, httpx
+sk = os.environ['STRIPE_SECRET_KEY']; auth = (sk, '')
+EMAIL = 'correo@ejemplo.com'   # <-- el usuario a extender
+DIAS  = 7                       # <-- días a sumar a lo que le quede
+# localizar su suscripción por email
+subs = httpx.get('https://api.stripe.com/v1/subscriptions',
+                 params={'limit':100,'status':'all','expand[]':'data.customer'},
+                 auth=auth, timeout=30).json()['data']
+match = [s for s in subs if ((s.get('customer') or {}).get('email') or '').lower() == EMAIL.lower()]
+assert len(match) == 1, f'esperaba 1 sub para {EMAIL}, encontré {len(match)}'
+s = match[0]; new_end = int(s['trial_end']) + DIAS*24*3600
+r = httpx.post(f"https://api.stripe.com/v1/subscriptions/{s['id']}",
+               data={'trial_end': str(new_end), 'proration_behavior':'none'},
+               auth=auth, timeout=30); r.raise_for_status()
+print('OK, nuevo trial_end (unix):', r.json()['trial_end'])
+PY
+```
+> Solo funciona si el usuario está **en prueba** (`status = trialing`). Si ya está
+> pagando (`active`), no es una prueba: habría que ofrecerle otra cosa (cupón).
+
 ## Preguntas frecuentes
 
 - **¿Cuándo lo nota el usuario?** En su **próximo login**. Si ya está dentro,
   que recargue o vuelva a entrar.
-- **¿Y si ya empezó su prueba de 7 días?** El cambio a "preferencial" aplica en su
-  **próximo checkout**; no alarga una prueba que Stripe ya arrancó. Para gratis
-  (cortesía) sí aplica siempre (le quita el muro).
+- **¿Y si ya empezó su prueba de 7 días?** Ver el **Caso 2** de arriba: la lista no
+  alarga una prueba ya arrancada; hay que **extenderla en Stripe** (comando). Para
+  gratis (cortesía) sí aplica siempre en el próximo login (le quita el muro).
 - **¿Puedo poner varios de golpe?** Sí: `--add a@x.com,b@y.com,c@z.com`.
 - **¿Se puede probar sin escribir?** Sí, añade `--dry-run` al final.
 - **¿Dónde se guarda?** En la base de datos de billing de producción
