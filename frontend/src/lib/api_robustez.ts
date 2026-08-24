@@ -91,6 +91,57 @@ export interface McHistogram {
   edges: number[];
 }
 
+/** Resumen de una muestra: lo que devuelve `_describe` en el backend. */
+export interface McSample {
+  n: number;
+  mean: number;
+  median: number;
+  p5: number;
+  p25: number;
+  p75: number;
+  p95: number;
+  worst: number;
+  best: number;
+}
+
+/**
+ * Perdidas paso a paso del bootstrap.
+ *
+ * Un "paso" es la unidad remuestreada: una sesion o un trade, segun `unit`.
+ * Ojo con la diferencia entre las dos familias: `step_*` describe UN paso
+ * cualquiera, `worst_step_*` describe el PEOR paso de cada simulacion completa.
+ */
+export interface McLosses {
+  unit: "day" | "trade";
+  sampled_curves: number;
+  sampled_steps: number;
+  step_usd: McSample;
+  step_pct: McSample;
+  win_usd: McSample;
+  loss_usd: McSample;
+  win_pct: McSample;
+  loss_pct: McSample;
+  win_rate_pct: number;
+  worst_step_usd: McSample;
+  worst_step_pct: McSample;
+  streak: {
+    median: number;
+    p95: number;
+    p99: number;
+    worst: number;
+    mean: number;
+    histogram: Array<{ length: number; count: number }>;
+  };
+  /** Cuantiles ordenados (501 puntos) para resolver umbrales por interpolacion. */
+  grids: {
+    step_usd: number[];
+    step_pct: number[];
+    worst_step_usd: number[];
+    worst_step_pct: number[];
+    max_dd_pct: number[];
+  };
+}
+
 export interface MonteCarloOut {
   method: McMethod;
   mode: CompoundMode;
@@ -114,6 +165,8 @@ export interface MonteCarloOut {
   ruin_pct_threshold: number;
   hist_final: McHistogram;
   hist_drawdown: McHistogram;
+  /** Perdidas por paso y rejillas de probabilidad. */
+  losses?: McLosses;
   /** Recorrido del drawdown en el caso real y en tres escenarios simulados. */
   dd_paths?: {
     real: number[];
@@ -170,6 +223,7 @@ export function runRobustezMonteCarlo(body: {
   mode: CompoundMode;
   risk_pct: number;
   ruin_pct: number;
+  unit?: "day" | "trade";
   seed?: number | null;
 }): Promise<MonteCarloOut> {
   return apiRequest<MonteCarloOut>("/robustness/montecarlo", {
@@ -188,6 +242,69 @@ export function runRobustezStress(body: {
   seed?: number | null;
 }): Promise<StressOut> {
   return apiRequest<StressOut>("/robustness/stress", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 120_000,
+  });
+}
+
+/* ── Prueba de fondeo ────────────────────────────────────────────────── */
+
+/** Reparto de desenlaces de un challenge, bajo una lectura (cierre o MAE). */
+export interface FundingOutcome {
+  pass_pct: number;
+  fail_daily_pct: number;
+  fail_dd_pct: number;
+  /** Ni pasa ni rompe: se agoto el plazo o el histórico simulado. */
+  unresolved_pct: number;
+  sessions_to_pass: { n: number; p25?: number; p50?: number; p75?: number; min?: number; max?: number };
+  session_of_breach: { n: number; p25?: number; p50?: number; p75?: number; min?: number; max?: number };
+  final_return_pct: { p5: number; p50: number; p95: number };
+}
+
+export interface FundingOut {
+  simulations: number;
+  account: number;
+  n_steps: number;
+  history_days: number;
+  mode: CompoundMode;
+  risk_pct: number;
+  rules: {
+    target_pct: number;
+    target_usd: number;
+    daily_loss_pct: number;
+    daily_loss_usd: number;
+    max_dd_pct: number;
+    dd_basis: "percent" | "fixed";
+    dd_usd_at_start: number;
+    min_trading_days: number;
+    min_trades: number;
+    horizon_days: number | null;
+  };
+  /** Evaluado con el PnL de cierre de cada sesion. */
+  closed: FundingOutcome;
+  /** Evaluado incluyendo la peor excursion intradia. null si no se mando MAE. */
+  mae: FundingOutcome | null;
+}
+
+export function runRobustezFunding(body: {
+  values: number[];
+  mae_fracs?: number[] | null;
+  trades_per_day?: number[] | null;
+  account: number;
+  risk_pct: number;
+  mode: CompoundMode;
+  target_pct: number;
+  daily_loss_pct: number;
+  max_dd_pct: number;
+  dd_basis: "percent" | "fixed";
+  min_trading_days: number;
+  min_trades: number;
+  horizon_days?: number | null;
+  simulations: number;
+  seed?: number | null;
+}): Promise<FundingOut> {
+  return apiRequest<FundingOut>("/robustness/funding", {
     method: "POST",
     body: JSON.stringify(body),
     timeoutMs: 120_000,

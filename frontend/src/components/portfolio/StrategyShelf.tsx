@@ -356,20 +356,33 @@ export function StrategyShelf({
   );
 }
 
-/** Boton pequeño de accion de fila (añadir/quitar de un cuadro). */
+/** Boton pequeño de accion de fila (añadir/quitar de un cuadro, borrar).
+ *
+ *  `danger` lo tiñe de rojo sin rellenarlo: la accion destructiva tiene que
+ *  distinguirse de un vistazo, pero sin gritar mas que los datos de la fila. */
 export function ShelfAction({
   label,
   active,
   onClick,
   disabled,
   title,
+  danger,
 }: {
   label: string;
   active?: boolean;
   onClick: () => void;
   disabled?: boolean;
   title?: string;
+  danger?: boolean;
 }) {
+  const borde = danger ? color.loss : active ? color.copper : color.border;
+  const texto = disabled
+    ? color.textMuted
+    : danger
+      ? color.loss
+      : active
+        ? color.copperText
+        : color.textSecondary;
   return (
     <button
       type="button"
@@ -381,10 +394,10 @@ export function ShelfAction({
         fontSize: 10,
         fontFamily: font.sans,
         letterSpacing: "0.03em",
-        border: `0.5px solid ${active ? color.copper : color.border}`,
+        border: `0.5px solid ${borde}`,
         borderRadius: radius.sm,
-        background: active ? color.copper : "transparent",
-        color: disabled ? color.textMuted : active ? color.copperText : color.textSecondary,
+        background: active && !danger ? color.copper : "transparent",
+        color: texto,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transition: "background 120ms, border-color 120ms",

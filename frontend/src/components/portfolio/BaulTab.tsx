@@ -9,17 +9,42 @@ import React, { useEffect, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ReadingNote } from "@/components/robustez/shared";
 import { StrategyShelf, ShelfAction, type CurveState } from "./StrategyShelf";
-import { getPortfolioStrategyEquity, type Bucket, type PortfolioStrategy } from "@/lib/api_portfolio_lab";
+import {
+  getPortfolioStrategyEquity,
+  previewStrategyDeletion,
+  type Bucket,
+  type DeletionPreview,
+  type PortfolioStrategy,
+} from "@/lib/api_portfolio_lab";
 
 export function BaulTab({
   strategies,
   onToggle,
+  onDelete,
   busyId,
 }: {
   strategies: PortfolioStrategy[];
   onToggle: (s: PortfolioStrategy, bucket: Bucket, present: boolean) => void;
+  /** Borrado DEFINITIVO: la estrategia, sus corridas y sus asignaciones. */
+  onDelete: (s: PortfolioStrategy) => void;
   busyId: string | null;
 }) {
+  // Confirmacion en dos pasos, en la propia fila: el borrado es irreversible y
+  // un solo clic en una lista de filas finas se da sin querer. Se guarda el id
+  // pendiente, no un booleano, para que abrir la confirmacion de otra fila
+  // cierre la anterior sola.
+  const [porBorrar, setPorBorrar] = useState<string | null>(null);
+  // Lo que se lleva por delante, consultado al abrir la confirmacion. Sin esto
+  // el usuario no sabria que tambien caen las corridas de cartera.
+  const [previo, setPrevio] = useState<DeletionPreview | null>(null);
+
+  const pedirConfirmacion = (s: PortfolioStrategy) => {
+    setPorBorrar(s.id);
+    setPrevio(null);
+    previewStrategyDeletion(s.id)
+      .then((p) => setPrevio(p))
+      .catch(() => setPrevio(null)); // sin numeros, pero la confirmacion sigue
+  };
   const inPortfolio = strategies.filter((s) => s.buckets.includes("portfolio"));
   const inIncubator = strategies.filter((s) => s.buckets.includes("incubadora"));
 
@@ -51,6 +76,42 @@ export function BaulTab({
     const p = s.buckets.includes("portfolio");
     const i = s.buckets.includes("incubadora");
     const busy = busyId === s.id;
+
+    if (porBorrar === s.id) {
+      // Se enumera lo que desaparece. Las corridas de cartera se destacan
+      // porque son el efecto que nadie espera.
+      const piezas: string[] = [];
+      if (previo) {
+        if (previo.runs_own) piezas.push(`${previo.runs_own} corrida${previo.runs_own === 1 ? "" : "s"}`);
+        if (previo.runs_portfolio) {
+          piezas.push(`${previo.runs_portfolio} de cartera`);
+        }
+      }
+      const aviso = previo
+        ? piezas.length
+          ? `Se borra la estrategia y ${piezas.join(" + ")}. Sin vuelta atras`
+          : "Se borra la estrategia. No tiene corridas guardadas"
+        : "Se borra del todo, sin vuelta atras";
+      return (
+        <>
+          <span style={{ fontSize: 10, fontFamily: font.sans, color: color.loss, whiteSpace: "nowrap" }}>
+            {aviso}
+          </span>
+          <ShelfAction label="cancelar" onClick={() => { setPorBorrar(null); setPrevio(null); }} disabled={busy} />
+          <ShelfAction
+            label={busy ? "borrando…" : "sí, borrar"}
+            danger
+            disabled={busy}
+            onClick={() => {
+              setPorBorrar(null);
+              setPrevio(null);
+              onDelete(s);
+            }}
+          />
+        </>
+      );
+    }
+
     return (
       <>
         <ShelfAction
@@ -66,6 +127,13 @@ export function BaulTab({
           disabled={busy || !s.run}
           title={s.run ? undefined : "Necesita un backtest guardado"}
           onClick={() => onToggle(s, "incubadora", !i)}
+        />
+        <ShelfAction
+          label="borrar"
+          danger
+          disabled={busy}
+          title="Borra la estrategia y todo rastro de ella. Irreversible."
+          onClick={() => pedirConfirmacion(s)}
         />
       </>
     );
@@ -115,8 +183,12 @@ export function BaulTab({
       />
 
       <p style={{ margin: 0, fontSize: 11, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-        Una estrategia puede estar en los dos cuadros a la vez. Quitarla de un cuadro no borra nada:
-        la estrategia y sus corridas siguen en el baúl genérico.
+        Una estrategia puede estar en los dos cuadros a la vez. <strong>Quitarla</strong> de un cuadro
+        no borra nada: la estrategia y sus corridas siguen en el baúl genérico. <strong>Borrar</strong>,
+        en el baúl genérico, no deja rastro: se lleva la estrategia, todas sus corridas guardadas (con
+        sus ficheros de disco) y sus asignaciones. También caen las <strong>corridas de cartera</strong>
+        que la incluían — las demás estrategias de esa cartera no se tocan, pero ese resultado combinado
+        desaparece porque ya no sería reproducible. La confirmación te dice cuántas son antes de pulsar.
       </p>
     </div>
   );

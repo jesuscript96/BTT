@@ -22,6 +22,7 @@ sesion 5, ver MEMORIA §5).
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Optional
 
@@ -173,6 +174,131 @@ def set_assignment(con, strategy_id: str, bucket: str, present: bool) -> list[st
         [strategy_id],
     ).fetchall()
     return [r[0] for r in rows]
+
+
+# ── Borrado definitivo ──────────────────────────────────────────────────
+
+def _ids_de_corrida(raw) -> list:
+    """`strategy_ids` llega como lista o como texto JSON segun el driver."""
+    import json as _json
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, (str, bytes, bytearray)):
+        try:
+            v = _json.loads(raw)
+            return v if isinstance(v, list) else []
+        except (TypeError, ValueError):
+            return []
+    return []
+
+
+def _corridas_de(con, strategy_id: str) -> tuple[list[str], list[str]]:
+    """Ids de corrida que mencionan la estrategia: (propias, de cartera).
+
+    Solo se leen `id` y `strategy_ids`: traer `results_json` aqui seria mover
+    megas por nada (mismo motivo que en el listado del baul).
+    """
+    filas = con.execute("SELECT id, strategy_ids FROM backtest_results").fetchall()
+    propias: list[str] = []
+    cartera: list[str] = []
+    for run_id, sids in filas:
+        ids = _ids_de_corrida(sids)
+        if strategy_id not in ids:
+            continue
+        (propias if len(set(ids)) == 1 else cartera).append(run_id)
+    return propias, cartera
+
+
+def _borra_ficheros_de_corrida(run_ids: list[str]) -> int:
+    """Borra los `.result` y `.equity` en disco de esas corridas.
+
+    El `id` de `backtest_results` ES el `job_id` con el que se guardo el trabajo
+    (ver `autosave_backtest`), asi que los ficheros del directorio de resultados
+    se llaman igual. Son la parte MAS pesada de todas: 138 MB para siete
+    trabajos en la maquina donde se escribio esto. Si no se borran aqui, no los
+    borra nadie.
+    """
+    from app.services import backtest_jobs as bj
+
+    borrados = 0
+    for run_id in run_ids:
+        for ruta in (
+            os.path.join(bj.RESULTS_DIR, f"{run_id}.result"),
+            os.path.join(bj.RESULTS_DIR, f"{run_id}.equity"),
+        ):
+            try:
+                if os.path.exists(ruta):
+                    os.remove(ruta)
+                    borrados += 1
+            except OSError as e:  # noqa: PERF203
+                print(f"[WARN] no se pudo borrar {ruta}: {e}")
+    return borrados
+
+
+def preview_strategy_deletion(con, strategy_id: str) -> dict:
+    """Que desapareceria si se borrase. No toca nada."""
+    ensure_assignments_table(con)
+    propias, cartera = _corridas_de(con, strategy_id)
+    cuadros = con.execute(
+        "SELECT bucket FROM portfolio_lab_assignments WHERE strategy_id = ?", [strategy_id]
+    ).fetchall()
+    return {
+        "runs_own": len(propias),
+        "runs_portfolio": len(cartera),
+        "buckets": [c[0] for c in cuadros],
+    }
+
+
+def delete_strategy_everywhere(con, strategy_id: str) -> dict:
+    """Borra una estrategia y TODO rastro de ella. Devuelve el recuento.
+
+    El endpoint generico `DELETE /api/strategies/{id}` solo quita la fila de
+    `strategies`. Eso deja atras las corridas de `backtest_results` —varios MB
+    de `results_json` cada una— y sus ficheros en disco, que es justo lo que
+    hacia crecer el baul sin freno.
+
+    **Se borran TAMBIEN las corridas de cartera** que incluian a la estrategia
+    (decision del usuario, 2026-08-24: "ni rastro"). No es gratis y hay que
+    saberlo: una corrida de cartera guardada que combinaba A, B y C desaparece
+    al borrar A. Las estrategias B y C **no** se tocan — siguen en el baul con
+    sus propias corridas—, lo que se pierde es ese resultado combinado, que de
+    todas formas ya no seria reproducible sin A. Por eso el endpoint de preview
+    lo dice ANTES de confirmar.
+
+    Motivo de fondo para no conservarlas: el id de la estrategia no vive solo en
+    la columna `strategy_ids`, tambien va dentro de `results_json`
+    (`backtest_params.strategy_id`). Dejar la fila y limpiar la columna seguiria
+    dejando rastro dentro del JSON.
+
+    No borra `portfolio_lab_real_pnl`: va por fecha, es el PnL real del usuario
+    y no pertenece a ninguna estrategia concreta.
+    """
+    ensure_assignments_table(con)
+    ensure_monitor_tables(con)
+
+    propias, cartera = _corridas_de(con, strategy_id)
+    todas = propias + cartera
+
+    if todas:
+        marcas = ", ".join("?" for _ in todas)
+        con.execute(f"DELETE FROM backtest_results WHERE id IN ({marcas})", todas)
+
+    cuadros = con.execute(
+        "SELECT bucket FROM portfolio_lab_assignments WHERE strategy_id = ?", [strategy_id]
+    ).fetchall()
+    con.execute("DELETE FROM portfolio_lab_assignments WHERE strategy_id = ?", [strategy_id])
+    con.execute("DELETE FROM portfolio_lab_monitor WHERE strategy_id = ?", [strategy_id])
+
+    # Los ficheros van DESPUES del DELETE: si la transaccion fallase, es
+    # preferible un fichero huerfano en disco que una fila sin sus datos.
+    ficheros = _borra_ficheros_de_corrida(todas)
+
+    return {
+        "runs_deleted": len(propias),
+        "runs_portfolio_deleted": len(cartera),
+        "files_deleted": ficheros,
+        "buckets_cleared": [c[0] for c in cuadros],
+    }
 
 
 # ── Normalizacion ───────────────────────────────────────────────────────

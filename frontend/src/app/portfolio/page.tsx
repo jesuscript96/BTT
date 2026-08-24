@@ -17,6 +17,7 @@ import { BaulTab } from "@/components/portfolio/BaulTab";
 import { PortfolioTab } from "@/components/portfolio/PortfolioTab";
 import { MonitorTab } from "@/components/portfolio/MonitorTab";
 import {
+  deletePortfolioStrategy,
   listPortfolioStrategies,
   setPortfolioAssignment,
   type Bucket,
@@ -31,6 +32,8 @@ export default function PortfolioPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("baul");
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Que se acaba de borrar, para decirlo con numeros en vez de un "hecho" seco.
+  const [aviso, setAviso] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -51,6 +54,31 @@ export default function PortfolioPage() {
       setStrategies((prev) => prev.map((x) => (x.id === s.id ? { ...x, buckets: res.buckets } : x)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo guardar la asignación");
+    } finally {
+      setBusyId(null);
+    }
+  }, []);
+
+  const borrar = useCallback(async (s: PortfolioStrategy) => {
+    setBusyId(s.id);
+    setError(null);
+    setAviso(null);
+    try {
+      const res = await deletePortfolioStrategy(s.id);
+      setStrategies((prev) => prev.filter((x) => x.id !== s.id));
+      const partes = [`«${res.name}» borrada sin dejar rastro`];
+      const corridas = res.runs_deleted + res.runs_portfolio_deleted;
+      if (corridas) {
+        partes.push(
+          `${corridas} corrida${corridas === 1 ? "" : "s"}` +
+            (res.runs_portfolio_deleted ? ` (${res.runs_portfolio_deleted} de cartera)` : ""),
+        );
+      }
+      if (res.files_deleted) partes.push(`${res.files_deleted} ficheros de disco liberados`);
+      setAviso(partes.join(" · "));
+      setTimeout(() => setAviso(null), 12000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo borrar la estrategia");
     } finally {
       setBusyId(null);
     }
@@ -77,6 +105,23 @@ export default function PortfolioPage() {
         </div>
       )}
 
+      {aviso && (
+        <div
+          style={{
+            marginBottom: 18,
+            padding: "9px 13px",
+            border: `0.5px solid ${color.border}`,
+            borderLeft: `2px solid ${color.copper}`,
+            borderRadius: 6,
+            fontSize: 11.5,
+            fontFamily: font.sans,
+            color: color.textSecondary,
+          }}
+        >
+          {aviso}
+        </div>
+      )}
+
       <SubTabs
         value={tab}
         onChange={setTab}
@@ -92,7 +137,7 @@ export default function PortfolioPage() {
           Cargando estrategias…
         </div>
       ) : tab === "baul" ? (
-        <BaulTab strategies={strategies} onToggle={toggle} busyId={busyId} />
+        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} busyId={busyId} />
       ) : tab === "portfolio" ? (
         <PortfolioTab strategies={strategies} />
       ) : (

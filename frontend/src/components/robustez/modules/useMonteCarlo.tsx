@@ -6,7 +6,6 @@ import {
   DataTable,
   ErrorBox,
   Field,
-  MetricTile,
   NumberInput,
   Placeholder,
   ReadingNote,
@@ -14,11 +13,13 @@ import {
   SectionHead,
   Segmented,
   TextInput,
-  TileGrid,
   fmt,
 } from "../shared";
+import { InlineStats } from "@/components/portfolio/StatSheet";
 import { DistributionChart, SpaghettiChart } from "../charts/MonteCarloCharts";
 import { DrawdownCompare } from "../charts/DrawdownCompare";
+import { FundingSection, LossesSection } from "../charts/MonteCarloExtras";
+import { realLossStats } from "@/lib/robustez/loss_stats";
 import { Help, StaleNotice } from "../help";
 import { runRobustezMonteCarlo, type McMethod, type MonteCarloOut } from "@/lib/api_robustez";
 import type { ModuleCtx, ModuleParts } from "./types";
@@ -76,6 +77,28 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
       .map(([, v]) => v);
   }, [selected, unit, useCompound]);
 
+  // El lado REAL de los bloques de abajo. Depende solo de la corrida cargada,
+  // no de la simulacion, asi que se calcula una vez y sobrevive a cada
+  // re-ejecucion del Monte Carlo.
+  const real = useMemo(
+    () =>
+      run
+        ? realLossStats(run.trades, run.global_equity, compounding?.init_cash ?? 10000)
+        : null,
+    [run, compounding?.init_cash],
+  );
+
+  // Serie por SESION para la prueba de fondeo. No usa `values` a proposito: si
+  // el usuario elige remuestreo "por trade" arriba, el bootstrap principal
+  // cambia de unidad, pero un challenge se juega SIEMPRE con limites diarios.
+  const fundingValues = useMemo(() => {
+    if (!run || !real) return [];
+    if (!useCompound) return real.porDia.valores;
+    const byDay = new Map<string, number>();
+    for (const t of run.trades) byDay.set(t.date, (byDay.get(t.date) || 0) + (t.r_precise ?? 0));
+    return real.fechas.map((d) => byDay.get(d) || 0);
+  }, [run, real, useCompound]);
+
   // Huella de la configuracion: si se cambia un mando y no se vuelve a
   // ejecutar, lo que se ve es del barrido anterior.
   const cfgKey = JSON.stringify({ sims, method, unit, ruinPct, from, to });
@@ -95,6 +118,7 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
         mode: useCompound ? "compound" : "additive",
         risk_pct: compounding?.risk_pct || 3,
         ruin_pct: ruinPct,
+        unit,
         seed: null,
       });
       setOut(res);
@@ -264,33 +288,15 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
               </span>
             }
           />
-          <TileGrid>
-            <MetricTile
-              label="DD real"
-              value={fmt.pct(out.base_max_drawdown, 1)}
-              hint="Lo que ocurrio de verdad."
-              tone={color.copper}
-            />
-            <MetricTile
-              label="DD mediano"
-              value={fmt.pct(out.drawdown.p50, 1)}
-              hint="La mitad de los escenarios pasa de aqui."
-              tone={color.loss}
-            />
-            <MetricTile
-              label="Aguantar el 95%"
-              value={fmt.pct(out.dd_tolerance.p95, 1)}
-              hint="Solo 1 de cada 20 escenarios lo supera."
-              tone={color.loss}
-            />
-            <MetricTile
-              label="Aguantar el 99%"
-              value={fmt.pct(out.dd_tolerance.p99, 1)}
-              hint="Solo 1 de cada 100 lo supera."
-              tone={color.loss}
-            />
-            <MetricTile label="Peor simulado" value={fmt.pct(out.drawdown.worst, 1)} tone={color.loss} />
-          </TileGrid>
+          <InlineStats
+            items={[
+              { label: "DD real", value: fmt.pct(out.base_max_drawdown, 1), tone: color.copper, help: "Lo que ocurrio de verdad." },
+              { label: "DD mediano", value: fmt.pct(out.drawdown.p50, 1), tone: color.loss, help: "La mitad de los escenarios pasa de aqui." },
+              { label: "Aguantar el 95%", value: fmt.pct(out.dd_tolerance.p95, 1), tone: color.loss, help: "Solo 1 de cada 20 escenarios lo supera." },
+              { label: "Aguantar el 99%", value: fmt.pct(out.dd_tolerance.p99, 1), tone: color.loss, help: "Solo 1 de cada 100 lo supera." },
+              { label: "Peor simulado", value: fmt.pct(out.drawdown.worst, 1), tone: color.loss },
+            ]}
+          />
 
           <div style={{ marginTop: 14 }}>
             <DistributionChart
@@ -381,22 +387,24 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
                 : "Intervalos de confianza sobre el resultado final."
             }
           />
-          <TileGrid>
-            <MetricTile
-              label="Prob. de perder"
-              value={fmt.pct(out.prob_losing_pct, 1)}
-              hint="Escenarios que acaban por debajo del capital inicial."
-              tone={out.prob_losing_pct > 20 ? color.loss : color.profit}
-            />
-            <MetricTile
-              label={`Prob. ruina (-${out.ruin_pct_threshold}%)`}
-              value={fmt.pct(out.prob_ruin_pct, 1)}
-              tone={out.prob_ruin_pct > 5 ? color.loss : color.profit}
-            />
-            <MetricTile label="Final p5" value={fmt.money(out.final_balance.p5)} sub={fmt.pct(out.return_pct.p5, 0)} tone={color.loss} />
-            <MetricTile label="Final mediano" value={fmt.money(out.final_balance.p50)} sub={fmt.pct(out.return_pct.p50, 0)} />
-            <MetricTile label="Final p95" value={fmt.money(out.final_balance.p95)} sub={fmt.pct(out.return_pct.p95, 0)} tone={color.profit} />
-          </TileGrid>
+          <InlineStats
+            items={[
+              {
+                label: "Prob. de perder",
+                value: fmt.pct(out.prob_losing_pct, 1),
+                tone: out.prob_losing_pct > 20 ? color.loss : color.profit,
+                help: "Escenarios que acaban por debajo del capital inicial.",
+              },
+              {
+                label: `Prob. ruina (-${out.ruin_pct_threshold}%)`,
+                value: fmt.pct(out.prob_ruin_pct, 1),
+                tone: out.prob_ruin_pct > 5 ? color.loss : color.profit,
+              },
+              { label: "Final p5", value: `${fmt.money(out.final_balance.p5)} · ${fmt.pct(out.return_pct.p5, 0)}`, tone: color.loss },
+              { label: "Final mediano", value: `${fmt.money(out.final_balance.p50)} · ${fmt.pct(out.return_pct.p50, 0)}` },
+              { label: "Final p95", value: `${fmt.money(out.final_balance.p95)} · ${fmt.pct(out.return_pct.p95, 0)}`, tone: color.profit },
+            ]}
+          />
 
           {!isPerm && (
             <div style={{ marginTop: 14 }}>
@@ -430,6 +438,33 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
             />
           </div>
         </section>
+
+        {/* ── Perdidas dia a dia y probabilidades ── */}
+        {real && out.losses && (
+          <LossesSection
+            out={out}
+            real={real}
+            capital={{
+              initCash: out.init_cash,
+              esPct: useCompound,
+              riskPct: out.risk_pct,
+              riesgoTipo: String((run.backtest_params as Record<string, unknown>)?.risk_type ?? "").toUpperCase() || undefined,
+              origen: "backtest guardado",
+            }}
+          />
+        )}
+
+        {/* ── Prueba de fondeo ── */}
+        {real && (
+          <FundingSection
+            valoresDia={fundingValues}
+            maeFracs={real.maeFracs}
+            tradesPorDia={real.tradesPorDia}
+            esPct={useCompound}
+            riskPctDefault={compounding?.risk_pct || 1}
+            nSesiones={real.fechas.length}
+          />
+        )}
 
         <ReadingNote>
           Modelo <strong>{out.mode === "compound" ? "compuesto" : "aditivo"}</strong>

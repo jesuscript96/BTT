@@ -236,7 +236,17 @@ export interface RiskManagement {
     take_profit: RiskSettings;
     partial_take_profits: PartialTakeProfit[];
     trailing_stop: TrailingStopSettings;
+    /** OJO: `max_drawdown_daily` no lo lee ningun motor; la UI lo pinta pero no
+     *  hace nada. El cortacircuitos real es `daily_loss_limit`. */
     max_drawdown_daily?: number;
+    /** Cortacircuitos de perdida diaria: corta la sesion al cruzar el umbral. */
+    daily_loss_limit?: {
+        enabled: boolean;
+        /** CASH = dolares fijos; PCT = % del capital de apertura del dia. */
+        unit: 'CASH' | 'PCT';
+        value: number;
+        on_open_positions: 'LET_RUN' | 'CLOSE_ALL';
+    };
     size_by_sl?: boolean;
     swing_option?: {
         active: boolean;

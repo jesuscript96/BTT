@@ -93,6 +93,63 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
         con.close()
 
 
+@router.get("/strategies/{strategy_id}/deletion-preview")
+def deletion_preview(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Que desapareceria al borrarla. Solo lectura.
+
+    Existe para que la confirmacion diga numeros en vez de un "¿seguro?" a
+    ciegas: el borrado se lleva tambien las corridas de CARTERA que incluian la
+    estrategia, y eso hay que verlo antes de pulsar, no despues.
+    """
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    scope_sql, scope_params = scope_clause(user_id)
+    try:
+        row = con.execute(
+            f"SELECT name FROM strategies WHERE id = ?{scope_sql}",
+            [strategy_id, *scope_params],
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+        return {"id": strategy_id, "name": row[0], **pls.preview_strategy_deletion(con, strategy_id)}
+    finally:
+        con.close()
+
+
+@router.delete("/strategies/{strategy_id}")
+def delete_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Borra una estrategia del baul y todo lo que cuelga de ella. IRREVERSIBLE.
+
+    Existe aparte del `DELETE /api/strategies/{id}` generico porque aquel solo
+    quita la fila de `strategies` y deja las corridas guardadas en la base. Como
+    cada corrida arrastra su `results_json` de varios MB, borrar "a medias" no
+    resuelve el problema que motivo esto: que el baul crezca sin freno.
+    """
+    _guard()
+    lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
+    with lock:
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                f"SELECT name FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+            nombre = row[0]
+
+            resumen = pls.delete_strategy_everywhere(con, strategy_id)
+            con.execute(
+                f"DELETE FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            )
+        finally:
+            con.close()
+
+    return {"deleted": True, "id": strategy_id, "name": nombre, **resumen}
+
+
 @router.get("/strategies/{strategy_id}/equity")
 def strategy_equity(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
     """Curva diaria de la ultima corrida, para el minigrafico del baul.
