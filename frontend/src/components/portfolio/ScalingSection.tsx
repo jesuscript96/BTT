@@ -30,6 +30,8 @@ import { PnlCalendar } from "./PnlCalendar";
 import { CorrelationMatrix } from "./charts/CorrelationMatrix";
 import { DrawdownRibbon } from "@/components/robustez/charts/BasicCharts";
 import { SpaghettiChart, DistributionChart } from "@/components/robustez/charts/MonteCarloCharts";
+import { FundingSection, LossesSection } from "@/components/robustez/charts/MonteCarloExtras";
+import { realLossStatsFromDaily } from "@/lib/robustez/loss_stats";
 import { runPortfolioMc } from "@/lib/api_portfolio_lab";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { ChevronRight } from "lucide-react";
@@ -535,6 +537,38 @@ export function useScalingSection(ctx: Ctx): { config: React.ReactNode; results:
 
   const names = out ? out.per_strategy.map((p) => p.name) : ctx.names;
 
+  // Lado REAL de los bloques de perdidas y fondeo. En el portfolio no hay
+  // trades individuales ni MAE, solo el PnL de cada sesion del modelo
+  // combinado: se construye la misma estructura con los huecos vacios y la
+  // interfaz oculta sola lo que no aplica.
+  const realModelo = useMemo(
+    () =>
+      out
+        ? realLossStatsFromDaily(
+            out.calendar,
+            out.daily_pnl,
+            out.equity,
+            Number(out.config.init_cash) || ctx.execCfg.init_cash,
+          )
+        : null,
+    [out, ctx.execCfg.init_cash],
+  );
+
+  // El fondeo se juega SIEMPRE por sesiones. El MC del modelo compone con
+  // risk_pct=1 sobre el retorno diario en %, asi que esa misma serie es la
+  // unidad correcta aqui (mode compound, riesgo 1 -> eq *= 1 + v/100).
+  const fundingValuesModelo = useMemo(() => {
+    if (!out) return [];
+    const init = Number(out.config.init_cash) || ctx.execCfg.init_cash;
+    const rets: number[] = [];
+    let prev = init;
+    for (const v of out.equity) {
+      rets.push(prev > 0 ? (v / prev - 1) * 100 : 0);
+      prev = v;
+    }
+    return rets;
+  }, [out, ctx.execCfg.init_cash]);
+
   const config = (
     <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
       <span style={{ fontSize: 10, letterSpacing: "0.11em", textTransform: "uppercase", color: color.copper, fontFamily: font.sans }}>
@@ -777,6 +811,37 @@ export function useScalingSection(ctx: Ctx): { config: React.ReactNode; results:
                     caption="Max drawdown de cada escenario simulado (%)."
                   />
                 </div>
+
+                {/* Mismos bloques que en Robustez, sobre la serie del modelo. */}
+                {realModelo && mcOut.losses && (
+                  <LossesSection
+                    out={mcOut}
+                    real={realModelo}
+                    capital={{
+                      initCash: mcOut.init_cash,
+                      // El MC del modelo compone SIEMPRE sobre el retorno diario
+                      // en %, sea cual sea el escalado: el riesgo por operacion
+                      // ya esta dentro de esa serie.
+                      esPct: true,
+                      riskPct: mcOut.risk_pct,
+                      riesgoTipo: SCALING_LABELS[String((out.config.scaling as ScalingCfg)?.model)] || undefined,
+                      origen: "modelo calculado",
+                    }}
+                  />
+                )}
+
+                {realModelo && (
+                  <FundingSection
+                    valoresDia={fundingValuesModelo}
+                    maeFracs={null}
+                    tradesPorDia={null}
+                    esPct
+                    riskPctDefault={1}
+                    nSesiones={out.calendar.length}
+                    riskLabel="Multiplicador de exposicion (x1 = 1%)"
+                    riskHint="El riesgo por trade ya esta dentro del modelo. Este mando escala la serie entera: 2 = el doble de exposicion."
+                  />
+                )}
               </div>
             )}
           </div>

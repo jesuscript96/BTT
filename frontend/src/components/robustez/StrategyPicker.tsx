@@ -92,10 +92,10 @@ const num = (v: number | null | undefined, digits = 2, suffix = "") =>
 /** Metrica compacta de la cabecera de cada estrategia. */
 function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 62 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, minWidth: 52 }}>
       <span
         style={{
-          fontSize: 9,
+          fontSize: 8.5,
           letterSpacing: "0.08em",
           textTransform: "uppercase",
           color: color.textMuted,
@@ -104,7 +104,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: str
       >
         {label}
       </span>
-      <span style={{ fontSize: 13, fontFamily: font.mono, color: tone || color.textHigh }}>{value}</span>
+      <span style={{ fontSize: 11.5, fontFamily: font.mono, color: tone || color.textHigh }}>{value}</span>
     </div>
   );
 }
@@ -236,8 +236,11 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 14,
-                padding: "12px 16px",
+                gap: 10,
+                // Filas finas, como las del baul del Portfolio (peticion del
+                // usuario 2026-08-24): la lista se recorre de un vistazo y no
+                // empuja el contenido util fuera de la pantalla.
+                padding: "5px 14px",
                 cursor: "pointer",
                 background: isSelected ? color.bgElevated : "transparent",
                 borderLeft: `2px solid ${isSelected ? color.copper : "transparent"}`,
@@ -252,8 +255,9 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
             >
               <ChevronRight
                 style={{
-                  width: 14,
-                  height: 14,
+                  width: 13,
+                  height: 13,
+                  strokeWidth: 1.5,
                   flexShrink: 0,
                   color: color.textMuted,
                   transform: isExpanded ? "rotate(90deg)" : "none",
@@ -262,11 +266,11 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
               />
 
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {isSelected && <Check style={{ width: 13, height: 13, color: color.copper, flexShrink: 0 }} />}
+                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                  {isSelected && <Check style={{ width: 12, height: 12, color: color.copper, flexShrink: 0 }} />}
                   <span
                     style={{
-                      fontSize: 14,
+                      fontSize: 12.5,
                       fontFamily: font.sans,
                       color: color.textHigh,
                       whiteSpace: "nowrap",
@@ -280,7 +284,7 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
                     <span style={{ fontSize: 10, color: color.copper, fontFamily: font.sans }}>cargando…</span>
                   )}
                 </div>
-                <div style={{ fontSize: 11, color: color.textMuted, fontFamily: font.sans, marginTop: 2 }}>
+                <div style={{ fontSize: 9.5, color: color.textMuted, fontFamily: font.sans }}>
                   {hasRun
                     ? `${s.run!.total_trades ?? 0} trades · corrida del ${(s.run!.executed_at || "").slice(0, 16).replace("T", " ")}`
                     : "sin backtest guardado"}
@@ -288,7 +292,7 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
               </div>
 
               {hasRun ? (
-                <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 15, flexShrink: 0 }}>
                   <Stat
                     label="Retorno"
                     value={num(s.run!.total_return_pct, 1, "%")}
@@ -300,9 +304,9 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
                   <Stat label="Sharpe" value={num(s.run!.sharpe_ratio, 2)} />
                 </div>
               ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.warning, flexShrink: 0 }}>
-                  <CircleAlert style={{ width: 13, height: 13 }} />
-                  <span style={{ fontSize: 11, fontFamily: font.sans }}>no analizable</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, color: color.warning, flexShrink: 0 }}>
+                  <CircleAlert style={{ width: 12, height: 12, strokeWidth: 1.5 }} />
+                  <span style={{ fontSize: 10.5, fontFamily: font.sans }}>no analizable</span>
                 </div>
               )}
             </div>

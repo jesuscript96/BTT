@@ -22,6 +22,7 @@ from app.auth import get_current_user_id, scope_clause
 from app.database import get_user_db_connection
 from app.services import robustness_service as rs
 from app.services.robustness_mc import run_bootstrap
+from app.services.robustness_funding import run_funding
 from app.services.robustness_stress import run_stress
 
 router = APIRouter()
@@ -122,6 +123,9 @@ class MonteCarloReq(BaseModel):
     mode: str = "compound"         # compound | additive
     risk_pct: float = 3.0
     ruin_pct: float = 50.0
+    # Etiqueta de la unidad remuestreada: solo sirve para que el bloque de
+    # perdidas sepa si un "paso" es una sesion o un trade.
+    unit: str = "day"           # day | trade
     seed: int | None = None
 
 
@@ -146,6 +150,58 @@ def montecarlo(req: MonteCarloReq):
             mode=req.mode,
             risk_pct=req.risk_pct,
             ruin_pct=req.ruin_pct,
+            unit=req.unit,
+            seed=req.seed,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class FundingReq(BaseModel):
+    """Reglas de una prueba de fondeo, evaluadas sobre el bootstrap por SESIONES.
+
+    `values` va siempre por dia: un challenge se juega con limites diarios, asi
+    que remuestrear trades sueltos no responde a la pregunta.
+    """
+    values: list[float]
+    # Fraccion de la equity de apertura que llego a perder cada sesion en su
+    # peor momento (MAE). Opcional: sin esto solo se evalua el cierre.
+    mae_fracs: list[float] | None = None
+    trades_per_day: list[int] | None = None
+    account: float = 25000.0
+    risk_pct: float = 3.0
+    mode: str = "compound"
+    target_pct: float = 8.0
+    daily_loss_pct: float = 2.0
+    max_dd_pct: float = 6.0
+    dd_basis: str = "percent"      # percent (del pico) | fixed ($ desde el pico)
+    min_trading_days: int = 0
+    min_trades: int = 0
+    horizon_days: int | None = None
+    simulations: int = 5000
+    seed: int | None = None
+
+
+@router.post("/funding")
+def funding(req: FundingReq):
+    """Probabilidad de superar el challenge con estas reglas."""
+    _guard()
+    try:
+        return run_funding(
+            req.values,
+            mae_fracs=req.mae_fracs,
+            trades_per_day=req.trades_per_day,
+            account=req.account,
+            risk_pct=req.risk_pct,
+            mode=req.mode,
+            target_pct=req.target_pct,
+            daily_loss_pct=req.daily_loss_pct,
+            max_dd_pct=req.max_dd_pct,
+            dd_basis=req.dd_basis,
+            min_trading_days=req.min_trading_days,
+            min_trades=req.min_trades,
+            horizon_days=req.horizon_days,
+            simulations=req.simulations,
             seed=req.seed,
         )
     except ValueError as e:

@@ -88,6 +88,65 @@ def _safe_hist(x: np.ndarray, bins: int = 40) -> dict:
     return {"counts": counts.tolist(), "edges": np.round(edges, 2).tolist()}
 
 
+_GRID_Q = 501  # puntos de la rejilla de cuantiles que viaja al navegador
+
+
+def _grid(x: np.ndarray, decimals: int = 2) -> list[float]:
+    """La ECDF comprimida: cuantiles equiespaciados de 0 a 100.
+
+    Con esto el navegador contesta "¿que probabilidad hay de perder X?" por
+    interpolacion, sin volver a pedir nada al servidor cada vez que se mueve un
+    slider. 501 puntos dan una resolucion de 0,2 puntos porcentuales —de sobra
+    para lo que se pregunta aqui— y ocupan 4 KB en vez de los 400 KB que
+    costaria mandar 50.000 simulaciones.
+    """
+    qs = np.linspace(0.0, 100.0, _GRID_Q)
+    return np.percentile(x, qs).round(decimals).tolist()
+
+
+def _max_losing_run(neg: np.ndarray) -> np.ndarray:
+    """Racha maxima de pasos negativos consecutivos, por fila.
+
+    El bucle es sobre COLUMNAS (n pasos), no sobre filas: cada iteracion es una
+    operacion vectorizada sobre las m simulaciones a la vez. Con n del orden de
+    mil y m de unos miles, son mil operaciones numpy, no millones en Python.
+    """
+    m, n = neg.shape
+    acc = np.zeros(m, dtype=np.int32)
+    best = np.zeros(m, dtype=np.int32)
+    for j in range(n):
+        acc = np.where(neg[:, j], acc + 1, 0)
+        best = np.maximum(best, acc)
+    return best
+
+
+def _streak_histogram(runs: np.ndarray) -> list[dict]:
+    """Cuantas simulaciones tuvieron cada longitud de racha perdedora maxima."""
+    if runs.size == 0:
+        return []
+    top = int(runs.max())
+    counts = np.bincount(runs, minlength=top + 1)
+    return [{"length": int(i), "count": int(c)} for i, c in enumerate(counts) if c and i > 0]
+
+
+def _describe(x: np.ndarray) -> dict:
+    """Resumen de una muestra: media, mediana y los percentiles utiles."""
+    if x.size == 0:
+        return {"n": 0, "mean": 0.0, "median": 0.0, "p5": 0.0, "p25": 0.0,
+                "p75": 0.0, "p95": 0.0, "worst": 0.0, "best": 0.0}
+    return {
+        "n": int(x.size),
+        "mean": round(float(x.mean()), 2),
+        "median": round(float(np.median(x)), 2),
+        "p5": round(float(np.percentile(x, 5)), 2),
+        "p25": round(float(np.percentile(x, 25)), 2),
+        "p75": round(float(np.percentile(x, 75)), 2),
+        "p95": round(float(np.percentile(x, 95)), 2),
+        "worst": round(float(x.min()), 2),
+        "best": round(float(x.max()), 2),
+    }
+
+
 def run_bootstrap(
     values: list[float],
     *,
@@ -97,6 +156,7 @@ def run_bootstrap(
     mode: str = "compound",
     risk_pct: float = 3.0,
     ruin_pct: float = 50.0,
+    unit: str = "day",
     seed: int | None = None,
 ) -> dict:
     """Remuestrea el histórico y describe el abanico de resultados.
@@ -117,6 +177,14 @@ def run_bootstrap(
 
     finals = np.empty(sims, dtype=np.float64)
     maxdds = np.empty(sims, dtype=np.float64)
+    # Peor paso de cada simulacion. Un "paso" es la unidad que se remuestrea:
+    # una SESION si el frontend manda valores por dia (lo normal), o un trade si
+    # manda valores por trade. En $ y en % del capital con el que arranco ese
+    # paso — en modo compuesto las dos cosas no son intercambiables, porque el
+    # mismo % duele mas dolares cuanto mayor sea la cuenta.
+    worst_step = np.empty(sims, dtype=np.float64)
+    worst_step_pct = np.empty(sims, dtype=np.float64)
+    lose_runs = np.empty(sims, dtype=np.int32)
     ruined = 0
     ruin_level = init_cash * (1.0 - ruin_pct / 100.0)
 
@@ -133,6 +201,17 @@ def run_bootstrap(
         finals[done:done + m] = curves[:, -1]
         maxdds[done:done + m] = _max_drawdowns(curves)
         ruined += int(np.count_nonzero(curves.min(axis=1) <= ruin_level))
+
+        # PnL de cada paso y su peor caso, sobre TODAS las simulaciones: son
+        # vectores 1D y las colas es justo donde esta la informacion util.
+        steps = np.diff(curves, axis=1)
+        opens = curves[:, :-1]
+        worst_step[done:done + m] = steps.min(axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            steps_pct = np.where(opens > 0, steps / opens, 0.0) * 100.0
+        worst_step_pct[done:done + m] = steps_pct.min(axis=1)
+        lose_runs[done:done + m] = _max_losing_run(steps < 0)
+        del steps, opens, steps_pct
 
         if band_kept < n_band:
             take = min(n_band - band_kept, m)
@@ -158,6 +237,7 @@ def run_bootstrap(
     base_final = float(base_curve[-1])
 
     dd_paths = _representative_dd_paths(band_curves, band_dds, maxdds, base_curve)
+    losses = _loss_block(band_curves, worst_step, worst_step_pct, lose_runs, maxdds, unit)
 
     def p(a: np.ndarray, q: float) -> float:
         return round(float(np.percentile(a, q)), 2)
@@ -207,6 +287,7 @@ def run_bootstrap(
         "hist_final": _safe_hist(finals),
         "hist_drawdown": _safe_hist(maxdds),
         "dd_paths": dd_paths,
+        "losses": losses,
     }
 
 
@@ -255,5 +336,84 @@ def _representative_dd_paths(
             "p50": round(p50, 2),
             "p95": round(p95, 2),
             "p99": round(p99, 2),
+        },
+    }
+
+
+def _loss_block(
+    band_curves: np.ndarray,
+    worst_step: np.ndarray,
+    worst_step_pct: np.ndarray,
+    lose_runs: np.ndarray,
+    maxdds: np.ndarray,
+    unit: str,
+) -> dict:
+    """Perdidas paso a paso y las rejillas para preguntar probabilidades.
+
+    Dos familias de numeros que NO significan lo mismo y que la interfaz debe
+    separar sin ambiguedad:
+
+    * `step_*` describe UN paso cualquiera (una sesion, o un trade). Responde a
+      "¿que suele pasar en un dia?" y a "¿que probabilidad hay de que UN dia
+      cualquiera pierda mas de X?".
+    * `worst_*` describe el PEOR paso de cada simulacion completa. Responde a
+      "¿que probabilidad hay de que EN ALGUN MOMENTO de la corrida haya un dia
+      que pierda mas de X?". Esta segunda cifra siempre es mucho mayor, y es la
+      que importa para un limite de perdida diaria: basta con romperlo una vez.
+
+    Los estadisticos agregados de paso salen de la submuestra de curvas que ya
+    se guardaba para las bandas (hasta 1.500 trayectorias). Es una muestra
+    aleatoria de la misma distribucion y evita tener que retener en memoria
+    todas las simulaciones. Los extremos por simulacion, en cambio, se acumulan
+    sobre TODAS: las colas son justo lo que se esta midiendo.
+    """
+    if band_curves.size == 0:
+        return {}
+
+    steps = np.diff(band_curves, axis=1)
+    opens = band_curves[:, :-1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        steps_pct = np.where(opens > 0, steps / opens, 0.0) * 100.0
+
+    flat = steps.ravel()
+    flat_pct = steps_pct.ravel()
+    wins = flat[flat > 0]
+    losses_only = flat[flat < 0]
+    wins_pct = flat_pct[flat_pct > 0]
+    losses_pct = flat_pct[flat_pct < 0]
+
+    total = int(flat.size)
+    return {
+        "unit": "trade" if unit == "trade" else "day",
+        "sampled_curves": int(band_curves.shape[0]),
+        "sampled_steps": total,
+        # Un paso cualquiera
+        "step_usd": _describe(flat),
+        "step_pct": _describe(flat_pct),
+        "win_usd": _describe(wins),
+        "loss_usd": _describe(losses_only),
+        "win_pct": _describe(wins_pct),
+        "loss_pct": _describe(losses_pct),
+        "win_rate_pct": round(float(wins.size / total * 100.0), 2) if total else 0.0,
+        # El peor paso de cada simulacion
+        "worst_step_usd": _describe(worst_step),
+        "worst_step_pct": _describe(worst_step_pct),
+        # Racha de pasos perdedores seguidos
+        "streak": {
+            "median": int(np.median(lose_runs)),
+            "p95": int(np.percentile(lose_runs, 95)),
+            "p99": int(np.percentile(lose_runs, 99)),
+            "worst": int(lose_runs.max()),
+            "mean": round(float(lose_runs.mean()), 2),
+            "histogram": _streak_histogram(lose_runs),
+        },
+        # Rejillas de cuantiles: con estas el navegador resuelve cualquier
+        # umbral por interpolacion, sin volver a simular al mover un slider.
+        "grids": {
+            "step_usd": _grid(flat),
+            "step_pct": _grid(flat_pct, 3),
+            "worst_step_usd": _grid(worst_step),
+            "worst_step_pct": _grid(worst_step_pct, 3),
+            "max_dd_pct": _grid(maxdds),
         },
     }
