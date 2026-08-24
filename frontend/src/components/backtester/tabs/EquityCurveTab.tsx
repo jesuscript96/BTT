@@ -166,13 +166,44 @@ export default function EquityCurveTab({
     }
   };
 
-  const getDrawdownRValue = (ddPct: number) => {
-    if (riskType === "PERCENT") {
-      return riskR > 0 ? ddPct / riskR : 0;
-    } else {
-      return riskR > 0 ? ((ddPct / 100) * initCash) / riskR : 0;
+  // El drawdown en $ y R se mide contra el PICO MOVIL de la equity, no contra
+  // el capital inicial: un -10% desde un pico de 500.000 son -50.000, no
+  // -10% x capital_inicial. Usar initCash subestimaba la caida en cuanto la
+  // cuenta componia, y hacia que la misma estrategia se dibujase distinta
+  // segun la ventana de fechas (2026-08-24).
+  const ddPeaks = useMemo(() => {
+    const out: number[] = [];
+    let peak = -Infinity;
+    for (const p of globalEquity) {
+      if (p.value > peak) peak = p.value;
+      out.push(peak);
     }
+    return out;
+  }, [globalEquity]);
+
+  const ddCash = (ddPct: number, idx: number) => {
+    const peak = ddPeaks[idx];
+    return (ddPct / 100) * (peak && peak > 0 ? peak : initCash);
   };
+
+  const ddR = (ddPct: number, idx: number) => {
+    if (riskType === "PERCENT") return riskR > 0 ? ddPct / riskR : 0;
+    return riskR > 0 ? ddCash(ddPct, idx) / riskR : 0;
+  };
+
+  /** Pico en el instante del PEOR drawdown, para las cifras de cabecera. */
+  const worstDDIdx = useMemo(() => {
+    let idx = 0;
+    let peor = 0;
+    globalDrawdown.forEach((d, i) => {
+      if (d.value < peor) {
+        peor = d.value;
+        idx = i;
+      }
+    });
+    return idx;
+  }, [globalDrawdown]);
+
   const [activeMainTab, setActiveMainTab] = useState<"equity" | "oos_degradation">("equity");
 
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
@@ -439,12 +470,12 @@ export default function EquityCurveTab({
       });
 
       drawdownSeries.setData(
-        globalDrawdown.map((p) => {
+        globalDrawdown.map((p, i) => {
           let val = p.value; // Drawdown is natively in % from the backend
           if (viewMode === "R") {
-            val = getDrawdownRValue(p.value);
+            val = ddR(p.value, i);
           } else if (viewMode === "$") {
-            val = (p.value / 100) * initCash;
+            val = ddCash(p.value, i);
           }
           return { time: p.time as Time, value: val };
         })
@@ -679,8 +710,8 @@ export default function EquityCurveTab({
 
   const ddDisplay = (() => {
     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
-    if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
-    if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
+    if (viewMode === "$") return `$${ddCash(maxDD, worstDDIdx).toFixed(2)}`;
+    if (viewMode === "R") return `${ddR(maxDD, worstDDIdx).toFixed(2)}R`;
     return `${maxDD.toFixed(2)}%`;
   })();
 
