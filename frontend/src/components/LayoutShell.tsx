@@ -4,6 +4,9 @@ import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
+// Apagado del entorno local. Se pinta solo si el backend lo declara
+// disponible (LOCAL_SHUTDOWN_ENABLED); en produccion devuelve null.
+import ShutdownButton from "@/components/ShutdownButton";
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -36,6 +39,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
       {!isAuthRoute && (
         <>
           <FeedbackWidget open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+          <ShutdownButton />
         </>
       )}
     </div>
