@@ -897,6 +897,8 @@ INDICATOR_NAME_MAP = {
     "Donchian": "Donchian Channels",
     "Bollinger Bands": "Bollinger Bands",
     "Accumulated Volume": "Accumulated Volume",
+    "Accumulated Dollar Volume": "Accumulated Dollar Volume",
+    "Dollar Volume": "Dollar Volume",
     "Yesterday Volume": "Yesterday Volume",
     "RVOL": "RVOL",
 
@@ -1632,6 +1634,17 @@ def _compute_raw(
 
     if name == "Accumulated Volume":
         return volume.cumsum().astype(float)
+
+    if name == "Accumulated Dollar Volume":
+        # Acum. Dollar Volume: suma de (volumen x cierre) de CADA vela desde el
+        # inicio de sesion hasta la actual. Es cumsum(volumen x close) — cada
+        # barra aporta su propio volumen x su propio close.
+        return (volume.astype(float) * close.astype(float)).cumsum()
+
+    if name == "Dollar Volume":
+        # Dollar Volume: el valor en dolares de ESTA vela, volumen x cierre. Sin
+        # acumular.
+        return (volume.astype(float) * close.astype(float))
 
     if name == "RVOL by bar" or name == "RVOL":
         # Relative Volume: current cumulative volume / average cumulative volume at same time

@@ -41,6 +41,8 @@ class IndicatorType(str, Enum):
     VOLUME = "Volume"
     RVOL = "RVOL by bar"
     AVOLUME = "Accumulated Volume"
+    ADVOLUME = "Accumulated Dollar Volume"
+    DVOLUME = "Dollar Volume"
     SMA_VOLUME = "SMA Volume"
 
     # Price Variables

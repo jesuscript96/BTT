@@ -160,6 +160,8 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
 
     // Volume — standalone o valor fijo
     [IndicatorType.ACCUMULATED_VOLUME]: [],
+    [IndicatorType.ACCUM_DOLLAR_VOLUME]: [],
+    [IndicatorType.DOLLAR_VOLUME]: [],
     [IndicatorType.YESTERDAY_VOLUME]: [],
     [IndicatorType.RVOL]: [],
     [IndicatorType.VOLUME]: [IndicatorType.VOLUME],

@@ -899,6 +899,16 @@ class BacktestEngine:
             series = df.groupby(['ticker', df['timestamp'].dt.date])['volume'].cumsum()
             if len(series) == len(df):
                 series.index = df.index
+        elif name == IndicatorType.ADVOLUME:
+            # Acum. Dollar Volume: suma de (volumen x cierre) de cada vela desde
+            # el inicio de sesion (cumsum(volumen x close)).
+            dv = df['volume'] * df['close']
+            series = dv.groupby([df['ticker'], df['timestamp'].dt.date]).cumsum()
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.DVOLUME:
+            # Dollar Volume: valor en dolares de la vela actual (volumen x cierre).
+            series = df['volume'] * df['close']
         elif name == IndicatorType.WILLIAMS_R:
             # %R = -100 * (High_n - Close) / (High_n - Low_n)
             def williams_r(g, p):

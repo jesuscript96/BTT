@@ -16,7 +16,7 @@ _CATEGORY = {
         "RSI", "MACD", "Stochastic", "Momentum", "CCI", "ROC", "DMI+", "DMI-", "Williams %R",
     ],
     "Volatility": ["ATR", "ADX", "Bollinger Bands", "Donchian", "Parabolic SAR"],
-    "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "SMA Volume"],
+    "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume"],
     "Price": [
         "Bar Close", "Bar Open", "High Bar", "Low Bar", "PM High", "PM Low", "PM Open",
         "AM Open", "RTH High", "RTH Low", "RTH Open", "Yesterday High", "Yesterday Low",

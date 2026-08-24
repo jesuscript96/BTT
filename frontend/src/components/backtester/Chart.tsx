@@ -48,6 +48,8 @@ import {
   calculateVolume,
   calculateRVOL,
   calculateAccumulatedVolume,
+  calculateAccumDollarVolume,
+  calculateDollarVolume,
   calculateHeikinAshi,
 } from "@/lib/indicators";
 
@@ -868,6 +870,22 @@ export default function Chart({
                 const d = calculateAccumulatedVolume(deduped);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: "#10b981", lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "ACCUM_DOLLAR_VOLUME": {
+                const d = calculateAccumDollarVolume(deduped);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#0ea5e9", lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "DOLLAR_VOLUME": {
+                const d = calculateDollarVolume(deduped);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(HistogramSeries, { color: "#38bdf8" });
                   s.setData(d);
                 }
                 break;
