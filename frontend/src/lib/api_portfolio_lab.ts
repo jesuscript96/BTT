@@ -411,6 +411,44 @@ export function clearRealPnl(): Promise<{ cleared: boolean }> {
   return apiRequest("/portfolio-lab/monitor/real", { method: "DELETE" });
 }
 
+/* ── Borrado ─────────────────────────────────────────────────────── */
+
+export interface DeletionPreview {
+  id: string;
+  name: string;
+  /** Corridas que son solo suyas. */
+  runs_own: number;
+  /** Corridas de CARTERA que la incluian: tambien se borran. */
+  runs_portfolio: number;
+  buckets: string[];
+}
+
+export interface DeleteStrategyOut {
+  deleted: boolean;
+  id: string;
+  name: string;
+  runs_deleted: number;
+  runs_portfolio_deleted: number;
+  /** Ficheros .result/.equity borrados del disco. */
+  files_deleted: number;
+  buckets_cleared: string[];
+}
+
+/** Que desapareceria al borrarla. Solo lectura. */
+export function previewStrategyDeletion(strategyId: string): Promise<DeletionPreview> {
+  return apiRequest<DeletionPreview>(
+    `/portfolio-lab/strategies/${encodeURIComponent(strategyId)}/deletion-preview`,
+  );
+}
+
+/** IRREVERSIBLE: borra la estrategia, sus corridas propias y sus asignaciones. */
+export function deletePortfolioStrategy(strategyId: string): Promise<DeleteStrategyOut> {
+  return apiRequest<DeleteStrategyOut>(`/portfolio-lab/strategies/${encodeURIComponent(strategyId)}`, {
+    method: "DELETE",
+    timeoutMs: 60_000,
+  });
+}
+
 /* ── Monte Carlo ─────────────────────────────────────────────────── */
 
 export interface PortfolioMcIn {
