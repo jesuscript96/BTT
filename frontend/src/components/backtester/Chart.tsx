@@ -53,6 +53,24 @@ import {
   calculateHeikinAshi,
 } from "@/lib/indicators";
 
+/**
+ * Acciones legibles en las marcas del grafico.
+ *
+ * Antes se pintaba con `toFixed(0)` y una posicion fraccionaria salia como
+ * "+0", que parecia que el añadido NO se habia ejecutado. Ocurre en cuanto el
+ * riesgo por operacion es pequeño frente al precio: 1 $ sobre una accion de
+ * 12 $ son 0,083 acciones — reales y compradas, pero invisibles al redondear.
+ * Se muestran mas decimales cuanto menor es la cantidad.
+ */
+function fmtShares(n: number): string {
+  const a = Math.abs(n);
+  if (!Number.isFinite(n)) return "0";
+  if (a >= 100) return n.toFixed(0);
+  if (a >= 10) return n.toFixed(1);
+  if (a >= 1) return n.toFixed(2);
+  return n.toFixed(3);
+}
+
 // ---------------------------------------------------------------------------
 // Color palettes for multi-instance indicators
 // ---------------------------------------------------------------------------
@@ -437,8 +455,8 @@ export default function Chart({
               color: isAdd ? "#c87941" : "#d9a441",
               shape: isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square",
               text: isAdd
-                ? `+${(ex.size ?? 0).toFixed(0)} @ $${ex.price.toFixed(2)}`
-                : `−${(ex.size ?? 0).toFixed(0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
+                ? `+${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}`
+                : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
             });
           }
