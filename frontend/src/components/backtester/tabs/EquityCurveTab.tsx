@@ -16,6 +16,7 @@ import {
 import type { GlobalEquityPoint, DrawdownPoint, TradeRecord, AggregateMetrics } from "@/lib/api_backtester";
 import OOSDegradationTab from "./OOSDegradationTab";
 import InfoTooltip from "../InfoTooltip";
+import { saneaSerie, excedeRangoGrafico } from "@/lib/chartSafeValue";
 
 function computeR2FromEquity(eqPoints: any[]): number {
   const N = eqPoints.length;
@@ -369,7 +370,7 @@ export default function EquityCurveTab({
       bottomColor: "rgba(59,130,246,0.05)",
       lineWidth: 2,
     });
-    equitySeries.setData(
+    equitySeries.setData(saneaSerie(
       globalEquity.map((p) => {
         let val = p.value;
         if (viewMode === "%") {
@@ -379,7 +380,7 @@ export default function EquityCurveTab({
         }
         return { time: p.time as Time, value: val };
       })
-    );
+    ).datos);
 
     // --- Monthly Expenses Curve ---
     if (showEquityExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
@@ -392,7 +393,7 @@ export default function EquityCurveTab({
       const startTs = globalEquity[0].time as number;
       const sPerMonth = 30.436875 * 24 * 60 * 60; // Average seconds per month
 
-      expensesSeries.setData(
+      expensesSeries.setData(saneaSerie(
         globalEquity.map((p) => {
           const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
           const netValue = p.value - (monthlyExpenses * monthsElapsed);
@@ -405,7 +406,7 @@ export default function EquityCurveTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
     }
 
     if (openPositions.length) {
@@ -469,7 +470,7 @@ export default function EquityCurveTab({
         lineWidth: 2,
       });
 
-      drawdownSeries.setData(
+      drawdownSeries.setData(saneaSerie(
         globalDrawdown.map((p, i) => {
           let val = p.value; // Drawdown is natively in % from the backend
           if (viewMode === "R") {
@@ -479,7 +480,7 @@ export default function EquityCurveTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
 
       // --- Drawdown with Expenses Series ---
       if (showDrawdownExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
@@ -515,7 +516,7 @@ export default function EquityCurveTab({
           return { time: p.time as Time, value: val };
         });
 
-        ddExpensesSeries.setData(netDrawdown);
+        ddExpensesSeries.setData(saneaSerie(netDrawdown).datos);
       }
 
       // Synchronize horizontal scrolling
@@ -581,7 +582,7 @@ export default function EquityCurveTab({
       }
 
       if (ddPeriodData.length > 0) {
-        ddPeriodSeries.setData(ddPeriodData);
+        ddPeriodSeries.setData(saneaSerie(ddPeriodData).datos);
       }
     }
 
@@ -730,8 +731,36 @@ export default function EquityCurveTab({
     return `${maxProfitWithExpenses.toFixed(2)}`;
   })();
 
+  // Si la curva compone tanto que se sale del rango que lightweight-charts
+  // sabe pintar, se recorta (ver lib/chartSafeValue) y se avisa: un grafico
+  // que miente sobre el tamaño de la cuenta es peor que uno que no se pinta.
+  const curvaFueraDeRango = (globalEquity || []).some((p) => excedeRangoGrafico(p.value));
+
   return (
     <div className="flex flex-col h-full">
+      {/* Aviso de curva recortada. Va ARRIBA del todo y no se puede cerrar: si
+          el grafico no representa el tamaño real de la cuenta, el usuario tiene
+          que saberlo antes de leer nada. */}
+      {curvaFueraDeRango && (
+        <div
+          style={{
+            padding: '6px 10px',
+            borderBottom: '0.5px solid var(--color-ec-border)',
+            borderLeft: '2px solid var(--color-ec-warning)',
+            fontSize: 11,
+            fontFamily: 'var(--color-ec-sans)',
+            color: 'var(--color-ec-text-secondary)',
+            lineHeight: 1.5,
+          }}
+        >
+          <strong style={{ color: 'var(--color-ec-warning)' }}>Curva recortada.</strong>{' '}
+          La equity supera el máximo que el gráfico sabe dibujar (90,07 billones), así que
+          la línea se aplana al llegar ahí. Los <strong>números de las métricas son
+          correctos</strong>; lo que no es fiable es la forma del tramo final. Suele indicar
+          una composición irreal: baja el riesgo por operación o mira la curva en <strong>%</strong>.
+        </div>
+      )}
+
       {/* MAIN TAB SWITCHER */}
       <div style={{ borderBottom: '0.5px solid var(--color-ec-border)', height: 32, display: 'flex', alignItems: 'center', padding: '0 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', height: '100%', gap: 0 }}>

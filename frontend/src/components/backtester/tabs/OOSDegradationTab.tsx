@@ -13,6 +13,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { GlobalEquityPoint, TradeRecord } from "@/lib/api_backtester";
+import { saneaSerie, excedeRangoGrafico } from "@/lib/chartSafeValue";
 
 interface OOSDegradationTabProps {
   fullGlobalEquity: GlobalEquityPoint[];
@@ -266,7 +267,7 @@ export default function OOSDegradationTab({
       priceLineVisible: false,
       crosshairMarkerVisible: true,
     });
-    isSeries.setData(
+    isSeries.setData(saneaSerie(
       fullGlobalEquity.slice(0, cutoffIdx).map((p) => {
         let val = p.value;
         if (viewMode === "%") {
@@ -276,7 +277,7 @@ export default function OOSDegradationTab({
         }
         return { time: p.time as Time, value: val };
       })
-    );
+    ).datos);
 
     // OOS area (green)
     const oosSeries = chart.addSeries(AreaSeries, {
@@ -288,7 +289,7 @@ export default function OOSDegradationTab({
       priceLineVisible: false,
       crosshairMarkerVisible: true,
     });
-    oosSeries.setData(
+    oosSeries.setData(saneaSerie(
       fullGlobalEquity.slice(cutoffIdx - 1).map((p) => {
         let val = p.value;
         if (viewMode === "%") {
@@ -298,7 +299,7 @@ export default function OOSDegradationTab({
         }
         return { time: p.time as Time, value: val };
       })
-    );
+    ).datos);
 
     // Expenses curve
     if (showEquityExpenses && monthlyExpenses && monthlyExpenses > 0 && fullGlobalEquity.length > 0) {
@@ -311,7 +312,7 @@ export default function OOSDegradationTab({
         lineWidth: 2,
         lineStyle: LineStyle.Dotted,
       });
-      isExpensesSeries.setData(
+      isExpensesSeries.setData(saneaSerie(
         fullGlobalEquity.slice(0, cutoffIdx).map((p) => {
           const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
           const netValue = p.value - (monthlyExpenses * monthsElapsed);
@@ -323,7 +324,7 @@ export default function OOSDegradationTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
 
       // OOS Expenses (green dotted)
       const oosExpensesSeries = chart.addSeries(LineSeries, {
@@ -331,7 +332,7 @@ export default function OOSDegradationTab({
         lineWidth: 2,
         lineStyle: LineStyle.Dotted,
       });
-      oosExpensesSeries.setData(
+      oosExpensesSeries.setData(saneaSerie(
         fullGlobalEquity.slice(cutoffIdx - 1).map((p) => {
           const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
           const netValue = p.value - (monthlyExpenses * monthsElapsed);
@@ -343,7 +344,7 @@ export default function OOSDegradationTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
     }
 
     // --- Drawdown Chart ---
@@ -393,7 +394,7 @@ export default function OOSDegradationTab({
         lineWidth: 2,
       });
 
-      drawdownSeries.setData(
+      drawdownSeries.setData(saneaSerie(
         fullGlobalDrawdown.map((p, i) => {
           let val = p.value;
           if (viewMode === "R") {
@@ -403,7 +404,7 @@ export default function OOSDegradationTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
 
       // Synced Drawdown Expenses
       if (showDrawdownExpenses && monthlyExpenses && monthlyExpenses > 0 && fullGlobalEquity.length > 0) {
@@ -439,7 +440,7 @@ export default function OOSDegradationTab({
           return { time: p.time as Time, value: val };
         });
 
-        ddExpensesSeries.setData(netDrawdown);
+        ddExpensesSeries.setData(saneaSerie(netDrawdown).datos);
       }
 
       // Synchronize horizontal scrolling
@@ -859,7 +860,12 @@ export default function OOSDegradationTab({
                     }
                   }
 
-                  return (
+                  // Si la curva compone tanto que se sale del rango que lightweight-charts
+  // sabe pintar, se recorta (ver lib/chartSafeValue) y se avisa: un grafico
+  // que miente sobre el tamaño de la cuenta es peor que uno que no se pinta.
+  const curvaFueraDeRango = (fullGlobalEquity || []).some((p) => excedeRangoGrafico(p.value));
+
+  return (
                     <tr key={row.key} style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
                       <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff" }}>
                         {row.label}
