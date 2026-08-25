@@ -580,6 +580,8 @@ const isVolumeIndicator = (name?: string): boolean => {
   return (
     name === IndicatorType.VOLUME ||
     name === IndicatorType.ACCUMULATED_VOLUME ||
+    name === IndicatorType.ACCUM_DOLLAR_VOLUME ||
+    name === IndicatorType.DOLLAR_VOLUME ||
     name === IndicatorType.YESTERDAY_VOLUME
   );
 };

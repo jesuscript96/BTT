@@ -335,6 +335,116 @@ Ficheros: `services/portfolio_sim.py`, `services/portfolio_sim_jit.py`,
 `components/backtester/ResultsTabs.tsx`, `lib/api_backtester.ts`,
 `types/strategy.ts`.
 
+### Drawdown: dos bugs corregidos (AFECTA A METRICAS REPORTADAS)
+
+**1. El Max DD de la tarjeta no correspondia al grafico.** En
+`_aggregate_metrics` era `min(global_max_dd, worst_day_dd)`, mezclando la caida
+de la curva de equity de CIERRE (lo que dibuja `global_drawdown`) con la peor
+excursion INTRADIA de una sola sesion. Los dos son a escala de cuenta —cada
+ticker-dia se simula con el capital completo— pero miden cosas distintas, y el
+min() daba un numero que no corresponde a ningun punto de la curva. Ademas
+contaminaba **Calmar** y **DD/Return**.
+
+Saltaba cuanto mas pequeña era la cuenta frente al riesgo por trade: con
+`risk_type=FIXED` y `risk_r=1200` sobre 10.000$, cada operacion es un 12% de la
+cuenta y un dia con reentradas la hunde intradia mucho mas que la curva de
+cierres. Sintoma real: ventana 2019->2026 con Max DD -38% y un grafico que nunca
+bajaba de ~-20%; la misma estrategia en 2024->2026 si cuadraba.
+
+`max_drawdown_pct` pasa a ser SOLO la curva de la cuenta. El intradia se
+conserva en un campo nuevo `worst_intraday_dd_pct`. **Cambia el Max DD reportado
+y persistido** en corridas con cuenta pequeña — hay que coordinarlo.
+
+**2. El grafico dibujaba mal el drawdown en $ y en R.** En `EquityCurveTab` y
+`OOSDegradationTab` se calculaba `(dd% / 100) * initCash`, pero el % es respecto
+al **pico movil** de la equity, no al capital inicial. Subestimaba la caida en
+cuanto la cuenta componia, y el error crecia con lo que hubiera crecido —
+la misma estrategia se dibujaba distinta segun la ventana. Medido: pintaba
+-5.631$ donde lo correcto eran -7.624$ (1,35x). Corregido en los 8 sitios con un
+helper que usa el pico movil. **El modo `%` no cambia.**
+
+**NO es bug** (queda dicho para no volver a investigarlo): que el mismo dia
+muestre distinto DD% segun la ventana. Con riesgo FIJO en dolares la misma
+perdida en $ es un % distinto segun lo que haya crecido la cuenta. Con PERCENT
+el % es invariante.
+
+### Cortacircuitos de perdida diaria: no se aplicaba en el camino secuencial
+
+El limite estaba SOLO en `simulate_and_accumulate` (caminos SLAB y PARALLEL).
+`run_backtest` tiene un TERCER camino —el bucle secuencial, que llama a
+`simulate()` directo— y es **el que corre por defecto** sin
+`BTT_SLAB_STREAM_ENABLED` ni `BACKTEST_PARALLEL_WORKERS`. Resultado: el ajuste no
+hacia nada y el usuario veia resultados identicos con y sin el.
+
+Mismo patron que la piramidacion (§10.2). **Regla: al tocar el motor, comprobar
+los TRES caminos.**
+
+Arreglado con un buffer por dia en el bucle secuencial, activo solo si el tope
+esta encendido (apagado -> camino byte-identico). Red de seguridad:
+`test_run_backtest_slab_equivalence` (secuencial vs slab) sigue pasando.
+Regresion nueva: `tests/test_daily_limit_sequential.py`.
+
+Matiz por diseño: si todas las posiciones cierran a la vez (holds a EOD) no queda
+nada abierto que cortar y los trades no cambian, aunque el mecanismo si corre y
+la bitacora `daily_limit_log` se rellena.
+
+### Indicadores nuevos: Acum. Dollar Volume y Dollar Volume
+
+- **`Dollar Volume`**: volumen x cierre de la vela actual, sin acumular.
+- **`Accumulated Dollar Volume`** (UI: "Acum. Dollar Volume"): suma acumulada
+  desde el inicio de sesion de (volumen x cierre) de CADA vela. Es exactamente
+  el `cumsum` del anterior.
+
+Replicados en las 13 capas (enum, mapa de nombres, computo, motor legacy,
+catalogo publico, registro del grafico, calculo del grafico, ConditionBuilder,
+Wizard, validacion, colores, alias del asistente). Verificados por la via del
+motor real (`translate_strategy`).
+
+Suite: 103 fallidos / 321 pasados, los mismos 103 preexistentes del baseline.
+Cero regresiones.
+
+### Graficos: dos fallos de representacion (solo frontend)
+
+**1. La curva de equity tumbaba la pagina entera.** `lightweight-charts` lanza
+EXCEPCION —no un aviso— si un punto supera ±90.071.992.547.409,91 (2^53/100).
+Una estrategia que compone lo alcanza legitimamente: 1,0066x por operacion sobre
+3.500 operaciones son 9,7e9 veces el capital, y con 10.000$ la curva llega a 96
+billones. El backtest esta bien; lo que fallaba es que al pintarlo se caia la
+vista entera (probablemente tambien la causa del "al darle a Trades no cargan
+los graficos": un error de render se lleva el arbol por delante).
+
+Nuevo `lib/chartSafeValue.ts` en las 11 series de `EquityCurveTab` y
+`OOSDegradationTab`: recorta al limite, convierte NaN/Infinity a 0 y **avisa en
+pantalla**. No se recorta en silencio a proposito.
+
+**2. Las marcas de piramide redondeaban las acciones a 0.** Se pintaban con
+`toFixed(0)`, asi que 0,083 acciones salian como "+0" y parecia que el añadido
+no se habia ejecutado. **El motor nunca truncaba**: entrada
+(`risk_amount / dist`) y añadido (`add_cash / add_px`) son fraccionarios. Era
+solo la etiqueta. Ahora se muestran decimales segun la magnitud.
+
+NO se añadio la cantidad a la marca de ENTRADA: el `size` del trade es la
+posicion FINAL (entrada + añadidos - parciales) y ponerlo en la flecha de
+entrada seria engañoso. El motor no registra ejecucion de tipo "entry".
+
+**OJO AL INTEGRAR:** el commit `5741202` de Alvaro (MAX DD $ desde el pico) toca
+el mismo fichero `OOSDegradationTab.tsx` con el mismo proposito que el fix del
+drawdown en $/R de Sailor. Revisar la resolucion del merge en esa pestaña.
+
+### Indicadores nuevos: Acum. Dollar Volume y Dollar Volume
+
+- **`Dollar Volume`**: volumen x cierre de la vela actual, sin acumular.
+- **`Accumulated Dollar Volume`** (UI: "Acum. Dollar Volume"): suma acumulada de
+  (volumen x cierre) de CADA vela. Es el `cumsum` del anterior.
+
+Replicados en las 13 capas y verificados por la via del motor real
+(`translate_strategy`). Sirven para filtrar acciones iliquidas tipo "codigo de
+barras".
+
+**Pendiente menor:** ninguno de los dos esta en `_RAW_INDICATOR_DISPATCH`
+(`strategy_engine.py`). Hoy da igual porque N2a esta OFF, pero si se activa
+devolverian NaN en silencio y las condiciones no dispararian nunca.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado

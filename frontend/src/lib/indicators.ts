@@ -1004,6 +1004,23 @@ export function calculateAccumulatedVolume(data: CandleData[]): IndicatorDataPoi
 }
 
 // ---------------------------------------------------------------------------
+// 26b. Acum. Dollar Volume — suma de (volumen x cierre) de CADA vela
+// ---------------------------------------------------------------------------
+export function calculateAccumDollarVolume(data: CandleData[]): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    let cum = 0;
+    return sorted.map(c => { cum += c.volume * c.close; return { time: c.time as Time, value: cum }; });
+}
+
+// ---------------------------------------------------------------------------
+// 26c. Dollar Volume — volumen x cierre de la vela actual, sin acumular
+// ---------------------------------------------------------------------------
+export function calculateDollarVolume(data: CandleData[]): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    return sorted.map(c => ({ time: c.time as Time, value: c.volume * c.close }));
+}
+
+// ---------------------------------------------------------------------------
 // 27. Heikin-Ashi
 // ---------------------------------------------------------------------------
 export function calculateHeikinAshi(data: CandleData[]): HeikinAshiDataPoint[] {

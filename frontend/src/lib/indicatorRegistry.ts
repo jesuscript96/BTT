@@ -303,6 +303,22 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     multi: false,
   },
   {
+    id: "ACCUM_DOLLAR_VOLUME",
+    label: "Acum. Dollar Volume",
+    category: "Volume",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
+  {
+    id: "DOLLAR_VOLUME",
+    label: "Dollar Volume",
+    category: "Volume",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
+  {
     id: "HEIKIN_ASHI",
     label: "Heikin-Ashi",
     category: "Volume",

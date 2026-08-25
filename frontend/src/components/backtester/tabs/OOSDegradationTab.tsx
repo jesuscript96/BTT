@@ -13,6 +13,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { GlobalEquityPoint, TradeRecord } from "@/lib/api_backtester";
+import { saneaSerie, excedeRangoGrafico } from "@/lib/chartSafeValue";
 
 interface OOSDegradationTabProps {
   fullGlobalEquity: GlobalEquityPoint[];
@@ -136,13 +137,44 @@ export default function OOSDegradationTab({
     }
   };
 
-  const getDrawdownRValue = (ddPct: number) => {
-    if (riskType === "PERCENT") {
-      return riskR > 0 ? ddPct / riskR : 0;
-    } else {
-      return riskR > 0 ? ((ddPct / 100) * initCash) / riskR : 0;
+  // El drawdown en $ y R se mide contra el PICO MOVIL de la equity, no contra
+  // el capital inicial: un -10% desde un pico de 500.000 son -50.000, no
+  // -10% x capital_inicial. Usar initCash subestimaba la caida en cuanto la
+  // cuenta componia, y hacia que la misma estrategia se dibujase distinta
+  // segun la ventana de fechas (2026-08-24).
+  const ddPeaks = useMemo(() => {
+    const out: number[] = [];
+    let peak = -Infinity;
+    for (const p of fullGlobalEquity) {
+      if (p.value > peak) peak = p.value;
+      out.push(peak);
     }
+    return out;
+  }, [fullGlobalEquity]);
+
+  const ddCash = (ddPct: number, idx: number) => {
+    const peak = ddPeaks[idx];
+    return (ddPct / 100) * (peak && peak > 0 ? peak : initCash);
   };
+
+  const ddR = (ddPct: number, idx: number) => {
+    if (riskType === "PERCENT") return riskR > 0 ? ddPct / riskR : 0;
+    return riskR > 0 ? ddCash(ddPct, idx) / riskR : 0;
+  };
+
+  /** Pico en el instante del PEOR drawdown, para las cifras de cabecera. */
+  const worstDDIdx = useMemo(() => {
+    let idx = 0;
+    let peor = 0;
+    fullGlobalDrawdown.forEach((d, i) => {
+      if (d.value < peor) {
+        peor = d.value;
+        idx = i;
+      }
+    });
+    return idx;
+  }, [fullGlobalDrawdown]);
+
   const [showEquityExpenses, setShowEquityExpenses] = useState(true);
   const [showDrawdownExpenses, setShowDrawdownExpenses] = useState(false);
 
@@ -235,7 +267,7 @@ export default function OOSDegradationTab({
       priceLineVisible: false,
       crosshairMarkerVisible: true,
     });
-    isSeries.setData(
+    isSeries.setData(saneaSerie(
       fullGlobalEquity.slice(0, cutoffIdx).map((p) => {
         let val = p.value;
         if (viewMode === "%") {
@@ -245,7 +277,7 @@ export default function OOSDegradationTab({
         }
         return { time: p.time as Time, value: val };
       })
-    );
+    ).datos);
 
     // OOS area (green)
     const oosSeries = chart.addSeries(AreaSeries, {
@@ -257,7 +289,7 @@ export default function OOSDegradationTab({
       priceLineVisible: false,
       crosshairMarkerVisible: true,
     });
-    oosSeries.setData(
+    oosSeries.setData(saneaSerie(
       fullGlobalEquity.slice(cutoffIdx - 1).map((p) => {
         let val = p.value;
         if (viewMode === "%") {
@@ -267,7 +299,7 @@ export default function OOSDegradationTab({
         }
         return { time: p.time as Time, value: val };
       })
-    );
+    ).datos);
 
     // Expenses curve
     if (showEquityExpenses && monthlyExpenses && monthlyExpenses > 0 && fullGlobalEquity.length > 0) {
@@ -280,7 +312,7 @@ export default function OOSDegradationTab({
         lineWidth: 2,
         lineStyle: LineStyle.Dotted,
       });
-      isExpensesSeries.setData(
+      isExpensesSeries.setData(saneaSerie(
         fullGlobalEquity.slice(0, cutoffIdx).map((p) => {
           const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
           const netValue = p.value - (monthlyExpenses * monthsElapsed);
@@ -292,7 +324,7 @@ export default function OOSDegradationTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
 
       // OOS Expenses (green dotted)
       const oosExpensesSeries = chart.addSeries(LineSeries, {
@@ -300,7 +332,7 @@ export default function OOSDegradationTab({
         lineWidth: 2,
         lineStyle: LineStyle.Dotted,
       });
-      oosExpensesSeries.setData(
+      oosExpensesSeries.setData(saneaSerie(
         fullGlobalEquity.slice(cutoffIdx - 1).map((p) => {
           const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
           const netValue = p.value - (monthlyExpenses * monthsElapsed);
@@ -312,7 +344,7 @@ export default function OOSDegradationTab({
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
     }
 
     // --- Drawdown Chart ---
@@ -362,17 +394,17 @@ export default function OOSDegradationTab({
         lineWidth: 2,
       });
 
-      drawdownSeries.setData(
-        fullGlobalDrawdown.map((p) => {
+      drawdownSeries.setData(saneaSerie(
+        fullGlobalDrawdown.map((p, i) => {
           let val = p.value;
           if (viewMode === "R") {
-            val = getDrawdownRValue(p.value);
+            val = ddR(p.value, i);
           } else if (viewMode === "$") {
-            val = (p.value / 100) * initCash;
+            val = ddCash(p.value, i);
           }
           return { time: p.time as Time, value: val };
         })
-      );
+      ).datos);
 
       // Synced Drawdown Expenses
       if (showDrawdownExpenses && monthlyExpenses && monthlyExpenses > 0 && fullGlobalEquity.length > 0) {
@@ -408,7 +440,7 @@ export default function OOSDegradationTab({
           return { time: p.time as Time, value: val };
         });
 
-        ddExpensesSeries.setData(netDrawdown);
+        ddExpensesSeries.setData(saneaSerie(netDrawdown).datos);
       }
 
       // Synchronize horizontal scrolling
@@ -553,8 +585,8 @@ export default function OOSDegradationTab({
 
   const ddDisplay = (() => {
     if (viewMode === "%") return `${maxDD.toFixed(2)}%`;
-    if (viewMode === "$") return `$${((maxDD / 100) * initCash).toFixed(2)}`;
-    if (viewMode === "R") return `${getDrawdownRValue(maxDD).toFixed(2)}R`;
+    if (viewMode === "$") return `$${ddCash(maxDD, worstDDIdx).toFixed(2)}`;
+    if (viewMode === "R") return `${ddR(maxDD, worstDDIdx).toFixed(2)}R`;
     return `${maxDD.toFixed(2)}%`;
   })();
 
@@ -828,7 +860,12 @@ export default function OOSDegradationTab({
                     }
                   }
 
-                  return (
+                  // Si la curva compone tanto que se sale del rango que lightweight-charts
+  // sabe pintar, se recorta (ver lib/chartSafeValue) y se avisa: un grafico
+  // que miente sobre el tamaño de la cuenta es peor que uno que no se pinta.
+  const curvaFueraDeRango = (fullGlobalEquity || []).some((p) => excedeRangoGrafico(p.value));
+
+  return (
                     <tr key={row.key} style={{ borderBottom: "0.5px solid rgba(255, 255, 255, 0.05)" }}>
                       <td style={{ textAlign: "left", padding: "4px 0", color: "#ffffff" }}>
                         {row.label}

@@ -58,6 +58,8 @@ export enum IndicatorType {
     DARVAS_BOX = "Darvas Box",
     BOLLINGER_BANDS = "Bollinger Bands",
     ACCUMULATED_VOLUME = "Accumulated Volume",
+    ACCUM_DOLLAR_VOLUME = "Accumulated Dollar Volume",
+    DOLLAR_VOLUME = "Dollar Volume",
     YESTERDAY_VOLUME = "Yesterday Volume",
     RVOL = "RVOL by bar",
     VOLUME = "Volume",

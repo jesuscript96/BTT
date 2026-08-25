@@ -25,6 +25,8 @@ const isVolumeIndicator = (name?: string): boolean => {
     return (
         name === IndicatorType.VOLUME ||
         name === IndicatorType.ACCUMULATED_VOLUME ||
+        name === IndicatorType.ACCUM_DOLLAR_VOLUME ||
+        name === IndicatorType.DOLLAR_VOLUME ||
         name === IndicatorType.YESTERDAY_VOLUME
     );
 };
@@ -110,6 +112,8 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.DONCHIAN, IndicatorType.DARVAS_BOX,
         IndicatorType.BOLLINGER_BANDS,
         IndicatorType.ACCUMULATED_VOLUME,
+        IndicatorType.ACCUM_DOLLAR_VOLUME,
+        IndicatorType.DOLLAR_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
     ],
 };
@@ -176,6 +180,8 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.DARVAS_BOX]: "Darvas Box",
     [IndicatorType.BOLLINGER_BANDS]: "Bollinger Bands",
     [IndicatorType.ACCUMULATED_VOLUME]: "Accum. Volume",
+    [IndicatorType.ACCUM_DOLLAR_VOLUME]: "Acum. Dollar Volume",
+    [IndicatorType.DOLLAR_VOLUME]: "Dollar Volume",
     [IndicatorType.YESTERDAY_VOLUME]: "Yesterday Volume",
     [IndicatorType.RVOL]: "RVOL by bar",
     [IndicatorType.VOLUME]: "Volume",
@@ -240,6 +246,8 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.DARVAS_BOX]: "Caja de Darvas: resistencia (Upper) y soporte (Lower) horizontales. El techo se valida cuando N velas seguidas no lo superan; el suelo, cuando N velas seguidas no lo perforan. Las mechas construyen la caja; solo un CIERRE fuera la rompe.",
     [IndicatorType.BOLLINGER_BANDS]: "Bandas de Bollinger.",
     [IndicatorType.ACCUMULATED_VOLUME]: "Volumen total acumulado desde el inicio de la sesión en Premarket hasta la vela actual",
+    [IndicatorType.ACCUM_DOLLAR_VOLUME]: "Suma acumulada, desde el inicio de la sesión hasta la vela actual, del volumen de cada vela multiplicado por su cierre (Σ de volumen × Close de cada vela).",
+    [IndicatorType.DOLLAR_VOLUME]: "Valor en dólares de la vela actual: su volumen multiplicado por su cierre (volumen × Close), sin acumular.",
     [IndicatorType.YESTERDAY_VOLUME]: "Volumen total registrado el día de ayer.",
     [IndicatorType.RVOL]: "Volumen relativo de la barra respecto a su hora histórica.",
     [IndicatorType.VOLUME]: "Volumen individual de la barra actual.",
@@ -262,6 +270,8 @@ const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
     IndicatorType.EMA,
     IndicatorType.VWAP,
     IndicatorType.ACCUMULATED_VOLUME,
+    IndicatorType.ACCUM_DOLLAR_VOLUME,
+    IndicatorType.DOLLAR_VOLUME,
     IndicatorType.BOLLINGER_BANDS,
     IndicatorType.DONCHIAN,
     IndicatorType.DARVAS_BOX,
