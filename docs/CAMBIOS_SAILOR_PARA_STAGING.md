@@ -403,6 +403,48 @@ motor real (`translate_strategy`).
 Suite: 103 fallidos / 321 pasados, los mismos 103 preexistentes del baseline.
 Cero regresiones.
 
+### Graficos: dos fallos de representacion (solo frontend)
+
+**1. La curva de equity tumbaba la pagina entera.** `lightweight-charts` lanza
+EXCEPCION —no un aviso— si un punto supera ±90.071.992.547.409,91 (2^53/100).
+Una estrategia que compone lo alcanza legitimamente: 1,0066x por operacion sobre
+3.500 operaciones son 9,7e9 veces el capital, y con 10.000$ la curva llega a 96
+billones. El backtest esta bien; lo que fallaba es que al pintarlo se caia la
+vista entera (probablemente tambien la causa del "al darle a Trades no cargan
+los graficos": un error de render se lleva el arbol por delante).
+
+Nuevo `lib/chartSafeValue.ts` en las 11 series de `EquityCurveTab` y
+`OOSDegradationTab`: recorta al limite, convierte NaN/Infinity a 0 y **avisa en
+pantalla**. No se recorta en silencio a proposito.
+
+**2. Las marcas de piramide redondeaban las acciones a 0.** Se pintaban con
+`toFixed(0)`, asi que 0,083 acciones salian como "+0" y parecia que el añadido
+no se habia ejecutado. **El motor nunca truncaba**: entrada
+(`risk_amount / dist`) y añadido (`add_cash / add_px`) son fraccionarios. Era
+solo la etiqueta. Ahora se muestran decimales segun la magnitud.
+
+NO se añadio la cantidad a la marca de ENTRADA: el `size` del trade es la
+posicion FINAL (entrada + añadidos - parciales) y ponerlo en la flecha de
+entrada seria engañoso. El motor no registra ejecucion de tipo "entry".
+
+**OJO AL INTEGRAR:** el commit `5741202` de Alvaro (MAX DD $ desde el pico) toca
+el mismo fichero `OOSDegradationTab.tsx` con el mismo proposito que el fix del
+drawdown en $/R de Sailor. Revisar la resolucion del merge en esa pestaña.
+
+### Indicadores nuevos: Acum. Dollar Volume y Dollar Volume
+
+- **`Dollar Volume`**: volumen x cierre de la vela actual, sin acumular.
+- **`Accumulated Dollar Volume`** (UI: "Acum. Dollar Volume"): suma acumulada de
+  (volumen x cierre) de CADA vela. Es el `cumsum` del anterior.
+
+Replicados en las 13 capas y verificados por la via del motor real
+(`translate_strategy`). Sirven para filtrar acciones iliquidas tipo "codigo de
+barras".
+
+**Pendiente menor:** ninguno de los dos esta en `_RAW_INDICATOR_DISPATCH`
+(`strategy_engine.py`). Hoy da igual porque N2a esta OFF, pero si se activa
+devolverian NaN en silencio y las condiciones no dispararian nunca.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
