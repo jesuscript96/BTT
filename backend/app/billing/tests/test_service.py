@@ -113,6 +113,24 @@ def test_trial_override_is_one_shot_then_falls_back(svc, gw, store):
     assert gw.checkout_calls[-1]["trial_days"] == 7            # back to default
 
 
+# ── trial_offer_days in the summary (drives the PRE-checkout copy) ────────────
+def test_summary_trial_offer_days_default(svc):
+    assert svc.get_billing_summary("newbie")["trial_offer_days"] == 7
+
+
+def test_summary_trial_offer_days_preferential_and_read_only(svc, store):
+    store.set_trial_override("u1", 14)
+    s = svc.get_billing_summary("u1")
+    assert s["trial_offer_days"] == 14                         # 14-day user never reads 7
+    # the summary is READ-ONLY: it must NOT consume the one-shot override
+    assert store.get_trial_override("u1").consumed_at is None
+
+
+def test_summary_trial_offer_days_returning_email_is_zero(svc, store):
+    store.record_trial(normalize_email("a@b.com"), "email")    # already trialed
+    assert svc.get_billing_summary("u1", email="a@b.com")["trial_offer_days"] == 0
+
+
 def test_trial_override_beats_used_trial(svc, gw, store):
     # Even a returning email (would normally get NO trial) gets the admin grant.
     store.record_trial(normalize_email("a@b.com"), "email")

@@ -409,7 +409,6 @@ export default function BacktestPanel({
   */
 
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const isInitialMountRef = useRef(true);
   const [selectedDataset, setSelectedDataset] = useState("");
   const [selectedStrategy, setSelectedStrategy] = useState("");
   const lastActiveStrategyRef = useRef<any>(null);
@@ -562,11 +561,6 @@ export default function BacktestPanel({
 
     setLoadError(failed);
     setLoadingData(false);
-    
-    // Allow selectedDataset change effect to run after mount
-    setTimeout(() => {
-      isInitialMountRef.current = false;
-    }, 100);
   };
 
   useEffect(() => {
@@ -594,8 +588,30 @@ export default function BacktestPanel({
     return () => window.removeEventListener("fill-backtest-form", onFill);
   }, []);
 
+  // Al CAMBIAR de dataset, las fechas vuelven al rango completo del nuevo. Pero solo
+  // ante un cambio REAL: antes este efecto dependia de `datasets` y no comparaba con el
+  // dataset anterior, asi que cualquier re-sincronizacion que volviese a fijar el MISMO
+  // dataset —el efecto que copia `dataset_id` de la estrategia activa, que se dispara al
+  // tocar un parametro; un refetch que renueva la identidad del array; o el rebote a ""
+  // y vuelta— pisaba las fechas que habia elegido el usuario y el backtest se lanzaba con
+  // el rango entero. De ahi el "se deselecciona la fecha y usa la que le da la gana".
+  //
+  // `prevDatasetRef` en null = todavia no sabemos cual es el dataset (montaje): se adopta
+  // el primero que llegue SIN tocar las fechas, porque loadData ya las ha dejado puestas
+  // (las del sessionStorage si el usuario las habia elegido, o el rango completo si no).
+  // Eso sustituye al viejo guard por setTimeout de 100 ms, que era una carrera: si algo
+  // fijaba el dataset pasada esa ventana, borraba las fechas recien restauradas.
+  const prevDatasetRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (isInitialMountRef.current) return;
+    if (!selectedDataset) return;              // sin dataset todavia: nada que resetear
+    if (prevDatasetRef.current === null) {     // primera resolucion: adoptar, no pisar
+      prevDatasetRef.current = selectedDataset;
+      return;
+    }
+    if (prevDatasetRef.current === selectedDataset) return;  // re-sync del mismo: no tocar
+    prevDatasetRef.current = selectedDataset;
+
     const ds = datasets.find(d => d.id === selectedDataset);
     if (ds) {
       if (ds.min_date) setStartDate(ds.min_date);
