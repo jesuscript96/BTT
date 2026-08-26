@@ -7,7 +7,6 @@ import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import TradesTab from "@/components/backtester/tabs/TradesTab";
 import ChartsTab from "@/components/backtester/tabs/ChartsTab";
 import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
-import LockedFeature from "@/components/LockedFeature";
 import Chart from "@/components/backtester/Chart";
 
 const TABS = [
@@ -405,15 +404,20 @@ export default function ResultsTabs({
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>
             {mountedTabs.has("charts_optimization") && mountedChartsSub.has("optimization") && (
-            <LockedFeature feature="backtester.surface_3d" requiredTier="Pro">
-              <OptimizationSurfaceTab
-                strategyId={strategyId}
-                strategyDefinition={strategyDefinition}
-                datasetId={datasetId}
-                isDarkMode={isDarkMode}
-                backtestParams={backtestParams}
-              />
-            </LockedFeature>
+            /* Sin gate: el acceso es todo-o-nada. El unico tier con
+               backtester.surface_3d en false es "Locked", que ya no entra en la app
+               (BillingGuard tapa la pantalla entera y el backend responde 403 en
+               backtester.run). Envolverlo aqui solo conseguia que a un usuario CON
+               acceso le saliera "requiere una suscripcion activa" si el mapa de
+               entitlements del navegador se habia resuelto antes de que /billing/me
+               materializase su grant. */
+            <OptimizationSurfaceTab
+              strategyId={strategyId}
+              strategyDefinition={strategyDefinition}
+              datasetId={datasetId}
+              isDarkMode={isDarkMode}
+              backtestParams={backtestParams}
+            />
             )}
           </div>
         </div>
