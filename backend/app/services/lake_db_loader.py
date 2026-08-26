@@ -207,12 +207,46 @@ def _alinear_pmh_gap_pct(con, ini: str, fin: str) -> None:
     informe. La formula se copia literal de init_db.py: si cambia alli, cambia
     aqui. Va DENTRO de la transaccion de la carga: si falla, el mes entero se
     deshace, porque media carga con el gap sin alinear es peor que ninguna.
+
+    AJUSTE POR SPLIT (PRD_FIX_gaps_falsos_splits): la formula ahora replica la
+    del ETL del lago (etl_to_edgecute.py): en el dia de execution_date el
+    cierre anterior se ajusta por product(split_from/split_to) leido del
+    Parquet de splits del lago (que lleva esas columnas). Sin esto, cada
+    reverse-split reinsertaria su gap falso del +15.000% en la tabla al cargar
+    el mes. La IPO (prev_close NULL) no se toca, igual que la formula original.
     """
+    # Factor de split del lago: <LOCAL_LAKE_DIR>/splits/data.parquet (donde lo
+    # escribe el ETL); cold_storage/splits es un junction al mismo fichero.
+    raiz = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/").rstrip("\\")
+    candidatos = [os.path.join(raiz, "splits", "data.parquet"),
+                  os.path.join(raiz, "cold_storage", "splits", "data.parquet")]
+    splits_parquet = next((p for p in candidatos if p and os.path.exists(p)), None)
+    if not splits_parquet:
+        raise RuntimeError(
+            "no hay splits/data.parquet en el lago local: no se puede alinear "
+            "pmh_gap_pct con el factor de split (LOCAL_LAKE_DIR mal configurado)")
+    sp = _g(splits_parquet)
+    rango = (f"timestamp >= TIMESTAMP '{ini}' AND timestamp < TIMESTAMP '{fin}' "
+             f"AND prev_close IS NOT NULL AND prev_close > 0")
+    # Dias SIN split (la inmensa mayoria): misma formula de siempre.
     con.execute(
-        "UPDATE daily_metrics "
-        "SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
-        f"WHERE timestamp >= TIMESTAMP '{ini}' AND timestamp < TIMESTAMP '{fin}' "
-        "AND prev_close IS NOT NULL AND prev_close > 0"
+        f"UPDATE daily_metrics "
+        f"SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
+        f"WHERE {rango} "
+        f"AND (ticker, CAST(timestamp AS DATE)) NOT IN "
+        f"(SELECT ticker, CAST(execution_date AS DATE) FROM read_parquet('{sp}'))"
+    )
+    # Dias CON split: prev_close ajustado por el factor del lago (espejo del
+    # split_fac del ETL; product() por si hay varios splits el mismo dia).
+    con.execute(
+        f"UPDATE daily_metrics AS d SET pmh_gap_pct = "
+        f"(d.pm_high - d.prev_close * sf.f) / NULLIF(d.prev_close * sf.f, 0) * 100 "
+        f"FROM (SELECT ticker, CAST(execution_date AS DATE) AS ed, "
+        f"      product(CAST(split_from AS DOUBLE) / CAST(split_to AS DOUBLE)) AS f "
+        f"      FROM read_parquet('{sp}') GROUP BY 1, 2) sf "
+        f"WHERE d.ticker = sf.ticker AND CAST(d.timestamp AS DATE) = sf.ed "
+        f"AND d.timestamp >= TIMESTAMP '{ini}' AND d.timestamp < TIMESTAMP '{fin}' "
+        f"AND d.prev_close IS NOT NULL AND d.prev_close > 0"
     )
 
 

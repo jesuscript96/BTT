@@ -1,3 +1,5 @@
+import os
+
 from app.database import get_db_connection, get_user_db_connection
 
 def init_db():
@@ -335,9 +337,40 @@ def init_db():
     # The seed_mock_data.py module is kept for local manual use via `python -m app.seed_mock_data`.
 
     # Migration: Recalculate pmh_gap_pct to use the correct Premarket High vs Prev Close formula
+    # AJUSTE POR SPLIT (PRD_FIX_gaps_falsos_splits): replica la formula del ETL del
+    # lago — en dia de execution_date el prev_close se ajusta por
+    # product(split_from/split_to) del cold_storage/splits del lago local. La
+    # version cruda de antes reinsertaba el gap falso (-90% / +15.000%) de cada
+    # split en TODA la tabla en cada arranque. Paridad con
+    # lake_db_loader._alinear_pmh_gap_pct: si cambia una, cambiar la otra.
     try:
-        cur.execute("UPDATE daily_metrics SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) WHERE prev_close IS NOT NULL AND prev_close > 0")
-        print("[INFO] Successfully migrated local daily_metrics pmh_gap_pct calculation")
+        _lake = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/").rstrip("\\")
+        _cand = [os.path.join(_lake, "splits", "data.parquet"),
+                 os.path.join(_lake, "cold_storage", "splits", "data.parquet")] if _lake else []
+        _sp = next((p for p in _cand if os.path.exists(p)), None)
+        if _sp and os.path.exists(_sp):
+            _sp = _sp.replace("\\", "/")
+            cur.execute(
+                "UPDATE daily_metrics "
+                "SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
+                "WHERE prev_close IS NOT NULL AND prev_close > 0 "
+                "AND (ticker, CAST(timestamp AS DATE)) NOT IN "
+                f"(SELECT ticker, CAST(execution_date AS DATE) FROM read_parquet('{_sp}'))"
+            )
+            cur.execute(
+                "UPDATE daily_metrics AS d SET pmh_gap_pct = "
+                "(d.pm_high - d.prev_close * sf.f) / NULLIF(d.prev_close * sf.f, 0) * 100 "
+                "FROM (SELECT ticker, CAST(execution_date AS DATE) AS ed, "
+                "      product(CAST(split_from AS DOUBLE) / CAST(split_to AS DOUBLE)) AS f "
+                f"      FROM read_parquet('{_sp}') GROUP BY 1, 2) sf "
+                "WHERE d.ticker = sf.ticker AND CAST(d.timestamp AS DATE) = sf.ed "
+                "AND d.prev_close IS NOT NULL AND d.prev_close > 0"
+            )
+            print("[INFO] Successfully migrated local daily_metrics pmh_gap_pct calculation (split-adjusted)")
+        else:
+            # Sin lago local no hay factores de split: los valores ya cargados
+            # por el ETL/loader son correctos y NO se recalculan en crudo.
+            print("[INFO] No local lake splits found: pmh_gap_pct left as loaded (split-adjusted by ETL)")
     except Exception as e:
         print(f"[WARN] Could not update local daily_metrics pmh_gap_pct: {e}")
 
