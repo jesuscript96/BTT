@@ -1,13 +1,21 @@
-# Cambios de la rama de Sailor — nota para staging
+# Memoria madre
 
-> **Qué es esto.** Un resumen de lo que se ha tocado en
-> `sailor-rama-desarrollo`, escrito para que el otro desarrollador decida qué
-> quiere adoptar y qué no. **No es una petición de merge.** Buena parte de esto
-> es específico del entorno local de Sailor (lago de datos propio en `D:`,
-> 16 GB de RAM) y no tiene por qué tener sentido en producción.
+> **Qué es esto (renombrado el 2026-08-26).** Este documento pasa a ser el
+> registro cronológico PRINCIPAL del repo BTT: aquí se reportan las auditorías
+> y cambios que se vayan haciendo, para Sailor y para el socio por igual.
+> Sustituye al antiguo `docs/MEMORIA.md` de `staging` — esa rama se vació y se
+> igualó a `sailor-rama-desarrollo` el 2026-08-26, así que este es ahora el
+> único que existe.
 >
-> El detalle completo, con números medidos y los callejones sin salida, está en
-> `Base de datos Backtester/docs/MEMORIA.md` (fuera de este repo).
+> Se sigue escribiendo hacia abajo, sin editar lo anterior — igual que su
+> hermano `Base de datos Backtester/docs/MEMORIA.md` (fuera de este repo, para
+> el proyecto del lago de datos). El detalle numérico de cada sesión del
+> backtester vive aquí; el del lago, allí.
+>
+> **Nota histórica:** hasta el 2026-08-26 este fichero se llamaba
+> `CAMBIOS_SAILOR_PARA_STAGING.md` y era "una nota para que el otro
+> desarrollador decida qué adoptar, no una petición de merge". Las entradas de
+> antes de esa fecha se escribieron con ese espíritu — léanse con ese matiz.
 
 ---
 
@@ -441,9 +449,144 @@ Replicados en las 13 capas y verificados por la via del motor real
 (`translate_strategy`). Sirven para filtrar acciones iliquidas tipo "codigo de
 barras".
 
-**Pendiente menor:** ninguno de los dos esta en `_RAW_INDICATOR_DISPATCH`
-(`strategy_engine.py`). Hoy da igual porque N2a esta OFF, pero si se activa
-devolverian NaN en silencio y las condiciones no dispararian nunca.
+**Correccion (2026-08-26): esto NO es un pendiente y el aviso de abajo era
+falso.** Se dijo que, al no estar en `_RAW_INDICATOR_DISPATCH`, con N2a activo
+devolverian NaN en silencio. No es asi: `_extract_indicator_plan` gatea POR
+ESTRATEGIA (`_cfg_native_ok` marca `has_special=True`) cualquier indicador que no
+este en el dispatch, y esa estrategia entera se va al camino clasico — correcta,
+solo que sin el acelerón. Es la red que se puso en `fix/n2a-parity` el
+2026-07-06 justo para matar la clase de bug "0 trades en silencio".
+Comprobado en runtime el 26-ago: `Dollar Volume`, `Acum. Dollar Volume`,
+`Squeeze` y `Darvas Box` dan `has_special=True`; `SMA` da `False` y va nativo.
+Meterlos en el dispatch seria solo una optimizacion, nunca una correccion.
+
+## 2026-08-26
+
+### 1. Indicador nuevo: `Squeeze` (spike de precio en una ventana de reloj)
+
+Mide cuanto se ha movido el precio respecto al de hace X **minutos de reloj**.
+Se usa como cifra, no como nivel: solo se puede enfrentar a un numero
+(`indicatorValidation.ts` con lista de destinos vacia, igual que los de volumen).
+
+Dos parametros, ambos en la propia condicion:
+- `range_minutes` — la ventana, en MINUTOS (se reutiliza el campo que ya existia
+  para "Range of Time").
+- `squeeze_direction` — `"up"` o `"down"` (campo NUEVO de `IndicatorConfig`).
+
+**Semantica, fijada por el usuario:** mide **punta a punta**, cierre actual
+contra el cierre de hace X minutos, y el valor sale **siempre positivo en la
+direccion elegida** (con "down" se devuelve la caida en positivo) para que la
+condicion se lea igual arriba que abajo: `Squeeze > 10` es "se ha disparado mas
+de un 10%". Consecuencia asumida: un zigzag dentro de la ventana cuenta el neto
+(100 -> 110 -> 104,5 -> 114,95 son +15%), pero una caida seguida de una subida
+dentro de la MISMA ventana se compensan (100 -> 90 -> 105 son +5%, no +16,7%).
+
+**Lo que no es obvio y es el nucleo de la implementacion:** la ventana se
+resuelve **por reloj con un asof hacia atras sobre los timestamps**, no contando
+barras. Las velas del lago son **dispersas** — solo existe el minuto que tuvo
+operaciones — asi que "5 velas atras" seria una ventana distinta en cada ticker
+y en cada tramo del dia (en premarket hay huecos de decenas de minutos). La
+referencia es el ultimo cierre CONOCIDO en `t - X min`: si el simbolo no cotizo
+en ese hueco el precio no cambio, y el spike aparece entero en la primera vela
+nueva, que es justo lo que se ve en el grafico. Vale `NaN` mientras la ventana
+empieza antes de la primera vela del dia (comparar contra NaN da False: sin
+referencia, no hay senal — mismo convenio que Darvas).
+
+Replicado en las 14 capas de un indicador nuevo, incluido el dibujo en "Analisis
+por trade" (panel propio, valor CON signo y linea en 0).
+
+**Paridad backend contra grafico verificada**, que es la trampa que costo una
+vuelta con Darvas: se compilo `indicators.ts` con `tsc` y se ejecuto en node
+contra la salida de Python sobre las MISMAS velas — 433 velas con premarket
+disperso (huecos de hasta 37 min), un spike vertical y una meseta plana para
+forzar empates, ventanas de 1, 2, 5, 15 y 60 min: **0 diferencias, desvio
+0,000e+00**. Si se toca una de las dos implementaciones hay que tocar la otra y
+repetir esto; esta anotado en el comentario de ambas.
+
+Va por el camino clasico (no esta en `_RAW_INDICATOR_DISPATCH`), que es correcto
+por construccion — ver la correccion del apartado de Dollar Volume.
+
+### 2. Tope de locates: `max_locates` (limita el TAMANO, no el coste)
+
+**Esto toca el motor y hay que acordarlo.**
+
+Campo nuevo de ejecucion, `max_locates` (0 = sin tope, comportamiento identico al
+de siempre). Es el maximo de paquetes de 100 acciones que se esta dispuesto a
+alquilar por ticker-dia; en **CORTO** recorta el tamano a `max_locates * 100`
+acciones. **Recorta la posicion, no anula el trade.** En largo no hace nada.
+
+El porque: la factura del dia es `ceil(max_corto_del_dia / 100) * coste`, asi que
+con precios bajos el numero de locates se dispara. Con 1.000 $ de exposicion a
+5 $ hacen falta 2 locates; a 0,50 $ hacen falta 20. Topar cada entrada topa la
+factura del dia entero, porque el cobro se calcula sobre el maximo del dia.
+
+Medido, con tope 5 y locate a 1 $/paquete:
+
+| Precio | Sin tope | Con tope 5 |
+|---|---|---|
+| 5,00 $ | 200 acc. · 2 paquetes · 2 $ | igual (no llega al tope) |
+| 0,50 $ | 2.000 acc. · 20 paquetes · **20 $** | 500 acc. (250 $) · 5 paquetes · **5 $** |
+
+**Detalles que no son obvios:**
+- El cupo cuenta **entrada MAS anadidos de piramide**, porque un anadido en corto
+  sube el maximo del dia y con el la factura. Si un anadido no cabe entero se
+  recorta, y queda anotado en la bitacora de ejecuciones como
+  `recortado_por_locates` (igual que el tope de caja).
+- Aplicado en los DOS simuladores que deben ir en paridad bit a bit
+  (`portfolio_sim.py` y el kernel `portfolio_sim_jit.py`, con su envoltorio
+  `sim_dispatch.py`) y enhebrado por los TRES caminos de `run_backtest` (slab,
+  paralelo y secuencial). **Paridad Python contra JIT verificada: 20/20
+  combinaciones de precio x tope identicas, tolerancia 0.**
+- En el Laboratorio de Portfolio solo lo recibe el monitor en tiempo real, que
+  es lo unico que vuelve a simular. `combine` y `scaling` trabajan sobre los
+  trades YA guardados, cuyo tamano viene topado de su corrida original;
+  recortarlos ahi a posteriori falsearia el PnL, porque el tope cambia el
+  TAMANO, no el coste.
+- La rejilla locates x slippage de Robustez barre el COSTE del locate; el cupo de
+  acciones se mantiene fijo en todos los puntos.
+
+**De paso, comprobado y confirmado** (habia duda): el locate se cobra **UNA sola
+vez por ticker-dia**, no una al abrir y otra al cerrar, y un solo locate cubre
+todos los shorts de ese ticker ese dia (se calcula sobre el maximo en corto del
+dia, no por trade).
+
+### 3. Optimizacion: el take profit por TIEMPO y por HORA ya se pueden barrer
+
+En la superficie 2D/3D solo se podia optimizar el take profit por **distancia
+(%)**. Los otros dos tipos que la interfaz deja configurar no llegaban:
+
+- **Por hora** (`take_profit.type = "Hour"`, valor `"15:30"`): `float("15:30")`
+  reventaba y `extract_parameters` lo **descartaba en silencio**. Ni aparecia en
+  la lista.
+- **Por tiempo** (`type = "Time"`, valor en minutos): si aparecia, pero con
+  rangos y paso de PORCENTAJE (paso 0,5 = medios minutos), o sea inservible.
+- Lo mismo en los parciales, cuyo disparo puede ser `"TIME:30"`, `"HOUR:15:30"`
+  o `"EOD"`: solo se barria el numerico.
+
+Ahora los tres se extraen con sus unidades. Como el optimizador solo sabe mover
+numeros, **por tiempo se barren minutos enteros** y **por hora, minutos desde
+medianoche** (09:30 = 570), y al escribir cada punto de la rejilla se devuelve la
+forma ORIGINAL del valor (`_encode_tp_value`: `"15:45"`, `"HOUR:16:00"`,
+`"TIME:60"`). La decision se toma releyendo la forma que tiene HOY el valor en la
+definicion, asi que **un valor originalmente numerico pasa de largo** y ningun
+parametro de los que ya funcionaban cambia de comportamiento.
+
+Los parametros llevan ahora un campo `unit` (`"minutes"`, `"time_of_day"` o
+`null`) para que la interfaz sepa pintarlos: con `time_of_day` el rango se elige
+con dos selectores de HORA y los ejes del grafico (2D y 3D) muestran HH:MM en vez
+de "570", con el globo del raton en hora via `customdata`. `"EOD"` no es
+optimizable: no hay numero que mover, solo se ofrece su Capital %.
+
+Verificado de punta a punta sobre la estrategia real del usuario (que cierra por
+`Hora: 09:00`): ahora sale "Take Profit (Hora de cierre)", valor 540, barrido
+07:00-11:00 a saltos de 5 min, y cada punto de la rejilla llega al motor como
+`tp_time_limit='HOUR:HH:MM'` correcto.
+
+### Regresion
+
+Suite completa antes y despues de los tres cambios: **103 fallos / 321 pasan /
+13 errores en ambos casos, 0 rotos**. Los fallos son preexistentes de este
+entorno (sin acceso a GCS: 403). `tsc --noEmit` del frontend, 0 errores.
 
 ## Cambios de sesiones anteriores pendientes de coordinar
 
