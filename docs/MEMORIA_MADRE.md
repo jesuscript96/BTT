@@ -632,8 +632,9 @@ El bygap se regenera como paso final del diario (`regenerar_bygap.py`, 34 s).
 mostraba "1460 días" (≈5,8 candidatos/día). Ahora cuenta **fechas de calendario
 únicas** (`backtest_service.py`, `_aggregate_metrics`). Efecto lateral
 intencionado: `Avg Ret/Day` y `Avg R/Day` pasan a ser por SESIÓN (denominador
-correcto). Verificado en "Estrategia RTH prueba XX" (2025): Days 1460 → 250.
-La pestaña "Dias" de la lista sigue listando ticker-días (es su naturaleza).
+correcto). Verificado sobre una estrategia con ventana de un año: Days
+1460 → 250. La pestaña "Dias" de la lista sigue listando ticker-días (es su
+naturaleza).
 
 ### 4. PENDIENTES para coordinar (reportados, NO tocados)
 
@@ -648,10 +649,6 @@ La pestaña "Dias" de la lista sigue listando ticker-días (es su naturaleza).
 - **`alvaro-prereset-8b7959f` además contiene** la `MEMORIA.md` antigua (981
   líneas), la carpeta `ALVARO_CAMBIOS/`, el Darvas Box y 2 merges de staging
   que la rama actual no tiene. Recuperación pendiente de acordar.
-- **Curva dentada de "RTH prueba XX"**: NO es bug. Sharpe 2,4 con 1R fijo = 1%
-  de la cuenta por trade y drift +0,008R/trade → dentado matemático. Comparada
-  con Definitiva 2.3 (Sharpe 8,6, +149%, WR 69,6% vs +12,2% y 57,5%): misma
-  renderización, distinta relación señal/ruido.
 
 ### 5. PRD para Sailor con todo el paquete de hoy
 
