@@ -114,6 +114,15 @@ export default function ResultsTabs({
   const dll = result.daily_limit_log || [];
   const dllRebasados = dll.filter((d) => d.overshoot > 0);
 
+  // Completitud de datos: el motor descarta EN SILENCIO los ticker-dias
+  // candidatos que no tienen intradia (un mes sin cargar, la cache atrasada).
+  // El backend siempre lo mide, pero hasta ahora solo se veia en el log del
+  // servidor: un resultado parcial parecia uno normal. Se avisa aqui, sin
+  // bloquear nada — el resultado sigue siendo util, solo hay que saber que
+  // esta calculado sobre menos dias de los pedidos.
+  const dc = result.data_completeness;
+  const dcIncompleto = !!dc && dc.missing_ticker_days > 0;
+
   return (
     <div className="transition-colors">
       <div style={{
@@ -179,6 +188,42 @@ export default function ResultsTabs({
           dato que cambia la lectura de todo lo demas y el usuario no deberia
           tener que ir a buscarlo a una pestaña concreta. Solo aparece si el
           limite llego a saltar alguna vez. */}
+      {dcIncompleto && dc && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            flexWrap: 'wrap',
+            gap: '4px 16px',
+            padding: '7px 2px 0',
+            fontFamily: 'var(--color-ec-sans)',
+            fontSize: 11,
+            color: 'var(--color-ec-text-muted)',
+          }}
+          title={`Sin intradía (muestra):${String.fromCharCode(10)}${dc.missing_sample.slice(0, 12).join(String.fromCharCode(10))}`}
+        >
+          <span style={{ color: 'var(--color-ec-warning)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', fontSize: 9.5 }}>
+            Datos incompletos
+          </span>
+          <span>
+            se han operado{' '}
+            <strong style={{ color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-mono)' }}>
+              {dc.executed_ticker_days.toLocaleString('es-ES')}
+            </strong>{' '}de{' '}
+            <strong style={{ color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-mono)' }}>
+              {dc.expected_ticker_days.toLocaleString('es-ES')}
+            </strong>{' '}ticker-días candidatos{' '}
+            <strong style={{ fontFamily: 'var(--color-ec-mono)' }}>({dc.completeness_pct}%)</strong>
+          </span>
+          <span style={{ color: 'var(--color-ec-warning)' }}>
+            faltan{' '}
+            <strong style={{ fontFamily: 'var(--color-ec-mono)' }}>
+              {dc.missing_ticker_days.toLocaleString('es-ES')}
+            </strong>{' '}sin intradía — el resultado es parcial
+          </span>
+        </div>
+      )}
+
       {dll.length > 0 && (
         <div
           style={{

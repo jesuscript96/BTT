@@ -692,6 +692,41 @@ Suite completa: **103 fallos / 321 pasan / 13 errores, idéntico al baseline.**
 - **Su fix de fees (`cd455ae`, ITEM 4)** sigue solo en
   `alvaro-prereset-8b7959f`, fuera de staging. Pendiente de coordinar.
 
+### Meses en el aire: el hueco deja de ser mudo (26/08, cierre)
+
+Petición del usuario tras la auditoría: *"lo del tema de que se queden meses en
+el aire no me gusta, lo ideal es que funcione bien y que además no dé error
+503"*. O sea: que no falten datos, no que el motor grite.
+
+Había DOS silencios distintos, y ninguno se arregla con el 503:
+
+1. **`cargar_meses_en_duckdb` se saltaba un mes sin decir nada.** El `continue`
+   del glob era mudo: si el parquet del mes no estaba, la tabla se quedaba con
+   el hueco y el resumen de la actualización no lo mencionaba. Ahora ese caso
+   **se registra** (`[CARGA] SIN PARQUET EN EL LAGO: <tabla> <año>-<mes>`) y va
+   en el resumen como `sin_parquet`, así que la actualización diaria lo reporta.
+   De paso, el glob prueba los **dos paddings** (`month=01` y `month=1`): el
+   nuestro va con cero, pero DuckDB por defecto escribe sin él, y basta con
+   regenerar el lago de otra forma para que el mes "deje de existir".
+   Probado con un lago de mentira: resuelve con cero, sin cero, y devuelve
+   "no está" cuando de verdad no está.
+
+2. **El backtest descartaba ticker-días sin intradía y el aviso moría en el log
+   del servidor.** El motor ya calculaba `data_completeness` y la metía en el
+   resultado, pero **el frontend no la miraba**: un resultado parcial tenía
+   exactamente la misma pinta que uno completo. Ahora, cuando no llega al 100 %,
+   sale un aviso en la cabecera de resultados — *"se han operado N de M
+   ticker-días candidatos (X %), faltan K sin intradía — el resultado es
+   parcial"*, con la muestra de los que faltan en el tooltip.
+
+**Decisión: NO se activa `BACKTEST_STRICT_COMPLETENESS`.** Con el aviso visible
+ya no hace falta bloquear: el resultado parcial sigue siendo útil y ahora se
+sabe que lo es. El interruptor sigue ahí por si algún día se quiere el rechazo
+duro.
+
+Suite: 103 fallos / 321 pasan / 13 errores, idéntico al baseline. `tsc`, 0
+errores.
+
 ## Seguimiento Sailor ↔ Álvaro — quién tenía qué bien (2026-08-26)
 
 > **Para qué es esta tabla.** Llevar la cuenta, en un solo sitio, de qué parte
@@ -779,7 +814,8 @@ son comparables con resultados anteriores. `avg_return_per_day_pct` no cambia
 | Indicador `Squeeze` | ✅ En producción local (§2026-08-26) |
 | Tope de locates (`max_locates`) | ✅ En producción local (§2026-08-26) |
 | Optimización TP por tiempo/hora | ✅ Incluido el panel lateral, que mostraba minutos crudos (517) en vez de la hora (08:37) |
-| `BACKTEST_STRICT_COMPLETENESS` | ⬜ Apagado. Decisión del usuario |
+| `BACKTEST_STRICT_COMPLETENESS` | ⬜ Apagado **a propósito**: el aviso de completitud ya se ve en la interfaz, no hace falta el 503 |
+| Meses que falten en el lago | ✅ Ya no se saltan en silencio: se registran y salen en el resumen de la actualización |
 | Suite de tests | 103 fallos / 321 pasan / 13 errores — **idéntico al baseline**, 0 regresiones |
 | Divergencia con `staging` | `staging` lleva 7 commits suyos encima; **su fix de splits no se puede mergear tal cual** (ver arriba) |
 

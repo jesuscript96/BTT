@@ -119,7 +119,11 @@ def cargar_meses_en_duckdb(meses: Iterable[tuple[int, int]], log: Log) -> dict:
     corre al final de una actualizacion de 15 minutos que ya ha hecho su
     trabajo y no debe darse por perdida.
     """
-    resumen: dict = {"cargados": [], "saltados": 0, "filas": 0, "error": None}
+    resumen: dict = {"cargados": [], "saltados": 0, "filas": 0, "error": None,
+                     # Meses que el lago NO tiene. Antes se saltaban con un
+                     # `continue` mudo y la tabla se quedaba con el hueco sin
+                     # que nadie se enterara ("meses en el aire").
+                     "sin_parquet": []}
 
     cs = _cold_storage()
     if not cs:
@@ -149,8 +153,24 @@ def cargar_meses_en_duckdb(meses: Iterable[tuple[int, int]], log: Log) -> dict:
 
         for tabla, cols in COLUMNAS_INSERT.items():
             for y, m in meses:
-                patron = _g(os.path.join(cs, tabla, f"year={y}", f"month={m:02d}", "*.parquet"))
-                if not glob.glob(patron):
+                # Se prueban los DOS paddings: nuestro lago escribe `month=01`
+                # pero DuckDB por defecto escribe `month=1`, y un glob que no
+                # resuelve hacia que el mes "no existiera" y la carga se
+                # saltara EN SILENCIO (le paso al socio con agosto).
+                patron = None
+                for pad in (f"{m:02d}", str(m)):
+                    cand = _g(os.path.join(cs, tabla, f"year={y}", f"month={pad}", "*.parquet"))
+                    if glob.glob(cand):
+                        patron = cand
+                        break
+                if not patron:
+                    # NUNCA en silencio: un mes que falta en el lago es un
+                    # hueco en la tabla, y hay que poder verlo sin leer el log
+                    # entero.
+                    hueco = f"{tabla} {y}-{m:02d}"
+                    resumen["sin_parquet"].append(hueco)
+                    log(f"[CARGA] SIN PARQUET EN EL LAGO: {hueco} — "
+                        f"la tabla se queda sin ese mes")
                     continue
                 esperadas = con.execute(
                     f"SELECT count(*) FROM read_parquet('{patron}')").fetchone()[0]
