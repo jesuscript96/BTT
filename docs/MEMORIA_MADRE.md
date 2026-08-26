@@ -693,6 +693,22 @@ Primer paso propuesto: medir con profiler 5-10 ticker-días para partir el
 stream_build en (lectura / resample / indicadores / simulación) y decidir con
 datos qué tabla paga su coste.
 
+### 7. Fix del padding de meses: agosto "no existía" para el loader y la caché
+
+Síntoma: un backtest rechazado por completitud — "10 de 4.977 ticker-días sin
+intradía", todos del 17-20/08, pese a que el lago tenía las velas. Causa raíz:
+**las particiones del lago van sin cero (`month=8`, como las escribe DuckDB) y
+los globs de `lake_db_loader` iban con cero (`month=08`)** → el mes no
+resolvía y tres cosas fallaban EN SILENCIO: `cargar_meses_en_duckdb` se saltaba
+la carga del mes, `anadir_dias_al_cache` reportaba "ya estaba al día" sin
+mirar nada (167 ficheros de caché de agosto quedados en el día 14 — residuo
+del incidente del 21/08), y la carga incremental nueva del ETL tampoco encontraba
+el parquet. Arreglado probando ambos paddings (igual que hacía el resolvedor de
+velas). Tras el fix: agosto cargado en `local_data.duckdb` (tabla al 25/08) y
+caché reparada (+224.279 velas en 167 ficheros). NOTA: si se invoca
+`anadir_dias_al_cache` fuera del backend, `CACHE_DIR=.cache/intraday` es
+RELATIVO al cwd de `backend/` — exportarlo absoluto.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado

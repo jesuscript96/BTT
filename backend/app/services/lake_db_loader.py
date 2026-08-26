@@ -149,8 +149,16 @@ def cargar_meses_en_duckdb(meses: Iterable[tuple[int, int]], log: Log) -> dict:
 
         for tabla, cols in COLUMNAS_INSERT.items():
             for y, m in meses:
-                patron = _g(os.path.join(cs, tabla, f"year={y}", f"month={m:02d}", "*.parquet"))
-                if not glob.glob(patron):
+                # OJO: las particiones del lago van SIN cero (month=8, como las
+                # escribe DuckDB). Solo month=08 hacia que el mes "no existiera"
+                # y la carga se saltara en silencio.
+                patron = None
+                for pad in (f"{m:02d}", str(m)):
+                    p = _g(os.path.join(cs, tabla, f"year={y}", f"month={pad}", "*.parquet"))
+                    if glob.glob(p):
+                        patron = p
+                        break
+                if not patron:
                     continue
                 esperadas = con.execute(
                     f"SELECT count(*) FROM read_parquet('{patron}')").fetchone()[0]
@@ -504,8 +512,14 @@ def anadir_dias_al_cache(meses, log: Log) -> dict:
         carpeta = os.path.join(G.LOCAL_CACHE_DIR, "raw", str(y), f"{m:02d}")
         if not os.path.isdir(carpeta) or not glob.glob(os.path.join(carpeta, "*.parquet")):
             continue
-        patron_lago = _g(os.path.join(cs, "intraday_1m", f"year={y}", f"month={m:02d}", "*.parquet"))
-        if not glob.glob(patron_lago):
+        # Las particiones del lago van SIN cero (month=8); se prueban ambos.
+        patron_lago = None
+        for pad in (f"{m:02d}", str(m)):
+            p = _g(os.path.join(cs, "intraday_1m", f"year={y}", f"month={pad}", "*.parquet"))
+            if glob.glob(p):
+                patron_lago = p
+                break
+        if not patron_lago:
             continue
 
         try:
