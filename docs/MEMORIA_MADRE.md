@@ -653,6 +653,14 @@ La pestaña "Dias" de la lista sigue listando ticker-días (es su naturaleza).
   con Definitiva 2.3 (Sharpe 8,6, +149%, WR 69,6% vs +12,2% y 57,5%): misma
   renderización, distinta relación señal/ruido.
 
+### 5. PRD para Sailor con todo el paquete de hoy
+
+`docs/PRD_FIX_SPLITS_GAPS_Y_PIPELINE_20260826.md` — el fix de gaps por split
+(lago + backend), la carga incremental del DuckDB, el fix de "Days" y cómo
+verificar cada cosa en 5 minutos. Solo los arreglos que afectan a ambos;
+nada de estrategias ni curvas concretas. `BACKTEST_STRICT_COMPLETENESS=true`
+ya está activo en el `.env` local de Alvaro (recomendado en todos).
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
