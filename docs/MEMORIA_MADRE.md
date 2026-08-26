@@ -588,6 +588,71 @@ Suite completa antes y despues de los tres cambios: **103 fallos / 321 pasan /
 13 errores en ambos casos, 0 rotos**. Los fallos son preexistentes de este
 entorno (sin acceso a GCS: 403). `tsc --noEmit` del frontend, 0 errores.
 
+## 2026-08-26 (tarde) — Fix de gaps por split en el lago + carga incremental del DuckDB + fix de "Days"
+
+### 1. Fix del gap diario por split (el dato, no la app)
+
+El universo del backtester leía el gap en crudo: cada split/reverse-split entraba
+como gap gigante falso (NVDA 2024-06-10 = -89,89%; 2.123 ticker-días falsos con
+`pmh>=50`, el 9,4% del universo short). Corregido en el lago (proyecto
+`cangrejo_data`, PRD_FIX_gaps_falsos_splits): los 3 gaps (`gap_pct`,
+`gap_at_open_pct`, `pmh_gap_pct`) dividen por `close_prev_adj = prev_close *
+product(split_from/split_to)` del día. `daily_metrics`, bygap y
+`local_data.duckdb` regenerados y verificados (NVDA pasa a +1,08; universo
+`pmh>=50` de 22.676 → 20.997).
+
+**Consecuencia para comparar backtests viejos/nuevos:** los candidatos fantasma
+por split ya no existen. Con el dataset típico (`pmh>=20`, `close>=$1`) en 2025
+eran 361 pares de 8.462 (-4,3%); en todo el histórico, 1.824 pares. Curvas
+antiguas con más trades incluían shorts contra gaps que nunca ocurrieron.
+
+En ESTE repo (commits `19979bc` + `6c05066` en `alvaro-rama-desarrollo`):
+`lake_db_loader._alinear_pmh_gap_pct` y la migración de arranque de `init_db.py`
+usan la misma fórmula ajustada (antes reescribían `pmh_gap_pct` en crudo en cada
+carga/arranque y re-corrompían la tabla). La tabla `splits` del DuckDB local
+pasa a 4 columnas (`split_from`/`split_to` incluidas): con eso arranca sin el
+`[WARN] Failed to load splits cache` y el filtro anti-reverse-split del
+screener vuelve a funcionar. OJO: anti-join con `NOT EXISTS`, no con
+`(a,b) NOT IN (SELECT x,y)` — el venv del backend lleva DuckDB 1.1.3 y no lo
+soporta.
+
+### 2. Carga incremental del DuckDB en el ETL diario (adiós a la reescritura de 58 GB)
+
+`etl_to_edgecute.py --incremental --load` ya no hace DROP+CREATE+INSERT de las
+~3.000 M de filas: carga SOLO los meses tocados (DELETE por rango + INSERT del
+parquet, transaccional, espejo de `cargar_meses_en_duckdb`). El paso ETL del
+diario pasa de 30-40 min a ~2 min (medido en la run manual del 26/08:
+pipeline completo 8/8 pasos en 18,2 min). La recarga completa queda como
+herramienta de reparación (`--full --load` o FASE 3 de `reparar_lago.py`).
+El bygap se regenera como paso final del diario (`regenerar_bygap.py`, 34 s).
+
+### 3. Fix de "Days" en Aggregate Results (el único cambio de código de esta tanda aparte de los de arriba)
+
+`Days` contaba **ticker-días** (`len(day_results)`), no sesiones: un año
+mostraba "1460 días" (≈5,8 candidatos/día). Ahora cuenta **fechas de calendario
+únicas** (`backtest_service.py`, `_aggregate_metrics`). Efecto lateral
+intencionado: `Avg Ret/Day` y `Avg R/Day` pasan a ser por SESIÓN (denominador
+correcto). Verificado en "Estrategia RTH prueba XX" (2025): Days 1460 → 250.
+La pestaña "Dias" de la lista sigue listando ticker-días (es su naturaleza).
+
+### 4. PENDIENTES para coordinar (reportados, NO tocados)
+
+- **Cherry-pick del fix de fees `cd455ae`** ("cobra el lado de entrada en la 1ª
+  ejecución que liquida la posición" — ITEM 4 del reporte Sailor). NO está en
+  esta rama; vive en `alvaro-prereset-8b7959f`. La versión actual tiene ese bug
+  activo: cierres 100% vía parciales pagan un solo lado de comisión → resultados
+  ligeramente sobreestimados en estrategias con parciales. Con él van sus tests
+  (`test_fees.py`, `test_bygap_parity.py`, `test_fade_partials.py`,
+  `test_current_gap_semantics.py`, `test_trail_break_even.py` — 901 líneas,
+  tampoco están).
+- **`alvaro-prereset-8b7959f` además contiene** la `MEMORIA.md` antigua (981
+  líneas), la carpeta `ALVARO_CAMBIOS/`, el Darvas Box y 2 merges de staging
+  que la rama actual no tiene. Recuperación pendiente de acordar.
+- **Curva dentada de "RTH prueba XX"**: NO es bug. Sharpe 2,4 con 1R fijo = 1%
+  de la cuenta por trade y drift +0,008R/trade → dentado matemático. Comparada
+  con Definitiva 2.3 (Sharpe 8,6, +149%, WR 69,6% vs +12,2% y 57,5%): misma
+  renderización, distinta relación señal/ruido.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado

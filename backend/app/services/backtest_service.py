@@ -1517,7 +1517,11 @@ def _aggregate_metrics(
         total_days = len(unique_dates)
         total_trades = len(trades)
     else:
-        total_days = len(day_results)
+        # Días de CALENDARIO con operaciones (una por sesión), no ticker-días:
+        # una sesión con 6 candidatos genera 6 day_results pero es 1 día.
+        # Antes len(day_results), que inflaba "Days" (p.ej. 1460 en un año).
+        # Cambia el denominador de Avg Ret/Day y Avg R/Day a por SESIÓN.
+        total_days = len({str(d.get("date", ""))[:10] for d in day_results if d.get("date")}) or len(day_results)
         total_trades = sum(d.get("total_trades", 0) for d in day_results)
 
     # Re-calculate total expenses for the net profit metric
