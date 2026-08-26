@@ -64,6 +64,9 @@ export enum IndicatorType {
     RVOL = "RVOL by bar",
     VOLUME = "Volume",
     ATR = "ATR",
+    // Squeeze: % que ha movido el precio en una ventana de RELOJ (minutos).
+    // No es un nivel: es una cifra, asi que solo se compara contra un numero.
+    SQUEEZE = "Squeeze",
 }
 
 export enum Comparator {
@@ -162,6 +165,11 @@ export interface IndicatorConfig {
 
     // "Elapsed time from last High": ancla del reloj
     session_ref?: "full" | "pm" | "rth";
+
+    // Squeeze: direccion del spike. El indicador devuelve SIEMPRE positivo el
+    // movimiento en la direccion elegida, para que la condicion se lea igual
+    // arriba que abajo ("Squeeze > 10"). La ventana va en `range_minutes`.
+    squeeze_direction?: "up" | "down";
 }
 
 export interface ComparisonCondition {

@@ -59,6 +59,10 @@ class BacktestRequest(BaseModel):
     # cuesta un locate). Antes "PERCENT" (% del riesgo) — semántica corregida
     # por decisión de producto (Jaume 2026-07-07). backtest_service ya default FLAT.
     locate_type: str = "FLAT"
+    # Tope de locates: máximo de paquetes de 100 acciones que se está dispuesto
+    # a alquilar por ticker-día. 0 = sin tope. Limita el tamaño en CORTO a
+    # max_locates * 100 acciones (Jaume 2026-08-26).
+    max_locates: int = 0
     look_ahead_prevention: bool = True
 
 
@@ -378,6 +382,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             custom_end_time=custom_end_time,
             locates_cost=req.locates_cost,
             locate_type=req.locate_type,
+            max_locates=req.max_locates,
             look_ahead_prevention=req.look_ahead_prevention,
             day_group_iter=intraday_stream,
             n_groups_hint=n_qualifying,

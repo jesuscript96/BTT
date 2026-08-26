@@ -319,6 +319,15 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     multi: false,
   },
   {
+    id: "SQUEEZE",
+    label: "Squeeze (%)",
+    category: "Momentum",
+    displayMode: "panel",
+    // Minutos de RELOJ, no velas. `multi` para poder comparar dos ventanas.
+    params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
+    multi: true,
+  },
+  {
     id: "HEIKIN_ASHI",
     label: "Heikin-Ashi",
     category: "Volume",

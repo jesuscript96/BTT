@@ -184,6 +184,10 @@ def run_strategy_trades(
     slippage: float = 0.0,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # Tope de locates: maximo de paquetes de 100 acciones en corto por
+    # ticker-dia. 0 = sin tope. Va en la clave de cache porque CAMBIA el tamano
+    # de las posiciones (y con el, el return_pct de cada trade).
+    max_locates: int = 0,
 ) -> tuple[list[dict], str, bool]:
     """Run ONE strategy through the live orchestrator and return its trades.
 
@@ -232,6 +236,7 @@ def run_strategy_trades(
         "slippage": slippage,
         "locates_cost": locates_cost,
         "locate_type": locate_type,
+        "max_locates": max_locates,
     }
     cache_key = _strategy_cache_key(
         effective_dataset_id, date_from, date_to, sdef, costs
@@ -265,6 +270,7 @@ def run_strategy_trades(
         slippage=slippage,
         locates_cost=locates_cost,
         locate_type=locate_type,
+        max_locates=max_locates,
     )
     result = run_backtest_orchestrator(req)
     trades = result.get("trades", []) or []

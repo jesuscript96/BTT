@@ -75,6 +75,10 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.TRIANGLE_DESCENDING:
         case IndicatorType.TRIANGLE_SYMMETRIC:
             return { pivot_window: 5, tri_lookback: 35, slope_tolerance: 1.5, min_r_squared: 0.65, min_pivots: 2 };
+        // Squeeze: 5 minutos de ventana y direccion "arriba" es el caso tipico
+        // (cazar el disparo). La ventana va en MINUTOS DE RELOJ, no en velas.
+        case IndicatorType.SQUEEZE:
+            return { range_minutes: 5, squeeze_direction: "up" };
         default:
             return {};
     }
@@ -115,6 +119,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.ACCUM_DOLLAR_VOLUME,
         IndicatorType.DOLLAR_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
+        IndicatorType.SQUEEZE,
     ],
 };
 
@@ -186,6 +191,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.RVOL]: "RVOL by bar",
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.ATR]: "ATR",
+    [IndicatorType.SQUEEZE]: "Squeeze",
 };
 
 interface TooltipContextType {
@@ -251,7 +257,8 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.YESTERDAY_VOLUME]: "Volumen total registrado el día de ayer.",
     [IndicatorType.RVOL]: "Volumen relativo de la barra respecto a su hora histórica.",
     [IndicatorType.VOLUME]: "Volumen individual de la barra actual.",
-    [IndicatorType.ATR]: "Rango Medio Verdadero."
+    [IndicatorType.ATR]: "Rango Medio Verdadero.",
+    [IndicatorType.SQUEEZE]: "Spike de precio: cuánto se ha movido el cierre respecto al de hace X MINUTOS DE RELOJ (no velas). Devuelve el porcentaje SIEMPRE en positivo en la dirección elegida, así que «Squeeze > 10» significa «se ha disparado más de un 10%» tanto arriba como abajo. Solo se compara contra una cifra. Ojo: mide punta a punta, así que un zigzag dentro de la ventana cuenta el neto (100→110→104,5→114,95 son +15%), pero una caída seguida de una subida dentro de la misma ventana se compensan."
 };
 
 const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
@@ -684,6 +691,55 @@ export const IndicatorParams = ({
                                 </select>
                             </div>
                         );
+                    case IndicatorType.SQUEEZE:
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={value.range_minutes ?? ''}
+                                    onChange={(e) => onChange({ ...value, range_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="Minutos"
+                                    style={{
+                                        flex: '1 1 70px',
+                                        minWidth: '70px',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 10px',
+                                        fontSize: 'var(--ec-fs-select)',
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                    }}
+                                    title="Ventana en MINUTOS DE RELOJ: en cuánto tiempo se tiene que haber producido el movimiento. No son velas — con temporalidad de 5m, 15 minutos siguen siendo 15 minutos."
+                                />
+                                <select
+                                    value={value.squeeze_direction || 'up'}
+                                    onChange={(e) => onChange({ ...value, squeeze_direction: e.target.value as "up" | "down" })}
+                                    style={{
+                                        flex: '1 1 90px',
+                                        minWidth: '90px',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 10px',
+                                        fontSize: 'var(--ec-fs-select)',
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                    }}
+                                    title="Dirección del spike. El valor sale SIEMPRE positivo en la dirección elegida, así que la condición se escribe igual en las dos: «> 10» es «más de un 10%»."
+                                >
+                                    <option value="up">Hacia arriba</option>
+                                    <option value="down">Hacia abajo</option>
+                                </select>
+                            </div>
+                        );
                     case IndicatorType.OPENING_RANGE_PLUS:
                     case IndicatorType.OPENING_RANGE_MINUS:
                     case IndicatorType.OPENING_RANGE_AM_PLUS:
@@ -1030,7 +1086,10 @@ export const TargetInput = ({
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
     const isVol = isFixed && isVolumeIndicator(sourceIndicatorName);
-    const isPercent = isFixed && sourceIndicatorName === IndicatorType.PM_HIGH_GAP;
+    const isPercent = isFixed && (
+        sourceIndicatorName === IndicatorType.PM_HIGH_GAP ||
+        sourceIndicatorName === IndicatorType.SQUEEZE
+    );
 
     const [localText, setLocalText] = React.useState("");
     const [isFocused, setIsFocused] = React.useState(false);
@@ -1610,13 +1669,18 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
             const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
             return { source: `${tfStr}Elapsed Time:`, target: `${opSymbol} ${mins} mins` };
         }
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        // Squeeze lleva la ventana y la direccion EN el resumen a proposito:
+        // dos condiciones de Squeeze con distinta direccion son estrategias
+        // opuestas, y sin esto se leerian identicas.
+        const sourceStr = c.source.name === IndicatorType.SQUEEZE
+            ? `Squeeze ${c.source.squeeze_direction === 'down' ? '↓' : '↑'} ${c.source.range_minutes ?? 5} min`
+            : `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
         if (typeof c.target === 'number') {
             if (isVolumeIndicator(c.source.name)) {
                 targetStr = `${(c.target / 1000000).toString()}M`;
-            } else if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+            } else if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.SQUEEZE) {
                 targetStr = `${c.target}%`;
             } else {
                 targetStr = String(c.target);

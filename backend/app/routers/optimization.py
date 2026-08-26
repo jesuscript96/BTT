@@ -58,6 +58,8 @@ class SurfaceRequest(BaseModel):
     custom_start_time: str | None = None
     custom_end_time: str | None = None
     locates_cost: float = 0.0
+    # Tope de locates (0 = sin tope). Ver portfolio_sim.simulate.
+    max_locates: int = 0
     look_ahead_prevention: bool = True
     is_percent: float = 100.0
     task_id: str | None = None
@@ -190,6 +192,7 @@ def run_surface(req: SurfaceRequest):
             "custom_start_time": req.custom_start_time,
             "custom_end_time": req.custom_end_time,
             "locates_cost": req.locates_cost,
+            "max_locates": req.max_locates,
             "look_ahead_prevention": req.look_ahead_prevention,
             "is_percent": req.is_percent,
         },

@@ -74,6 +74,8 @@ class PortfolioRunRequest(BaseModel):
     slippage: float = 0.0
     locates_cost: float = 0.0
     locate_type: str = "FLAT"
+    # Tope de locates (0 = sin tope). Ver portfolio_sim.simulate.
+    max_locates: int = 0
 
 
 class PortfolioRecombineRequest(BaseModel):
@@ -128,6 +130,7 @@ def _req_costs(req: PortfolioRunRequest) -> dict:
         "slippage": req.slippage,
         "locates_cost": req.locates_cost,
         "locate_type": req.locate_type,
+        "max_locates": req.max_locates,
     }
 
 
@@ -418,6 +421,7 @@ def _run_portfolio_in_background(
                 slippage=req.slippage,
                 locates_cost=req.locates_cost,
                 locate_type=req.locate_type,
+                max_locates=req.max_locates,
             )
             cache_keys[sid] = ckey  # ensure exact key stored
             per_strategy_trades[sid] = trades

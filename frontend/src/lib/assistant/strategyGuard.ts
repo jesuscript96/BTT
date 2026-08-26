@@ -70,6 +70,9 @@ function normalizeIndicatorName(name: string): string {
         "rvol by bar": "RVOL by bar",
         "rvol": "RVOL by bar",
         "bollinger bands": "Bollinger Bands",
+        "squeeze": "Squeeze",
+        "spike": "Squeeze",
+        "spike de precio": "Squeeze",
     };
     const key = name.toLowerCase().trim();
     if (LEGACY_MAP[key]) {

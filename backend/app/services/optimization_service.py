@@ -219,6 +219,142 @@ METRICS = {
 
 
 # ---------------------------------------------------------------------------
+# Take Profit por TIEMPO y por HORA
+# ---------------------------------------------------------------------------
+# El motor guarda estos dos con forma de TEXTO, no de numero:
+#
+#   TP completo tipo "Time"   -> take_profit.value = 30          (minutos, numero)
+#   TP completo tipo "Hour"   -> take_profit.value = "15:30"     (texto)
+#   Parcial por tiempo        -> distance_pct      = "TIME:30"
+#   Parcial por hora          -> distance_pct      = "HOUR:15:30"
+#   Parcial al cierre         -> distance_pct      = "EOD"       (no optimizable)
+#
+# El optimizador solo sabe barrer NUMEROS. Por eso:
+#   - "por tiempo" se barre en MINUTOS enteros,
+#   - "por hora" se barre en MINUTOS DESDE MEDIANOCHE (09:30 = 570),
+# y al escribir cada punto de la rejilla se devuelve la forma ORIGINAL
+# (_encode_tp_value). Antes de esto (2026-08-26) el TP por hora ni siquiera
+# aparecia en la lista: `float("15:30")` reventaba y el extractor lo descartaba
+# sin decir nada; y el TP por tiempo salia con rangos de porcentaje (paso 0,5,
+# o sea medios minutos).
+
+# Ventana de sesion del lago: 04:00 -> 20:00. Acota el barrido por hora para no
+# proponer cierres a las 3 de la manana.
+_SESSION_MIN_MINUTES = 4 * 60
+_SESSION_MAX_MINUTES = 20 * 60
+
+
+def _hhmm_to_minutes(txt) -> int | None:
+    """'15:30' -> 930. None si no tiene forma de hora."""
+    try:
+        parts = str(txt).strip().split(":")
+        h, m = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError, AttributeError):
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return h * 60 + m
+
+
+def _minutes_to_hhmm(mins) -> str:
+    """930 -> '15:30'."""
+    m = int(round(float(mins))) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _decode_tp_value(raw):
+    """(unidad, numero) de un valor de take profit.
+
+    unidad: 'pct' | 'minutes' | 'time_of_day' | None (no se puede barrer).
+    """
+    if raw is None or isinstance(raw, bool):
+        return None, None
+    if isinstance(raw, (int, float)):
+        return "pct", float(raw)
+    if isinstance(raw, str):
+        txt = raw.strip()
+        up = txt.upper()
+        if up == "EOD":
+            return None, None
+        if up.startswith("HOUR:"):
+            mins = _hhmm_to_minutes(txt[5:])
+            return ("time_of_day", float(mins)) if mins is not None else (None, None)
+        if up.startswith("TIME:"):
+            try:
+                return "minutes", float(txt[5:])
+            except ValueError:
+                return None, None
+        if ":" in txt:  # "15:30" pelado — el TP completo tipo Hour
+            mins = _hhmm_to_minutes(txt)
+            return ("time_of_day", float(mins)) if mins is not None else (None, None)
+        try:
+            return "pct", float(txt)
+        except ValueError:
+            return None, None
+    return None, None
+
+
+def _encode_tp_value(original, nuevo):
+    """Devuelve `nuevo` con la MISMA forma que tenia `original`.
+
+    Un original numerico pasa de largo: por eso esto se puede aplicar a TODOS
+    los parametros sin cambiar el comportamiento de los que ya funcionaban.
+    """
+    if isinstance(original, str):
+        txt = original.strip()
+        up = txt.upper()
+        if up.startswith("HOUR:"):
+            return f"HOUR:{_minutes_to_hhmm(nuevo)}"
+        if up.startswith("TIME:"):
+            return f"TIME:{int(round(float(nuevo)))}"
+        if up == "EOD":
+            return original
+        if ":" in txt:
+            return _minutes_to_hhmm(nuevo)
+    return nuevo
+
+
+def _get_nested_value(obj, path: str):
+    """Lee un valor por ruta separada por puntos. None si la ruta no existe."""
+    cur = obj
+    for k in path.split("."):
+        try:
+            cur = cur[int(k)] if isinstance(cur, list) else cur[k]
+        except (KeyError, IndexError, ValueError, TypeError):
+            return None
+    return cur
+
+
+def _is_take_profit_path(path: str) -> bool:
+    """Solo las rutas de take profit llevan valores con forma de texto.
+
+    Acota la reescritura de formato: cualquier otro parametro se escribe tal
+    cual, como siempre, aunque su valor de ahora fuese una cadena rara.
+    """
+    return "take_profit" in (path or "")
+
+
+def _param_unit_from_def(base_def: dict, path: str) -> str | None:
+    """'minutes' | 'time_of_day' | None, segun la forma que tiene HOY el valor.
+
+    Es lo que permite barrer numeros y devolver texto al escribir, sin que el
+    frontend tenga que mandar metadatos nuevos.
+    """
+    if not _is_take_profit_path(path):
+        return None
+    raw = _get_nested_value(base_def or {}, path)
+    if isinstance(raw, str):
+        unidad, _ = _decode_tp_value(raw)
+        return unidad if unidad in ("minutes", "time_of_day") else None
+    # El TP completo por TIEMPO guarda un numero pelado; quien lo dice es `type`.
+    if path == "risk_management.take_profit.value":
+        tp = ((base_def or {}).get("risk_management") or {}).get("take_profit") or {}
+        if str(tp.get("type", "") or "").strip().lower() == "time":
+            return "minutes"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Parameter extraction
 # ---------------------------------------------------------------------------
 
@@ -228,7 +364,8 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
     _seen = set()
 
     def _add(param_id: str, label: str, value, category: str, path: str,
-             min_val=None, max_val=None, step=None, is_int_param=False):
+             min_val=None, max_val=None, step=None, is_int_param=False,
+             unit=None):
         if param_id in _seen or value is None:
             return
         _seen.add(param_id)
@@ -259,6 +396,9 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
             "min": v_min,
             "max": v_max,
             "step": v_step,
+            # 'minutes' / 'time_of_day' para los take profit por tiempo y por
+            # hora; None para todo lo demas (que se pinta como numero pelado).
+            "unit": unit,
         })
 
     def _auto_step(v):
@@ -305,21 +445,68 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         tp_mode = rm.get("take_profit_mode", "Full")
         
         if tp_mode == "Full":
-            tp = rm.get("take_profit")
-            if tp:
-                val = tp.get("value")
-                if val is not None:
-                    _add("risk.take_profit.value",
-                         f"Take Profit ({tp.get('type', 'Pct')})",
-                         val, "Risk", "risk_management.take_profit.value",
-                         min_val=0.5, max_val=max(float(val) * 4, 30) if val else 30, step=0.5)
+            tp = rm.get("take_profit") or {}
+            val = tp.get("value")
+            tp_type = str(tp.get("type", "") or "").strip().lower()
+            if val is not None:
+                if tp_type == "hour":
+                    # Hora de cierre. Se barren minutos desde medianoche y al
+                    # escribir el punto se devuelve "HH:MM".
+                    mins = _hhmm_to_minutes(val)
+                    if mins is not None:
+                        _add("risk.take_profit.value",
+                             "Take Profit (Hora de cierre)",
+                             mins, "Risk", "risk_management.take_profit.value",
+                             min_val=max(_SESSION_MIN_MINUTES, mins - 120),
+                             max_val=min(_SESSION_MAX_MINUTES, mins + 120),
+                             step=5, unit="time_of_day")
+                elif tp_type == "time":
+                    try:
+                        mins = float(val)
+                    except (TypeError, ValueError):
+                        mins = None
+                    if mins is not None:
+                        _add("risk.take_profit.value",
+                             "Take Profit (Tiempo, min)",
+                             mins, "Risk", "risk_management.take_profit.value",
+                             min_val=1, max_val=max(mins * 3, mins + 60),
+                             step=1, unit="minutes")
+                else:
+                    # Distancia en % (o cualquier tipo numerico): igual que antes.
+                    try:
+                        pct = float(val)
+                    except (TypeError, ValueError):
+                        pct = None
+                    if pct is not None:
+                        _add("risk.take_profit.value",
+                             f"Take Profit ({tp.get('type', 'Pct')})",
+                             pct, "Risk", "risk_management.take_profit.value",
+                             min_val=0.5, max_val=max(pct * 4, 30), step=0.5)
         elif tp_mode == "Partial":
             for i, ptp in enumerate(rm.get("partial_take_profits") or []):
-                _add(f"risk.partial_tp.{i}.distance_pct",
-                     f"Parcial {i+1} Distancia %",
-                     ptp.get("distance_pct") if ptp else None, "Risk",
-                     f"risk_management.partial_take_profits.{i}.distance_pct",
-                     min_val=0.5, step=0.5)
+                # El disparo de un parcial puede ser distancia (%), tiempo
+                # (TIME:min), hora (HOUR:HH:MM) o el cierre (EOD). Los tres
+                # primeros son barribles; EOD no tiene numero que mover.
+                unidad, num = _decode_tp_value((ptp or {}).get("distance_pct"))
+                ruta = f"risk_management.partial_take_profits.{i}.distance_pct"
+                if unidad == "time_of_day":
+                    _add(f"risk.partial_tp.{i}.distance_pct",
+                         f"Parcial {i+1} Hora de cierre",
+                         num, "Risk", ruta,
+                         min_val=max(_SESSION_MIN_MINUTES, num - 120),
+                         max_val=min(_SESSION_MAX_MINUTES, num + 120),
+                         step=5, unit="time_of_day")
+                elif unidad == "minutes":
+                    _add(f"risk.partial_tp.{i}.distance_pct",
+                         f"Parcial {i+1} Tiempo (min)",
+                         num, "Risk", ruta,
+                         min_val=1, max_val=max(num * 3, num + 60),
+                         step=1, unit="minutes")
+                elif unidad == "pct":
+                    _add(f"risk.partial_tp.{i}.distance_pct",
+                         f"Parcial {i+1} Distancia %",
+                         num, "Risk", ruta,
+                         min_val=0.5, step=0.5)
                 _add(f"risk.partial_tp.{i}.capital_pct",
                      f"Parcial {i+1} Capital %",
                      ptp.get("capital_pct") if ptp else None, "Risk",
@@ -482,10 +669,19 @@ def _set_nested_value(obj, path: str, value):
             k = int(k)
         current = current[k] if isinstance(current, list) else current.get(k, {})
     last_key = keys[-1]
+    # El barrido siempre mueve NUMEROS, pero el take profit por tiempo y por
+    # hora se guardan como texto ("15:30", "HOUR:15:30", "TIME:30"). Se relee
+    # lo que habia y se devuelve con la misma forma. Un valor original numerico
+    # pasa de largo, asi que esto no toca ningun parametro de los de siempre.
+    reencode = _is_take_profit_path(path)
     if isinstance(current, list):
-        current[int(last_key)] = value
+        idx = int(last_key)
+        anterior = current[idx] if 0 <= idx < len(current) else None
+        current[idx] = _encode_tp_value(anterior, value) if reencode else value
     else:
-        current[last_key] = value
+        current[last_key] = (
+            _encode_tp_value(current.get(last_key), value) if reencode else value
+        )
 
 
 def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
@@ -525,6 +721,7 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
             custom_start_time=backtest_params.get("custom_start_time"),
             custom_end_time=backtest_params.get("custom_end_time"),
             locates_cost=backtest_params.get("locates_cost", 0),
+            max_locates=backtest_params.get("max_locates", 0),
             look_ahead_prevention=backtest_params.get("look_ahead_prevention", True),
             day_group_iter=iter(point_groups),
             n_groups_hint=len(point_groups),
@@ -628,6 +825,10 @@ def run_optimization_grid(
                             "time_hour", "time_minute", "days_lookback", "orb_minutes", 
                             "time_from_hour", "time_from_minute", "range_minutes", 
                             "deviationLevel", "sma_period", "lookback"}:
+                is_int = True
+            # Take profit por tiempo (minutos) o por hora (minutos desde
+            # medianoche): no existen los medios minutos.
+            if _param_unit_from_def(base_def, pc.get("path", "")) in ("minutes", "time_of_day"):
                 is_int = True
 
             if is_int:
@@ -966,7 +1167,10 @@ def run_optimization_grid(
 
     return {
         "params": [
-            {"id": pc["id"], "label": pc.get("label", pc["id"]), "values": axes[i]}
+            {"id": pc["id"], "label": pc.get("label", pc["id"]), "values": axes[i],
+             # 'time_of_day' hace que el eje se pinte como HH:MM en vez de como
+             # "570". None = numero pelado, como toda la vida.
+             "unit": _param_unit_from_def(base_def, pc.get("path", ""))}
             for i, pc in enumerate(param_configs)
         ],
         "grid": [[clean(v) for v in row] for row in results_grid.tolist()]

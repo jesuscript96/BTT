@@ -14,6 +14,7 @@ _CATEGORY = {
     ],
     "Momentum": [
         "RSI", "MACD", "Stochastic", "Momentum", "CCI", "ROC", "DMI+", "DMI-", "Williams %R",
+        "Squeeze",
     ],
     "Volatility": ["ATR", "ADX", "Bollinger Bands", "Donchian", "Parabolic SAR"],
     "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume"],
@@ -51,6 +52,7 @@ _PARAMS = {
     "Time of Day": ["time_hour", "time_minute", "time_condition"],
     "High of last X days": ["days_lookback"], "Low of last X days": ["days_lookback"],
     "Max N Bars": ["period"], "Opening Range +": ["orb_minutes"], "Opening Range -": ["orb_minutes"],
+    "Squeeze": ["range_minutes", "squeeze_direction"],
 }
 
 

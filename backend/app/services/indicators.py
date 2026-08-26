@@ -894,6 +894,7 @@ INDICATOR_NAME_MAP = {
     "Darvas Box": "Darvas Box",
     "Darvas": "Darvas Box",
     "Caja Darvas": "Darvas Box",
+    "Squeeze": "Squeeze",
     "Donchian": "Donchian Channels",
     "Bollinger Bands": "Bollinger Bands",
     "Accumulated Volume": "Accumulated Volume",
@@ -939,11 +940,12 @@ def compute_indicator(
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
     session_ref: str | None = None,
+    squeeze_direction: str | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -972,7 +974,7 @@ def compute_indicator(
         days_lookback, time_hour, time_minute, time_condition,
         band_line, orb_minutes, ap_session, daily_stats, df, range_minutes,
         pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots,
-        session_ref
+        session_ref, squeeze_direction
     )
 
     if offset and offset != 0:
@@ -1210,6 +1212,7 @@ def _compute_raw(
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
     session_ref: str | None = None,
+    squeeze_direction: str | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -1743,6 +1746,65 @@ def _compute_raw(
             elif time_condition == "AFTER":
                 return (minutes >= target_min).astype(float)
         return minutes
+
+    if name == "Squeeze":
+        # Squeeze — cuanto se ha DISPARADO el precio en una ventana de reloj.
+        #
+        # Mide punta a punta: cierre actual contra el cierre de hace
+        # `range_minutes` MINUTOS. Un zigzag dentro de la ventana no lo rompe
+        # (100 -> 110 -> 104,5 -> 114,95 sale +15%), pero una caida seguida de
+        # un disparo dentro de la MISMA ventana se compensa (100 -> 90 -> 105
+        # sale +5%, no +16,7%). Semantica fijada por el usuario el 2026-08-26.
+        #
+        # La ventana es de RELOJ, no de velas, y esto NO es un detalle: las
+        # velas del lago son dispersas (solo existe el minuto que tuvo
+        # operaciones), asi que "5 velas atras" seria una ventana distinta en
+        # cada ticker y en cada tramo del dia. La referencia se busca con un
+        # asof HACIA ATRAS: el ultimo cierre conocido en `t - X min`. Si el
+        # simbolo no cotizo en ese hueco, el precio no cambio — la referencia
+        # sigue siendo el ultimo print y el spike aparece entero en la primera
+        # vela nueva, que es justo lo que se ve en el grafico.
+        #
+        # Vale NaN mientras la ventana empieza antes de la primera vela del
+        # dia (no hay contra que comparar). Una comparacion contra NaN da
+        # False: sin referencia, no hay senal. Mismo convenio que Darvas.
+        win = int(range_minutes) if range_minutes else 5
+        if win < 1:
+            win = 1
+        c_vals = close.values.astype(np.float64)
+        n = len(c_vals)
+        out = np.full(n, np.nan)
+        if n > 0 and "timestamp" in df.columns:
+            t_ns = pd.to_datetime(df["timestamp"]).values.astype("datetime64[ns]").astype(np.int64)
+            order = None
+            if n > 1 and not np.all(t_ns[1:] >= t_ns[:-1]):
+                # El asof exige el eje de tiempo ordenado. El motor entrega las
+                # velas en orden, pero sobre datos desordenados searchsorted
+                # devolveria referencias arbitrarias SIN avisar.
+                order = np.argsort(t_ns, kind="stable")
+                t_ns = t_ns[order]
+                c_ord = c_vals[order]
+            else:
+                c_ord = c_vals
+            ref_ns = t_ns - int(win) * 60 * 1_000_000_000
+            idx = np.searchsorted(t_ns, ref_ns, side="right") - 1
+            ok = idx >= 0
+            if ok.any():
+                base = c_ord[idx[ok]]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    pct = np.where(base > 0, (c_ord[ok] - base) / base * 100.0, np.nan)
+                res = np.full(n, np.nan)
+                res[ok] = pct
+                if order is not None:
+                    out[order] = res
+                else:
+                    out = res
+        if str(squeeze_direction or "up").lower() == "down":
+            # "Abajo" devuelve la CAIDA en positivo, para que la condicion se
+            # lea igual en las dos direcciones: "Squeeze > 10" es "se ha
+            # movido mas de un 10% en la direccion elegida".
+            out = -out
+        return pd.Series(out, index=close.index)
 
     if name == "Range of time" or name == "Range of Time":
         timestamps = pd.to_datetime(df["timestamp"])

@@ -341,6 +341,9 @@ export async function runBacktest(params: {
   custom_end_time?: string;
   locates_cost?: number;
   locate_type?: "PERCENT" | "FLAT";
+  // Tope de locates: máximo de paquetes de 100 acciones que se alquilan por
+  // ticker-día. 0 = sin tope. Recorta el tamaño en CORTO a max_locates * 100.
+  max_locates?: number;
   look_ahead_prevention?: boolean;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
@@ -364,6 +367,7 @@ export async function runBacktestWithDefinition(params: {
   custom_start_time?: string;
   custom_end_time?: string;
   locates_cost?: number;
+  max_locates?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
 }): Promise<BacktestResult> {
@@ -466,6 +470,11 @@ export async function fetchMultiDayCandles(
 
 // --- Optimization Surface ---
 
+/** Unidad de un parámetro optimizable. `minutes` = minutos de reloj (take
+ *  profit por tiempo); `time_of_day` = minutos desde medianoche, que se pintan
+ *  como HH:MM (take profit por hora de cierre). null = número pelado. */
+export type OptimizationParamUnit = "minutes" | "time_of_day" | null;
+
 export interface OptimizationParam {
   id: string;
   label: string;
@@ -475,6 +484,7 @@ export interface OptimizationParam {
   min: number;
   max: number;
   step: number;
+  unit?: OptimizationParamUnit;
 }
 
 export interface OptimizationParamConfig {
@@ -509,7 +519,7 @@ export interface PlateauAnalysis {
 }
 
 export interface OptimizationResult {
-  params: { id: string; label: string; values: number[] }[];
+  params: { id: string; label: string; values: number[]; unit?: OptimizationParamUnit }[];
   grid: number[][];
   metric: string;
   metric_label: string;
@@ -547,6 +557,7 @@ export async function runOptimizationSurface(params: {
   custom_start_time?: string;
   custom_end_time?: string;
   locates_cost?: number;
+  max_locates?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;

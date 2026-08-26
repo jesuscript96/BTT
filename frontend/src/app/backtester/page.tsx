@@ -504,6 +504,7 @@ export default function Home() {
       custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time) : undefined,
       monthly_expenses: p?.monthly_expenses,
       locates_cost: p?.locates_cost,
+      max_locates: p?.max_locates,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -547,6 +548,7 @@ export default function Home() {
         custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time || undefined) : undefined,
         custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
         locates_cost: p?.locates_cost,
+        max_locates: p?.max_locates,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
       }));
@@ -756,6 +758,7 @@ export default function Home() {
       custom_end_time: params.custom_end_time,
       monthly_expenses: params.monthly_expenses,
       locates_cost: (params as any).locates_cost,
+      max_locates: (params as any).max_locates,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,

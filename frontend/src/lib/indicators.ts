@@ -1021,6 +1021,41 @@ export function calculateDollarVolume(data: CandleData[]): IndicatorDataPoint[] 
 }
 
 // ---------------------------------------------------------------------------
+// 26d. Squeeze — % que ha movido el precio en una ventana de RELOJ
+//
+// PARIDAD OBLIGATORIA con `_compute_raw("Squeeze")` de
+// backend/app/services/indicators.py. Si se toca una, hay que tocar la otra:
+// este calculo es el que se PINTA, y el del backend el que DISPARA. Si
+// divergen, el grafico miente justo en lo que se quiere verificar (es lo que
+// paso con Darvas, §8.5 de MEMORIA.md).
+//
+// La ventana va en MINUTOS DE RELOJ, no en velas: las velas del lago son
+// dispersas (solo existe el minuto que tuvo operaciones). La referencia es el
+// ultimo cierre CONOCIDO en `t - X min` (asof hacia atras). Sin referencia
+// (la ventana empieza antes de la primera vela) no se emite punto.
+//
+// Aqui se pinta el valor CON SIGNO (+ sube, - baja). En las condiciones el
+// desplegable de direccion lo devuelve siempre en positivo; es el mismo
+// numero con el signo cambiado cuando se elige "hacia abajo".
+// ---------------------------------------------------------------------------
+export function calculateSqueeze(data: CandleData[], minutes: number): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    const winSec = Math.max(1, Math.floor(minutes || 5)) * 60;
+    const out: IndicatorDataPoint[] = [];
+    let j = 0; // puntero del asof: solo avanza, igual que la ventana
+    for (let i = 0; i < sorted.length; i++) {
+        const ref = sorted[i].time - winSec;
+        while (j + 1 < sorted.length && sorted[j + 1].time <= ref) j++;
+        if (sorted[j].time > ref) continue; // todavia no hay contra que comparar
+        const base = sorted[j].close;
+        if (base > 0) {
+            out.push({ time: sorted[i].time as Time, value: (sorted[i].close - base) / base * 100 });
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // 27. Heikin-Ashi
 // ---------------------------------------------------------------------------
 export function calculateHeikinAshi(data: CandleData[]): HeikinAshiDataPoint[] {

@@ -167,6 +167,9 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.VOLUME]: [IndicatorType.VOLUME],
     [IndicatorType.ATR]: [IndicatorType.ATR],
     [IndicatorType.PM_HIGH_GAP]: [],
+    // Squeeze: es un PORCENTAJE, no un nivel de precio. Lista de destinos
+    // vacia = solo se puede enfrentar a una cifra fija (isStandalone()).
+    [IndicatorType.SQUEEZE]: [],
 };
 
 const DISTANCE_ALLOWED_TARGETS = [

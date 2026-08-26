@@ -58,6 +58,7 @@ const INDICATOR_COLORS: Record<string, { bg: string; text: string; accent: strin
   ACCUMULATED_VOLUME: { bg: "bg-emerald-50", text: "text-emerald-800", accent: "text-emerald-600", border: "border-emerald-200" },
   ACCUM_DOLLAR_VOLUME: { bg: "bg-sky-50", text: "text-sky-800", accent: "text-sky-600", border: "border-sky-200" },
   DOLLAR_VOLUME: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
+  SQUEEZE: { bg: "bg-fuchsia-50", text: "text-fuchsia-800", accent: "text-fuchsia-600", border: "border-fuchsia-200" },
   HEIKIN_ASHI: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
 };
 

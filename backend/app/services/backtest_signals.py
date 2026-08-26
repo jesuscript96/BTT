@@ -940,6 +940,9 @@ def simulate_and_accumulate(signals_sorted, params):
     slippage = params["slippage"]
     locates_cost = params["locates_cost"]
     locate_type = params["locate_type"]
+    # Tope de locates. `.get` a proposito: los callers antiguos que no lo
+    # manden siguen funcionando con 0 = sin tope.
+    max_locates = params.get("max_locates", 0) or 0
     look_ahead_prevention = params["look_ahead_prevention"]
     strategy_def = params["strategy_def"]
     elapsed_limit = params["elapsed_limit"]
@@ -1013,6 +1016,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 slippage=slippage,
                 locates_cost=locates_cost,
                 locate_type=locate_type,
+                max_locates=max_locates,
                 look_ahead_prevention=look_ahead_prevention,
                 sl_stop=sig["sig_sl_stop"],
                 sl_trail=sig["sig_sl_trail"],

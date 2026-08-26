@@ -319,9 +319,29 @@ export default function OptimizationSurfaceTab({
       grid.push(row);
     }
 
+    // Un eje de "hora de cierre" viaja en minutos desde medianoche. Se pintan
+    // las marcas como HH:MM (tickvals/ticktext) y, cuando alguno de los dos
+    // ejes es de hora, el globo del raton usa `customdata` para decir la hora
+    // en vez del numero. Sin ejes de hora todo se queda EXACTAMENTE como estaba.
+    const xIsTime = p[0].unit === "time_of_day";
+    const yIsTime = p[1]?.unit === "time_of_day";
+    const anyTime = xIsTime || yIsTime;
+    const tickCfg = (isTime: boolean, values: number[]) =>
+      isTime
+        ? { tickmode: "array" as const, tickvals: values, ticktext: values.map(minutesToHHMM) }
+        : {};
+    const axisText = (isTime: boolean, v: number) =>
+      isTime ? minutesToHHMM(v) : String(v);
+    const hoverTime =
+      `${p[0].label}: %{customdata[0]}<br>${p[1]?.label ?? ""}: %{customdata[1]}<br>${metricLabel}: %{z:.4f}<extra></extra>`;
+
     if (mode === "2D" && p.length === 2) {
       const x = p[0].values;
       const y = p[1].values;
+      // customdata[i][j] acompaña a z[i][j]: i recorre Y, j recorre X.
+      const customdata = anyTime
+        ? y.map((yv) => x.map((xv) => [axisText(xIsTime, xv), axisText(yIsTime, yv)]))
+        : undefined;
 
       return {
         data: [
@@ -336,16 +356,18 @@ export default function OptimizationSurfaceTab({
               title: { text: metricLabel, font: { color: fg, size: 10 } },
               tickfont: { color: fg, size: 9 },
             },
-            hovertemplate:
-              `${p[0].label}: %{x:.2f}<br>${p[1].label}: %{y:.2f}<br>${metricLabel}: %{z:.4f}<extra></extra>`,
+            ...(customdata ? { customdata } : {}),
+            hovertemplate: anyTime
+              ? hoverTime
+              : `${p[0].label}: %{x:.2f}<br>${p[1].label}: %{y:.2f}<br>${metricLabel}: %{z:.4f}<extra></extra>`,
           },
         ],
         layout: {
           paper_bgcolor: bg,
           plot_bgcolor: bg,
           font: { color: fg, family: "'JetBrains Mono', monospace", size: 10 },
-          xaxis: { title: { text: p[0].label }, gridcolor: gridColor, color: fg },
-          yaxis: { title: { text: p[1].label }, gridcolor: gridColor, color: fg },
+          xaxis: { title: { text: p[0].label }, gridcolor: gridColor, color: fg, ...tickCfg(xIsTime, x) },
+          yaxis: { title: { text: p[1].label }, gridcolor: gridColor, color: fg, ...tickCfg(yIsTime, y) },
           margin: { l: 60, r: 20, t: 30, b: 60 },
           autosize: true,
           uirevision: metric,
@@ -361,6 +383,9 @@ export default function OptimizationSurfaceTab({
 
       const x = p[0].values;
       const y = p[1].values;
+      const customdata3d = anyTime
+        ? y.map((yv) => x.map((xv) => [axisText(xIsTime, xv), axisText(yIsTime, yv)]))
+        : undefined;
 
       return {
         data: [
@@ -374,8 +399,10 @@ export default function OptimizationSurfaceTab({
               title: { text: metricLabel, font: { color: fg, size: 10 } },
               tickfont: { color: fg, size: 9 },
             },
-            hovertemplate:
-              `${p[0].label}: %{x:.2f}<br>${p[1].label}: %{y:.2f}<br>${metricLabel}: %{z:.4f}<extra></extra>`,
+            ...(customdata3d ? { customdata: customdata3d } : {}),
+            hovertemplate: anyTime
+              ? hoverTime
+              : `${p[0].label}: %{x:.2f}<br>${p[1].label}: %{y:.2f}<br>${metricLabel}: %{z:.4f}<extra></extra>`,
             lighting: { ambient: 0.6, diffuse: 0.5, specular: 0.3, roughness: 0.8 },
           },
         ],
@@ -384,8 +411,8 @@ export default function OptimizationSurfaceTab({
           plot_bgcolor: bg,
           font: { color: fg, family: "'JetBrains Mono', monospace", size: 10 },
           scene: {
-            xaxis: { title: { text: p[0].label }, gridcolor: gridColor, color: fg, backgroundcolor: bg },
-            yaxis: { title: { text: p[1].label }, gridcolor: gridColor, color: fg, backgroundcolor: bg },
+            xaxis: { title: { text: p[0].label }, gridcolor: gridColor, color: fg, backgroundcolor: bg, ...tickCfg(xIsTime, x) },
+            yaxis: { title: { text: p[1].label }, gridcolor: gridColor, color: fg, backgroundcolor: bg, ...tickCfg(yIsTime, y) },
             zaxis: { title: { text: metricLabel }, gridcolor: gridColor, color: fg, backgroundcolor: bg },
             bgcolor: bg,
           },
@@ -798,8 +825,29 @@ export default function OptimizationSurfaceTab({
 // Sub-components
 // ---------------------------------------------------------------------------
 
+// Los take profit por HORA se barren en minutos desde medianoche (09:30 = 570)
+// porque el optimizador solo sabe mover numeros; el backend devuelve la forma
+// "HH:MM" al escribir cada punto. Aqui se hace el viaje de vuelta para que en
+// pantalla se lea una hora y no un 570.
+export function minutesToHHMM(mins: number): string {
+  const m = ((Math.round(mins) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
+export function hhmmToMinutes(txt: string): number | null {
+  const parts = (txt || "").split(":");
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+  return h * 60 + m;
+}
+
 function isIntegerParam(param: OptimizationParam) {
   if (!param) return false;
+  // Minutos de reloj y horas de cierre no tienen decimales.
+  if (param.unit === "minutes" || param.unit === "time_of_day") return true;
   const keys = param.path.split(".");
   const lastKey = keys[keys.length - 1];
   const intKeys = [
@@ -848,8 +896,12 @@ function RangeSlider({
   gridSteps: number;
 }) {
   const isVolume = isVolumeParam(param);
+  const isTimeOfDay = param?.unit === "time_of_day";
   const scale = isVolume ? 1000000 : 1;
   const displayLabel = isVolume ? `${label} (M)` : label;
+  // Formatea un valor del eje para leerlo: hora de reloj, millones o crudo.
+  const fmt = (v: number) =>
+    isTimeOfDay ? minutesToHHMM(v) : isVolume ? `${v / scale}M` : String(v);
 
   const [localMin, setLocalMin] = useState(() => (value[0] / scale).toString());
   const [localMax, setLocalMax] = useState(() => (value[1] / scale).toString());
@@ -893,6 +945,8 @@ function RangeSlider({
     suggestions = Array.from(new Set([maxLow, maxHigh])).filter((m) => m !== value[1] && m > value[0]);
     warningMessage = isVolume
       ? `El rango (${rangeWidth / scale}M) debe ser múltiplo de ${intervalWidth / scale}M (para que los saltos sean múltiplos de ${step / scale}M).`
+      : isTimeOfDay
+      ? `El rango (${rangeWidth} min) debe ser múltiplo de ${intervalWidth} min (para que los saltos sean múltiplos de ${step} min).`
       : `El rango (${rangeWidth}) debe ser múltiplo de ${intervalWidth} (para que los saltos sean múltiplos de ${step}).`;
   }
 
@@ -900,39 +954,69 @@ function RangeSlider({
     <div className="flex flex-col space-y-2 p-3 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)]">
       <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase font-semibold tracking-wider">{displayLabel}</label>
       <div className="flex items-center gap-2">
-        <input
-          type="number"
-          step="any"
-          value={localMin}
-          onChange={(e) => {
-            const valStr = e.target.value;
-            setLocalMin(valStr);
-            const num = parseFloat(valStr);
-            if (!isNaN(num)) {
-              onChange([num * scale, value[1]]);
-            }
-          }}
-          className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
-        />
-        <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono font-bold">→</span>
-        <input
-          type="number"
-          step="any"
-          value={localMax}
-          onChange={(e) => {
-            const valStr = e.target.value;
-            setLocalMax(valStr);
-            const num = parseFloat(valStr);
-            if (!isNaN(num)) {
-              onChange([value[0], num * scale]);
-            }
-          }}
-          className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
-        />
+        {isTimeOfDay ? (
+          /* Hora de cierre: se elige como hora, aunque por dentro viaje en
+             minutos desde medianoche (que es lo que sabe barrer la rejilla). */
+          <>
+            <input
+              type="time"
+              step={300}
+              value={minutesToHHMM(value[0])}
+              onChange={(e) => {
+                const num = hhmmToMinutes(e.target.value);
+                if (num !== null) onChange([num, value[1]]);
+              }}
+              className="w-24 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            />
+            <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono font-bold">→</span>
+            <input
+              type="time"
+              step={300}
+              value={minutesToHHMM(value[1])}
+              onChange={(e) => {
+                const num = hhmmToMinutes(e.target.value);
+                if (num !== null) onChange([value[0], num]);
+              }}
+              className="w-24 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            />
+          </>
+        ) : (
+          <>
+            <input
+              type="number"
+              step="any"
+              value={localMin}
+              onChange={(e) => {
+                const valStr = e.target.value;
+                setLocalMin(valStr);
+                const num = parseFloat(valStr);
+                if (!isNaN(num)) {
+                  onChange([num * scale, value[1]]);
+                }
+              }}
+              className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            />
+            <span className="text-[9px] text-[var(--color-ec-text-secondary)] font-mono font-bold">→</span>
+            <input
+              type="number"
+              step="any"
+              value={localMax}
+              onChange={(e) => {
+                const valStr = e.target.value;
+                setLocalMax(valStr);
+                const num = parseFloat(valStr);
+                if (!isNaN(num)) {
+                  onChange([value[0], num * scale]);
+                }
+              }}
+              className="w-20 bg-[var(--color-ec-bg)] border border-[var(--color-ec-border)] rounded px-2 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)] font-mono"
+            />
+          </>
+        )}
       </div>
       {param && (
         <p className="text-[9px] text-[var(--color-ec-text-muted)] font-mono opacity-80">
-          Actual: <span className="text-[var(--color-ec-text-primary)] font-bold">{isVolume ? `${param.current_value / scale}M` : param.current_value}</span> | Paso base: {isVolume ? `${step / scale}M` : step}
+          Actual: <span className="text-[var(--color-ec-text-primary)] font-bold">{fmt(param.current_value)}</span> | Paso base: {isTimeOfDay ? `${step} min` : isVolume ? `${step / scale}M` : step}
         </p>
       )}
       {limitWarning && (
@@ -952,7 +1036,7 @@ function RangeSlider({
                   onClick={() => onChange([value[0], s])}
                   className="px-1.5 py-0.5 bg-amber-500/20 hover:bg-amber-500/35 text-amber-400 rounded cursor-pointer border border-amber-500/30 transition-all active:scale-[0.95] font-bold"
                 >
-                  {isVolume ? `${s / scale}M` : s} (Rango: {isVolume ? `${(s - value[0]) / scale}M` : s - value[0]})
+                  {fmt(s)} (Rango: {isVolume ? `${(s - value[0]) / scale}M` : isTimeOfDay ? `${s - value[0]} min` : s - value[0]})
                 </button>
               ))}
             </div>

@@ -202,6 +202,10 @@ def _bt_kwargs(backtest_params: dict) -> dict:
         "custom_start_time": backtest_params.get("custom_start_time"),
         "custom_end_time": backtest_params.get("custom_end_time"),
         "locate_type": backtest_params.get("locate_type", "FLAT"),
+        # Tope de locates: el barrido mueve el COSTE del locate, no el cupo de
+        # acciones, asi que el tope se mantiene fijo en todos los puntos de la
+        # rejilla (y del WFO, que reusa esta funcion).
+        "max_locates": backtest_params.get("max_locates", 0),
         "look_ahead_prevention": backtest_params.get("look_ahead_prevention", True),
     }
 

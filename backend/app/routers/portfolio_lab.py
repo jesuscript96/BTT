@@ -479,6 +479,12 @@ def _monitor_worker(task_id: str, strategies: list[dict]) -> dict:
                 slippage=float(params.get("slippage") or 0.0),
                 locates_cost=float(params.get("locates_cost") or 0.0),
                 locate_type=str(params.get("locate_type") or "FLAT"),
+                # Tope de locates: este es el UNICO sitio del Laboratorio que
+                # vuelve a simular. `combine` y `scaling` trabajan sobre los
+                # trades ya guardados, cuyo tamano YA viene topado de la
+                # corrida original — recortarlo ahi a posteriori seria falsear
+                # el PnL, porque el tope cambia el tamano, no el coste.
+                max_locates=int(params.get("max_locates") or 0),
                 start_date=start,
                 end_date=None,
                 market_sessions=params.get("market_sessions") or definition.get("market_sessions"),

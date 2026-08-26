@@ -36,6 +36,13 @@ def simulate(
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # TOPE DE LOCATES (2026-08-26). Maximo de paquetes de 100 acciones que se
+    # esta dispuesto a alquilar para un ticker-dia. 0 = sin tope (comportamiento
+    # de siempre). En CORTO limita el tamano a `max_locates * 100` acciones:
+    # como la factura del dia es ceil(max_corto_del_dia / 100) * coste, topar
+    # cada entrada topa el gasto del dia entero. Recorta la posicion, NO anula
+    # el trade. En largo no se aplica: los locates son cosa del corto.
+    max_locates: int = 0,
     look_ahead_prevention: bool = True,
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
@@ -797,6 +804,17 @@ def simulate(
                     add_cash_pedido = add_cash
                     add_cash = min(add_cash, disponible)
                     add_size = add_cash / add_px
+                    # TOPE DE LOCATES: un anadido en corto sube el maximo del
+                    # dia y con el la factura, asi que el cupo cuenta entrada
+                    # MAS anadidos. Se recorta igual que con el tope de caja.
+                    recortado_locates = False
+                    if (not is_long) and max_locates > 0:
+                        cupo_locates = max_locates * 100.0 - size
+                        if cupo_locates <= 0:
+                            continue
+                        if add_size > cupo_locates:
+                            add_size = cupo_locates
+                            recortado_locates = True
                     if add_size <= 0:
                         continue
                     recortado = add_cash < add_cash_pedido - 1e-9
@@ -822,6 +840,7 @@ def simulate(
                         # Queda anotado cuando el tope de caja recorta, para que
                         # un añadido a medias no parezca uno normal.
                         **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
+                        **({"recortado_por_locates": int(max_locates)} if recortado_locates else {}),
                     })
                     if not is_long:
                         max_short_size_today = max(max_short_size_today, size)
@@ -989,6 +1008,11 @@ def simulate(
                 # Cap size by available cash
                 max_size = available_cash / entry_price
                 size = min(size, max_size)
+
+                # Tope de locates: en corto, nunca mas acciones de las que
+                # cubren los paquetes que se esta dispuesto a alquilar.
+                if (not is_long) and max_locates > 0:
+                    size = min(size, max_locates * 100.0)
 
                 if size > 0:
                     # Track Max Short Size for Locates

@@ -28,6 +28,9 @@ class IndicatorType(str, Enum):
     DMI_PLUS = "DMI+"
     DMI_MINUS = "DMI-"
     WILLIAMS_R = "Williams %R"
+    # Squeeze: % que ha movido el precio en una ventana de RELOJ (minutos).
+    # Solo se compara contra una cifra fija; no es un nivel de precio.
+    SQUEEZE = "Squeeze"
 
     # Volatility
     ATR = "ATR"
@@ -226,6 +229,10 @@ class IndicatorConfig(BaseModel):
     time_from_minute: Optional[int] = None
     range_minutes: Optional[int] = None
     return_pct: Optional[float] = None
+    # Squeeze: direccion del spike que se quiere medir. El indicador devuelve
+    # SIEMPRE positivo el movimiento en la direccion elegida, para que la
+    # condicion se lea igual arriba que abajo ("Squeeze > 10").
+    squeeze_direction: Optional[Literal["up", "down"]] = None
 
     # New indicator-specific parameters
     deviationLevel: Optional[int] = None       # Linear Regression deviation (1, 2, 3)

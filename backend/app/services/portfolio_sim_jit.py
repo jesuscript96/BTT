@@ -111,6 +111,9 @@ def _core_simulate_jit(
     # Cortacircuitos de perdida diaria, en NANOSEGUNDOS epoch (0 = apagado).
     # Paridad exacta con portfolio_sim.py, incluido el uso de >=.
     no_new_risk_after, force_close_at,
+    # Tope de locates: maximo de paquetes de 100 acciones en corto (0 = sin
+    # tope). Paridad exacta con portfolio_sim.py.
+    max_locates,
 ):
     n = len(close)
 
@@ -688,6 +691,11 @@ def _core_simulate_jit(
 
                 max_size = available_cash / entry_price
                 size = min(size, max_size)
+
+                # Tope de locates: en corto, nunca mas acciones de las que
+                # cubren los paquetes que se esta dispuesto a alquilar.
+                if (not is_long) and max_locates > 0:
+                    size = min(size, max_locates * 100.0)
 
                 if size > 0:
                     if not is_long:

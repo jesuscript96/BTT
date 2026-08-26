@@ -50,6 +50,7 @@ import {
   calculateAccumulatedVolume,
   calculateAccumDollarVolume,
   calculateDollarVolume,
+  calculateSqueeze,
   calculateHeikinAshi,
 } from "@/lib/indicators";
 
@@ -905,6 +906,19 @@ export default function Chart({
                 if (d.length > 0) {
                   const s = subChart.addSeries(HistogramSeries, { color: "#38bdf8" });
                   s.setData(d);
+                }
+                break;
+              }
+              case "SQUEEZE": {
+                // Se pinta CON SIGNO (+ sube, - baja) y con una linea en 0:
+                // asi se ve de un vistazo hacia donde fue el disparo. En las
+                // condiciones el desplegable de direccion lo devuelve siempre
+                // en positivo, que es el mismo numero con el signo cambiado.
+                const d = calculateSqueeze(deduped, inst.params.minutes ?? 5);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#c026d3", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
                 }
                 break;
               }

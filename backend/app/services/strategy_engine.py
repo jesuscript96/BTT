@@ -1263,6 +1263,7 @@ def _compute_from_config(
         min_r_squared=cfg.get("min_r_squared"),
         min_pivots=cfg.get("min_pivots"),
         session_ref=cfg.get("session_ref"),
+        squeeze_direction=cfg.get("squeeze_direction"),
     )
 
 

@@ -114,6 +114,8 @@ def simulate_jit(
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # Tope de locates (0 = sin tope). Ver portfolio_sim.simulate.
+    max_locates: int = 0,
     look_ahead_prevention: bool = True,
     partial_take_profits: list | None = None,
     hs_type: str | None = None,
@@ -320,6 +322,7 @@ def simulate_jit(
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
         int(no_new_risk_after or 0), int(force_close_at or 0),
+        float(max_locates or 0),
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---

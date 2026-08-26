@@ -81,6 +81,9 @@ def run_backtest(
     custom_end_time: str | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # Tope de locates: maximo de paquetes de 100 acciones en corto por
+    # ticker-dia. 0 = sin tope. Ver portfolio_sim.simulate.
+    max_locates: int = 0,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -332,6 +335,7 @@ def run_backtest(
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
+            "max_locates": max_locates,
             "look_ahead_prevention": look_ahead_prevention,
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
@@ -385,6 +389,7 @@ def run_backtest(
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
+            "max_locates": max_locates,
             "look_ahead_prevention": look_ahead_prevention,
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
@@ -852,6 +857,7 @@ def run_backtest(
                 slippage=slippage,
                 locates_cost=locates_cost,
                 locate_type=locate_type,
+                max_locates=max_locates,
                 look_ahead_prevention=look_ahead_prevention,
                 sl_stop=sig_sl_stop,
                 sl_trail=sig_sl_trail,

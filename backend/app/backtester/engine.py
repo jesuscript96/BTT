@@ -1021,6 +1021,38 @@ class BacktestEngine:
             if getattr(config, 'time_hour', None) is not None or getattr(config, 'time_minute', None) is not None:
                 # If target is fixed, we still return the series; comparison is done in _evaluate_comparison
                 pass
+        elif name == IndicatorType.SQUEEZE:
+            # Squeeze — % que ha movido el precio en una ventana de RELOJ.
+            # Paridad con `_compute_raw("Squeeze")` de services/indicators.py,
+            # que es la via viva; esta es la del motor legacy. La ventana va en
+            # MINUTOS, no en velas: el lago solo guarda el minuto que tuvo
+            # operaciones, asi que la referencia se busca con un asof hacia
+            # atras (ultimo cierre conocido en `t - X min`).
+            win = int(getattr(config, 'range_minutes', None) or 5)
+            if win < 1:
+                win = 1
+
+            def calc_squeeze(g):
+                if g.empty:
+                    return pd.Series(np.nan, index=g.index)
+                g_sorted = g.sort_values('timestamp')
+                t_ns = pd.to_datetime(g_sorted['timestamp']).values.astype('datetime64[ns]').astype(np.int64)
+                c_vals = g_sorted['close'].values.astype(np.float64)
+                idx = np.searchsorted(t_ns, t_ns - win * 60 * 1_000_000_000, side='right') - 1
+                out = np.full(len(c_vals), np.nan)
+                ok = idx >= 0
+                if ok.any():
+                    base = c_vals[idx[ok]]
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        out[ok] = np.where(base > 0, (c_vals[ok] - base) / base * 100.0, np.nan)
+                return pd.Series(out, index=g_sorted.index)
+
+            series = df.groupby(['ticker', df['timestamp'].dt.date], group_keys=False).apply(calc_squeeze)
+            if len(series) == len(df):
+                series = series.reindex(df.index)
+            # "Abajo" devuelve la caida en POSITIVO, igual que la via viva.
+            if str(getattr(config, 'squeeze_direction', None) or 'up').lower() == 'down':
+                series = -series
         elif name == IndicatorType.RANGE_OF_TIME:
             # Calculate elapsed minutes per ticker per date
             def calc_range_of_time(g):
