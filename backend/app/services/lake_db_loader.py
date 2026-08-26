@@ -229,12 +229,15 @@ def _alinear_pmh_gap_pct(con, ini: str, fin: str) -> None:
     rango = (f"timestamp >= TIMESTAMP '{ini}' AND timestamp < TIMESTAMP '{fin}' "
              f"AND prev_close IS NOT NULL AND prev_close > 0")
     # Dias SIN split (la inmensa mayoria): misma formula de siempre.
+    # OJO compatibilidad: el backend corre DuckDB 1.1.3, que no soporta
+    # "(a, b) NOT IN (SELECT x, y ...)" — anti-join con NOT EXISTS.
     con.execute(
         f"UPDATE daily_metrics "
         f"SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
         f"WHERE {rango} "
-        f"AND (ticker, CAST(timestamp AS DATE)) NOT IN "
-        f"(SELECT ticker, CAST(execution_date AS DATE) FROM read_parquet('{sp}'))"
+        f"AND NOT EXISTS (SELECT 1 FROM read_parquet('{sp}') s "
+        f"WHERE s.ticker = daily_metrics.ticker "
+        f"AND CAST(s.execution_date AS DATE) = CAST(daily_metrics.timestamp AS DATE))"
     )
     # Dias CON split: prev_close ajustado por el factor del lago (espejo del
     # split_fac del ETL; product() por si hay varios splits el mismo dia).

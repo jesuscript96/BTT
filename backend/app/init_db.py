@@ -350,12 +350,15 @@ def init_db():
         _sp = next((p for p in _cand if os.path.exists(p)), None)
         if _sp and os.path.exists(_sp):
             _sp = _sp.replace("\\", "/")
+            # OJO compatibilidad: DuckDB 1.1.3 (venv del backend) no soporta
+            # "(a, b) NOT IN (SELECT x, y ...)" — anti-join con NOT EXISTS.
             cur.execute(
                 "UPDATE daily_metrics "
                 "SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
                 "WHERE prev_close IS NOT NULL AND prev_close > 0 "
-                "AND (ticker, CAST(timestamp AS DATE)) NOT IN "
-                f"(SELECT ticker, CAST(execution_date AS DATE) FROM read_parquet('{_sp}'))"
+                "AND NOT EXISTS (SELECT 1 FROM read_parquet('" + _sp + "') s "
+                "WHERE s.ticker = daily_metrics.ticker "
+                "AND CAST(s.execution_date AS DATE) = CAST(daily_metrics.timestamp AS DATE))"
             )
             cur.execute(
                 "UPDATE daily_metrics AS d SET pmh_gap_pct = "
