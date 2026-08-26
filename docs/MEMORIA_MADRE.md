@@ -658,6 +658,41 @@ verificar cada cosa en 5 minutos. Solo los arreglos que afectan a ambos;
 nada de estrategias ni curvas concretas. `BACKTEST_STRICT_COMPLETENESS=true`
 ya está activo en el `.env` local de Alvaro (recomendado en todos).
 
+### 6. PRÓXIMOS ARREGLOS (propuesta): tablas de precalculados para acelerar la carga
+
+Medido el 26/08 con los `[TIMING]` del motor: de una run de ~86 s, el
+**stream_build se lleva ~83 s (95 %)** — el bucle que por cada ticker-día lee
+las velas, las **resamplea** (1m→5m/15m según la estrategia) y **recalcula los
+indicadores en Python** (rolling/groupby) antes de simular. El qualifying ya no
+es el problema (3,5 s frío, ms en caché; el bygap materializado hizo su
+trabajo). La idea es aplicar el MISMO patrón del bygap a lo que se recalcula
+en cada run:
+
+1. **Velas 5m/15m precalculadas en el lago** — el resample 1m→Nmin se haría
+   una vez en el ETL (parquet por ticker-mes), no en cada backtest.
+2. **Indicadores estándar precalculados por (ticker, día)** — solo los de
+   parámetros FIJOS de uso común (EMA rápidas/lentas típicas, Accum Volume,
+   RVOL, PM high/low vs open...). Los de parámetros libres del usuario
+   (Squeeze con ventana variable, etc.) seguirían calculándose en vivo: la
+   tabla no puede llevar todas las combinaciones.
+3. **Precarga del universo** — extender el `[PRECACHE]` actual para que tras
+   cada actualización del lago queden en caché los ticker-días candidatos más
+   frecuentes (hoy solo calienta lo que acaba de usar cada dataset).
+
+**Puntos a decidir juntos:** qué indicadores entran (lista cerrada inicial),
+dónde viven (lago `cangrejo_data` vs caché del backend), la invalidación tras
+cada update del diario (el bygap ya lo resuelve regenerándose en 34 s — estas
+tablas seguirían el mismo paso final), y el coste de disco (estimación
+inicial: ~1,5-2× el intradía para velas 5m + indicadores).
+
+**Impacto esperado:** si el resample+indicadores son la mitad del stream_build
+(por medir con un profiler fino antes de empezar), una run típica pasaría de
+~3,5 min en frío a ~1,5 min, y las re-runs de optimización (que repiten el
+mismo cálculo decenas de veces por rejilla) serían el mayor beneficiado.
+Primer paso propuesto: medir con profiler 5-10 ticker-días para partir el
+stream_build en (lectura / resample / indicadores / simulación) y decidir con
+datos qué tabla paga su coste.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
