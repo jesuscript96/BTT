@@ -940,6 +940,27 @@ son comparables con resultados anteriores. `avg_return_per_day_pct` no cambia
 | Suite de tests | 103 fallos / 321 pasan / 13 errores — **idéntico al baseline**, 0 regresiones |
 | Divergencia con `staging` | `staging` lleva 7 commits suyos encima; **su fix de splits no se puede mergear tal cual** (ver arriba) |
 
+## Estado actual de la rama Álvaro respecto a los datos (2026-08-27)
+
+| Elemento | Estado |
+|---|---|
+| Gaps ajustados por split | ✅ Corregido (`19979bc`, `6c05066`). Nuestro `prev_close` es CRUDO y se ajusta al calcular en `_alinear_pmh_gap_pct`. **NO portar a Sailor**: su lago ya ajusta dentro de la columna → doble ajuste |
+| `init_db.py` / `_alinear_pmh_gap_pct` | Ajuste de split ACTIVO — necesario en este lago (al revés que en Sailor, donde es no-op) |
+| Tabla `splits` | ✅ Corregida a 4 columnas (tenía 2; daba `[WARN] split_from not found`) |
+| Junctions `cold_storage/splits` y `/tickers` | ✅ Creados (no existían; el reload se saltaba en silencio) |
+| Padding de meses en particiones | ✅ El glob prueba ambos (`month=8` y `month=08`) — `8777d17` |
+| "Days" / `avg_r_per_day` | ✅ Corregido a sesiones de calendario (converge con staging) |
+| Carga incremental del DuckDB | ✅ Propia: 30-40 min → 2,2 min |
+| `BACKTEST_STRICT_COMPLETENESS` | ✅ Encendido (`true`) en el `.env` local de Álvaro |
+| Perf al lanzar backtest | `stream_build` = 95% del run (medido 26/08). PRD en `docs/PRD_PERF_BACKTEST_STREAMBUILD_20260827.md`, pendiente de atacar |
+| Sync con `staging` | ✅ Mergeado (`347e127`): la rama contiene los 2 commits de Jaime |
+| Suite de tests | 103 fallos / 321 pasan / 15 errores (medido 27/08 en esta máquina, tal cual). NF/NP idénticos al baseline de Sailor; casi todos los fallos son `daily_metrics does not exist` (los tests esperan la BD remota, no el lago local). Los +2 errores vs sus 13: colección de 2 tests obsoletos (`test_backtest_engine.py` importa `Condition`, `test_backtest_integration.py` importa `filter_market_data_by_interval_and_dates` — nombres ya inexistentes). Sin cambios de código |
+
+Regla que se lleva de aquí: los dos lagos llegan al mismo resultado por caminos
+distintos (Álvaro ajusta el split al calcular, Sailor dentro de la columna del
+ETL). Antes de adoptar un fix de datos del otro lado, verificar en qué capa
+aplica cada lago el ajuste — los parches NO son intercambiables.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
