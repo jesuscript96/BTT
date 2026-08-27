@@ -6,6 +6,7 @@
 // los trades se piden solo para la estrategia elegida.
 
 import { apiRequest } from "./api";
+import type { OptimizationParamUnit } from "./api_backtester";
 
 export interface RobustezRunMeta {
   run_id: string;
@@ -530,6 +531,11 @@ export interface OptimizableParam {
   max: number;
   step: number;
   cheap: boolean;
+  /** Unidad del barrido. `time_of_day` = MINUTOS DESDE MEDIANOCHE, que hay que
+   *  pintar como HH:MM: un cierre a las 08:30 viaja como 510. El backend ya la
+   *  mandaba (`extract_parameters`), pero este tipo no la declaraba y Walk
+   *  Forward enseñaba el número crudo. */
+  unit?: OptimizationParamUnit;
 }
 
 export function getStrategyParameters(strategyId: string): Promise<{ parameters: OptimizableParam[] }> {

@@ -19,6 +19,48 @@ import {
 } from "../shared";
 import { Help, PlainStats, StaleNotice, Verdict } from "../help";
 import { WfoParamMatrix, WfoWindowBars } from "../charts/WfoCharts";
+
+/* ── Horas de cierre ──────────────────────────────────────────────────
+   Los parametros de hora se barren en MINUTOS DESDE MEDIANOCHE (08:30 = 510).
+   Estos dos ayudantes estan duplicados a proposito de
+   `OptimizationSurfaceTab`: importarlos de alli arrastraria Plotly (va con
+   `next/dynamic`) a un modulo de Robustez que no lo necesita. Son seis lineas;
+   si aparece un tercer sitio, toca moverlos a un util comun. */
+const minutosAHHMM = (mins: number) => {
+  const m = Math.max(0, Math.round(mins));
+  return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+const hhmmAMinutos = (txt: string): number | null => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(txt.trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+};
+
+function HoraInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <input
+      type="time"
+      value={minutosAHHMM(value)}
+      onChange={(e) => {
+        const v = hhmmAMinutos(e.target.value);
+        if (v !== null) onChange(v);
+      }}
+      style={{
+        background: color.bgBase,
+        border: `0.5px solid ${color.border}`,
+        borderRadius: radius.sm,
+        color: color.textHigh,
+        fontFamily: font.mono,
+        fontSize: 12.5,
+        padding: "7px 9px",
+        width: "100%",
+        outline: "none",
+      }}
+      onFocus={(e) => (e.currentTarget.style.borderColor = color.copper)}
+      onBlur={(e) => (e.currentTarget.style.borderColor = color.border)}
+    />
+  );
+}
 import {
   cancelRobustezJob,
   getStrategyParameters,
@@ -244,6 +286,9 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
   useEffect(() => stopPolling, []);
 
   const sel = params.find((p) => p.path === chosen) || null;
+  // Solo `time_of_day` es una hora de reloj. `minutes` (un TP a los N minutos
+  // de abrir) es un numero normal y se sigue pintando como tal.
+  const esHora = sel?.unit === "time_of_day";
 
   const launchFast = async () => {
     if (!strategy) return;
@@ -432,12 +477,29 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
           </Field>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            <Field label="min">
-              <NumberInput value={pMin} onChange={setPMin} step={1} />
-            </Field>
-            <Field label="max">
-              <NumberInput value={pMax} onChange={setPMax} step={1} />
-            </Field>
+            {/* Un parametro de HORA de cierre viaja en MINUTOS DESDE MEDIANOCHE
+                (08:30 = 510). Con NumberInput se veia el 510 crudo y habia que
+                hacer la cuenta a mano. Los de unidad `minutes` (un TP a los N
+                minutos de abrir) SI son un numero normal: esos no se tocan. */}
+            {esHora ? (
+              <>
+                <Field label="min (hora)">
+                  <HoraInput value={pMin} onChange={setPMin} />
+                </Field>
+                <Field label="max (hora)">
+                  <HoraInput value={pMax} onChange={setPMax} />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="min">
+                  <NumberInput value={pMin} onChange={setPMin} step={1} />
+                </Field>
+                <Field label="max">
+                  <NumberInput value={pMax} onChange={setPMax} step={1} />
+                </Field>
+              </>
+            )}
             <Field label="pasos">
               <NumberInput value={pSteps} onChange={setPSteps} min={2} max={20} step={1} />
             </Field>
