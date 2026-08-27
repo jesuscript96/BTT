@@ -551,9 +551,13 @@ export function FundingSection({
   nSesiones,
   riskLabel,
   riskHint,
+  baseCash,
 }: {
   /** R-multiplos por sesion (compound) o PnL en $ por sesion (additive). */
   valoresDia: number[];
+  /** Capital del que salen esos dolares. Imprescindible en ADITIVO: sin el,
+   *  cambiar la cuenta base encogia las reglas pero no las apuestas. */
+  baseCash?: number | null;
   /** Excursion adversa de cada sesion como fraccion de su apertura. Opcional. */
   maeFracs?: number[] | null;
   tradesPorDia?: number[] | null;
@@ -599,6 +603,7 @@ export function FundingSection({
         horizon_days: cfg.plazo === "fijo" ? cfg.horizonDays : null,
         simulations: cfg.sims,
         seed: null,
+        values_base_cash: baseCash ?? null,
       });
       setOut(res);
       setRanCfg(cfgKey);

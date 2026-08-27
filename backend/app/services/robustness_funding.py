@@ -168,6 +168,9 @@ def run_funding(
     horizon_days: int | None = None,
     simulations: int = 5000,
     seed: int | None = None,
+    # Capital con el que se corrio el backtest del que salen `values`. Solo se
+    # usa en ADITIVO, para reescalar. Ver el bloque de `escala` mas abajo.
+    values_base_cash: float | None = None,
 ) -> dict:
     """Fraccion de historias alternativas que habrian superado el challenge."""
     arr = np.asarray([v for v in values if v is not None], dtype=np.float64)
@@ -197,6 +200,22 @@ def run_funding(
     rng = np.random.default_rng(seed)
     compound = mode == "compound"
     risk_frac = risk_pct / 100.0
+
+    # ── Reescalado de la serie en ADITIVO ─────────────────────────────────
+    # En aditivo `values` son PnL en DOLARES, y esos dolares salen del capital
+    # con el que se corrio el backtest. Cambiar `account` sin tocarlos simulaba
+    # una cuenta de X moviendose como si operase Y: las reglas (que son % de la
+    # cuenta) se encogian pero el tamaño de las apuestas no, asi que el numero
+    # de la casilla movia el resultado sin significar nada (0,7% con 25.000 y
+    # 24,1% con 100.000 sobre la MISMA serie).
+    #
+    # En compuesto no hace falta: los R-multiplos son proporciones y escalan
+    # solos. `mae_fracs` tampoco se toca — son fracciones de la apertura.
+    escala = 1.0
+    if not compound and values_base_cash and values_base_cash > 0:
+        escala = account / float(values_base_cash)
+        if escala != 1.0:
+            arr = arr * escala
 
     limit_usd = account * daily_loss_pct / 100.0
     target_usd = account * (1.0 + target_pct / 100.0)
@@ -253,6 +272,11 @@ def run_funding(
         "history_days": n_hist,
         "mode": "compound" if compound else "additive",
         "risk_pct": risk_pct,
+        # Factor aplicado a la serie en aditivo (1 = sin reescalar). Se expone
+        # para que la interfaz pueda decir que los dolares NO son los del
+        # backtest, sino los de la cuenta que se esta simulando.
+        "scale": round(escala, 6),
+        "values_base_cash": round(float(values_base_cash), 2) if values_base_cash else None,
         "rules": {
             "target_pct": target_pct,
             "target_usd": round(target_usd - account, 2),

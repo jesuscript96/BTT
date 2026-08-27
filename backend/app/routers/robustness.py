@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from app.auth import get_current_user_id, scope_clause
 from app.database import get_user_db_connection
 from app.services import robustness_service as rs
-from app.services.robustness_mc import run_bootstrap
+from app.services.robustness_mc import run_bootstrap, run_horizon
 from app.services.robustness_funding import run_funding
 from app.services.robustness_stress import run_stress
 
@@ -157,6 +157,43 @@ def montecarlo(req: MonteCarloReq):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class HorizonReq(BaseModel):
+    """Probabilidad acumulada de ruina / objetivo dentro de X sesiones.
+
+    Mismo remuestreo que `/montecarlo`, pero con el horizonte como VARIABLE en
+    vez de fijo al largo del historico. Ver `run_horizon`.
+    """
+    values: list[float]
+    init_cash: float = 10000.0
+    simulations: int = 5000
+    mode: str = "compound"         # compound | additive
+    risk_pct: float = 3.0
+    ruin_pct: float = 50.0
+    target_pct: float = 8.0
+    max_days: int = 120
+    seed: int | None = None
+
+
+@router.post("/montecarlo/horizon")
+def montecarlo_horizon(req: HorizonReq):
+    """Curva de probabilidad de ruina y de objetivo por horizonte."""
+    _guard()
+    try:
+        return run_horizon(
+            req.values,
+            init_cash=req.init_cash,
+            simulations=req.simulations,
+            mode=req.mode,
+            risk_pct=req.risk_pct,
+            ruin_pct=req.ruin_pct,
+            target_pct=req.target_pct,
+            max_days=req.max_days,
+            seed=req.seed,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class FundingReq(BaseModel):
     """Reglas de una prueba de fondeo, evaluadas sobre el bootstrap por SESIONES.
 
@@ -180,6 +217,9 @@ class FundingReq(BaseModel):
     horizon_days: int | None = None
     simulations: int = 5000
     seed: int | None = None
+    # Capital del backtest del que salen `values`. Solo se usa en aditivo, para
+    # reescalar la serie de dolares a la cuenta que se simula.
+    values_base_cash: float | None = None
 
 
 @router.post("/funding")
@@ -203,6 +243,7 @@ def funding(req: FundingReq):
             horizon_days=req.horizon_days,
             simulations=req.simulations,
             seed=req.seed,
+            values_base_cash=req.values_base_cash,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

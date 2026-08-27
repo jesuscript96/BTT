@@ -417,3 +417,94 @@ def _loss_block(
             "max_dd_pct": _grid(maxdds),
         },
     }
+
+
+def run_horizon(
+    values: list[float],
+    *,
+    init_cash: float = 10000.0,
+    simulations: int = 5000,
+    mode: str = "compound",
+    risk_pct: float = 3.0,
+    ruin_pct: float = 50.0,
+    target_pct: float = 8.0,
+    max_days: int = 120,
+    seed: int | None = None,
+) -> dict:
+    """Probabilidad ACUMULADA de tocar la ruina o el objetivo dentro de X pasos.
+
+    Contesta lo que `run_bootstrap` no puede: alli el horizonte es fijo (el
+    largo del historico) y solo se conoce el desenlace al final del todo, asi
+    que su `prob_ruin_pct` es "en algun momento de los ~N dias que duro el
+    backtest". Aqui el horizonte es la VARIABLE, y la respuesta es una curva:
+    para cada dia 1..D, que porcentaje de trayectorias ya habia tocado el
+    nivel.
+
+    Siempre remuestrea CON REEMPLAZO. El estudio mira hacia adelante y el
+    horizonte puede superar el historico; una permutacion, que solo reordena lo
+    que ya paso, no puede alargarse mas alla de su propio tamaño.
+    """
+    arr = np.asarray([v for v in values if v is not None], dtype=np.float64)
+    n = int(arr.size)
+    if n == 0:
+        raise ValueError("La estrategia no tiene trades utilizables")
+
+    dias = max(1, min(int(max_days), 2000))
+    sims = max(100, min(int(simulations), 50_000))
+    rng = np.random.default_rng(seed)
+    compound = mode == "compound"
+    risk_frac = risk_pct / 100.0
+
+    ruin_level = init_cash * (1.0 - ruin_pct / 100.0)
+    target_level = init_cash * (1.0 + target_pct / 100.0)
+
+    # Histograma del PRIMER paso en que se toca cada nivel; acumulandolo sale la
+    # curva entera sin tener que guardar una matriz sims x dias completa.
+    first_ruin = np.zeros(dias + 2, dtype=np.int64)
+    first_target = np.zeros(dias + 2, dtype=np.int64)
+    # Objetivo alcanzado ANTES de arruinarse: es el numero que de verdad importa
+    # para una prueba de fondeo, porque llegar al objetivo con la cuenta ya
+    # reventada no la aprueba.
+    first_target_alive = np.zeros(dias + 2, dtype=np.int64)
+
+    chunk = max(1, min(sims, _CHUNK_MAX_CELLS // (dias + 1)))
+    done = 0
+    while done < sims:
+        m = min(chunk, sims - done)
+        curves = _curves_from(_draw(rng, arr, m, dias, True), init_cash, compound, risk_frac)
+        pasos = curves[:, 1:]          # la columna 0 es el capital inicial
+
+        hit_r = pasos <= ruin_level
+        hit_t = pasos >= target_level
+        any_r = hit_r.any(axis=1)
+        any_t = hit_t.any(axis=1)
+        # argmax sobre booleanos da el primer True. El +1 lleva el indice de
+        # columna al numero de dia; las que no tocan van a `dias + 1`, fuera de
+        # la curva, para que no cuenten en ningun acumulado.
+        day_r = np.where(any_r, hit_r.argmax(axis=1) + 1, dias + 1)
+        day_t = np.where(any_t, hit_t.argmax(axis=1) + 1, dias + 1)
+
+        first_ruin += np.bincount(day_r[any_r], minlength=dias + 2)[: dias + 2]
+        first_target += np.bincount(day_t[any_t], minlength=dias + 2)[: dias + 2]
+        vivas = any_t & (day_t < day_r)
+        first_target_alive += np.bincount(day_t[vivas], minlength=dias + 2)[: dias + 2]
+
+        done += m
+
+    def acumulada(h: np.ndarray) -> list[float]:
+        return (np.cumsum(h[1:dias + 1]) / sims * 100.0).round(2).tolist()
+
+    return {
+        "days": list(range(1, dias + 1)),
+        "prob_ruin_pct": acumulada(first_ruin),
+        "prob_target_pct": acumulada(first_target),
+        "prob_target_alive_pct": acumulada(first_target_alive),
+        "init_cash": round(init_cash, 2),
+        "ruin_pct": ruin_pct,
+        "target_pct": target_pct,
+        "ruin_level": round(ruin_level, 2),
+        "target_level": round(target_level, 2),
+        "max_days": dias,
+        "simulations": sims,
+        "sample_size": n,
+    }
