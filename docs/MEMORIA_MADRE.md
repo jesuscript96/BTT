@@ -961,6 +961,10 @@ distintos (Álvaro ajusta el split al calcular, Sailor dentro de la columna del
 ETL). Antes de adoptar un fix de datos del otro lado, verificar en qué capa
 aplica cada lago el ajuste — los parches NO son intercambiables.
 
+> **2026-08-27**: divergencias rama Álvaro vs `staging` medidas y clasificadas
+> para triaje de Jaime (qué adoptar / no adoptar / ya convergido, con diffs) →
+> `docs/DIVERGENCIAS_ALVARO_VS_STAGING_20260827.md`.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
