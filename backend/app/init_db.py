@@ -343,37 +343,47 @@ def init_db():
     # version cruda de antes reinsertaba el gap falso (-90% / +15.000%) de cada
     # split en TODA la tabla en cada arranque. Paridad con
     # lake_db_loader._alinear_pmh_gap_pct: si cambia una, cambiar la otra.
+    # INTERRUPTOR LAKE_PREV_CLOSE_YA_AJUSTADO (2026-08-27, propuesta de Sailor —
+    # MEMORIA_MADRE): los dos lagos ajustan el split en CAPAS distintas; el de
+    # esta rama guarda prev_close CRUDO (hace falta este recalculo) y el de
+    # Sailor ya lo hornea dentro de la columna (recalcilar aqui seria doble
+    # ajuste). Con la variable en true este bloque entero se salta y
+    # pmh_gap_pct se queda como lo escribio el ETL. Apagado por defecto (R7).
     try:
-        _lake = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/").rstrip("\\")
-        _cand = [os.path.join(_lake, "splits", "data.parquet"),
-                 os.path.join(_lake, "cold_storage", "splits", "data.parquet")] if _lake else []
-        _sp = next((p for p in _cand if os.path.exists(p)), None)
-        if _sp and os.path.exists(_sp):
-            _sp = _sp.replace("\\", "/")
-            # OJO compatibilidad: DuckDB 1.1.3 (venv del backend) no soporta
-            # "(a, b) NOT IN (SELECT x, y ...)" — anti-join con NOT EXISTS.
-            cur.execute(
-                "UPDATE daily_metrics "
-                "SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
-                "WHERE prev_close IS NOT NULL AND prev_close > 0 "
-                "AND NOT EXISTS (SELECT 1 FROM read_parquet('" + _sp + "') s "
-                "WHERE s.ticker = daily_metrics.ticker "
-                "AND CAST(s.execution_date AS DATE) = CAST(daily_metrics.timestamp AS DATE))"
-            )
-            cur.execute(
-                "UPDATE daily_metrics AS d SET pmh_gap_pct = "
-                "(d.pm_high - d.prev_close * sf.f) / NULLIF(d.prev_close * sf.f, 0) * 100 "
-                "FROM (SELECT ticker, CAST(execution_date AS DATE) AS ed, "
-                "      product(CAST(split_from AS DOUBLE) / CAST(split_to AS DOUBLE)) AS f "
-                f"      FROM read_parquet('{_sp}') GROUP BY 1, 2) sf "
-                "WHERE d.ticker = sf.ticker AND CAST(d.timestamp AS DATE) = sf.ed "
-                "AND d.prev_close IS NOT NULL AND d.prev_close > 0"
-            )
-            print("[INFO] Successfully migrated local daily_metrics pmh_gap_pct calculation (split-adjusted)")
+        if os.getenv("LAKE_PREV_CLOSE_YA_AJUSTADO", "false").strip().lower() in ("1", "true", "yes", "on"):
+            print("[INFO] LAKE_PREV_CLOSE_YA_AJUSTADO=true: pmh_gap_pct se deja como "
+                  "lo escribio el ETL (prev_close ya ajustado por split), no se recalcula")
         else:
-            # Sin lago local no hay factores de split: los valores ya cargados
-            # por el ETL/loader son correctos y NO se recalculan en crudo.
-            print("[INFO] No local lake splits found: pmh_gap_pct left as loaded (split-adjusted by ETL)")
+            _lake = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/").rstrip("\\")
+            _cand = [os.path.join(_lake, "splits", "data.parquet"),
+                     os.path.join(_lake, "cold_storage", "splits", "data.parquet")] if _lake else []
+            _sp = next((p for p in _cand if os.path.exists(p)), None)
+            if _sp and os.path.exists(_sp):
+                _sp = _sp.replace("\\", "/")
+                # OJO compatibilidad: DuckDB 1.1.3 (venv del backend) no soporta
+                # "(a, b) NOT IN (SELECT x, y ...)" — anti-join con NOT EXISTS.
+                cur.execute(
+                    "UPDATE daily_metrics "
+                    "SET pmh_gap_pct = ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) "
+                    "WHERE prev_close IS NOT NULL AND prev_close > 0 "
+                    "AND NOT EXISTS (SELECT 1 FROM read_parquet('" + _sp + "') s "
+                    "WHERE s.ticker = daily_metrics.ticker "
+                    "AND CAST(s.execution_date AS DATE) = CAST(daily_metrics.timestamp AS DATE))"
+                )
+                cur.execute(
+                    "UPDATE daily_metrics AS d SET pmh_gap_pct = "
+                    "(d.pm_high - d.prev_close * sf.f) / NULLIF(d.prev_close * sf.f, 0) * 100 "
+                    "FROM (SELECT ticker, CAST(execution_date AS DATE) AS ed, "
+                    "      product(CAST(split_from AS DOUBLE) / CAST(split_to AS DOUBLE)) AS f "
+                    f"      FROM read_parquet('{_sp}') GROUP BY 1, 2) sf "
+                    "WHERE d.ticker = sf.ticker AND CAST(d.timestamp AS DATE) = sf.ed "
+                    "AND d.prev_close IS NOT NULL AND d.prev_close > 0"
+                )
+                print("[INFO] Successfully migrated local daily_metrics pmh_gap_pct calculation (split-adjusted)")
+            else:
+                # Sin lago local no hay factores de split: los valores ya cargados
+                # por el ETL/loader son correctos y NO se recalculan en crudo.
+                print("[INFO] No local lake splits found: pmh_gap_pct left as loaded (split-adjusted by ETL)")
     except Exception as e:
         print(f"[WARN] Could not update local daily_metrics pmh_gap_pct: {e}")
 

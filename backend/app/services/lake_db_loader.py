@@ -200,7 +200,7 @@ def cargar_meses_en_duckdb(meses: Iterable[tuple[int, int]], log: Log) -> dict:
                     con.execute(
                         f"INSERT INTO {tabla} SELECT {cols} FROM read_parquet('{patron}')")
                     if tabla == "daily_metrics":
-                        _alinear_pmh_gap_pct(con, ini, fin)
+                        _alinear_pmh_gap_pct(con, ini, fin, log)
                     con.execute("COMMIT")
                 except Exception:
                     con.execute("ROLLBACK")
@@ -215,7 +215,7 @@ def cargar_meses_en_duckdb(meses: Iterable[tuple[int, int]], log: Log) -> dict:
     return resumen
 
 
-def _alinear_pmh_gap_pct(con, ini: str, fin: str) -> None:
+def _alinear_pmh_gap_pct(con, ini: str, fin: str, log: Log | None = None) -> None:
     """Recalcula pmh_gap_pct en el mes recien cargado, como hace el arranque.
 
     POR QUE: `init_db.py` reescribe pmh_gap_pct de TODA la tabla en cada
@@ -234,7 +234,22 @@ def _alinear_pmh_gap_pct(con, ini: str, fin: str) -> None:
     Parquet de splits del lago (que lleva esas columnas). Sin esto, cada
     reverse-split reinsertaria su gap falso del +15.000% en la tabla al cargar
     el mes. La IPO (prev_close NULL) no se toca, igual que la formula original.
+
+    INTERRUPTOR LAKE_PREV_CLOSE_YA_AJUSTADO (2026-08-27, propuesta de Sailor —
+    MEMORIA_MADRE "Por que sus parches de splits NO se pueden adoptar aqui"):
+    los DOS lagos ajustan el split, pero en CAPAS distintas. Este (cangrejo_data)
+    guarda prev_close CRUDO y ajusta aqui; el de Sailor hornea el factor DENTRO
+    de prev_close en su ETL, asi que recalcular aqui seria un DOBLE ajuste
+    (medido: NVDA 1,08% correcto pasaria a 910,77% falso). Con la variable en
+    `true` este recalculo se apaga entero y pmh_gap_pct se queda tal y como lo
+    escribio el ETL. Apagado por defecto (regla R7): en este lago hace falta.
+    Paridad con init_db.py: el mismo interruptor gobierna los dos sitios.
     """
+    if os.getenv("LAKE_PREV_CLOSE_YA_AJUSTADO", "false").strip().lower() in ("1", "true", "yes", "on"):
+        (log or print)(
+            "[CARGA] LAKE_PREV_CLOSE_YA_AJUSTADO=true: pmh_gap_pct se deja como "
+            "lo escribio el ETL (prev_close ya ajustado por split), no se recalcula")
+        return
     # Factor de split del lago: <LOCAL_LAKE_DIR>/splits/data.parquet (donde lo
     # escribe el ETL); cold_storage/splits es un junction al mismo fichero.
     raiz = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/").rstrip("\\")

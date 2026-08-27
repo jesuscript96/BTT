@@ -945,7 +945,7 @@ son comparables con resultados anteriores. `avg_return_per_day_pct` no cambia
 | Elemento | Estado |
 |---|---|
 | Gaps ajustados por split | ✅ Corregido (`19979bc`, `6c05066`). Nuestro `prev_close` es CRUDO y se ajusta al calcular en `_alinear_pmh_gap_pct`. **NO portar a Sailor**: su lago ya ajusta dentro de la columna → doble ajuste |
-| `init_db.py` / `_alinear_pmh_gap_pct` | Ajuste de split ACTIVO — necesario en este lago (al revés que en Sailor, donde es no-op) |
+| `init_db.py` / `_alinear_pmh_gap_pct` | Ajuste de split ACTIVO — necesario en este lago. Interruptor `LAKE_PREV_CLOSE_YA_AJUSTADO` (default off) para el otro lago — ver entrada del 27/08 (tarde) |
 | Tabla `splits` | ✅ Corregida a 4 columnas (tenía 2; daba `[WARN] split_from not found`) |
 | Junctions `cold_storage/splits` y `/tickers` | ✅ Creados (no existían; el reload se saltaba en silencio) |
 | Padding de meses en particiones | ✅ El glob prueba ambos (`month=8` y `month=08`) — `8777d17` |
@@ -964,6 +964,40 @@ aplica cada lago el ajuste — los parches NO son intercambiables.
 > **2026-08-27**: divergencias rama Álvaro vs `staging` medidas y clasificadas
 > para triaje de Jaime (qué adoptar / no adoptar / ya convergido, con diffs) →
 > `docs/DIVERGENCIAS_ALVARO_VS_STAGING_20260827.md`.
+
+## 2026-08-27 (tarde) — `LAKE_PREV_CLOSE_YA_AJUSTADO`: el mismo backend para los dos lagos
+
+Implementada la propuesta textual de Sailor (§ "Por qué sus parches de splits
+NO se pueden adoptar aquí", alternativa conservadora): una variable de entorno
+que apaga el recálculo de `pmh_gap_pct` donde el ETL ya ajusta el split.
+
+- **Qué hace**: con `LAKE_PREV_CLOSE_YA_AJUSTADO=true`, los DOS sitios que
+  recalculan con factor de split se apagan enteros — la migración de arranque
+  de `init_db.py` (de paso desaparece el UPDATE de 19,2 M de filas no-op en
+  cada arranque de la máquina de Sailor) y `_alinear_pmh_gap_pct` en la carga
+  mensual. `pmh_gap_pct` se queda tal y como lo escribió el ETL, y ni se lee
+  ni se exige el parquet de splits en ese modo.
+- **Por qué así**: en el lago de Sailor la columna `prev_close` ya lleva el
+  factor horneado; recalcular ahí con factor es el doble ajuste (NVDA 1,08% →
+  910,77%) y recalcular sin factor es un no-op que reescribe 19 M de filas.
+  Confiar en el ETL era su propuesta PREFERIDA; esto es esa propuesta, pero
+  opt-in.
+- **Apagada por defecto (regla R7)**: en el lago de esta rama (`cangrejo_data`)
+  `prev_close` es CRUDO y el ajuste hace falta. Sin poner la variable, ni una
+  línea cambia de comportamiento en la máquina de Álvaro (los tests del camino
+  default lo fijan: el día de split sale 1,0% con factor, -89,9% sin).
+- **⚠️ COORDINAR**: cuando esto llegue a `staging`, **Sailor debe añadir
+  `LAKE_PREV_CLOSE_YA_AJUSTADO=true` a su `backend/.env`** — sin ella, su lago
+  sufriría el doble ajuste al primer arranque.
+- **Tests**: `tests/test_lake_prev_close_ya_ajustado.py` (nuevo, 5 casos: los
+  dos sitios × default/flag, y el contrato del `RuntimeError` sin parquet de
+  splits; todo con DuckDB en memoria + lago de mentira, nada de la BD remota).
+  Suite completa: **103 fallos / 326 pasan / 15 errores** — los mismos 103+15
+  del baseline, +5 verdes nuevos, 0 regresiones.
+
+Ficheros: `app/init_db.py`, `app/services/lake_db_loader.py`
+(`_alinear_pmh_gap_pct` gana un parámetro `log` opcional para avisar sin
+lanzar el mensaje al vacío).
 
 ## Cambios de sesiones anteriores pendientes de coordinar
 
