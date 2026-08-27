@@ -311,6 +311,12 @@ class PartialTakeProfit(BaseModel):
     capital_pct: float
 
 class RiskManagement(BaseModel):
+    # Dimensionar la posicion como riesgo / distancia real al stop ("Calculo de
+    # Shares por Distancia al SL" en la interfaz). NO estaba declarado, y
+    # pydantic va con extra="ignore": el frontend lo mandaba, el esquema lo
+    # tiraba sin error ni log, y la estrategia guardada salia siempre con la
+    # opcion desactivada. Ver la nota de las TRES CAPAS.
+    size_by_sl: Optional[bool] = False
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL
