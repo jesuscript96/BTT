@@ -79,12 +79,31 @@ def _safe_hist(x: np.ndarray, bins: int = 40) -> dict:
     Pasa en modo permutacion: el balance final es el mismo en todas las
     simulaciones, el rango es cero y np.histogram lanza "Too many bins".
     """
-    lo, hi = float(np.min(x)), float(np.max(x))
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi - lo < 1e-9:
-        pad = max(abs(lo) * 0.01, 1.0)
-        counts, edges = np.histogram(x, bins=3, range=(lo - pad, hi + pad))
+    # Los no finitos se APARTAN antes de mirar nada. Con interes compuesto una
+    # trayectoria muy buena puede desbordar la equity a +inf, y el plan B de
+    # abajo tambien reventaba porque calculaba `lo - pad` sobre ese inf.
+    x = np.asarray(x, dtype=np.float64)
+    finitos = x[np.isfinite(x)]
+    if finitos.size == 0:
+        return {"counts": [0], "edges": [0.0, 1.0]}
+
+    lo, hi = float(finitos.min()), float(finitos.max())
+    # El umbral es RELATIVO a la magnitud, no absoluto. numpy no falla porque el
+    # rango sea cero, sino cuando el ancho de bin cae por debajo del espaciado
+    # del float a esa magnitud: un rango de 1.000 sobre valores de 1e18 pasaba
+    # el `hi - lo < 1e-9` de antes y explotaba igual ("Too many bins for data
+    # range").
+    escala = max(abs(lo), abs(hi), 1.0)
+    if hi - lo <= escala * 1e-12:
+        pad = escala * 0.01
+        counts, edges = np.histogram(finitos, bins=3, range=(lo - pad, hi + pad))
     else:
-        counts, edges = np.histogram(x, bins=bins)
+        try:
+            counts, edges = np.histogram(finitos, bins=bins)
+        except ValueError:
+            # Red de seguridad: donde no caben 40 bins, 3 siempre caben. Mas
+            # vale un histograma basto que tumbar el Monte Carlo entero.
+            counts, edges = np.histogram(finitos, bins=3)
     return {"counts": counts.tolist(), "edges": np.round(edges, 2).tolist()}
 
 
