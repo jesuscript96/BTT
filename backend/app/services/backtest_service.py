@@ -22,6 +22,9 @@ from app.services.strategy_engine import translate_strategy, _parse_risk_managem
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
 from app.services.sim_dispatch import simulate
 from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_condition
+# Profiler de sub-fases de stream_build (PRD_PERF §7). Apagado por defecto:
+# BACKTEST_PROFILE_SUBPHASES=1 al arrancar. Con False todo esto es un no-op.
+from app.services.subphase_profiler import ENABLED as _SUBPHASE_ON, PROF as _SUBPROF
 
 logger = logging.getLogger("backtester.engine")
 
@@ -532,6 +535,11 @@ def run_backtest(
             _emitir(e)
         _pend.clear()
 
+    if _SUBPHASE_ON:
+        # El next() del iterador (I/O del stream) queda cronometrado aparte del
+        # cuerpo del bucle; ver subphase_profiler.timed_iter.
+        group_source = _SUBPROF.timed_iter(group_source)
+
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
         if progress_callback is not None:
@@ -539,6 +547,9 @@ def run_backtest(
 
         ticker = str(ticker_raw)
         date = str(date_raw)[:10]
+        if _SUBPHASE_ON:
+            _SUBPROF.day_boundary(ticker, date)
+            _SUBPROF.mark("prep")
 
         # Check day/month exclusions
         rm = strategy_def.get("risk_management", {}) if strategy_def else {}
@@ -676,6 +687,8 @@ def run_backtest(
         del day_df
 
         mini_df = pd.DataFrame(arrays)
+        if _SUBPHASE_ON:
+            _SUBPROF.mark("translate")
 
         # --- Signal computation (with optional cache for risk-only optimization) ---
         cache_key = (ticker, date)
@@ -736,6 +749,9 @@ def run_backtest(
                     ],
                     "pyramid_sequential": sig_pyramid_sequential,
                 }
+
+        if _SUBPHASE_ON:
+            _SUBPROF.mark("postproc")
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
         # to prevent new position entries on subsequent swing days.
@@ -883,6 +899,8 @@ def run_backtest(
                 elapsed_limit=elapsed_limit,
                 elapsed_operator=elapsed_operator,
         )
+        if _SUBPHASE_ON:
+            _SUBPROF.mark("simulate")
         try:
             sim_result = simulate(**_sim_kwargs)
         except Exception as exc:
@@ -891,6 +909,8 @@ def run_backtest(
             continue
 
         del mini_df
+        if _SUBPHASE_ON:
+            _SUBPROF.mark("emit")
 
         if not sim_result["trades"]:
             del sim_result
@@ -934,6 +954,9 @@ def run_backtest(
     from app.services.perf_timing import log_phase as _log_phase
     _log_phase("stream_build", (t_loop - t_total) * 1000, pairs=scanned,
                days=total_days, mode="sequential" if scanned else "pipelined")
+    if _SUBPHASE_ON:
+        _SUBPROF.report((t_loop - t_total) * 1000, (t_loop - t1) * 1000, total_days)
+        _SUBPROF.reset()
     logger.info(
         f"[STREAM] done: {days_with_entries} days with entries "
         f"({round(time.time()-t1, 2)}s)"

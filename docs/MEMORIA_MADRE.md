@@ -999,6 +999,47 @@ Ficheros: `app/init_db.py`, `app/services/lake_db_loader.py`
 (`_alinear_pmh_gap_pct` gana un parámetro `log` opcional para avisar sin
 lanzar el mensaje al vacío).
 
+## 2026-08-27 (noche) — Profiler fino de `stream_build`: el PRD de perf cambia de alcance
+
+Ejecutado el §7 del `docs/PRD_PERF_BACKTEST_STREAMBUILD_20260827.md` (ver ahí
+las tablas completas). Instrumentación nueva: `backend/app/services/subphase_profiler.py`,
+gated tras `BACKTEST_PROFILE_SUBPHASES=1` (**apagado por defecto**, R7), con
+hooks de solo-medición en `backtest_service` / `strategy_engine` / `indicators`.
+Con la var en off, cero cambio de comportamiento.
+
+**Qué se midió** (3 runs, 9-10 ticker-días, estrategias y datasets de Álvaro
+sin tocar, completitud 100 %):
+
+- **El resample es barato**: ~3 ms/ticker-día (7 % del stream_build caliente)
+  en estrategia multi-tf; 0 en todo-1m. **Las "velas Nm precalculadas" dejan
+  de ser la v1 del PRD.**
+- **Los "indicadores" del run frío (2,35 s) eran compilación única del
+  proceso**, no cálculo: días siguientes 0,1 ms. En caliente el coste real es
+  overhead pandas por llamada (~1-2 ms), no el math → la tabla de indicadores
+  fijos tampoco paga sin cambiar el camino de consumo.
+- **`fetch` (lectura del stream) es recurrente por run y por mes**: ~0,33-0,9 s
+  por mes aunque el proceso ya lo haya leído. 24 meses ≈ 8-20 s por run.
+- **La simulación es irrelevante (0,1-0,8 %) y NO es Numba**: el default es
+  `BACKTEST_NUMBA_SIM=0` (kernel Python). La casuística "kernel Numba" del
+  PRD §2 era errónea para la config por defecto.
+- **Extrapolación verificada**: 4.855 pares × ~13 ms + 24 meses × ~0,35 s ≈
+  los 86 s medidos el 26/08. El modelo cierra.
+
+**Orden de ataque recomendado (todo ya existe en el repo, gated)**: 1) warmup
+de indicadores al arrancar (mata los 2,35 s del 1.er run), 2) `BTT_SLAB_STREAM_ENABLED`
+(fetch mensual), 3) path nativo N2a por defecto en estrategias simples (mata
+el overhead pandas de translate, ~7 ms/día). Precalculados: solo si tras eso
+sigue doliendo, y como columnas por (ticker, día), no como velas Nm.
+
+**De paso**: `origin/feat/resample-memo` YA está contenida en esta rama
+(`17fdec3` es ancestro de HEAD) — el PRD §5 lo daba como "candidata a mergear".
+Nada que hacer.
+
+Operativa de la sesión: el backend local de Álvaro (8010) se reinició para
+arrancarlo con la var del profiler (estaba idle, verificado; `DISABLE_GCS_SYNC=true`
+confirmado en el log de arranque). Al terminar se **restauró** el backend
+habitual (`--reload`, sin la var) y se verificó sano y sin líneas SUBPHASE.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado

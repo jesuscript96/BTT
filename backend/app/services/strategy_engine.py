@@ -6,6 +6,7 @@ Optimized (N1+N2a): dict dispatch for comparators, pre-normalized indicator name
 unified timestamp parsing, and native numpy array evaluation path.
 """
 import logging
+import time
 import numpy as np
 import pandas as pd
 from app.services.indicators import (
@@ -15,6 +16,9 @@ from app.services.indicators import (
     _linear_regression, _consecutive_count,
     _hammer, _shooting_star, _pivot_points, _safe_float,
 )
+# Profiler de sub-fases de stream_build (PRD_PERF §7): apagado por defecto
+# (BACKTEST_PROFILE_SUBPHASES=1). Solo mide resample/align en el path legacy.
+from app.services.subphase_profiler import ENABLED as _SUBPHASE_ON, PROF as _SUBPROF
 
 logger = logging.getLogger("backtester.strategy_engine")
 
@@ -1050,7 +1054,10 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     for col in df.columns:
         if col not in agg_dict:
             agg_dict[col] = "first"
+    _t_res0 = time.perf_counter() if _SUBPHASE_ON else None
     resampled = df.set_index(ts).resample(freq).agg(agg_dict).dropna(subset=["open"])
+    if _SUBPHASE_ON:
+        _SUBPROF.acc("resample", time.perf_counter() - _t_res0)
     return resampled
 
 
@@ -1071,6 +1078,7 @@ def _align_signals_to_1m(
     tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1D"}
     freq = tf_map.get(timeframe, "1min")
     delta = pd.to_timedelta(freq)
+    _t_al0 = time.perf_counter() if _SUBPHASE_ON else None
     t_shifted = ts_1m + pd.to_timedelta("1min")
     t_floored = t_shifted.dt.floor(freq)
     T_closed = t_floored - delta
@@ -1081,6 +1089,8 @@ def _align_signals_to_1m(
         primera = T_closed.ne(T_closed.shift(1))
         primera.iloc[0] = True
         result = result & primera.values
+    if _SUBPHASE_ON:
+        _SUBPROF.acc("align", time.perf_counter() - _t_al0)
     result.index = df_1m.index
     # Una condicion en timeframe DIARIO sobre un dia intradia no tiene ninguna
     # vela diaria cerrada dentro del frame: `T_closed` apunta al dia anterior,

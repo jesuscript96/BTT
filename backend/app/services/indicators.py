@@ -7,9 +7,15 @@ Supports the full IndicatorConfig schema (BTT March 2026):
   days_lookback, calc_on_heikin, time_hour, time_minute, time_condition
 """
 
+import time
 import numpy as np
 import pandas as pd
 from numba import njit
+
+# Profiler de sub-fases de stream_build (PRD_PERF §7): apagado por defecto
+# (BACKTEST_PROFILE_SUBPHASES=1). Cronometra el cálculo de indicadores del
+# path legacy; los cache-hits salen con ~0 ms, que es su coste real.
+from app.services.subphase_profiler import ENABLED as _SUBPHASE_ON, PROF as _SUBPROF
 
 try:
     import talib as _talib
@@ -955,6 +961,8 @@ def compute_indicator(
     open_ = df["open"]
     volume = df["volume"]
 
+    _t_ind0 = time.perf_counter() if _SUBPHASE_ON else None
+
     # If calc_on_heikin, transform OHLC to Heikin-Ashi
     if calc_on_heikin:
         ha_o, ha_h, ha_l, ha_c = _heikin_ashi(
@@ -985,6 +993,9 @@ def compute_indicator(
 
     if cache is not None:
         cache[cache_key] = result
+
+    if _SUBPHASE_ON:
+        _SUBPROF.acc("indicators", time.perf_counter() - _t_ind0)
 
     return result
 
