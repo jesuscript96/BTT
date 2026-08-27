@@ -1118,6 +1118,55 @@ huérfano sirviendo con socket heredado (PID muerto en netstat) — matar el
 hijo `multiprocessing.spawn` lo libera. Backend restaurado al final
 (`--reload`, defaults) y verificado.
 
+## 2026-08-27 (noche, 4ª parte) — Guard de SL estructural invalidado + fallback "Previous Max" (Álvaro)
+
+**Bug grave del motor, corregido.** Un hard stop de Market Structure que al
+entrar quedaba en el lado GANADOR del precio (ej. corto con el PMH ya roto
+porque la acción saltó en RTH) disparaba `high >= SL` en la propia vela y
+hacía fill al precio del nivel — fuera del rango de la vela — contando un
+beneficio instantáneo imposible. Run manual de RTH 2.3: **540/1.261 trades
+eran fills fantasma y aportaban el 87 % del PnL** (WR 70,7 / PF 3,78 →
+real: ~49 % / ~1,36). Ejemplo: NITO 2025-01-03, tres cortos a ~3,1 con "SL"
+en 2,48 saliendo en 0 velas a 2,48.
+
+**Semántica nueva** (paridad Python↔JIT bit a bit, `dfa6e51`):
+
+- **Guard siempre activo**: nivel invalidado = premisa muerta = **no se
+  entra** (corto exige SL > entrada; largo 0 < SL < entrada). Stops
+  porcentuales intactos.
+- **`hard_stop.fallback_value`** (ej. "Previous Max" = último alto antes de
+  entrar, mismo offset): rescata el stop en **reentradas**.
+- **`hard_stop.fallback_first_entry: true`**: rescata también la primera
+  entrada.
+- Si el respaldo también queda invalidado → no se entra. `hard_stop` sigue
+  siendo dict libre: cero migraciones.
+- NO era look-ahead: `pm_high` ya era causal; el bug era stop en lado
+  inválido + fill imposible.
+
+Tocado: `portfolio_sim(_jit).py`, `sim_dispatch.py` (tabla de códigos HS_*
+compartida), `backtest_service.py` (secuencial) y `backtest_signals.py`
+(slab/paralelo). UI: apartado "Si el nivel ya está rebasado al entrar" en
+`RiskManagement.tsx` (desplegable + checkbox, textos por nivel y bias).
+`c79993d`: `stop_loss` pintado como línea en el chart de análisis por trade,
+regla de medición estilo TradingView, y fix de hidratación de fechas en
+`InlineDatasetBuilder` (fechas a nivel de módulo rompían SSR al cruzar
+medianoche).
+
+Tests: `test_hs_invalid_sl_guard.py` (30: semántica, espejo largo, paridad
+JIT, invariante de lado, 3 e2e por `run_backtest`) + grid de paridad
+ampliado con fallback → 37/37 ✓.
+
+**AVISO de comparabilidad**: todo run anterior a esta fecha con SL de Market
+Structure está inflado. No comparar curvas nuevas contra runs viejos. PRD
+completo para Jaime (con prompt para su IA incluido):
+`docs/PRD_GUARD_SL_ESTRUCTURAL_FALLBACK_20260827.md`.
+
+Operativa de esta sesión: el `--reload` de uvicorn VOLVIÓ a no disparar ni
+una recarga en todo un log de 9.000 líneas (misma sintomatología que la
+nota de la 3ª parte) — tras tocar código backend, reinicio manual
+obligatorio; el backend quedó arrancado y verificado
+(`DISABLE_GCS_SYNC=true` en el log).
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
