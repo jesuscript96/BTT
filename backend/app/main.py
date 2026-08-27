@@ -184,6 +184,19 @@ async def lifespan(app: FastAPI):
                     except Exception as e:
                         print(f"[JIT] warmup falló (se usará el path Python): {e}")
                 _threading.Thread(target=_warm_sim, daemon=True).start()
+
+            # Warmup de indicadores (PRD_PERF_BACKTEST_STREAMBUILD §7): el primer
+            # ticker-día del primer backtest tras un arranque pagaba ~2,4 s de
+            # compilación (kernels Numba + primer toque pandas). Daemon
+            # best-effort; opt-out con BTT_INDICATOR_WARMUP=0.
+            if os.getenv("BTT_INDICATOR_WARMUP", "1").strip().lower() not in ("0", "false", "no", "off"):
+                def _warm_ind():
+                    try:
+                        from app.services.indicators import warmup_indicators
+                        print(f"[JIT] indicadores warm en {warmup_indicators():.1f}s")
+                    except Exception as e:
+                        print(f"[JIT] warmup de indicadores falló (no crítico): {e}")
+                _threading.Thread(target=_warm_ind, daemon=True).start()
         except Exception as e:
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:

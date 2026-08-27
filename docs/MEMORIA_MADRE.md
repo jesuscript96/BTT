@@ -1078,6 +1078,46 @@ regresión motor 116 pasan. Nota operativa: el `--reload` de uvicorn se colgó
 una vez al recargar con el backend cargado (worker viejo siguió sirviendo);
 reinicio limpio del backend si algún cambio no aparece.
 
+## 2026-08-27 (noche, 3ª parte) — Warmup de indicadores + A/B del pipeline slab: -37 % pero DIVERGE
+
+Álvaro pidió "que los backtests vayan más rápido" (su idea: precalcular
+gap%/PMH-gap). Con los números del profiler, su idea apuntaba a la fase ya
+materializada — el ataque real fue otro:
+
+**Hecho y commiteado — warmup de indicadores al arrancar**
+(`indicators.warmup_indicators` + hilo daemon en `main.py`, opt-out
+`BTT_INDICATOR_WARMUP=0`): mata los 2,35 s de compilación del primer
+ticker-día del primer backtest tras cada arranque. En frío mide 0,5-0,9 s y
+corre en background al arrancar.
+
+**A/B/C medido** (enero 2025 del dataset 8777, 81 pares, misma estrategia,
+backend reiniciado por condición; logs `ab_a|b|c.log`):
+
+| Condición | Señales | Trades |
+|---|---|---|
+| A secuencial (defaults) | 1.871 ms | **29** |
+| B `BTT_SLAB_STREAM_ENABLED=1` | 1.182 ms (**-37 %**) | **37** |
+| C B + `BTT_N2A_NATIVE_ENABLED=1` | 1.214 ms | **37** |
+
+- El pipeline slab (incluso con fetch legacy por no haber slabs construidos)
+  es un 37 % más rápido en señales… **pero produce 37 trades donde el
+  secuencial produce 29** — paridad rota entre caminos del MISMO motor.
+  Sospecha: reentradas/partial-TPs (días con 2 trades). El modo slab además
+  rompe el reconciliador de completitud (reporta 0 % porque `_tracked_stream`
+  nunca se consume) y con `BACKTEST_STRICT_COMPLETENESS=true` de Álvaro el
+  run se rechaza con 503 — el guardián funcionó como debe.
+- N2A no se pudo aislar (solo aplica dentro del pipeline slab); mismo 37.
+
+**Plan para staging en `docs/PRD_PERF_BACKTESTS_STAGING_SAILOR_20260827.md`**:
+warmup mergeable ya; slab/N2A bloqueados hasta arreglar la paridad (repro
+incluido en el PRD). Rechazado con números: velas Nm, tabla de indicadores
+fijos y Numba-sim por rendimiento.
+
+Operativa: los reinicios del backend durante el A/B dejaron un worker
+huérfano sirviendo con socket heredado (PID muerto en netstat) — matar el
+hijo `multiprocessing.spawn` lo libera. Backend restaurado al final
+(`--reload`, defaults) y verificado.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado

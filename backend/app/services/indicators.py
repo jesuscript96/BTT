@@ -2040,3 +2040,43 @@ def detect_candle_pattern(
         signal = rolling_sum >= consecutive_count
 
     return signal.astype(bool)
+
+
+def warmup_indicators() -> float:
+    """Pre-compila los indicadores comunes fuera del primer backtest.
+
+    Medido (PRD_PERF §7, 2026-08-27): el primer ticker-día del primer backtest
+    tras un arranque pagaba ~2,4 s solo en compilación (kernels Numba cache=True
+    + primer toque pandas) — los días siguientes, 0,1 ms. Este warmup corre esa
+    penalización en el arranque con un df sintético, en un hilo daemon.
+
+    Best-effort: cualquier indicador que falle aquí se calentará en su primer
+    uso real, exactamente como hasta ahora. Devuelve segundos.
+    """
+    import time
+    t0 = time.time()
+    n = 240
+    rng = np.random.default_rng(7)
+    close = 100.0 + np.cumsum(rng.normal(0, 0.5, n))
+    high = close * 1.005
+    low = close * 0.995
+    open_ = np.roll(close, 1)
+    open_[0] = close[0]
+    vol = rng.integers(1_000, 90_000, n).astype(np.float64)
+    df = pd.DataFrame({
+        "timestamp": pd.date_range("2026-01-05 04:00", periods=n, freq="1min"),
+        "open": open_, "high": high, "low": low, "close": close, "volume": vol,
+    })
+    ts = pd.Series(df["timestamp"])
+    daily_stats = {"_mins": (ts.dt.hour * 60 + ts.dt.minute).to_numpy()}
+    for name, kwargs in (
+        ("EMA", {"period": 20}), ("SMA", {"period": 50}),
+        ("RSI", {"period": 14}), ("ATR", {"period": 14}),
+        ("VWAP", {}), ("Accumulated Volume", {}), ("Volume", {}),
+        ("PM High Gap (%)", {}),
+    ):
+        try:
+            compute_indicator(name, df, daily_stats=daily_stats, **kwargs)
+        except Exception:
+            pass
+    return time.time() - t0
