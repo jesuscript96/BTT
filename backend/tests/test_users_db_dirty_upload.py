@@ -20,7 +20,11 @@ class _FakeBlob:
         self._calls = calls
 
     def upload_from_filename(self, path, timeout=None):
-        self._calls.append(path)
+        # Se guardan los BYTES, no la ruta: upload_user_db sube una copia temporal
+        # (la red va fuera del lock de la DB), asi que el nombre del fichero es un
+        # detalle interno. Lo que importa es que el contenido sea el de la DB viva.
+        with open(path, "rb") as fh:
+            self._calls.append(fh.read())
 
 
 class _FakeBucket:
@@ -69,15 +73,20 @@ def test_shutdown_skips_upload_when_clean(gcs_env):
 def test_shutdown_uploads_after_marked_dirty(gcs_env):
     gcs_sync.mark_user_db_dirty()
     assert gcs_sync.upload_user_db(only_if_dirty=True) is True
-    assert gcs_env == ["users.duckdb"]
+    assert len(gcs_env) == 1
+    # Lo subido es la DB viva byte a byte (copia fiel, no un fichero a medias).
+    with open("users.duckdb", "rb") as fh:
+        assert gcs_env[0] == fh.read()
     # El éxito limpia el flag: el siguiente shutdown no vuelve a subir.
     assert gcs_sync.upload_user_db(only_if_dirty=True) is False
-    assert gcs_env == ["users.duckdb"]
+    assert len(gcs_env) == 1
 
 
 def test_write_path_upload_always_uploads_and_clears_flag(gcs_env):
     assert gcs_sync.upload_user_db() is True
-    assert gcs_env == ["users.duckdb"]
+    assert len(gcs_env) == 1
+    with open("users.duckdb", "rb") as fh:
+        assert gcs_env[0] == fh.read()
     assert gcs_sync.upload_user_db(only_if_dirty=True) is False
 
 
