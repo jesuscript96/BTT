@@ -936,12 +936,14 @@ export default function EquityCurveTab({
                   </div>
                 </>
               )}
-              {/* Compact Terminal HUD Table for R-squared (R2) in the bottom-left corner (above TradingView logo / time scale) */}
+              {/* HUD de System Stability (R2 / K-Ratio / SQN). Va ARRIBA-izquierda:
+                  abajo-izquierda tapaba la curva de equity, que es justo donde acaba
+                  cayendo el trazo en las estrategias perdedoras (V11). */}
               {metrics && metrics.r_squared !== undefined && (
                 <div
                   style={{
                     position: "absolute",
-                    bottom: 32, // Bajar a la esquina inferior izquierda tras ocultar el logo de TradingView
+                    top: 12,
                     left: 12,
                     backgroundColor: "transparent",
                     backdropFilter: "none",
