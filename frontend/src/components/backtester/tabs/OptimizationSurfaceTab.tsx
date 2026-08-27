@@ -11,6 +11,7 @@ import {
   type OptimizationParam,
   type OptimizationResult,
   type OptimizationParamConfig,
+  type OptimizationParamUnit,
 } from "@/lib/api_backtester";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -427,6 +428,19 @@ export default function OptimizationSurfaceTab({
   }, [result, mode, metric, isDarkMode]);
 
   const pa = result?.plateau_analyses?.[metric] || result?.plateau_analysis;
+  // Las coordenadas del panel (Peak/Robust Plateau/Local Stability/Robust
+  // Center) llegan del backend como el numero CRUDO del barrido -- minutos
+  // desde medianoche para un eje de hora, igual que en los ejes del grafico.
+  // El backend las indexa por LABEL (p.ej. "Parcial 1 Hora de cierre"), asi
+  // que aqui se cruza esa etiqueta con la unidad de result.params para saber
+  // si hay que formatear como hora antes de pintarla.
+  const unitByLabel = useMemo(() => {
+    const map: Record<string, OptimizationParamUnit> = {};
+    for (const p of result?.params || []) map[p.label] = p.unit ?? null;
+    return map;
+  }, [result]);
+  const fmtCoord = (label: string, v: number) =>
+    unitByLabel[label] === "time_of_day" ? minutesToHHMM(v) : fmt(v);
 
   if (!strategyId || !datasetId) {
     return (
@@ -724,7 +738,7 @@ export default function OptimizationSurfaceTab({
                   { label: "Value", value: fmt(pa.peak.value) },
                   ...Object.entries(pa.peak.coordinates).map(([k, v]) => ({
                     label: k,
-                    value: fmt(v),
+                    value: fmtCoord(k, v as number),
                   })),
                 ]}
               />
@@ -757,7 +771,7 @@ export default function OptimizationSurfaceTab({
                   { label: "Value", value: fmt(pa.local_stability.best_value) },
                   ...Object.entries(pa.local_stability.coordinates).map(([k, v]) => ({
                     label: k,
-                    value: fmt(v),
+                    value: fmtCoord(k, v as number),
                   })),
                   { label: "PF", value: fmt(pa.local_stability.profit_factor) },
                   { label: "DD/Ret", value: fmt(pa.local_stability.return_dd) },
@@ -774,7 +788,7 @@ export default function OptimizationSurfaceTab({
                 items={[
                   ...Object.entries(pa.robust_center.coordinates).map(([k, v]) => ({
                     label: k,
-                    value: fmt(v),
+                    value: fmtCoord(k, v as number),
                   })),
                   {
                     label: "Degradation",

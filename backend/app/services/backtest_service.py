@@ -1517,11 +1517,19 @@ def _aggregate_metrics(
         total_days = len(unique_dates)
         total_trades = len(trades)
     else:
-        # Días de CALENDARIO con operaciones (una por sesión), no ticker-días:
-        # una sesión con 6 candidatos genera 6 day_results pero es 1 día.
-        # Antes len(day_results), que inflaba "Days" (p.ej. 1460 en un año).
-        # Cambia el denominador de Avg Ret/Day y Avg R/Day a por SESIÓN.
-        total_days = len({str(d.get("date", ""))[:10] for d in day_results if d.get("date")}) or len(day_results)
+        # "Days" cuenta SESIONES DE CALENDARIO, no ticker-dias. `day_results`
+        # trae una entrada por (fecha, ticker), asi que una sesion con 6
+        # candidatos sumaba 6 y un ano llegaba a mostrar "1460 dias". La rama
+        # de arriba (sin day_results) ya contaba fechas unicas: esto solo
+        # elimina la incoherencia entre las dos.
+        # Afecta a `total_days` y a `avg_r_per_day` (que divide por el), que
+        # pasan a ser POR SESION. `avg_return_per_day_pct` NO cambia: se
+        # calcula aparte sobre un rango de fechas denso.
+        # El [:10] normaliza por si la fecha llegara como timestamp completo.
+        # Misma implementacion que el fix del socio en staging (40920cc), para
+        # que las dos ramas converjan sin conflicto.
+        fechas = {str(d.get("date", ""))[:10] for d in day_results if d.get("date")}
+        total_days = len(fechas) or len(day_results)
         total_trades = sum(d.get("total_trades", 0) for d in day_results)
 
     # Re-calculate total expenses for the net profit metric

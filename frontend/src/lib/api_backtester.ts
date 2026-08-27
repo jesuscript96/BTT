@@ -250,6 +250,18 @@ export interface BacktestResult {
   global_drawdown: DrawdownPoint[];
   /** Sesiones cortadas por el limite diario. Vacio o ausente si esta apagado. */
   daily_limit_log?: DailyLimitHit[];
+  /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
+   *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
+   *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
+  data_completeness?: DataCompleteness;
+}
+
+export interface DataCompleteness {
+  expected_ticker_days: number;
+  executed_ticker_days: number;
+  missing_ticker_days: number;
+  completeness_pct: number;
+  missing_sample: string[];
 }
 
 export interface WhatIfResult {

@@ -709,6 +709,237 @@ caché reparada (+224.279 velas en 167 ficheros). NOTA: si se invoca
 `anadir_dias_al_cache` fuera del backend, `CACHE_DIR=.cache/intraday` es
 RELATIVO al cwd de `backend/` — exportarlo absoluto.
 
+## 2026-08-26 (noche) — Auditoría del reporte de splits/gaps de Álvaro
+
+**Origen:** Álvaro reporta desde `staging` que cada split entraba como gap falso
+(NVDA 2024-06-10 = −89,89 %; 2.123 ticker-días contaminados, el 9,4 % del
+universo short) y pide aplicar su fix (`19979bc`, `6c05066`, `40920cc`) más
+regenerar `local_data.duckdb`. Se audita ANTES de tocar nada.
+
+### Veredicto: el bug de splits NO es nuestro — y su parche nos ROMPERÍA
+
+Su diagnóstico es correcto **para su lago** (`cangrejo_data`), que guarda el
+`prev_close` CRUDO y ajusta al calcular. **El nuestro no**: el ETL
+(`fase6_etl_edgecute.py`, paso 2/3) hornea el ajuste DENTRO de la propia
+columna, desde la especificación original (§6B.2):
+
+```sql
+o.prev_oficial * COALESCE(f.split_factor, 1.0) AS prev_close
+```
+
+Los tres gaps (`gap_pct`, `gap_at_open_pct`, `pmh_gap_pct`) dividen por esa
+columna ya ajustada. Verificado sobre los datos reales del lago:
+
+| NVDA | prev_close | pm_high | pmh_gap |
+|---|---|---|---|
+| 2024-06-07 | 1209,98 | 1219,00 | 0,75 % |
+| **2024-06-10** (split 1→10) | **120,888** | 122,19 | **1,08 %** |
+| 2024-06-11 | 121,79 | 122,53 | 0,61 % |
+
+**1,08 % exacto**, que es justo el valor que su PRD manda comprobar. El
+`prev_close` del día del split es 120,888 (ya dividido entre 10), no 1209,98.
+
+Contaminación medida en TODO nuestro lago (19,2 M filas):
+
+- 3.343 ticker-días caen en día de split.
+- **111** pasan de verdad el filtro `pmh_gap>=50` (gaps reales).
+- **2.643** pasarían si el gap fuera crudo → son los fantasma que **no
+  tenemos**. Peor gap falso evitado: **154.722 %** — el MISMO máximo que
+  reporta él, lo que confirma que la fuente (Polygon) y su diagnóstico cuadran.
+
+### ⚠️ Aplicar su parche nos habría corrompido datos correctos
+
+`19979bc` reescribe `pmh_gap_pct` en los días de split como
+`(pm_high − prev_close × factor) / (prev_close × factor)`. Sobre nuestra
+columna, que YA lleva el factor dentro, eso es un **doble ajuste**:
+
+| NVDA 2024-06-10 | valor |
+|---|---|
+| gap actual nuestro | **1,08 %** (correcto) |
+| gap si aplicamos su parche | **910,77 %** (falso) |
+
+A escala: reescribiría **3.343 ticker-días**, metería **436 candidatos falsos
+nuevos** en `pmh_gap>=50` y crearía un gap falso máximo de **19.312 %**. Es
+decir, nos habría inyectado exactamente el bug que él arregló.
+
+**Regla que se lleva de aquí:** antes de adoptar un fix de datos del otro lado,
+comprobar en QUÉ capa aplica cada lago el ajuste. Los dos pipelines llegan al
+mismo resultado por caminos distintos y los parches no son intercambiables.
+
+### Lo que sí se ha comprobado y NO hace falta tocar
+
+- **`init_db.py:339`** (el `UPDATE` de arranque sobre TODA la tabla con la
+  fórmula "cruda") y **`_alinear_pmh_gap_pct`**: se ejecutó su fórmula literal
+  contra los 19.237.937 registros con `prev_close > 0` → **0 filas cambiarían,
+  desvío máximo 0,0**. Son no-ops aquí, porque aplican la misma fórmula sobre
+  una columna ya ajustada. *Apunte de eficiencia, no de corrección:* ese UPDATE
+  reescribe 19,2 M filas en CADA arranque sin cambiar un solo valor.
+- **Tabla `splits`**: la nuestra ya tiene las 4 columnas
+  (`ticker`, `execution_date`, `split_from`, `split_to`), 28.145 filas. El
+  `[WARN] split_from not found` que él tuvo no nos afecta.
+- **Padding de meses (`8777d17`)**: las particiones de NUESTRO lago van CON
+  cero (`month=01`), las suyas sin (`month=8`). Su bug no es nuestro; su fix
+  (probar ambos paddings) sería inocuo y algo más robusto, pero no urge.
+
+### Lo que SÍ era nuestro y se ha arreglado
+
+**"Days" contaba ticker-días, no sesiones de calendario.**
+`_aggregate_metrics` hacía `total_days = len(day_results)`, y `day_results`
+trae una entrada por (fecha, ticker): una sesión con 6 candidatos sumaba 6.
+Lo delata que la otra rama del MISMO `if` (cuando no hay `day_results`) ya
+contaba fechas únicas — era una incoherencia, no un diseño.
+
+Arreglado contando fechas únicas, con la **misma implementación que su
+`40920cc`** (incluido el `[:10]` que normaliza por si la fecha llegara como
+timestamp) para que las dos ramas converjan sin conflicto.
+
+**Cambio de semántica a tener en cuenta:** `total_days` ("Days") y
+`avg_r_per_day` pasan a ser POR SESIÓN, así que no son comparables con
+resultados anteriores. `avg_return_per_day_pct` **no** cambia: se calcula
+aparte, sobre un rango de fechas denso, y nunca usó ese denominador.
+
+Verificado con caso a mano (2 sesiones × 5 ticker-días → Days=2, los 5 trades
+intactos, `avg_r_per_day` 5R/2=2,5) y con fecha en formato timestamp.
+Suite completa: **103 fallos / 321 pasan / 13 errores, idéntico al baseline.**
+
+### Pendiente de decisión del usuario
+
+- **`BACKTEST_STRICT_COMPLETENESS`**: el guardián existe en nuestro código
+  (`backtest_orchestrator.py`) pero NO está en nuestro `.env`, así que corre en
+  `false` (avisa en el log, no rechaza). Ponerlo a `true` hace que un backtest
+  con datos incompletos falle con 503 en vez de devolver un resultado parcial.
+  Es más seguro, pero **puede hacer fallar backtests que hoy salen adelante**,
+  así que no se ha tocado: es decisión suya.
+- **Su fix de fees (`cd455ae`, ITEM 4)** sigue solo en
+  `alvaro-prereset-8b7959f`, fuera de staging. Pendiente de coordinar.
+
+### Meses en el aire: el hueco deja de ser mudo (26/08, cierre)
+
+Petición del usuario tras la auditoría: *"lo del tema de que se queden meses en
+el aire no me gusta, lo ideal es que funcione bien y que además no dé error
+503"*. O sea: que no falten datos, no que el motor grite.
+
+Había DOS silencios distintos, y ninguno se arregla con el 503:
+
+1. **`cargar_meses_en_duckdb` se saltaba un mes sin decir nada.** El `continue`
+   del glob era mudo: si el parquet del mes no estaba, la tabla se quedaba con
+   el hueco y el resumen de la actualización no lo mencionaba. Ahora ese caso
+   **se registra** (`[CARGA] SIN PARQUET EN EL LAGO: <tabla> <año>-<mes>`) y va
+   en el resumen como `sin_parquet`, así que la actualización diaria lo reporta.
+   De paso, el glob prueba los **dos paddings** (`month=01` y `month=1`): el
+   nuestro va con cero, pero DuckDB por defecto escribe sin él, y basta con
+   regenerar el lago de otra forma para que el mes "deje de existir".
+   Probado con un lago de mentira: resuelve con cero, sin cero, y devuelve
+   "no está" cuando de verdad no está.
+
+2. **El backtest descartaba ticker-días sin intradía y el aviso moría en el log
+   del servidor.** El motor ya calculaba `data_completeness` y la metía en el
+   resultado, pero **el frontend no la miraba**: un resultado parcial tenía
+   exactamente la misma pinta que uno completo. Ahora, cuando no llega al 100 %,
+   sale un aviso en la cabecera de resultados — *"se han operado N de M
+   ticker-días candidatos (X %), faltan K sin intradía — el resultado es
+   parcial"*, con la muestra de los que faltan en el tooltip.
+
+**Decisión: NO se activa `BACKTEST_STRICT_COMPLETENESS`.** Con el aviso visible
+ya no hace falta bloquear: el resultado parcial sigue siendo útil y ahora se
+sabe que lo es. El interruptor sigue ahí por si algún día se quiere el rechazo
+duro.
+
+Suite: 103 fallos / 321 pasan / 13 errores, idéntico al baseline. `tsc`, 0
+errores.
+
+## Seguimiento Sailor ↔ Álvaro — quién tenía qué bien (2026-08-26)
+
+> **Para qué es esta tabla.** Llevar la cuenta, en un solo sitio, de qué parte
+> del pipeline estaba correcta en cada rama. No es un marcador: sirve para que,
+> ante el próximo reporte cruzado, se sepa de entrada **en qué capa trabaja cada
+> lago** antes de adoptar un parche del otro lado. Se actualiza cada vez que uno
+> de los dos audite o corrija algo del otro.
+
+| Asunto | Rama Sailor | Rama Álvaro | Nota |
+|---|---|---|---|
+| **Ajuste de split en el gap** | ✅ Correcto desde el origen | ❌ Roto, corregido el 26/08 (`19979bc` + lado lago) | Capas distintas: ver abajo |
+| **`prev_close` en `daily_metrics`** | ✅ Ya ajustado dentro de la columna | ❌ Crudo; se ajusta al calcular | **Origen de la incompatibilidad** |
+| **Tabla `splits` con 4 columnas** | ✅ Ya las tenía (28.145 filas) | ❌ Tenía 2; `[WARN] split_from not found` | Corregido por él |
+| **Padding de meses en particiones** | ✅ Con cero (`month=01`), globs OK | ❌ Sin cero (`month=8`) vs globs con cero → agosto "no existía" | `8777d17`; su bug, no el nuestro |
+| **"Days" cuenta sesiones** | ❌ Contaba ticker-días | ❌ Contaba ticker-días | **Bug COMPARTIDO**, corregido en los dos (`40920cc` / este commit) |
+| **Junctions `cold_storage/splits` y `/tickers`** | ✅ Existen | ❌ No existían; el reload se saltaba en silencio | Corregido por él |
+| **Carga incremental del DuckDB** | ⬜ No la tenemos | ✅ Suya, 30-40 min → 2,2 min | Mejora suya, interesante para nosotros |
+| **Guardián de completitud** | ⬜ Existe, apagado (`false`) | ✅ Encendido (`true`) | Decisión pendiente del usuario |
+
+### Lo que teníamos bien y él ha tenido que corregir
+
+**El gap ajustado por split.** Nuestro ETL (`fase6_etl_edgecute.py`, paso 2/3)
+hornea el ajuste DENTRO de la columna desde la especificación original (§6B.2):
+
+```sql
+o.prev_oficial * COALESCE(f.split_factor, 1.0) AS prev_close
+```
+
+Los tres gaps dividen por esa columna. Verificado sobre datos reales:
+**NVDA 2024-06-10 (split 1→10) = 1,08 %** con `prev_close` = 120,888. En todo
+el lago, 3.343 ticker-días caen en día de split y solo **111** pasan de verdad
+`pmh_gap>=50`; con la fórmula cruda serían **2.643**, con un gap falso máximo de
+**154.722 %** — el mismo número que él reporta, misma fuente de datos.
+
+También estaba ya bien: la tabla `splits` a 4 columnas, los junctions del
+`cold_storage`, y el padding de meses de las particiones.
+
+### ⚠️ Por qué sus parches de splits NO se pueden adoptar aquí
+
+Su `19979bc` recalcula el gap del día de split como
+`(pm_high − prev_close × factor) / (prev_close × factor)`. Sobre nuestra
+columna, que **ya lleva el factor**, eso es un doble ajuste:
+
+| NVDA 2024-06-10 | valor |
+|---|---|
+| gap actual nuestro | **1,08 %** (correcto) |
+| gap si aplicásemos su parche | **910,77 %** (falso) |
+
+A escala reescribiría 3.343 ticker-días, metería **436 candidatos fantasma
+nuevos** en `pmh_gap>=50` y crearía un gap falso máximo de **19.312 %**.
+
+Y no es hipotético: nuestro `.env` tiene
+`LOCAL_LAKE_DIR=D:/lago_backtester/parquet/edgecute` y ahí existe
+`cold_storage/splits/data.parquet`, así que su código **encontraría el fichero
+y aplicaría el factor** en cada carga mensual y en cada arranque.
+
+**El problema de fondo es que el mismo código no puede servir a los dos lagos
+tal cual está.** Propuesta para converger (a discutir entre los dos, NO
+aplicada): que el backend **deje de recalcular `pmh_gap_pct`** y confíe en el
+valor del ETL, que en ambos lagos ya es correcto. Eso serviría a los dos y de
+paso quitaría el `UPDATE` de 19,2 M filas que hoy corre en cada arranque sin
+cambiar un solo valor. Alternativa más conservadora: una variable de entorno
+tipo `LAKE_PREV_CLOSE_YA_AJUSTADO` que apague el factor donde no haga falta,
+siguiendo la regla R7 (cambios apagados por defecto).
+
+### El bug que teníamos LOS DOS
+
+**"Days" contaba ticker-días, no sesiones de calendario.**
+`_aggregate_metrics` hacía `total_days = len(day_results)`, con una entrada por
+(fecha, ticker): una sesión con 6 candidatos sumaba 6. Corregido en las dos
+ramas, y **con la misma implementación** (fechas únicas + `[:10]`) para que
+converjan sin conflicto.
+
+**Cambia la semántica:** "Days" y `avg_r_per_day` pasan a ser POR SESIÓN y no
+son comparables con resultados anteriores. `avg_return_per_day_pct` no cambia
+(se calcula aparte sobre un rango de fechas denso).
+
+### Estado actual de la rama Sailor
+
+| Elemento | Estado |
+|---|---|
+| Gaps ajustados por split | ✅ Correctos desde el origen — **no tocar** |
+| `init_db.py` / `_alinear_pmh_gap_pct` | Fórmula "cruda", pero **no-op aquí**: 0 filas cambiadas sobre 19.237.937, desvío 0,0 |
+| "Days" / `avg_r_per_day` | ✅ Corregido a sesiones de calendario |
+| Indicador `Squeeze` | ✅ En producción local (§2026-08-26) |
+| Tope de locates (`max_locates`) | ✅ En producción local (§2026-08-26) |
+| Optimización TP por tiempo/hora | ✅ Incluido el panel lateral, que mostraba minutos crudos (517) en vez de la hora (08:37) |
+| `BACKTEST_STRICT_COMPLETENESS` | ⬜ Apagado **a propósito**: el aviso de completitud ya se ve en la interfaz, no hace falta el 503 |
+| Meses que falten en el lago | ✅ Ya no se saltan en silencio: se registran y salen en el resumen de la actualización |
+| Suite de tests | 103 fallos / 321 pasan / 13 errores — **idéntico al baseline**, 0 regresiones |
+| Divergencia con `staging` | `staging` lleva 7 commits suyos encima; **su fix de splits no se puede mergear tal cual** (ver arriba) |
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
