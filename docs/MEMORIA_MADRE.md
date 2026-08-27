@@ -825,3 +825,121 @@ son comparables con resultados anteriores. `avg_return_per_day_pct` no cambia
   (entrada + salida), no sobre `|PnL|`. Un breakeven también paga comisión.
 - **El Baúl (`/database`) y el `PortfolioBuilder` viejo están borrados** en esta
   rama.
+
+---
+
+## 2026-08-27 — Renombrado, horizonte, y dos campos que se caían en silencio
+
+### 1. Renombrar estrategias desde el listado (`ae7dbb6`)
+
+Nuevo `PATCH /api/strategies/{id}/name`: toca **solo** `name` y `updated_at`,
+con el mismo `scope_clause` que el resto. Hacía falta uno propio porque el
+`PUT` existente exige el `StrategyCreate` entero, y los listados del Baúl y de
+Robustez no tienen la definición a mano. Lápiz inline (`RenameableName` en
+`robustez/shared.tsx`) en las tres estanterías del Baúl y en el listado de
+Robustez.
+
+**Trampa:** la fila es un `role="button"` que escucha Espacio para desplegarse.
+El input tiene que **cortar la propagación del keydown** o no se pueden
+escribir espacios en el nombre.
+
+### 2. Probabilidad de ruina y objetivo por horizonte (`7ee4e48`)
+
+Bloque nuevo dentro de *Rango de escenarios posibles*. El `prob_ruin_pct` de
+esa sección se mide sobre el horizonte **completo** del backtest, que no elige
+el usuario; aquí el horizonte es la variable. `run_horizon` acumula el
+histograma del PRIMER paso en que cada trayectoria toca cada nivel, así que no
+hay que guardar la matriz `sims × días` entera.
+
+**⚠️ NO es una prueba de fondeo.** Nació llamándose "estudio de paso de pruebas
+de fondeo" y confundió: el usuario comparó su 70% con el 17% de
+`FundingSection`. **Las dos cifras eran correctas.** Aquí el suelo es FIJO
+(un % bajo el capital inicial) y no hay límite de pérdida diaria ni drawdown
+trailing. Renombrado y advertido en la propia interfaz.
+
+Auditoría de `FundingSection` con 5 casos de comportamiento conocido (aprueba
+en la sesión 8, rotura de DD en la 7, límite diario en la 1, mínimos, suma de
+desenlaces = 100): **correcto, no había fallo ahí**.
+
+### 3. FIX: la cuenta base del fondeo no reescalaba en aditivo (`7ee4e48`)
+
+En modo **aditivo** los valores son PnL en **dólares** de la cuenta con la que
+se corrió el backtest. Cambiar "cuenta base" no los tocaba: solo encogía los
+umbrales, que son % de la cuenta. Se simulaba una cuenta de 25.000 moviéndose
+como si operase 50.000.
+
+| Cuenta base | Antes | Ahora |
+|---|---|---|
+| 25.000 $ | 0,7 % | 3,2 % |
+| 50.000 $ | 3,2 % | 3,2 % |
+| 100.000 $ | 24,1 % | 3,2 % |
+
+Invariante, como debe ser con reglas en porcentaje. En compuesto no se toca
+nada (los R-múltiplos son proporciones): verificado idéntico bit a bit. Solo
+afecta a backtests de riesgo **FIJO**, que son los que llegan en aditivo.
+
+### 4. FIX: `size_by_sl` y `pyramiding` se perdían (`2282509`)
+
+Los dos son el patrón de las **TRES CAPAS**, cada uno cayéndose en una distinta:
+
+- **`size_by_sl`** ("Cálculo de Shares por Distancia al SL") no estaba
+  declarado en el esquema `RiskManagement`. Pydantic va con `extra="ignore"`:
+  el frontend lo mandaba bien, el esquema lo tiraba **sin error, sin log y sin
+  422**, y la estrategia salía siempre con la opción desactivada. **Capa 2.**
+- **`pyramiding`** es clave de **primer nivel**, y de los seis sitios de
+  `page.tsx` que rearman el borrador **solo dos** la conservaban. Por eso una
+  estrategia con pirámide perdía su configuración al reabrir el panel.
+  **Capa 1.** `risk_management` no sufría esto porque los seis bloques acaban
+  en `...(def.risk_management || {})`.
+
+**⬜ Pendiente:** puede haber más campos igual. Falta una pasada comparando lo
+que emite el constructor contra lo que declara el esquema, en vez de irlos
+descubriendo de uno en uno.
+
+### 5. Glob de la caché: adoptado el ítem 2 de Álvaro (`27e8076`)
+
+`anadir_dias_al_cache` se quedó con `month={m:02d}` fijo cuando se arregló el
+del cargador principal (`919ea1c`). Con una partición `month=8` el glob no
+resolvía, el `continue` era mudo y la caché **se saltaba el mes entero sin
+dejar rastro**. Espejo exacto de `919ea1c`, más el log que allí sí se puso.
+
+Implementado aquí en vez de aceptar su cherry-pick: cinco líneas, patrón ya
+conocido, y así no se arrastra nada más de su rama. **Decirle que no hace
+falta parche.**
+
+Su **ítem 1** (ajuste de split de `pmh_gap_pct`) **NO se adopta**, de acuerdo
+con su propia recomendación: nuestro `prev_close` ya viene ajustado del ETL y
+doblaría el ajuste. **Ítems 3 y 4** ya convergidos.
+
+### Suite
+
+**103 fallos / 321 pasan — idéntico al baseline, 0 regresiones.** Los 15
+errores frente a los 13 anotados antes son 2 fallos de **recolección
+preexistentes**: `test_backtest_engine.py` y `test_backtest_integration.py`
+importan `filter_market_data_by_interval_and_dates`, que desapareció en el
+refactor `2e383a5`. Ningún commit de esta sesión toca `routers/backtest.py`.
+Se lanza con `--continue-on-collection-errors`, y el intérprete es
+`backend/.venv/Scripts/python.exe` (el Python del sistema no tiene pytest).
+
+### Fuera del repo: avisos del screener a Telegram
+
+Userscript de Tampermonkey que lee la tabla de `app.edgecute.com/screener` y
+avisa por Telegram cuando entra un ticker nuevo con `Change % > 50`, o cuando
+uno que ya estaba lo cruza. **Vive fuera del repo**, dentro de Tampermonkey.
+
+Tres cosas que costaron la tarde y conviene no repetir:
+
+1. **Chrome (MV3) tiene apagado por defecto un permiso por extensión llamado
+   «Permitir scripts de usuario»** (`chrome://extensions` → Detalles). Sin él
+   Tampermonkey lista los scripts y **los da por activos, pero no ejecuta
+   ninguno**, en silencio absoluto. **Comprobar esto ANTES que el código.**
+2. Las cabeceras de la tabla llevan `text-transform: uppercase` e `innerText`
+   devuelve el texto **ya transformado**: llegan como `TICKER`, `PRICE`.
+3. `fmtPct` antepone `+` a los positivos y la celda de `Change %` puede traer
+   una marca `▲`/`▼`. Un lector que exigiera que la celda entera fuese un
+   número devolvía `null` **siempre**.
+
+El screener no hace polling: va por **WebSocket** (`/screener/live`, top-50
+1×/s) y la app ya tiene alarmas propias (`matchesRules`, entrantes y cruces con
+cooldown). Ambas vías se descartaron a petición del usuario, que quería algo
+independiente que solo mirase la pantalla.
