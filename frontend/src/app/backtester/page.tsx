@@ -1788,42 +1788,13 @@ export default function Home() {
                   gap: 16,
                 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ec-text-high)', fontFamily: 'var(--color-ec-serif)' }}>
-                    Esta estrategia ya está guardada en el Baúl
+                    ¿Desea sobreescribir la estrategia con los nuevos parámetros?
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--color-ec-text-secondary)', fontFamily: 'var(--color-ec-sans)', lineHeight: 1.5 }}>
                     {isDatasetChanged
-                      ? <span>Guárdala como una estrategia <strong>nueva</strong> para conservar <strong>{strategyToSave?.name}</strong> tal y como está, o sobrescríbela con las nuevas variables y el nuevo dataset.</span>
-                      : <span>Guárdala como una estrategia <strong>nueva</strong> para conservar <strong>{strategyToSave?.name}</strong> tal y como está, o sobrescríbela con las nuevas variables configuradas.</span>}
+                      ? <span>Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con las nuevas variables y se asociará el nuevo dataset.</span>
+                      : <span>Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con las nuevas variables configuradas.</span>}
                   </div>
-
-                  {/* La opcion NO destructiva va primero y es la destacada. Antes este modal
-                      solo ofrecia sobrescribir o cancelar, y como al guardar se fija
-                      loadedStrategyId con un id real, TODO guardado posterior volvia a caer
-                      aqui: no habia manera de guardar una segunda estrategia y cada
-                      confirmacion pisaba la anterior (perdida de trabajo del cliente).
-                      Reutiliza el modal de "guardar" de siempre, que es el camino que hace
-                      POST /strategies (id nuevo en servidor) y deja intacta la original. */}
-                  <button
-                    disabled={isSavingStrategy}
-                    onClick={() => {
-                      setShowRewriteModal(false);
-                      setSaveName(`${strategyToSave?.name || "Estrategia"} (copia)`);
-                      setShowSaveModal(true);
-                    }}
-                    style={{
-                      padding: '8px 0', borderRadius: 5,
-                      fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
-                      textTransform: 'uppercase', cursor: 'pointer',
-                      backgroundColor: 'var(--color-ec-copper)',
-                      border: 'none',
-                      color: 'var(--color-ec-copper-text)',
-                      fontFamily: 'var(--color-ec-sans)',
-                      opacity: isSavingStrategy ? 0.4 : 1,
-                    }}
-                  >
-                    Guardar como nueva
-                  </button>
-
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       disabled={isSavingStrategy}
@@ -1839,7 +1810,7 @@ export default function Home() {
                         opacity: isSavingStrategy ? 0.5 : 1,
                       }}
                     >
-                      Cancelar
+                      No
                     </button>
                     <button
                     disabled={isSavingStrategy}
@@ -1962,14 +1933,14 @@ export default function Home() {
                       flex: 2, padding: '7px 0', borderRadius: 5,
                       fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
                       textTransform: 'uppercase', cursor: 'pointer',
-                      backgroundColor: 'var(--color-ec-bg-elevated)',
-                      border: '0.5px solid var(--color-ec-border)',
-                      color: 'var(--color-ec-text-secondary)',
+                      backgroundColor: 'var(--color-ec-copper)',
+                      border: 'none',
+                      color: 'var(--color-ec-copper-text)',
                       fontFamily: 'var(--color-ec-sans)',
                       opacity: isSavingStrategy ? 0.4 : 1,
                     }}
                   >
-                    {isSavingStrategy ? "Guardando..." : "Sobrescribir"}
+                    {isSavingStrategy ? "Guardando..." : "Sí"}
                   </button>
                 </div>
               </div>

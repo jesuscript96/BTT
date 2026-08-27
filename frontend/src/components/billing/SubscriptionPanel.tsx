@@ -212,8 +212,6 @@ function InvoicesCard({ invoices }: { invoices: BillingInvoice[] }) {
 }
 
 function Paywall({ summary, onCheckout, busy }: { summary: BillingSummary; onCheckout: () => void; busy: boolean }) {
-  // Real per-user trial length (preferential Path B days if any); never hardcode 7.
-  const trialDays = summary.trial_offer_days ?? 7;
   return (
     <Card style={{ maxWidth: 520, margin: "0 auto", textAlign: "center", padding: "34px 26px" }}>
       <div
@@ -235,7 +233,7 @@ function Paywall({ summary, onCheckout, busy }: { summary: BillingSummary; onChe
         Añade tu tarjeta para empezar
       </h2>
       <p style={{ color: color.textSecondary, margin: "0 auto", maxWidth: 400, fontSize: 14 }}>
-        Empieza tus {trialDays} días gratis en Edgecute. No se te cobra hoy. Cancela cuando quieras.
+        Empieza tus 7 días gratis en Edgecute. No se te cobra hoy. Cancela cuando quieras.
       </p>
       <div style={{ margin: "14px 0 4px" }}>
         <span style={{ fontFamily: font.serif, fontSize: 34, color: color.textHigh, fontWeight: 500 }}>
@@ -279,7 +277,7 @@ function Paywall({ summary, onCheckout, busy }: { summary: BillingSummary; onChe
         Añadir tarjeta y empezar
       </Button>
       <div style={{ color: color.textMuted, fontSize: 12, marginTop: 14 }}>
-        Se pedirá una tarjeta. No se te cobrará durante los {trialDays} días de prueba.
+        Se pedirá una tarjeta. No se te cobrará durante los 7 días de prueba.
       </div>
     </Card>
   );

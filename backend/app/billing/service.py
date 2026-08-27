@@ -250,22 +250,9 @@ class BillingService:
         pm = self._store.get_default_payment_method(user_id)
         grant = self._store.get_grant(user_id)
         invoices = self._store.list_invoices(user_id)
-        # Trial length the user WOULD get if they start now, so the PRE-checkout
-        # copy shows the right number (a preferential 14-day grant must never read
-        # "7"). Mirrors create_checkout_session but READ-ONLY (never consumes the
-        # override): pending override wins; a returning email gets 0 (no trial);
-        # otherwise the default window.
-        override = self._store.get_trial_override(user_id)
-        if override is not None and override.consumed_at is None:
-            trial_offer_days = override.days
-        elif email and self._store.has_used_trial(normalize_email(email)):
-            trial_offer_days = 0
-        else:
-            trial_offer_days = config.BILLING_TRIAL_DAYS
         return {
             "tier": tier,
             "access": tier != "Locked",
-            "trial_offer_days": trial_offer_days,
             # Admin precedence over comped (matches get_tier); _billing_stage
             # returns "admin" when tier is Admin.
             "stage": "comped" if (is_comped and tier != "Admin") else _billing_stage(tier, sub, grant),

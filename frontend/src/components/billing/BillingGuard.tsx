@@ -131,9 +131,6 @@ export function BillingGuard() {
 
   const returning = summary.stage === "resubscribe";
   const price = formatMoney(summary.plan.amount_cents, summary.plan.currency);
-  // Real per-user trial length (preferential Path B days if any) from /me, so a
-  // 14-day user never reads "7". Falls back to the default if the field is absent.
-  const trialDays = summary.trial_offer_days ?? TRIAL_DAYS;
 
   return (
     <div role="dialog" aria-modal="true" style={overlayStyle}>
@@ -171,7 +168,7 @@ export function BillingGuard() {
         <p style={{ color: color.textSecondary, margin: "0 auto", maxWidth: 400, fontSize: 14, lineHeight: 1.5 }}>
           {returning
             ? "Vuelve a suscribirte a Edgecute para recuperar el acceso completo. Sin permanencia; cancela cuando quieras."
-            : `Empieza tus ${trialDays} días gratis. No se te cobra hoy — al terminar la prueba, ${price}/mes. Cancela cuando quieras.`}
+            : `Empieza tus ${TRIAL_DAYS} días gratis. No se te cobra hoy — al terminar la prueba, ${price}/mes. Cancela cuando quieras.`}
         </p>
 
         <div style={{ margin: "16px 0 4px" }}>
@@ -231,7 +228,7 @@ export function BillingGuard() {
         <div style={{ color: color.textMuted, fontSize: 12, marginTop: 14 }}>
           {returning
             ? "Se te cobrará al confirmar. Sin periodo de prueba."
-            : `Se pedirá una tarjeta. No se te cobrará durante los ${trialDays} días de prueba.`}
+            : `Se pedirá una tarjeta. No se te cobrará durante los ${TRIAL_DAYS} días de prueba.`}
         </div>
       </div>
     </div>
