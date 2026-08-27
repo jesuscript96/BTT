@@ -1040,6 +1040,44 @@ arrancarlo con la var del profiler (estaba idle, verificado; `DISABLE_GCS_SYNC=t
 confirmado en el log de arranque). Al terminar se **restauró** el backend
 habitual (`--reload`, sin la var) y se verificó sano y sin líneas SUBPHASE.
 
+## 2026-08-27 (noche, 2ª parte) — «Últimas pruebas» en Portfolio: los runs ya no se pierden
+
+Pedida por Álvaro: "que las últimas pruebas se queden guardadas para darles al
+click". El diagnóstico: el backend YA auto-guardaba cada backtest exitoso en
+`backtest_results` (modo `auto`, retención 50, `f16dfd8`) — lo que se borró el
+21/08 (`48abb88`) fue solo la UI («Últimas pruebas» del antiguo Baúl
+`/database`). Lo que faltaba: endpoints ligeros y una pantalla.
+
+**Backend** (`strategy_search.py` + `backtest.py`):
+- `GET /api/strategy-search/recent` — listado LIGERO (sin `results_json`, que
+  en `/list` hace pesar respuestas decenas de MB): metadatos + métricas tipadas
+  + label por `json_extract`.
+- `GET /api/strategy-search/{id}` — payload completo de un run (incluye
+  `backtest_params` + snapshot de `strategy_definition` + `global_equity`).
+  Patrón rescatado del router legacy desmontado `_backtest_btt_legacy.py`.
+- `_autosave_success` ahora conserva `day_results` (solo dropea
+  `equity_curves`): la reapertura muestra calendario y selección de día. Los
+  runs guardados ANTES de este cambio no tienen day_results (calendario vacío).
+
+**Frontend**: 4ª sub-pestaña «Últimas pruebas» en `/portfolio`
+(`RecentRunsTab.tsx`). Al pulsar «abrir» se pide el payload por id y se
+escribe en `sessionStorage['backtester_results_state']` — la clave que
+`/backtester` YA restaura al montar — y se navega a `/backtester`: el run se
+repinta (métricas/trades/calendario/equity global) sin tocar su página.
+Degradación conocida: equity POR DÍA solo mientras el job viva (~1 h).
+Borrado con confirmación en dos pasos en la propia fila.
+
+**Fix de paso**: el 503 del guardián de memoria era invisible en la UI — el
+catch leía `detail` como string y el guard manda `{code, message}` (objeto).
+Nuevo helper `apiErrorMessage` en `backtester/page.tsx` para los dos catches.
+
+**Verificado** (navegador real): tabla con los runs del 27/08, «abrir» →
+backtester repinta exactamente las métricas del run (2281 trades / 56,5 % /
+PF 1,32 / Sharpe 3,29). Tests: `test_strategy_search_recent.py` (5) +
+regresión motor 116 pasan. Nota operativa: el `--reload` de uvicorn se colgó
+una vez al recargar con el backend cargado (worker viejo siguió sirviendo);
+reinicio limpio del backend si algún cambio no aparece.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado

@@ -16,6 +16,7 @@ import { SubTabs } from "@/components/robustez/help";
 import { BaulTab } from "@/components/portfolio/BaulTab";
 import { PortfolioTab } from "@/components/portfolio/PortfolioTab";
 import { MonitorTab } from "@/components/portfolio/MonitorTab";
+import { RecentRunsTab } from "@/components/portfolio/RecentRunsTab";
 import {
   deletePortfolioStrategy,
   listPortfolioStrategies,
@@ -24,7 +25,7 @@ import {
   type PortfolioStrategy,
 } from "@/lib/api_portfolio_lab";
 
-type Tab = "baul" | "portfolio" | "monitor";
+type Tab = "baul" | "portfolio" | "monitor" | "runs";
 
 export default function PortfolioPage() {
   const [strategies, setStrategies] = useState<PortfolioStrategy[]>([]);
@@ -129,10 +130,15 @@ export default function PortfolioPage() {
           { value: "baul", label: "Baúl" },
           { value: "portfolio", label: "Portfolio" },
           { value: "monitor", label: "Monitorización" },
+          { value: "runs", label: "Últimas pruebas" },
         ]}
       />
 
-      {loading ? (
+      {tab === "runs" ? (
+        // Carga propia (independiente del listado de estrategias): los runs
+        // auto-guardados viven en backtest_results, no en strategies.
+        <RecentRunsTab />
+      ) : loading ? (
         <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: color.textMuted, fontFamily: font.sans }}>
           Cargando estrategias…
         </div>

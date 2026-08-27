@@ -45,6 +45,36 @@ import {
 } from "@/lib/api_backtester";
 
 
+// Extrae un mensaje mostrable de un error axios. FastAPI a veces manda
+// `detail` como objeto (p.ej. el 503 del guardián de memoria del backend:
+// {code, message, available_gb}); leerlo como string dejaba el setError con
+// un objeto y el usuario no veía NADA de por qué su backtest no arrancaba.
+function apiErrorMessage(err: unknown): string {
+  if (err && typeof err === "object" && "response" in err) {
+    const data = (err as { response?: { data?: { detail?: unknown; message?: unknown } } })
+      .response?.data;
+    const detail = data?.detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (detail && typeof detail === "object") {
+      const d = detail as { message?: unknown };
+      if (typeof d.message === "string" && d.message) return d.message;
+    }
+    if (typeof data?.message === "string" && data.message) return data.message;
+    return "Error del servidor";
+  }
+  if (err && typeof err === "object" && "message" in err) {
+    const errMsg = (err as { message: string }).message;
+    if (errMsg.includes("timeout")) {
+      return "Timeout: el backtest tardó demasiado. Prueba con un dataset más pequeño.";
+    }
+    if (errMsg.includes("Network")) {
+      return "Error de red: verifica que el backend esté corriendo.";
+    }
+    return errMsg;
+  }
+  return "Error desconocido";
+}
+
 // Shows "X / Y backtests hoy" only when the tier has a finite daily run limit.
 // MVP: limit is -1 (unlimited) so this renders nothing.
 function BacktestUsageIndicator() {
@@ -563,20 +593,7 @@ export default function Home() {
         }
       }
     } catch (err: unknown) {
-      let msg = "Error desconocido";
-      if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        msg = axiosErr.response?.data?.detail || "Error del servidor";
-      } else if (err && typeof err === "object" && "message" in err) {
-        const errMsg = (err as { message: string }).message;
-        if (errMsg.includes("timeout")) {
-          msg = "Timeout: el backtest tardó demasiado. Prueba con un dataset más pequeño.";
-        } else if (errMsg.includes("Network")) {
-          msg = "Error de red: verifica que el backend esté corriendo.";
-        } else {
-          msg = errMsg;
-        }
-      }
+      const msg = apiErrorMessage(err);
       if (msg !== "Backtest cancelado") {
         setError(msg);
       }
@@ -832,20 +849,7 @@ export default function Home() {
         console.warn("Could not fetch strategy definition:", strategyErr);
       }
     } catch (err: unknown) {
-      let msg = "Error desconocido";
-      if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        msg = axiosErr.response?.data?.detail || "Error del servidor";
-      } else if (err && typeof err === "object" && "message" in err) {
-        const errMsg = (err as { message: string }).message;
-        if (errMsg.includes("timeout")) {
-          msg = "Timeout: el backtest tardo demasiado. Prueba con un dataset mas pequeno.";
-        } else if (errMsg.includes("Network")) {
-          msg = "Error de red: verifica que el backend este corriendo.";
-        } else {
-          msg = errMsg;
-        }
-      }
+      const msg = apiErrorMessage(err);
       if (msg !== "Backtest cancelado") {
         setError(msg);
       }

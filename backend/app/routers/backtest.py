@@ -94,9 +94,11 @@ def _autosave_success(req: BacktestRequest, job_id: str, result: dict, user_id):
     """
     from app.routers.strategy_search import autosave_backtest
 
-    # Light payload: drop the heavy per-day/equity blobs (same trim the
-    # frontend applies when saving manually).
-    light = {k: v for k, v in result.items() if k not in ("equity_curves", "day_results")}
+    # Light payload: drop only the heavy per-ticker equity blobs. day_results
+    # (stats por ticker-día, ~decenas de KB) se conserva para que la
+    # reapertura desde 'Últimas pruebas' tenga calendario y selección de día;
+    # equity_curves se sirve por job mientras el job viva (~1h TTL).
+    light = {k: v for k, v in result.items() if k != "equity_curves"}
 
     strat_name = (
         (req.strategy_definition or {}).get("name")

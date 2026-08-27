@@ -339,6 +339,65 @@ def filter_strategies(filters: StrategySearchFilters, user_id: Optional[str] = D
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/recent")
+def list_recent_runs(
+    limit: int = Query(20, ge=1, le=100),
+    search_mode: Optional[str] = Query(None),
+    user_id: Optional[str] = Depends(get_current_user_id),
+):
+    """Lista LIGERA de runs recientes para el panel 'Últimas pruebas' de Portfolio.
+
+    /list arrastra el results_json completo de cada fila (decenas de MB con
+    historial); aquí solo metadatos + métricas tipadas, con label y strategy_ids
+    — nada del payload. El contenido completo se pide luego por id (GET /{id}).
+    """
+    con = get_user_db_connection(read_only=True)
+    try:
+        scope_sql, scope_params = scope_clause(user_id)
+        mode_sql = " AND search_mode = ?" if search_mode else ""
+        mode_params = [search_mode] if search_mode else []
+        rows = con.execute(
+            f"""
+            SELECT
+                id, executed_at, search_mode,
+                json_extract_string(results_json, '$.label') AS label,
+                strategy_ids,
+                total_trades, win_rate, profit_factor,
+                avg_r_multiple, total_return_r, total_return_pct,
+                max_drawdown_pct, sharpe_ratio
+            FROM backtest_results
+            WHERE 1=1{scope_sql}{mode_sql}
+            ORDER BY executed_at DESC
+            LIMIT ?
+            """,
+            [*scope_params, *mode_params, limit],
+        ).fetchall()
+        runs = [
+            {
+                "id": r[0],
+                "executed_at": str(r[1]),
+                "search_mode": r[2],
+                "label": r[3],
+                "strategy_ids": json.loads(r[4]) if r[4] else [],
+                "total_trades": r[5],
+                "win_rate": r[6],
+                "profit_factor": r[7],
+                "avg_r_multiple": r[8],
+                "total_return_r": r[9],
+                "total_return_pct": r[10],
+                "max_drawdown_pct": r[11],
+                "sharpe_ratio": r[12],
+            }
+            for r in rows
+        ]
+        return {"runs": runs, "count": len(runs)}
+    except Exception as e:
+        print(f"Error listing recent runs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        con.close()
+
+
 @router.get("/list")
 def list_all_strategies(
     limit: int = Query(100, le=500),
@@ -487,14 +546,50 @@ def delete_strategy(strategy_id: str, background_tasks: BackgroundTasks, user_id
             )
         finally:
             con.close()
-            
+
     try:
         from app.gcs_sync import upload_user_db
         background_tasks.add_task(upload_user_db)
     except Exception as e:
         print(f"[WARN] GCS upload background scheduling failed after delete_strategy: {e}")
-        
+
     return {"status": "success", "message": "Strategy deleted"}
+
+
+@router.get("/{backtest_id}")
+def get_backtest_by_id(backtest_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """results_json COMPLETO de un run guardado.
+
+    Es la fuente para reabrir un run desde 'Últimas pruebas': el payload del
+    autosave lleva aggregate_metrics, trades, day_results, global_equity,
+    backtest_params y el snapshot de strategy_definition (patrón recuperado
+    del router legacy desmontado _backtest_btt_legacy.py).
+    """
+    scope_sql, scope_params = scope_clause(user_id)
+    con = get_user_db_connection(read_only=True)
+    try:
+        row = con.execute(
+            f"""
+            SELECT results_json, strategy_ids, executed_at, search_mode
+            FROM backtest_results WHERE id = ?{scope_sql}
+            """,
+            [backtest_id, *scope_params],
+        ).fetchone()
+    finally:
+        con.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Backtest result not found")
+    try:
+        payload = json.loads(row[0]) if row[0] else {}
+    except Exception:
+        payload = {}
+    return {
+        "id": backtest_id,
+        "strategy_ids": json.loads(row[1]) if row[1] else [],
+        "executed_at": str(row[2]),
+        "search_mode": row[3],
+        "results_json": payload,
+    }
 
 
 @router.post("/export")

@@ -290,6 +290,44 @@ export function getSavedBacktests(limit = 100): Promise<{ strategies: any[]; tot
   return apiRequest<{ strategies: any[]; total_count: number }>(`/strategy-search/list?limit=${limit}`);
 }
 
+// ── 'Últimas pruebas' (panel de runs recientes en Portfolio) ──
+// /recent devuelve SOLO metadatos + métricas tipadas (sin results_json, que
+// en /list hace pesar la respuesta decenas de MB). El payload completo de un
+// run se pide aparte por id.
+export interface RecentRun {
+  id: string;
+  executed_at: string;
+  search_mode: string;
+  label: string | null;
+  strategy_ids: string[];
+  total_trades: number;
+  win_rate: number;
+  profit_factor: number;
+  avg_r_multiple: number;
+  total_return_r: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+}
+
+export function getRecentRuns(
+  limit = 20,
+): Promise<{ runs: RecentRun[]; count: number }> {
+  return apiRequest<{ runs: RecentRun[]; count: number }>(
+    `/strategy-search/recent?limit=${limit}`,
+  );
+}
+
+export function getSavedRunById(id: string): Promise<{
+  id: string;
+  strategy_ids: string[];
+  executed_at: string;
+  search_mode: string;
+  results_json: Record<string, any>;
+}> {
+  return apiRequest(`/strategy-search/${encodeURIComponent(id)}`);
+}
+
 export function saveBacktest(data: {
   strategy_ids: string[];
   results_json: Record<string, unknown>;
