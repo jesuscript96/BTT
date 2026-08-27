@@ -89,6 +89,24 @@ _REASON_STR = {
 _PARTIAL_REASONS = (6, 7, 8, 9)
 
 
+def _hs_value_to_code(hs_value):
+    """hs_value (string) -> codigo HS_* del kernel. Misma tabla para el nivel
+    principal y para `fallback_value`, para que no puedan divergir."""
+    if hs_value == "HOD":
+        return _pjit.HS_HOD
+    elif hs_value == "LOD":
+        return _pjit.HS_LOD
+    elif hs_value == "PMH":
+        return _pjit.HS_PMH
+    elif hs_value == "PML":
+        return _pjit.HS_PML
+    elif hs_value in ("Previous Max", "PrevMax"):
+        return _pjit.HS_PREVMAX
+    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow"):
+        return _pjit.HS_PREVMIN
+    return _pjit.HS_NONE
+
+
 def simulate_jit(
     close: np.ndarray,
     open_: np.ndarray,
@@ -122,6 +140,10 @@ def simulate_jit(
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
     hs_offset_pct: float | None = 0.0,
+    # Ver portfolio_sim.simulate: rescate del SL estructural en reentradas
+    # (o tambien en primera entrada con fallback_first_entry).
+    hs_fallback_value: str | None = None,
+    hs_fallback_first: bool = False,
     hods: np.ndarray | None = None,
     lods: np.ndarray | None = None,
     pm_highs: np.ndarray | None = None,
@@ -158,20 +180,8 @@ def simulate_jit(
 
     hs_type_code = 1 if hs_type == "Market Structure (HOD/LOD)" else 0
 
-    if hs_value == "HOD":
-        hs_value_code = _pjit.HS_HOD
-    elif hs_value == "LOD":
-        hs_value_code = _pjit.HS_LOD
-    elif hs_value == "PMH":
-        hs_value_code = _pjit.HS_PMH
-    elif hs_value == "PML":
-        hs_value_code = _pjit.HS_PML
-    elif hs_value in ("Previous Max", "PrevMax"):
-        hs_value_code = _pjit.HS_PREVMAX
-    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow"):
-        hs_value_code = _pjit.HS_PREVMIN
-    else:
-        hs_value_code = _pjit.HS_NONE
+    hs_value_code = _hs_value_to_code(hs_value)
+    hs_fallback_code = _hs_value_to_code(hs_fallback_value)
 
     # signed SL offset (constant per call; computed exactly as the original)
     offset_pct = float(hs_offset_pct) if hs_offset_pct is not None else 0.0
@@ -311,6 +321,8 @@ def simulate_jit(
         has_trail_pct, trail_pct_v,
         bool(look_ahead_prevention),
         hs_type_code, hs_value_code, sl_offset,
+        hs_fallback_code,
+        bool(hs_fallback_first),
         has_hods, hods_a,
         has_lods, lods_a,
         has_pm_high, pm_high_a,

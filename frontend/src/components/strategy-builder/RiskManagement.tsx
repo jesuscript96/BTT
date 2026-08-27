@@ -7,9 +7,12 @@ interface Props {
     risk: RiskManagement;
     onChange: (risk: RiskManagement) => void;
     applyDay?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
+    /** Dirección de la estrategia: adapta los textos del bloque de nivel
+     *  rebasado ("por arriba" en corto, "por abajo" en largo). */
+    bias?: 'long' | 'short' | null;
 }
 
-const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDay = 'gap_day' }) => {
+const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDay = 'gap_day', bias }) => {
 
     // Cortacircuitos de perdida diaria. Se lee con defaults para que una
     // estrategia guardada antes de que esto existiera no rompa nada.
@@ -70,6 +73,24 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
     };
 
     const totalPartialCapital = (risk.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
+
+    // Copys del bloque "nivel rebasado": se adaptan al nivel elegido y a la
+    // dirección de la estrategia (corto: el stop va arriba y se rebasa por
+    // arriba; largo: va abajo y se perfora por abajo).
+    const nivelSL = ({
+        'HOD': 'el HOD', 'LOD': 'el LOD', 'PMH': 'el PMH', 'PML': 'el PML',
+        'Previous Max': 'el Previous Max', 'Previous Min': 'el Previous Min',
+    } as Record<string, string>)[String(risk.hard_stop.value ?? '')] || 'el nivel elegido';
+    const rebase = bias === 'short'
+        ? 'por arriba'
+        : bias === 'long'
+            ? 'por abajo'
+            : 'hacia el lado ganador';
+    const ladoResto = bias === 'short'
+        ? 'el stop quedaría por debajo de tu entrada'
+        : bias === 'long'
+            ? 'el stop quedaría por encima de tu entrada'
+            : 'el stop quedaría en el lado ganador de tu entrada';
 
 
 
@@ -307,6 +328,128 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 </div>
                             )}
                         </div>
+
+                        {/* ── Nivel rebasado al entrar ────────────────────────────────
+                            Un stop estructural solo es real si queda en el lado perdedor
+                            de la entrada. Si el precio ya lo ha rebasado, la entrada no se
+                            abre; en REENTRADAS se puede rescatar con el nivel elegido. */}
+                        {risk.hard_stop.type === RiskType.MARKET_STRUCTURE && (
+                            <div style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 8,
+                                border: '0.5px solid var(--color-ec-border)',
+                                borderRadius: 5,
+                                backgroundColor: 'var(--color-ec-bg-elevated)',
+                                padding: '10px 12px',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)', flexShrink: 0 }} />
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 10,
+                                        fontWeight: 700,
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.05em',
+                                        color: 'var(--color-ec-text-secondary)',
+                                    }}>
+                                        Si el nivel ya está rebasado al entrar
+                                    </span>
+                                </div>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 10,
+                                    lineHeight: 1.5,
+                                    color: 'var(--color-ec-text-muted)',
+                                }}>
+                                    El SL se coloca en <strong style={{ color: 'var(--color-ec-text-primary)' }}>{nivelSL}</strong> con su
+                                    offset, pero un stop solo vale si queda en el lado perdedor de la entrada. Si al
+                                    dispararse una señal el precio ya ha rebasado {nivelSL} {rebase} ({ladoResto}),
+                                    ese stop no existe: <strong style={{ color: 'var(--color-ec-text-primary)' }}>esa entrada se salta</strong>,
+                                    salvo que configures un respaldo justo debajo.
+                                </span>
+                                <div style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 6,
+                                    paddingTop: 8,
+                                    borderTop: '0.5px dotted var(--color-ec-border)',
+                                }}>
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 10,
+                                        lineHeight: 1.5,
+                                        color: 'var(--color-ec-text-secondary)',
+                                    }}>
+                                        En una <strong>reentrada</strong> (tras un stop-out es normal volver a entrar con
+                                        el nivel ya rebasado), si el precio ha rebasado {nivelSL} {rebase}, el SL pasará a:
+                                    </span>
+                                    <select
+                                        value={risk.hard_stop.fallback_value || ''}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'fallback_value', e.target.value || undefined)}
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 10px',
+                                            fontSize: 12,
+                                            fontWeight: 500,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                            height: '36px',
+                                            width: '100%',
+                                        }}
+                                    >
+                                        <option value="">No entrar (sin respaldo)</option>
+                                        <option value="HOD">HOD (High of Day)</option>
+                                        <option value="LOD">LOD (Low of Day)</option>
+                                        <option value="PMH">PMH (Premarket High)</option>
+                                        <option value="PML">PML (Premarket Low)</option>
+                                        <option value="Previous Max">Previous Max (último alto antes de entrar)</option>
+                                        <option value="Previous Min">Previous Min (último bajo antes de entrar)</option>
+                                    </select>
+                                    {!!risk.hard_stop.fallback_value && (
+                                        <label style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 6,
+                                            cursor: 'pointer',
+                                            marginTop: 2,
+                                        }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={!!risk.hard_stop.fallback_first_entry}
+                                                onChange={(e) => updateRiskSetting('hard_stop', 'fallback_first_entry', e.target.checked)}
+                                                style={{ accentColor: 'var(--color-ec-copper)', cursor: 'pointer' }}
+                                            />
+                                            <span style={{
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                fontSize: 10,
+                                                fontWeight: 600,
+                                                color: 'var(--color-ec-text-secondary)',
+                                            }}>
+                                                Rescatar también la primera entrada con el nivel rebasado
+                                            </span>
+                                        </label>
+                                    )}
+                                    <span style={{
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        fontSize: 9,
+                                        fontStyle: 'italic',
+                                        lineHeight: 1.4,
+                                        color: 'var(--color-ec-text-muted)',
+                                    }}>
+                                        Se aplica el mismo offset de arriba.{' '}
+                                        {risk.hard_stop.fallback_first_entry && risk.hard_stop.fallback_value
+                                            ? 'El respaldo aplica desde la primera entrada.'
+                                            : 'La primera entrada con el nivel rebasado se salta (solo las reentradas usan el respaldo).'}{' '}
+                                        Si también este nivel estuviera rebasado, la entrada se salta igualmente.
+                                    </span>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Size by SL Description block with Switch */}
                         <div style={{

@@ -2326,7 +2326,7 @@ export default function InlineStrategyBuilder({
         {/* Piramidación: entre la salida lógica y el stop loss fijo (petición del usuario) */}
         <PyramidingBuilder config={pyramiding} onChange={setPyramiding} />
         <div data-helper="st-risk" style={{ display: 'contents' }}>
-        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
+        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} bias={bias} />
         </div>
       </div>
 
