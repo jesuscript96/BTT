@@ -1167,6 +1167,31 @@ nota de la 3ª parte) — tras tocar código backend, reinicio manual
 obligatorio; el backend quedó arrancado y verificado
 (`DISABLE_GCS_SYNC=true` en el log).
 
+## 2026-08-27 (noche, 5ª parte) — Rescate del indicador Current Gap (%) (Álvaro)
+
+El indicador **Current Gap (%)** de la lógica de entrada (hecho el 18/08,
+`6631056`) se quedó huérfano en `alvaro-prereset-8b7959f` cuando la rama se
+recreó: no existía en `alvaro-rama-desarrollo`. Rescatado con cherry-pick
+(`e04d95e`, autoría y mensaje originales conservados).
+
+Semántica (recordatorio): `Current_Gap[t] = (close[t] − prev_close) /
+prev_close × 100` — gap VIVO vela a vela contra el cierre de ayer, a
+diferencia de PM High Gap (%) (máximo del premarket congelado a las 09:30)
+sigue al precio todo el día y baja si el precio baja. Condición `>= X` solo
+cierta en velas que están AHORA a X% sobre ayer. Misma cadena de fallback
+de `prev_close` que PM High Gap, evaluación por vela + fill en la apertura
+siguiente (look-ahead prevention), paridad legacy (`indicators.py`) ↔
+nativa (`strategy_engine._ri_current_gap`, no gatea a legacy).
+
+Conflictos del cherry-pick resueltos en `ConditionBuilder.tsx` e
+`indicatorValidation.ts`: HEAD había añadido Squeeze a los mismos checks de
+"indicador de porcentaje" donde el commit añadía Current Gap — conviven los
+tres (PM High Gap, Squeeze, Current Gap) como standalone con sufijo %.
+
+Verificado: 111 tests en verde (semántica original + paridad N2A del
+catálogo completo), tsc limpio, backend reiniciado y con la línea de
+seguridad en el log.
+
 ## Cambios de sesiones anteriores pendientes de coordinar
 
 - **Comisiones `PERCENT`**: se cobran sobre el NOCIONAL de cada lado
