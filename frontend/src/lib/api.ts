@@ -205,6 +205,15 @@ export function deleteStrategy(id: string): Promise<void> {
   });
 }
 
+/** Renombra una estrategia sin tocar su definicion (usado desde el Baul de
+ *  Portfolio y desde el listado de Robustez). */
+export function renameStrategy(id: string, name: string): Promise<Strategy> {
+  return apiRequest<Strategy>(`/strategies/${encodeURIComponent(id)}/name`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function toggleIncubator(
   id: string,
   monitoring: boolean,

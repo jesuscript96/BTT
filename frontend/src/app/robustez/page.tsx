@@ -18,6 +18,7 @@ import {
   type RobustezRun,
   type RobustezStrategy,
 } from "@/lib/api_robustez";
+import { renameStrategy } from "@/lib/api";
 
 export default function RobustezPage() {
   const [strategies, setStrategies] = useState<RobustezStrategy[]>([]);
@@ -70,6 +71,17 @@ export default function RobustezPage() {
   }, [selectedId]);
 
   const handleSelect = useCallback((id: string) => setSelectedId(id), []);
+
+  const handleRename = useCallback(async (s: RobustezStrategy, newName: string) => {
+    setError(null);
+    try {
+      const actualizada = await renameStrategy(s.id, newName);
+      setStrategies((prev) => prev.map((x) => (x.id === s.id ? { ...x, name: actualizada.name } : x)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo renombrar la estrategia");
+      throw e;
+    }
+  }, []);
 
   const selected = strategies.find((s) => s.id === selectedId) || null;
 
@@ -169,6 +181,7 @@ export default function RobustezPage() {
             strategies={strategies}
             selectedId={selectedId}
             onSelect={handleSelect}
+            onRename={handleRename}
             loadingRunFor={loadingRunFor}
           />
         )}

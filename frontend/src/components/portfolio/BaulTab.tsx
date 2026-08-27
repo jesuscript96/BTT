@@ -21,12 +21,14 @@ export function BaulTab({
   strategies,
   onToggle,
   onDelete,
+  onRename,
   busyId,
 }: {
   strategies: PortfolioStrategy[];
   onToggle: (s: PortfolioStrategy, bucket: Bucket, present: boolean) => void;
   /** Borrado DEFINITIVO: la estrategia, sus corridas y sus asignaciones. */
   onDelete: (s: PortfolioStrategy) => void;
+  onRename: (s: PortfolioStrategy, newName: string) => Promise<void>;
   busyId: string | null;
 }) {
   // Confirmacion en dos pasos, en la propia fila: el borrado es irreversible y
@@ -162,6 +164,7 @@ export function BaulTab({
         strategies={strategies}
         emptyText="No hay estrategias guardadas. Crea una en el Backtester y guárdala con «Guardar estrategia en el baúl»."
         actions={toggles}
+        onRename={onRename}
       />
 
       <StrategyShelf
@@ -171,6 +174,7 @@ export function BaulTab({
         strategies={inPortfolio}
         emptyText="Vacío. Añade estrategias desde el baúl genérico con «+ Portfolio»."
         actions={removeFrom("portfolio")}
+        onRename={onRename}
       />
 
       <StrategyShelf
@@ -180,6 +184,7 @@ export function BaulTab({
         strategies={inIncubator}
         emptyText="Vacío. Añade estrategias desde el baúl genérico con «+ Incubadora»."
         actions={removeFrom("incubadora")}
+        onRename={onRename}
       />
 
       <p style={{ margin: 0, fontSize: 11, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
