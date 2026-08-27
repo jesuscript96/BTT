@@ -222,6 +222,13 @@ export interface RiskSettings {
     value: number | string;
     operator?: string;
     offset_pct?: number;
+    // Solo hard_stop: nivel de respaldo en REENTRADAS cuando el principal
+    // queda invalidado al entrar (ej. corto con el PMH ya roto). El motor lo
+    // lee del JSON; undefined = sin respaldo (nivel invalidado = no se entra).
+    fallback_value?: string;
+    // Con true, el respaldo rescata TAMBIEN la primera entrada con el nivel
+    // invalidado (no solo reentradas).
+    fallback_first_entry?: boolean;
 }
 
 export interface PartialTakeProfit {

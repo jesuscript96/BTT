@@ -1032,6 +1032,11 @@ def simulate_and_accumulate(signals_sorted, params):
                 hs_value=hs.get("value"),
                 hs_operator=hs.get("operator", ">="),
                 hs_offset_pct=float(hs.get("offset_pct", 0.0)),
+                # Nivel de respaldo si el stop estructural queda invalidado al
+                # entrar (solo reentradas, o tambien primera entrada con
+                # fallback_first_entry). Ver portfolio_sim.simulate.
+                hs_fallback_value=hs.get("fallback_value"),
+                hs_fallback_first=bool(hs.get("fallback_first_entry", False)),
                 hods=sig["arrays"].get("hod"),
                 lods=sig["arrays"].get("lod"),
                 pm_highs=sig["arrays"].get("pm_high"),

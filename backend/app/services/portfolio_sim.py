@@ -10,6 +10,43 @@ import numpy as np
 from datetime import datetime, timezone
 
 
+def _structural_level(
+    value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+):
+    """Nivel estructural de un hard stop en la barra i.
+
+    Devuelve el valor del nivel pedido (HOD/LOD/PMH/PML/Previous Max/
+    Previous Min) o 0.0 si no está disponible (array ausente o valor 0);
+    el caller decide el default cuando es 0.0.
+    """
+    if value == "HOD" and hods is not None:
+        return hods[i] if hods[i] > 0 else 0.0
+    if value == "LOD" and lods is not None:
+        return lods[i] if lods[i] > 0 else 0.0
+    if value == "PMH" and pm_highs is not None:
+        return pm_highs[i] if pm_highs[i] > 0 else 0.0
+    if value == "PML" and pm_lows is not None:
+        return pm_lows[i] if pm_lows[i] > 0 else 0.0
+    if value in ("Previous Max", "PrevMax") and prev_highs is not None:
+        return prev_highs[i] if prev_highs[i] > 0 else 0.0
+    if value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
+        return prev_lows[i] if prev_lows[i] > 0 else 0.0
+    return 0.0
+
+
+def _sl_side_valid(stop_price, entry_price, is_long):
+    """True si el stop queda en el lado perdedor de la entrada.
+
+    Corto: SL estrictamente por encima del precio de entrada. Largo:
+    estrictamente por debajo (y positivo). Un stop en el lado ganador
+    (o a distancia cero) no es un stop: la premisa del nivel ya está
+    invalidada al entrar.
+    """
+    if is_long:
+        return 0.0 < stop_price < entry_price
+    return stop_price > entry_price
+
+
 
 def simulate(
     close: np.ndarray,
@@ -51,6 +88,16 @@ def simulate(
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
     hs_offset_pct: float | None = 0.0,
+    # Nivel de respaldo ("HOD"/"LOD"/"PMH"/"PML"/"Previous Max"/"Previous
+    # Min") para cuando el nivel principal del hard stop estructural queda
+    # invalidado al entrar (ej. corto con el PMH ya roto). Solo aplica en
+    # REENTRADAS (total_trades > 0): la primera entrada con el nivel roto
+    # no se hace. None (default) = sin respaldo, nivel invalidado = no se
+    # entra. Viaja en `hard_stop.fallback_value` del JSON de la estrategia.
+    hs_fallback_value: str | None = None,
+    # Con `fallback_first_entry: true` en el JSON, el respaldo rescata
+    # TAMBIEN la primera entrada con el nivel invalidado (no solo reentradas).
+    hs_fallback_first: bool = False,
     hods: np.ndarray | None = None,
     lods: np.ndarray | None = None,
     pm_highs: np.ndarray | None = None,
@@ -972,26 +1019,43 @@ def simulate(
                 # Determine Stop Loss Price
                 stop_loss_price = 0.0
                 if hs_type == "Market Structure (HOD/LOD)":
-                    val_struct = entry_price * (0.95 if is_long else 1.05)
-                    if hs_value == "HOD" and hods is not None:
-                        val_struct = hods[i] if hods[i] > 0 else val_struct
-                    elif hs_value == "LOD" and lods is not None:
-                        val_struct = lods[i] if lods[i] > 0 else val_struct
-                    elif hs_value == "PMH" and pm_highs is not None:
-                        val_struct = pm_highs[i] if pm_highs[i] > 0 else val_struct
-                    elif hs_value == "PML" and pm_lows is not None:
-                        val_struct = pm_lows[i] if pm_lows[i] > 0 else val_struct
-                    elif hs_value in ("Previous Max", "PrevMax") and prev_highs is not None:
-                        val_struct = prev_highs[i] if prev_highs[i] > 0 else val_struct
-                    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
-                        val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
-                    
+                    val_struct = _structural_level(
+                        hs_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+                    )
+                    if val_struct <= 0.0:
+                        val_struct = entry_price * (0.95 if is_long else 1.05)
+
                     # Calculate sl_offset
                     offset_pct = float(hs_offset_pct) if hs_offset_pct is not None else 0.0
                     offset_op = hs_operator or ">="
                     sign = 1.0 if offset_op in (">", ">=") else -1.0
                     sl_offset = sign * offset_pct / 100.0
                     stop_loss_price = val_struct * (1.0 + sl_offset)
+
+                    # Un stop estructural que queda en el lado GANADOR de la
+                    # entrada no es un stop: el chequeo de corto `high >= SL`
+                    # dispararia en la propia vela y haria fill al precio del
+                    # nivel (fuera del rango de la vela), contando un
+                    # beneficio instantaneo imposible. Nivel invalidado =
+                    # premisa muerta: no se entra. Excepciones: en REENTRADAS
+                    # (tras un stop-out es normal quedar pasado el nivel) se
+                    # rescatera con `hs_fallback_value` aplicando el mismo
+                    # offset; con `hs_fallback_first` tambien la primera
+                    # entrada. Si el respaldo tambien queda invalidado, no se
+                    # entra.
+                    if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                        if hs_fallback_value and (hs_fallback_first or total_trades > 0):
+                            fb_level = _structural_level(
+                                hs_fallback_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+                            )
+                            if fb_level > 0:
+                                fb_stop = fb_level * (1.0 + sl_offset)
+                                if _sl_side_valid(fb_stop, entry_price, is_long):
+                                    stop_loss_price = fb_stop
+                        if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
                 elif sl_stop is not None and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 

@@ -845,6 +845,11 @@ def run_backtest(
         hs_value = hs.get("value")
         hs_operator = hs.get("operator", ">=")
         hs_offset_pct = float(hs.get("offset_pct", 0.0))
+        # Nivel de respaldo si el stop estructural queda invalidado al entrar
+        # (solo reentradas, o tambien primera entrada con fallback_first_entry).
+        # Ver portfolio_sim.simulate.
+        hs_fallback = hs.get("fallback_value")
+        hs_fallback_first = bool(hs.get("fallback_first_entry", False))
 
         # Prepare timestamps array for elapsed time logic (numpy datetime64[ns] astype np.int64)
         ts_arr = arrays["timestamp"]
@@ -889,6 +894,8 @@ def run_backtest(
                 hs_value=hs_value,
                 hs_operator=hs_operator,
                 hs_offset_pct=hs_offset_pct,
+                hs_fallback_value=hs_fallback,
+                hs_fallback_first=hs_fallback_first,
                 hods=arrays.get("hod"),
                 lods=arrays.get("lod"),
                 pm_highs=arrays.get("pm_high"),

@@ -98,6 +98,12 @@ def _core_simulate_jit(
     has_trail_pct, trail_pct,
     look_ahead_prevention,
     hs_type_code, hs_value_code, sl_offset,
+    # Nivel de respaldo si el hard stop estructural queda invalidado al entrar
+    # (mismos codigos HS_*; HS_NONE = sin respaldo). Solo aplica en reentradas,
+    # salvo que hs_fallback_first rescate tambien la primera entrada.
+    # Paridad exacta con `hs_fallback_value`/`hs_fallback_first` de portfolio_sim.py.
+    hs_fallback_code,
+    hs_fallback_first,
     has_hods, hods,
     has_lods, lods,
     has_pm_high, pm_highs,
@@ -677,6 +683,39 @@ def _core_simulate_jit(
                     elif hs_value_code == HS_PREVMIN and has_prev_low:
                         val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
                     stop_loss_price = val_struct * (1.0 + sl_offset)
+
+                    # Guard (paridad bit a bit con portfolio_sim.py): un stop
+                    # estructural en el lado GANADOR de la entrada dispararia
+                    # en la propia vela con fill fuera de rango (beneficio
+                    # instantaneo imposible). Nivel invalidado = no se entra;
+                    # en reentrada (o primera entrada con hs_fallback_first)
+                    # se rescatera con `hs_fallback_code`.
+                    sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
+                    if not sl_valid:
+                        if hs_fallback_code != HS_NONE and (hs_fallback_first or total_trades > 0):
+                            fb_level = 0.0
+                            if hs_fallback_code == HS_HOD and has_hods:
+                                fb_level = hods[i] if hods[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_LOD and has_lods:
+                                fb_level = lods[i] if lods[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PMH and has_pm_high:
+                                fb_level = pm_highs[i] if pm_highs[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PML and has_pm_low:
+                                fb_level = pm_lows[i] if pm_lows[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PREVMAX and has_prev_high:
+                                fb_level = prev_highs[i] if prev_highs[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PREVMIN and has_prev_low:
+                                fb_level = prev_lows[i] if prev_lows[i] > 0 else 0.0
+                            if fb_level > 0:
+                                fb_stop = fb_level * (1.0 + sl_offset)
+                                fb_valid = (fb_stop > entry_price) if (not is_long) else (0.0 < fb_stop < entry_price)
+                                if fb_valid:
+                                    stop_loss_price = fb_stop
+                        sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
+                        if not sl_valid:
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
                 elif has_sl_stop and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 
