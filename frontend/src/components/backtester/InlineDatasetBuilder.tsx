@@ -58,10 +58,17 @@ interface IncludedCondition {
 }
 
 const MIN_DATE = "2006-01-01";
-const MAX_DATE = new Date().toISOString().split("T")[0];
-const TWO_YEARS_AGO = new Date(
-  new Date().setFullYear(new Date().getFullYear() - 2)
-).toISOString().split("T")[0];
+// "Hoy" y "hace 2 años" dependen del reloj: calculados al cargar el módulo,
+// el servidor (que lo evaluó al arrancar el proceso) y el navegador (que lo
+// evalúa al abrir la página) podían caer en días distintos y romper la
+// hidratación (min/value del input de fechas y el texto del resumen no
+// coincidían). Se calculan SOLO en el effect de montaje, nunca en render.
+const isoDate = (d: Date) => d.toISOString().split("T")[0];
+const yearsAgo = (n: number) => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - n);
+  return isoDate(d);
+};
 
 export default function InlineDatasetBuilder({
   onSave,
@@ -108,15 +115,19 @@ export default function InlineDatasetBuilder({
   }));
   */
 
-  const [dateFrom, setDateFrom] = useState(TWO_YEARS_AGO);
-  const [dateTo, setDateTo] = useState(MAX_DATE);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const [dbDateRange, setDbDateRange] = useState<any>({
     min_date: "2022-01-01",
-    max_date: new Date().toISOString().split("T")[0]
+    max_date: ""
   });
 
   useEffect(() => {
+    const hoy = isoDate(new Date());
+    setDateFrom(yearsAgo(2));
+    setDateTo(hoy);
+    setDbDateRange((prev: any) => ({ ...prev, max_date: hoy }));
     fetchAvailableDateRange().then(range => {
       if (range) {
         setDbDateRange(range);
