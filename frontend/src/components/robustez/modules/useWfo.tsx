@@ -20,6 +20,17 @@ import {
 import { Help, PlainStats, StaleNotice, Verdict } from "../help";
 import { WfoParamMatrix, WfoWindowBars } from "../charts/WfoCharts";
 
+import {
+  cancelRobustezJob,
+  getStrategyParameters,
+  pollRobustezJob,
+  runWfoFast,
+  startWfoFull,
+  type OptimizableParam,
+  type WfoOut,
+} from "@/lib/api_robustez";
+import type { ModuleCtx, ModuleParts } from "./types";
+
 /* ── Horas de cierre ──────────────────────────────────────────────────
    Los parametros de hora se barren en MINUTOS DESDE MEDIANOCHE (08:30 = 510).
    Estos dos ayudantes estan duplicados a proposito de
@@ -61,16 +72,6 @@ function HoraInput({ value, onChange }: { value: number; onChange: (v: number) =
     />
   );
 }
-import {
-  cancelRobustezJob,
-  getStrategyParameters,
-  pollRobustezJob,
-  runWfoFast,
-  startWfoFull,
-  type OptimizableParam,
-  type WfoOut,
-} from "@/lib/api_robustez";
-import type { ModuleCtx, ModuleParts } from "./types";
 
 type Mode = "rapido" | "completo";
 
@@ -701,6 +702,7 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
               windows={out.windows}
               paramValues={pc.values}
               paramLabel={pc.label}
+              formatValue={esHora ? minutosAHHMM : undefined}
               metricLabel={METRICS.find((m) => m.value === out.metric)?.label ?? out.metric}
               view={matrixView}
             />
@@ -716,7 +718,13 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
             <TileGrid min={165}>
               <MetricTile
                 label="Valor recomendado"
-                value={pa.recommended != null ? fmt.num(pa.recommended, 2) : "—"}
+                value={
+                  pa.recommended == null
+                    ? "—"
+                    : esHora
+                      ? minutosAHHMM(pa.recommended)
+                      : fmt.num(pa.recommended, 2)
+                }
                 sub={pa.at_edge ? "en el borde del rango" : pa.label}
                 tone={pa.at_edge ? color.warning : color.copper}
                 hint="El de mejor meseta, no el que mas veces gano."
@@ -743,7 +751,7 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
                   const mark = (n: React.ReactNode) =>
                     isBest ? <span style={{ color: color.copper }}>{n}</span> : n;
                   return [
-                    mark(fmt.num(pv.value, 2)),
+                    mark(esHora ? minutosAHHMM(pv.value) : fmt.num(pv.value, 2)),
                     mark(fmt.num(pv.mean, 3)),
                     mark(fmt.num(pv.plateau, 3)),
                     mark(fmt.num(pv.min, 3)),
@@ -806,7 +814,12 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
                 `${w.is_from} → ${w.is_to}`,
                 `${w.oos_from} → ${w.oos_to}`,
               ];
-              if (isFull) cells.push(w.best_params?.map((v) => fmt.num(v, 2)).join(" / ") ?? "—");
+              // Un parametro de hora viaja en minutos: sin esto la columna
+              // "mejor valor" de cada ventana enseñaba 510 en vez de 08:30.
+              if (isFull)
+                cells.push(
+                  w.best_params?.map((v) => (esHora ? minutosAHHMM(v) : fmt.num(v, 2))).join(" / ") ?? "—",
+                );
               cells.push(
                 <span key="i" style={{ color: w.is.return_pct >= 0 ? color.profit : color.loss }}>
                   {fmt.num(w.is.return_pct, 1)}
