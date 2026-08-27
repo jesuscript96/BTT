@@ -943,3 +943,93 @@ El screener no hace polling: va por **WebSocket** (`/screener/live`, top-50
 1×/s) y la app ya tiene alarmas propias (`matchesRules`, entrantes y cruces con
 cooldown). Ambas vías se descartaron a petición del usuario, que quería algo
 independiente que solo mirase la pantalla.
+
+---
+
+## 2026-08-27 (tarde) — Fills fantasma del SL estructural + arreglos de la sesión
+
+### 1. ⚠️ ADOPTADO de Álvaro: el SL estructural invalidado (`eb550d0`, `a2282b4`)
+
+Cherry-pick limpio de `dfa6e51` y `c79993d` de `alvaro-rama-desarrollo`. Base
+común `919ea1c` y **cero solape**: ninguno de sus 14 ficheros lo habíamos
+tocado nosotros.
+
+**El bug (lo teníamos igual).** Un stop de Market Structure que al entrar
+quedaba en el lado ganador —un corto con el PMH ya rebasado— dejaba el SL por
+DEBAJO de la entrada. En `portfolio_sim.py` el corto comprueba
+`price_for_sl >= trade_sl_price` y rellena a `min(SL, high)`: la condición se
+cumplía en la **propia vela de entrada** y vendía a un precio que la vela nunca
+tocó. Beneficio garantizado, sin riesgo, contado como salida "SL".
+
+En su run de RTH 2.3: **el 43 % de los trades eran fills fantasma y aportaban
+el 87 % del PnL** (PF 3,78 → 1,36 al arreglarlo).
+
+**🚨 CUALQUIER RUN GUARDADO ANTES DEL 2026-08-27 CON SL DE MARKET STRUCTURE
+ESTÁ INFLADO Y NO ES COMPARABLE.** Mismo aviso de semántica que el fix de
+splits. No comparar curvas nuevas contra runs viejos.
+
+**La semántica nueva:** guard siempre activo (no configurable) que valida el
+lado del nivel al precio REAL de entrada; si está invalidado, **no se entra**.
+Más dos campos opcionales en `hard_stop`: `fallback_value` (rescata
+REENTRADAS con otro nivel, típicamente "Previous Max", aplicando el mismo
+offset) y `fallback_first_entry` (extiende el rescate a la primera entrada).
+Si el respaldo también está invalidado, no se entra. Los stops porcentuales no
+se tocan.
+
+**Verificado por nuestra parte, no solo por sus tests:**
+- Sus 37 tests: 37/37 ✓.
+- Suite completa: **103 fallos / 354 pasan / 15 errores** contra el baseline de
+  103/321/15 → mismos fallos, mismos errores, **+33 tests nuevos**. 0 regresiones.
+- Reproducción propia del escenario NITO: corto a 3,20 con PMH en 2,48 → **0
+  trades** sin respaldo; con `Previous Max` (3,60) + `fallback_first_entry` →
+  1 trade con SL en 3,60, por encima de la entrada. ✓
+- Paridad Python↔JIT confirmada por lectura: `_sl_side_valid` en
+  `portfolio_sim.py` y su espejo con `hs_fallback_code` en
+  `portfolio_sim_jit.py`, con tabla de códigos compartida en `sim_dispatch.py`.
+- Los campos viajan por los DOS caminos: `backtest_service.py` (secuencial) y
+  `backtest_signals.py` (slab/paralelo).
+
+**Pendiente de producto:** re-optimizar con el motor honesto. Cada trade
+rescatado por el respaldo puede perder toda la distancia hasta ese último alto.
+
+### 2. Walk Forward: las horas ya no se piden ni se pintan en minutos (`6d5ea81`, `93dd847`)
+
+El fix de `1a1c3b4` tocó solo `OptimizationSurfaceTab`; Walk Forward se quedó
+fuera. Y dentro de WFO hubo que hacerlo **dos veces**: primero las casillas de
+entrada, y luego —porque no barrí todos los sitios de golpe— los ejes de la
+matriz 3D y del mapa de calor, sus globos de ratón (vía `customdata`, porque
+`%{x}` lee el valor crudo), la columna "mejor valor" por ventana, y el valor
+recomendado y la columna de valores del análisis por parámetro.
+
+La causa raíz: el backend YA mandaba `unit`, pero `OptimizableParam` de
+`api_robustez.ts` no lo declaraba. **Mismo patrón de campo mudo que
+`size_by_sl`, esta vez en el tipo del cliente.**
+
+### 3. Monte Carlo: el histograma tumbaba la simulación (`eab99cb`)
+
+"Too many bins for data range". `_safe_hist` tenía dos agujeros, **anteriores a
+esta sesión**: el guard miraba el rango ABSOLUTO cuando numpy falla por el
+ancho de bin relativo a la magnitud, y con `inf`/`nan` el propio plan B
+reventaba al calcular `lo - pad` sobre un valor no finito. Lo dispara el
+interés compuesto cuando una trayectoria desborda la equity. Verificado con 10
+formas de entrada.
+
+### 4. La barra de desenlaces del fondeo decía "días" sin decirlo (`c9e7031`)
+
+"rompe límite diario 88 %" se leía como "el 88 % de mis días", que es falso
+(son el 16 %). El 88 % son las **corridas** que acaban rotas, y basta UN día
+malo para tumbar una. Costó media conversación deshacer el malentendido.
+Ahora la barra dice "De cada 100 **intentos** de fondeo (no de días)".
+
+**Dato para tener a mano:** con la corrida real del usuario (275 sesiones,
+cuenta 50k, 1.500 $/trade), 44 sesiones cierran perdiendo más de 1.000 $. Al
+partir su calendario REAL en tramos seguidos de 20 sesiones, **las 256 ventanas
+posibles contienen al menos un día que rompe** el límite. La simulación no
+exagera: se queda corta.
+
+### 5. Descartado a petición del usuario
+
+Separar "cuenta base" y "tamaño de posición" en el panel de fondeo. Queda como
+está: la casilla de cuenta **escala el tamaño con ella**, así que cambiarla no
+mueve la probabilidad. Es correcto pero contraintuitivo — si vuelve a
+preguntar, es esto.
