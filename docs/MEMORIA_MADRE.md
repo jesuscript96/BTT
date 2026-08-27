@@ -1033,3 +1033,93 @@ Separar "cuenta base" y "tamaño de posición" en el panel de fondeo. Queda como
 está: la casilla de cuenta **escala el tamaño con ella**, así que cambiarla no
 mueve la probabilidad. Es correcto pero contraintuitivo — si vuelve a
 preguntar, es esto.
+
+---
+
+## 📣 Para Álvaro (y su IA) — respuesta de Sailor, 2026-08-27
+
+Escrito para que lo leáis directamente. Todo lo de abajo está ya en `staging`
+(commit `9ef1de9`), así que si partís de ahí lo tenéis.
+
+### 1. Vuestro fix del SL estructural: ADOPTADO y verificado ✅
+
+Cherry-pick de `dfa6e51` y `c79993d` sobre `sailor-rama-desarrollo`. Base común
+`919ea1c`, **cero conflictos**: ninguno de vuestros 14 ficheros lo habíamos
+tocado nosotros. Están en staging como `eb550d0` y `a2282b4`.
+
+**Confirmamos que teníamos el mismo bug**, verificado leyendo nuestro código
+antes de aplicar nada: `portfolio_sim.py` calculaba el SL estructural sin
+validar el lado, y el corto rellenaba con `min(SL, high)` cumpliéndose la
+condición en la propia vela de entrada.
+
+No nos fiamos solo de vuestros tests — esto es lo que medimos por nuestra parte:
+
+| Comprobación | Resultado |
+|---|---|
+| `test_hs_invalid_sl_guard.py` + `test_sim_jit_equivalence.py` | **37/37** ✓ |
+| Suite completa (con `--continue-on-collection-errors`) | **103F / 354P / 15E** |
+| Baseline previo nuestro | 103F / **321P** / 15E |
+| Veredicto | 0 regresiones, **+33 tests** |
+| Reproducción propia (escenario NITO) | corto a 3,20 con PMH 2,48 → **0 trades**; con `Previous Max` (3,60) + `fallback_first_entry` → 1 trade, SL 3,60 **por encima** de la entrada ✓ |
+| Paridad Python↔JIT | Confirmada por lectura: `_sl_side_valid` ↔ `hs_fallback_code`, tabla compartida en `sim_dispatch.py` |
+| Los campos llegan al simulador | Sí, por los **dos** caminos: `backtest_service` (secuencial) y `backtest_signals` (slab/paralelo) |
+
+Los 2 errores de recolección extra respecto a vuestra cuenta son
+**preexistentes y nuestros**: `test_backtest_engine.py` y
+`test_backtest_integration.py` importan
+`filter_market_data_by_interval_and_dates`, que desapareció en el refactor
+`2e383a5`. No tienen que ver con vuestro cambio.
+
+Aviso interno propagado: cualquier corrida guardada nuestra anterior al 27/08
+con SL de Market Structure queda marcada como inflada y no comparable.
+
+### 2. Vuestro informe de divergencias: ítem 2 — YA RESUELTO, no mandéis parche ✅
+
+El glob de `anadir_dias_al_cache` con padding fijo lo confirmamos y **lo
+arreglamos por nuestra cuenta** en `27e8076`, antes de que llegara vuestro
+cherry-pick. Mismo enfoque que `919ea1c` (prueba `{m:02d}` y `str(m)`), más el
+log que allí sí pusimos y aquí faltaba: un mes sin parquet ya no se salta mudo.
+
+Lo implementamos nosotros en vez de aceptar el cherry-pick por ser cinco líneas
+de un patrón ya conocido, y así no arrastrar nada más de la rama. **No hace
+falta que preparéis el parche.**
+
+### 3. Ítem 1 (split de `pmh_gap_pct`): NO adoptado — coincidimos con vosotros ✅
+
+De acuerdo con vuestra propia recomendación. Nuestro `prev_close` ya viene
+ajustado del ETL y aplicarlo aquí doblaría el ajuste (el NVDA 2024-06-10 →
+910,77 % falso). Queda cerrado formalmente por ambas partes.
+
+### 4. Ítems 3 y 4: convergidos, sin acción ✅
+
+"Days por sesión" y el glob del cargador principal ya estaban en staging con
+nuestros SHAs (`7415eed` y `919ea1c`).
+
+### 5. Lo que os llega nuevo de nuestra parte en este push
+
+Nada de esto toca el motor de simulación, así que no debería chocaros:
+
+- **Renombrar estrategias** desde el Baúl y desde Robustez (`PATCH
+  /api/strategies/{id}/name`, solo `name` + `updated_at`).
+- **Dos campos que se caían mudos** (`2282509`): `size_by_sl` no estaba
+  declarado en el esquema `RiskManagement` y pydantic lo tiraba con
+  `extra="ignore"`; `pyramiding` se perdía en 4 de los 6 sitios de `page.tsx`
+  que rearman el borrador. **Ojo si tenéis estrategias guardadas con "Cálculo
+  de Shares por Distancia al SL": hasta hoy esa opción no se persistía.**
+- **Monte Carlo**: `_safe_hist` tumbaba la simulación con "Too many bins for
+  data range" cuando el compuesto desbordaba la equity a `inf` (`eab99cb`).
+- **Walk Forward**: los parámetros de hora se pedían y se pintaban en minutos
+  crudos (510 en vez de 08:30), tanto en las casillas como en la matriz 3D,
+  el mapa de calor y las tablas (`6d5ea81`, `93dd847`).
+- **Robustez**: bloque nuevo de probabilidad de ruina/objetivo **por
+  horizonte**, y fix del reescalado de la cuenta base en la prueba de fondeo,
+  que en modo aditivo encogía los umbrales pero no el tamaño de las apuestas
+  (`7ee4e48`).
+
+### 6. Lo que abre vuestro cambio, y que compartimos
+
+Coincidimos con vuestra nota final: **hay que re-optimizar con el motor
+honesto**. Cada trade rescatado por el respaldo puede perder toda la distancia
+hasta ese último alto, así que los parámetros buenos de antes no tienen por qué
+seguir siéndolo. Nosotros vamos a relanzar nuestras estrategias con SL
+estructural antes de sacar ninguna conclusión.
