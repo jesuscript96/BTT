@@ -13,6 +13,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { createSeriesMarkers } from "lightweight-charts";
+import { Ruler } from "lucide-react";
 import type { CandleData, TradeRecord, EquityPoint, MultiDayCandles, Strategy } from "@/lib/api_backtester";
 import {
   getIndicatorDef,
@@ -174,6 +175,16 @@ export default function Chart({
 
   const [multiDayEnabled, setMultiDayEnabled] = useState(false);
 
+  // ── Regla de medición (estilo TradingView) ─────────────────────────────
+  // Con la regla activada, arrastrar sobre el gráfico mide Δprecio/Δ% y nº
+  // de velas entre dos puntos (clic para borrar). El render del chart no
+  // depende del toggle: los handlers leen el ref y el gráfico no se
+  // reconstruye al activarla.
+  const [measureEnabled, setMeasureEnabled] = useState(false);
+  const measureEnabledRef = useRef(false);
+  const measureClearFnsRef = useRef<Array<() => void>>([]);
+  const dayChartsRef = useRef<IChartApi[]>([]);
+
   const applyDay = useMemo(() => {
     if (activeStrategy?.definition && typeof activeStrategy.definition === 'object') {
       const def = activeStrategy.definition as any;
@@ -298,6 +309,9 @@ export default function Chart({
     if (chartRef.current) { chartRef.current.remove(); chartRef.current = null; }
     for (const sc of subChartsRef.current) { try { sc.remove(); } catch {} }
     subChartsRef.current = [];
+    dayChartsRef.current = [];
+    measureClearFnsRef.current = [];
+    const cleanupFns: Array<() => void> = [];
 
     const activeCharts: IChartApi[] = [];
     const activeSubCharts: IChartApi[] = [];
@@ -332,8 +346,13 @@ export default function Chart({
         crosshair: { mode: 0 },
         rightPriceScale: { borderColor: "#2C2F33" },
         timeScale: { borderColor: "#2C2F33", timeVisible: true, secondsVisible: false },
+        // Con la regla activada, el arrastre mide en vez de desplazar el
+        // eje temporal (la regla re-aplica esto al alternarla).
+        handleScroll: { pressedMouseMove: !measureEnabledRef.current },
+        handleScale: { axisPressedMouseMove: !measureEnabledRef.current },
       });
       activeCharts.push(chart);
+      dayChartsRef.current.push(chart);
 
       const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: "#10b981", downColor: "#ef4444",
@@ -352,6 +371,130 @@ export default function Chart({
         value: c.volume,
         color: c.close >= c.open ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)",
       })));
+
+      // ── Regla de medición (estilo TradingView) ─────────────────────────
+      // Overlay propio sobre el contenedor + conversión de coordenadas con
+      // la API del chart. Sin la regla activada los handlers son no-op y el
+      // gráfico se comporta como siempre.
+      {
+        const overlay = document.createElement("div");
+        overlay.style.cssText =
+          "position:absolute;inset:0;pointer-events:none;z-index:20;overflow:hidden;";
+        const box = document.createElement("div");
+        box.style.cssText =
+          "position:absolute;display:none;border:1px solid #3b82f6;background:rgba(59,130,246,0.13);";
+        const label = document.createElement("div");
+        label.style.cssText =
+          "position:absolute;display:none;white-space:nowrap;background:#16181A;border:1px solid #3b82f6;" +
+          "border-radius:4px;padding:4px 8px;font:600 11px/1.5 sans-serif;color:#e5e7eb;pointer-events:none;";
+        overlay.appendChild(box);
+        overlay.appendChild(label);
+        const prevPosition = container.style.position;
+        container.style.position = "relative";
+        container.appendChild(overlay);
+
+        const times = deduped.map(c => c.time as number);
+        const xToTime = (x: number): number => {
+          const t = chart.timeScale().coordinateToTime(x) as number | null;
+          if (t !== null && t !== undefined) return t;
+          // Fuera del rango de datos: clamp a la primera/última vela.
+          const first = chart.timeScale().timeToCoordinate(times[0] as Time);
+          const last = chart.timeScale().timeToCoordinate(times[times.length - 1] as Time);
+          if (first === null || last === null) return times[0];
+          return x < (first as number) ? times[0] : times[times.length - 1];
+        };
+        const nearestIdx = (t: number) => {
+          let lo = 0, hi = times.length - 1;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (times[mid] < t) lo = mid + 1; else hi = mid;
+          }
+          if (lo > 0 && Math.abs(times[lo - 1] - t) < Math.abs(times[lo] - t)) return lo - 1;
+          return lo;
+        };
+
+        let drag: { x: number; y: number; time: number; price: number } | null = null;
+        let frozen = false;
+
+        const clear = () => {
+          box.style.display = "none";
+          label.style.display = "none";
+          frozen = false;
+        };
+        measureClearFnsRef.current.push(clear);
+
+        const fmtPrice = (v: number) => {
+          const a = Math.abs(v);
+          if (a >= 100) return v.toFixed(2);
+          if (a >= 1) return v.toFixed(3);
+          return v.toFixed(4);
+        };
+
+        const renderMeasure = (end: { x: number; y: number; time: number; price: number }) => {
+          if (!drag) return;
+          const x1 = Math.min(drag.x, end.x), x2 = Math.max(drag.x, end.x);
+          const y1 = Math.min(drag.y, end.y), y2 = Math.max(drag.y, end.y);
+          box.style.display = "block";
+          box.style.left = `${x1}px`;
+          box.style.top = `${y1}px`;
+          box.style.width = `${Math.max(x2 - x1, 1)}px`;
+          box.style.height = `${Math.max(y2 - y1, 1)}px`;
+
+          const dp = end.price - drag.price;
+          const dpct = drag.price !== 0 ? (dp / drag.price) * 100 : 0;
+          const bars = Math.abs(nearestIdx(end.time) - nearestIdx(drag.time));
+          const mins = Math.round(Math.abs(end.time - drag.time) / 60);
+          const dur = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+          const up = dp >= 0;
+          label.style.display = "block";
+          label.style.color = up ? "#10b981" : "#ef4444";
+          label.innerHTML =
+            `${up ? "+" : ""}${fmtPrice(dp)} (${up ? "+" : ""}${dpct.toFixed(2)}%)` +
+            `<span style="color:#9ca3af">&nbsp;&nbsp;${bars} velas · ${dur}</span>`;
+          // Pegada a la esquina superior del rectángulo, sin salirse del chart.
+          label.style.left = `${Math.max(Math.min(x1 + 6, container.clientWidth - 190), 4)}px`;
+          label.style.top = `${Math.max(y1 - 22, 2)}px`;
+        };
+
+        const pointFrom = (e: MouseEvent) => {
+          const rect = container.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          const price = candleSeries.coordinateToPrice(y);
+          return {
+            x, y,
+            time: xToTime(x),
+            price: price === null ? (drag?.price ?? deduped[deduped.length - 1].close) : price,
+          };
+        };
+
+        const onDown = (e: MouseEvent) => {
+          if (!measureEnabledRef.current || e.button !== 0) return;
+          clear(); // un clic también borra la medición congelada anterior
+          drag = pointFrom(e);
+        };
+        const onMove = (e: MouseEvent) => {
+          if (!measureEnabledRef.current || !drag || frozen) return;
+          renderMeasure(pointFrom(e));
+        };
+        const onUp = () => {
+          if (!drag) return;
+          frozen = true; // queda fija hasta el próximo clic/arrastre
+          drag = null;
+        };
+
+        container.addEventListener("mousedown", onDown);
+        container.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+
+        cleanupFns.push(() => {
+          container.removeEventListener("mousedown", onDown);
+          container.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+          overlay.remove();
+          container.style.position = prevPosition;
+        });
+      }
 
       // Trade markers (snap to nearest aggregated candle time)
       if (showTrades && dayTrades.length > 0) {
@@ -513,6 +656,25 @@ export default function Chart({
 
         markers.sort((a, b) => (a.time as number) - (b.time as number));
         createSeriesMarkers(candleSeries, markers);
+
+        // Líneas del Stop Loss de cada trade del día: discontinuas, en rojo
+        // y con el precio en el eje. Antes el SL solo existía en la tabla y
+        // no podía verse sobre las velas (p. ej. para comprobar de un vistazo
+        // que el nivel queda en el lado correcto de la entrada).
+        for (const t of dayTrades) {
+          if (!t.stop_loss || t.stop_loss <= 0) continue;
+          const tEntryDate = t.entry_time.split(" ")[0];
+          const tExitDate = t.exit_time.split(" ")[0];
+          if (dayDateStr && tEntryDate !== dayDateStr && tExitDate !== dayDateStr) continue;
+          candleSeries.createPriceLine({
+            price: t.stop_loss,
+            color: "#ef4444",
+            lineWidth: 1,
+            lineStyle: 2, // discontinua
+            axisLabelVisible: true,
+            title: "SL",
+          });
+        }
       }
 
       // ========== OVERLAY INDICATORS ==========
@@ -1022,12 +1184,31 @@ export default function Chart({
     window.addEventListener("resize", handleResize);
 
     return () => {
+      for (const fn of cleanupFns) fn();
       window.removeEventListener("resize", handleResize);
       for (const sc of activeSubCharts) { try { sc.remove(); } catch {} }
       for (const c of activeCharts) { try { c.remove(); } catch {} }
       chartRef.current = null;
     };
   }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
+
+  // Toggle de la regla: sincroniza el ref, cambia el cursor y hace que el
+  // arrastre mida (en vez de desplazar la escala) mientras esté activa.
+  useEffect(() => {
+    measureEnabledRef.current = measureEnabled;
+    for (const c of dayChartsRef.current) {
+      c.applyOptions({
+        handleScroll: { pressedMouseMove: !measureEnabled },
+        handleScale: { axisPressedMouseMove: !measureEnabled },
+      });
+    }
+    for (const cont of [chartContainerRef, chartContainerRef1, chartContainerRef2, chartContainerRef3]) {
+      if (cont.current) cont.current.style.cursor = measureEnabled ? "crosshair" : "";
+    }
+    if (!measureEnabled) {
+      for (const clear of measureClearFnsRef.current) clear();
+    }
+  }, [measureEnabled]);
 
   return (
     <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] overflow-hidden" style={{ marginTop: 24 }}>
@@ -1101,6 +1282,35 @@ export default function Chart({
               </button>
             ))}
           </div>
+          <button
+            onClick={() => setMeasureEnabled(v => !v)}
+            title="Regla: arrastra sobre el gráfico para medir Δ$ y Δ% entre dos puntos. Clic para borrar la medición."
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '3px 10px',
+              height: '26px',
+              backgroundColor: measureEnabled ? 'var(--color-ec-copper)' : 'transparent',
+              border: '1.5px solid var(--color-ec-border)',
+              borderRadius: 5,
+              fontSize: 10,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: measureEnabled ? '#fff' : 'var(--color-ec-text-secondary)',
+              cursor: 'pointer',
+              transition: 'all 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!measureEnabled) e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+            }}
+            onMouseLeave={(e) => {
+              if (!measureEnabled) e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+            }}
+          >
+            <Ruler size={12} /> Regla
+          </button>
           {(applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive) && (
             <button
               onClick={() => setMultiDayEnabled(!multiDayEnabled)}
