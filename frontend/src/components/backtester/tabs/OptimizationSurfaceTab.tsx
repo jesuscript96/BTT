@@ -134,6 +134,31 @@ export default function OptimizationSurfaceTab({
 
   // Config state
   const [mode, setMode] = useState<"2D" | "3D">("2D");
+
+  // El modo 3D es una traza `surface` de Plotly y necesita WebGL. En equipos sin
+  // aceleracion (o con ella desactivada) Plotly no dibuja nada y suelta
+  // "WebGL is not supported by your browser": pantalla en negro y a adivinar.
+  // Como el modo 2D es una traza `contour` en SVG, ahi no hace falta WebGL, asi
+  // que basta con detectarlo y quedarse en 2D explicandolo. null = sin comprobar
+  // todavia (SSR): no se decide nada hasta montar en el navegador.
+  const [webglOk, setWebglOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let ok = false;
+    try {
+      const canvas = document.createElement("canvas");
+      const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+      ok = !!gl;
+      // Liberar el contexto: los navegadores limitan cuantos puede haber vivos a la vez.
+      const lose = (gl as WebGLRenderingContext | null)?.getExtension("WEBGL_lose_context");
+      lose?.loseContext();
+    } catch {
+      ok = false;
+    }
+    setWebglOk(ok);
+    if (!ok) setMode("2D");   // por si quedo en 3D de una sesion anterior
+  }, []);
+
   const [metric, setMetric] = useState("sharpe");
   const [paramX, setParamX] = useState("");
   const [paramY, setParamY] = useState("");
@@ -431,11 +456,19 @@ export default function OptimizationSurfaceTab({
         <div>
           <label className="text-[9px] text-[var(--color-ec-text-secondary)] block mb-1.5 font-mono uppercase">Modo</label>
           <div className="flex bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[28px] p-[2px]" style={{ marginTop: '2px' }}>
-            {(["2D", "3D"] as const).map((m) => (
+            {(["2D", "3D"] as const).map((m) => {
+              const bloqueado = m === "3D" && webglOk === false;
+              return (
               <button
                 key={m}
-                onClick={() => setMode(m)}
-                className={`flex-1 flex items-center justify-center text-[10px] font-mono font-bold rounded transition-colors cursor-pointer ${
+                disabled={bloqueado}
+                title={bloqueado
+                  ? "Tu navegador no tiene WebGL disponible, que es lo que necesita la vista 3D. La vista 2D muestra los mismos datos."
+                  : undefined}
+                onClick={() => { if (!bloqueado) setMode(m); }}
+                className={`flex-1 flex items-center justify-center text-[10px] font-mono font-bold rounded transition-colors ${
+                  bloqueado ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                } ${
                   mode === m
                     ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)] shadow-sm"
                     : "text-[var(--color-ec-text-muted)] hover:text-[var(--color-ec-text-primary)]"
@@ -443,7 +476,8 @@ export default function OptimizationSurfaceTab({
               >
                 {m}
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -664,6 +698,25 @@ export default function OptimizationSurfaceTab({
         <div className="flex gap-6 flex-col lg:flex-row">
           {/* Chart */}
           <div className="lg:w-2/3 min-h-[500px] flex flex-col">
+            {/* Sin WebGL no hay 3D posible. Se dice, en vez de dejar el grafico en
+                negro con un "WebGL is not supported by your browser" en la consola. */}
+            {webglOk === false && (
+              <div
+                className="mb-3 px-3 py-2 rounded text-[11px] font-mono"
+                style={{
+                  backgroundColor: "var(--color-ec-bg-elevated)",
+                  border: "0.5px solid var(--color-ec-border)",
+                  borderLeft: "2px solid var(--color-ec-warning)",
+                  color: "var(--color-ec-text-secondary)",
+                }}
+              >
+                Vista <strong style={{ color: "var(--color-ec-text-high)" }}>2D</strong>: tu
+                navegador no tiene WebGL disponible y la vista 3D lo necesita. Son los
+                mismos datos — el color es la métrica en vez de la altura. Suele
+                arreglarse activando la aceleración por hardware en los ajustes del
+                navegador.
+              </div>
+            )}
             <Plot
               data={plotData.data}
               layout={{
