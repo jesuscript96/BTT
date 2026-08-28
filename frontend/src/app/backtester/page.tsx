@@ -1804,7 +1804,8 @@ export default function Home() {
                       ? <span>Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con las nuevas variables y se asociará el nuevo dataset.</span>
                       : <span>Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con las nuevas variables configuradas.</span>}
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       disabled={isSavingStrategy}
                       onClick={() => setShowRewriteModal(false)}
@@ -1952,8 +1953,33 @@ export default function Home() {
                     }}
                   >
                     {isSavingStrategy ? "Guardando..." : "Sí"}
-                  </button>
-                </div>
+                    </button>
+                    </div>
+                    <button
+                      disabled={isSavingStrategy}
+                      onClick={() => {
+                        if (!strategyToSave || isSavingStrategy) return;
+                        // "Guardar como nueva": reabre el modal de guardado (que
+                        // CREA via createStrategy) con un nombre sugerido — la
+                        // estrategia original queda intacta en el baúl.
+                        setSaveName(strategyToSave.name ? `${strategyToSave.name} (copia)` : "");
+                        setShowRewriteModal(false);
+                        setShowSaveModal(true);
+                      }}
+                      style={{
+                        width: '100%', padding: '7px 0', borderRadius: 5,
+                        fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                        textTransform: 'uppercase', cursor: 'pointer',
+                        backgroundColor: 'transparent',
+                        border: '0.5px solid var(--color-ec-copper)',
+                        color: 'var(--color-ec-copper)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        opacity: isSavingStrategy ? 0.5 : 1,
+                      }}
+                    >
+                      Guardar como nueva estrategia
+                    </button>
+                  </div>
               </div>
             </div>
             );
