@@ -1123,3 +1123,169 @@ honesto**. Cada trade rescatado por el respaldo puede perder toda la distancia
 hasta ese último alto, así que los parámetros buenos de antes no tienen por qué
 seguir siéndolo. Nosotros vamos a relanzar nuestras estrategias con SL
 estructural antes de sacar ninguna conclusión.
+
+---
+
+## 2026-08-28 — Resumen de estrategia guardada, dos fixes de Álvaro adoptados, y tres auditorías medidas
+
+Sesión mixta: un arreglo propio, la adopción de dos parches del socio, y tres
+diagnósticos con números que NO tocan código. Lo que no se arregló queda
+listado al final con su porqué.
+
+### 1. El resumen de una estrategia guardada anunciaba parciales que no existían
+
+**Síntoma del usuario:** en el desplegable de una estrategia guardada (Robustez
+y Portfolio) el take profit salía bien, pero debajo aparecía «TP parciales» con
+la configuración de una versión ANTERIOR de esa misma estrategia, ya
+sobrescrita. Sospechaba que el guardado no sobrescribía bien.
+
+**El guardado sobrescribe bien.** En `users.duckdb` hay una sola fila para esa
+estrategia, sin duplicados, y `PUT /api/strategies/{id}` reescribe la
+definición entera, no hace merge. Comprobado con `updated_at`.
+
+Lo que sí pasa es que el JSON **arrastra** `partial_take_profits` de la versión
+vieja: el builder conserva el array en memoria al volver de «Parcial» a
+«Completo» (para que no pierdas la configuración si cambias de idea) y lo manda
+tal cual. **El motor lo ignora** — `strategy_engine.py:820` y `:1379` solo lo
+leen si `tp_mode == "Partial"`, y `optimization_service.py:485` tampoco expone
+esos parámetros fuera de ese modo. Los backtests eran correctos.
+
+El fallo estaba solo en el texto: `lib/robustez/formatStrategy.ts` pintaba la
+línea mirando únicamente si el array existía. Ahora usa **la misma puerta que
+el motor** (`use_take_profit is not False`, luego `tp_mode == "Partial"`), y
+además muestra «desactivado» cuando no hay TP, como ya hacía el hard stop.
+
+De paso, en esa misma línea, el disparo de un parcial por hora se pintaba como
+`30% a +HOUR:09:00%`. Ahora: `30% a las 09:00`. Los cuatro formatos que
+reconoce `_parse_partial_tps` (%, `TIME:`, `HOUR:`, `EOD`) se traducen.
+
+Un solo fichero, usado por `robustez/StrategyPicker.tsx` y
+`portfolio/StrategyShelf.tsx`. `tsc` limpio; verificado ejecutando `riskLines`
+contra la definición literal guardada en la base de datos.
+
+**Decisión consciente: NO se limpia el array al guardar.** Borrarlo en modo
+Completo haría perder la configuración de parciales al recargar la estrategia.
+Queda como está a propósito.
+
+### 2. Adoptados los dos fixes de Álvaro (`2aefb06` y `764277e`) — teníamos los dos
+
+Cherry-pick limpio de los dos, sin modificarlos.
+
+- **Darvas Box en el enum del schema.** El indicador estaba en el motor
+  (`indicators.py`, canónico «Darvas Box» + alias) y en el frontend
+  (`IndicatorType.DARVAS_BOX`), pero **no** en `schemas/strategy.py`. El
+  backtest corría y el guardado devolvía 422. Es exactamente el patrón de «un
+  campo se cae en silencio si no está declarado en las tres capas».
+  Verificado: una estrategia con condición Darvas ya valida, y un indicador
+  inventado sigue rebotando (contraprueba).
+- **«Guardar como nueva estrategia»** en el modal de sobrescritura.
+
+`tsc` limpio tras los dos.
+
+### 3. Auditoría: por qué un backtest tardó ~13 minutos
+
+Medido en vivo con `py-spy` sobre el proceso del backend (tres volcados de pila)
+y con las marcas de tiempo de la caché.
+
+| Tramo | Coste | Evitable |
+|---|---|---|
+| Datos en frío (dataset nuevo → 25 meses de parquet crudo) | ~7 min | Sí: relanzar el mismo dataset |
+| Piramidación → motor Python en las dos mitades | ~3 min | Sí: quitarla si la prueba no la necesita |
+| Sin paralelismo | multiplica todo | No, hoy |
+
+- **Datos en frío.** El dataset se creó a las 13:18 → universo nuevo → tickers
+  que no estaban en la caché por ticker-mes (`D:\tmp\btt_intraday_cache`; ojo:
+  `CACHE_DIR` está definido DOS veces en `gcs_cache.py`, líneas 37 y 799, y
+  gana la segunda). Escribió ~5.700 ficheros entre las 13:22 y las 13:29,
+  leyendo a ~100 MB/s. La barra de progreso no se mueve durante ese tramo
+  porque solo cuenta pares ya simulados.
+- **Piramidación.** Confirmado por pila:
+  `_evaluate_pyramid_levels → _resample_if_needed → pandas resample.agg`.
+  Dos puertas ya documentadas en el código la echan del camino rápido:
+  `strategy_engine.py:414` (fuerza `has_special=True` → nada de path nativo) y
+  `sim_dispatch.py:44` (con niveles de pirámide siempre `portfolio_sim`, nunca
+  el kernel Numba, aunque `BACKTEST_NUMBA_SIM=1`). Es el P3 conocido.
+- **Un núcleo de veinte — esto NO estaba apuntado.** `backtest_signals.py:765`
+  (y las otras dos vías del fichero) exigen `fork` / `forkserver`. En esta
+  máquina `multiprocessing.get_all_start_methods()` devuelve **`['spawn']`**,
+  así que **ninguna** vía paralela se activa: cae siempre al bucle secuencial
+  en línea. Además hay un segundo cerrojo antes: `BACKTEST_PARALLEL_WORKERS`
+  vale 1 por defecto (opt-in explícito, por riesgo de OOM en BROAD).
+  Ritmo medido del bucle: **39,6 pares/s** (de 4.960 a 6.743 en 45 s).
+
+  Matiz honesto: el propio código deja escrito que con spawn «a 1.200 pares el
+  spawn cuesta más que el trabajo» — pero eso se midió con el camino rápido,
+  donde cada par es baratísimo. Con piramidación el coste por par es otro orden
+  de magnitud y la cuenta puede darse la vuelta. **Sin medir. No tocar el motor
+  hasta medirlo.**
+
+### 4. Auditoría del slippage: la unidad es correcta y el coste cuadra al milímetro
+
+El usuario sospechaba que el slippage degradaba demasiado. **No hay bug.**
+
+**Unidad.** `BacktestPanel.tsx:696` y `:792` envían `slippage / 100`; el motor
+aplica `slip = precio × slippage` (`portfolio_sim_jit.py:650` y `:592`).
+Escribir 1 en la casilla «Slippage (%)» = 1% peor en la entrada y 1% peor en
+cada salida. Es lo que la etiqueta promete.
+
+**Prueba aritmética** sobre tres runs de la misma estrategia con las **mismas
+1.883 operaciones** (solo cambia el slippage):
+
+| Slippage | R media | PF |
+|---|---|---|
+| 0,05 % | +0,243 | 1,701 |
+| 0,50 % | +0,195 | 1,546 |
+| 1,00 % | +0,145 | 1,391 |
+
+Coste calculado a mano operación a operación: 0,005 / 0,050 / 0,097 R. Caídas
+reales de R media: 0,048 y 0,050. **Cuadra.**
+
+**La fórmula que lo explica:** `coste en R = 2 × slippage ÷ distancia al stop`.
+Con stops al ~23% (Previous Max + 10%), un 1% de slippage cuesta ~0,09 R contra
+una ventaja bruta de +0,24 R: se lleva el 40%. Con un stop al 2%, el mismo 1%
+costaría **1 R por operación**. La sensibilidad no es al slippage, es al
+cociente. Y con piramidación y TP parciales **se paga en cada añadido y en cada
+salida parcial**, no dos veces por operación.
+
+**Trampa metodológica detectada en los runs del usuario:** los backtests «sin
+slippage» se corrieron con `risk_r=1` y los «con slippage» con `risk_r=300`.
+Además, con `risk_r=1` la columna `r_multiple` deja de ser R y pasa a ser
+dólares (`r_multiple = pnl / risk_r`). Para comparar costes hay que mover una
+sola variable y mirar R media o PF, nunca el % de retorno (se mueve con el
+capital inicial: dos runs idénticos daban +681% y +136% simplemente por 10.000$
+contra 50.000$ — los mismos 68.154$ ganados).
+
+### 5. Aclarado (sin cambio): la guarda del SL estructural consume el flanco de señal
+
+Sobre el bloque «Si el nivel ya está rebasado al entrar» de `eb550d0`.
+
+`Previous Max` es `cummax(high).shift(1)` — el máximo del día hasta la vela
+anterior, no un pivote. Con offset +10%, en corto el nivel se considera
+rebasado solo si el precio de entrada supera `Previous Max × 1,10`.
+
+Lo que conviene tener claro: al saltarse la entrada, el código hace
+`prev_signal = current_signal; continue`, y las entradas disparan por flanco
+(`is_signal_trigger = current_signal and not prev_signal`). Es decir, **el
+disparo se consume**: aunque en la vela siguiente el Previous Max ya se haya
+puesto al día y el stop fuera válido, no entra. Hace falta que la condición se
+apague y se vuelva a encender. En una estrategia de gaps, donde la buena del
+día puede ser una sola señal, eso puede costar el día entero.
+
+La entrada saltada **no** gasta reentrada (`total_trades` no sube).
+
+Pendiente ofrecido y no ejecutado: medir cuántas señales se pierden hoy
+(correr la misma estrategia con y sin respaldo y comparar el nº de
+operaciones). Las entradas saltadas no dejan rastro; solo se ven por ausencia.
+
+### 6. Encontrado y NO arreglado (a la espera de decisión)
+
+- **Trampa de ×100 latente.** En `app/backtester/page.tsx:500` y `:545` el
+  valor por defecto es `slippage: p?.slippage ?? 0.01` — 0,01 en unidades del
+  MOTOR, o sea 1%, mientras que el valor por defecto del panel es 0,01 **en la
+  casilla**, o sea 0,01%. Cien veces. Lo mismo con `fees ?? 0.01`. **No
+  dispara hoy**: `p` es `panelParamsRef.current`, que el panel rellena al
+  montarse. Es una trampa esperando un cambio en el orden de carga.
+- **Trabajo muerto en cada mes del stream.** `db/gcs_cache.py:1298` hace
+  `n_groups = len(grouped)` y **no usa** `n_groups` en ninguna parte. Ese
+  `len()` sobre un groupby materializa el índice de todos los grupos del mes.
+  Se paga en los 25 meses para nada.
