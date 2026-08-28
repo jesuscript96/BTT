@@ -88,6 +88,18 @@ const RISK_UNITS: Record<string, string> = {
   ATR: "ATR",
 };
 
+/** Disparo de un TP parcial: distancia en %, minutos, hora del dia o el cierre.
+ *  Mismos cuatro formatos que reconoce `_parse_partial_tps` en el backend; antes
+ *  se pegaba un "%" a todos y un parcial por hora salia como "+HOUR:09:00%". */
+function formatPartialTrigger(d: unknown): string {
+  if (typeof d === "string") {
+    if (d.toUpperCase() === "EOD") return "al cierre";
+    if (d.startsWith("HOUR:")) return `a las ${d.slice(5)}`;
+    if (d.startsWith("TIME:")) return `a los ${d.slice(5)} min`;
+  }
+  return `a +${d}%`;
+}
+
 /** Resumen de la gestion de riesgo en lineas etiqueta/valor. */
 export function riskLines(rm: AnyRec | null | undefined): Array<[string, string]> {
   if (!rm) return [];
@@ -100,15 +112,26 @@ export function riskLines(rm: AnyRec | null | undefined): Array<[string, string]
     lines.push(["Hard stop", "desactivado"]);
   }
 
-  if (rm.use_take_profit && rm.take_profit) {
-    lines.push(["Take profit", `${rm.take_profit.value} ${unit(rm.take_profit.type)} (${rm.take_profit_mode || "Full"})`]);
-  }
+  // El take profit se resume EXACTAMENTE con la misma puerta que usa el motor
+  // (`strategy_engine.py`: `use_take_profit is not False` y luego
+  // `tp_mode == "Partial"`). Antes los parciales se pintaban solo por existir el
+  // array, y el builder lo conserva al volver a TP completo: una estrategia
+  // sobreescrita seguia arrastrando los parciales de la version anterior en su
+  // definicion y el desplegable los anunciaba aunque el motor no los mira.
+  const tpMode = rm.take_profit_mode || "Full";
+  const partials = Array.isArray(rm.partial_take_profits) ? rm.partial_take_profits : [];
 
-  if (Array.isArray(rm.partial_take_profits) && rm.partial_take_profits.length) {
+  if (rm.use_take_profit === false) {
+    lines.push(["Take profit", "desactivado"]);
+  } else if (tpMode === "Partial" && partials.length) {
     lines.push([
       "TP parciales",
-      rm.partial_take_profits.map((p: AnyRec) => `${p.capital_pct}% a +${p.distance_pct}%`).join(" · "),
+      partials.map((p: AnyRec) => `${p.capital_pct}% ${formatPartialTrigger(p.distance_pct)}`).join(" · "),
     ]);
+  } else if (rm.take_profit) {
+    lines.push(["Take profit", `${rm.take_profit.value} ${unit(rm.take_profit.type)}`]);
+  } else {
+    lines.push(["Take profit", "desactivado"]);
   }
 
   if (rm.trailing_stop?.active) {
