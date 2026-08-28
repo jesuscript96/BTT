@@ -1198,3 +1198,301 @@ seguridad en el log.
   (entrada + salida), no sobre `|PnL|`. Un breakeven también paga comisión.
 - **El Baúl (`/database`) y el `PortfolioBuilder` viejo están borrados** en esta
   rama.
+
+---
+
+## 2026-08-27 — Renombrado, horizonte, y dos campos que se caían en silencio
+
+### 1. Renombrar estrategias desde el listado (`ae7dbb6`)
+
+Nuevo `PATCH /api/strategies/{id}/name`: toca **solo** `name` y `updated_at`,
+con el mismo `scope_clause` que el resto. Hacía falta uno propio porque el
+`PUT` existente exige el `StrategyCreate` entero, y los listados del Baúl y de
+Robustez no tienen la definición a mano. Lápiz inline (`RenameableName` en
+`robustez/shared.tsx`) en las tres estanterías del Baúl y en el listado de
+Robustez.
+
+**Trampa:** la fila es un `role="button"` que escucha Espacio para desplegarse.
+El input tiene que **cortar la propagación del keydown** o no se pueden
+escribir espacios en el nombre.
+
+### 2. Probabilidad de ruina y objetivo por horizonte (`7ee4e48`)
+
+Bloque nuevo dentro de *Rango de escenarios posibles*. El `prob_ruin_pct` de
+esa sección se mide sobre el horizonte **completo** del backtest, que no elige
+el usuario; aquí el horizonte es la variable. `run_horizon` acumula el
+histograma del PRIMER paso en que cada trayectoria toca cada nivel, así que no
+hay que guardar la matriz `sims × días` entera.
+
+**⚠️ NO es una prueba de fondeo.** Nació llamándose "estudio de paso de pruebas
+de fondeo" y confundió: el usuario comparó su 70% con el 17% de
+`FundingSection`. **Las dos cifras eran correctas.** Aquí el suelo es FIJO
+(un % bajo el capital inicial) y no hay límite de pérdida diaria ni drawdown
+trailing. Renombrado y advertido en la propia interfaz.
+
+Auditoría de `FundingSection` con 5 casos de comportamiento conocido (aprueba
+en la sesión 8, rotura de DD en la 7, límite diario en la 1, mínimos, suma de
+desenlaces = 100): **correcto, no había fallo ahí**.
+
+### 3. FIX: la cuenta base del fondeo no reescalaba en aditivo (`7ee4e48`)
+
+En modo **aditivo** los valores son PnL en **dólares** de la cuenta con la que
+se corrió el backtest. Cambiar "cuenta base" no los tocaba: solo encogía los
+umbrales, que son % de la cuenta. Se simulaba una cuenta de 25.000 moviéndose
+como si operase 50.000.
+
+| Cuenta base | Antes | Ahora |
+|---|---|---|
+| 25.000 $ | 0,7 % | 3,2 % |
+| 50.000 $ | 3,2 % | 3,2 % |
+| 100.000 $ | 24,1 % | 3,2 % |
+
+Invariante, como debe ser con reglas en porcentaje. En compuesto no se toca
+nada (los R-múltiplos son proporciones): verificado idéntico bit a bit. Solo
+afecta a backtests de riesgo **FIJO**, que son los que llegan en aditivo.
+
+### 4. FIX: `size_by_sl` y `pyramiding` se perdían (`2282509`)
+
+Los dos son el patrón de las **TRES CAPAS**, cada uno cayéndose en una distinta:
+
+- **`size_by_sl`** ("Cálculo de Shares por Distancia al SL") no estaba
+  declarado en el esquema `RiskManagement`. Pydantic va con `extra="ignore"`:
+  el frontend lo mandaba bien, el esquema lo tiraba **sin error, sin log y sin
+  422**, y la estrategia salía siempre con la opción desactivada. **Capa 2.**
+- **`pyramiding`** es clave de **primer nivel**, y de los seis sitios de
+  `page.tsx` que rearman el borrador **solo dos** la conservaban. Por eso una
+  estrategia con pirámide perdía su configuración al reabrir el panel.
+  **Capa 1.** `risk_management` no sufría esto porque los seis bloques acaban
+  en `...(def.risk_management || {})`.
+
+**⬜ Pendiente:** puede haber más campos igual. Falta una pasada comparando lo
+que emite el constructor contra lo que declara el esquema, en vez de irlos
+descubriendo de uno en uno.
+
+### 5. Glob de la caché: adoptado el ítem 2 de Álvaro (`27e8076`)
+
+`anadir_dias_al_cache` se quedó con `month={m:02d}` fijo cuando se arregló el
+del cargador principal (`919ea1c`). Con una partición `month=8` el glob no
+resolvía, el `continue` era mudo y la caché **se saltaba el mes entero sin
+dejar rastro**. Espejo exacto de `919ea1c`, más el log que allí sí se puso.
+
+Implementado aquí en vez de aceptar su cherry-pick: cinco líneas, patrón ya
+conocido, y así no se arrastra nada más de su rama. **Decirle que no hace
+falta parche.**
+
+Su **ítem 1** (ajuste de split de `pmh_gap_pct`) **NO se adopta**, de acuerdo
+con su propia recomendación: nuestro `prev_close` ya viene ajustado del ETL y
+doblaría el ajuste. **Ítems 3 y 4** ya convergidos.
+
+### Suite
+
+**103 fallos / 321 pasan — idéntico al baseline, 0 regresiones.** Los 15
+errores frente a los 13 anotados antes son 2 fallos de **recolección
+preexistentes**: `test_backtest_engine.py` y `test_backtest_integration.py`
+importan `filter_market_data_by_interval_and_dates`, que desapareció en el
+refactor `2e383a5`. Ningún commit de esta sesión toca `routers/backtest.py`.
+Se lanza con `--continue-on-collection-errors`, y el intérprete es
+`backend/.venv/Scripts/python.exe` (el Python del sistema no tiene pytest).
+
+### Fuera del repo: avisos del screener a Telegram
+
+Userscript de Tampermonkey que lee la tabla de `app.edgecute.com/screener` y
+avisa por Telegram cuando entra un ticker nuevo con `Change % > 50`, o cuando
+uno que ya estaba lo cruza. **Vive fuera del repo**, dentro de Tampermonkey.
+
+Tres cosas que costaron la tarde y conviene no repetir:
+
+1. **Chrome (MV3) tiene apagado por defecto un permiso por extensión llamado
+   «Permitir scripts de usuario»** (`chrome://extensions` → Detalles). Sin él
+   Tampermonkey lista los scripts y **los da por activos, pero no ejecuta
+   ninguno**, en silencio absoluto. **Comprobar esto ANTES que el código.**
+2. Las cabeceras de la tabla llevan `text-transform: uppercase` e `innerText`
+   devuelve el texto **ya transformado**: llegan como `TICKER`, `PRICE`.
+3. `fmtPct` antepone `+` a los positivos y la celda de `Change %` puede traer
+   una marca `▲`/`▼`. Un lector que exigiera que la celda entera fuese un
+   número devolvía `null` **siempre**.
+
+El screener no hace polling: va por **WebSocket** (`/screener/live`, top-50
+1×/s) y la app ya tiene alarmas propias (`matchesRules`, entrantes y cruces con
+cooldown). Ambas vías se descartaron a petición del usuario, que quería algo
+independiente que solo mirase la pantalla.
+
+---
+
+## 2026-08-27 (tarde) — Fills fantasma del SL estructural + arreglos de la sesión
+
+### 1. ⚠️ ADOPTADO de Álvaro: el SL estructural invalidado (`eb550d0`, `a2282b4`)
+
+Cherry-pick limpio de `dfa6e51` y `c79993d` de `alvaro-rama-desarrollo`. Base
+común `919ea1c` y **cero solape**: ninguno de sus 14 ficheros lo habíamos
+tocado nosotros.
+
+**El bug (lo teníamos igual).** Un stop de Market Structure que al entrar
+quedaba en el lado ganador —un corto con el PMH ya rebasado— dejaba el SL por
+DEBAJO de la entrada. En `portfolio_sim.py` el corto comprueba
+`price_for_sl >= trade_sl_price` y rellena a `min(SL, high)`: la condición se
+cumplía en la **propia vela de entrada** y vendía a un precio que la vela nunca
+tocó. Beneficio garantizado, sin riesgo, contado como salida "SL".
+
+En su run de RTH 2.3: **el 43 % de los trades eran fills fantasma y aportaban
+el 87 % del PnL** (PF 3,78 → 1,36 al arreglarlo).
+
+**🚨 CUALQUIER RUN GUARDADO ANTES DEL 2026-08-27 CON SL DE MARKET STRUCTURE
+ESTÁ INFLADO Y NO ES COMPARABLE.** Mismo aviso de semántica que el fix de
+splits. No comparar curvas nuevas contra runs viejos.
+
+**La semántica nueva:** guard siempre activo (no configurable) que valida el
+lado del nivel al precio REAL de entrada; si está invalidado, **no se entra**.
+Más dos campos opcionales en `hard_stop`: `fallback_value` (rescata
+REENTRADAS con otro nivel, típicamente "Previous Max", aplicando el mismo
+offset) y `fallback_first_entry` (extiende el rescate a la primera entrada).
+Si el respaldo también está invalidado, no se entra. Los stops porcentuales no
+se tocan.
+
+**Verificado por nuestra parte, no solo por sus tests:**
+- Sus 37 tests: 37/37 ✓.
+- Suite completa: **103 fallos / 354 pasan / 15 errores** contra el baseline de
+  103/321/15 → mismos fallos, mismos errores, **+33 tests nuevos**. 0 regresiones.
+- Reproducción propia del escenario NITO: corto a 3,20 con PMH en 2,48 → **0
+  trades** sin respaldo; con `Previous Max` (3,60) + `fallback_first_entry` →
+  1 trade con SL en 3,60, por encima de la entrada. ✓
+- Paridad Python↔JIT confirmada por lectura: `_sl_side_valid` en
+  `portfolio_sim.py` y su espejo con `hs_fallback_code` en
+  `portfolio_sim_jit.py`, con tabla de códigos compartida en `sim_dispatch.py`.
+- Los campos viajan por los DOS caminos: `backtest_service.py` (secuencial) y
+  `backtest_signals.py` (slab/paralelo).
+
+**Pendiente de producto:** re-optimizar con el motor honesto. Cada trade
+rescatado por el respaldo puede perder toda la distancia hasta ese último alto.
+
+### 2. Walk Forward: las horas ya no se piden ni se pintan en minutos (`6d5ea81`, `93dd847`)
+
+El fix de `1a1c3b4` tocó solo `OptimizationSurfaceTab`; Walk Forward se quedó
+fuera. Y dentro de WFO hubo que hacerlo **dos veces**: primero las casillas de
+entrada, y luego —porque no barrí todos los sitios de golpe— los ejes de la
+matriz 3D y del mapa de calor, sus globos de ratón (vía `customdata`, porque
+`%{x}` lee el valor crudo), la columna "mejor valor" por ventana, y el valor
+recomendado y la columna de valores del análisis por parámetro.
+
+La causa raíz: el backend YA mandaba `unit`, pero `OptimizableParam` de
+`api_robustez.ts` no lo declaraba. **Mismo patrón de campo mudo que
+`size_by_sl`, esta vez en el tipo del cliente.**
+
+### 3. Monte Carlo: el histograma tumbaba la simulación (`eab99cb`)
+
+"Too many bins for data range". `_safe_hist` tenía dos agujeros, **anteriores a
+esta sesión**: el guard miraba el rango ABSOLUTO cuando numpy falla por el
+ancho de bin relativo a la magnitud, y con `inf`/`nan` el propio plan B
+reventaba al calcular `lo - pad` sobre un valor no finito. Lo dispara el
+interés compuesto cuando una trayectoria desborda la equity. Verificado con 10
+formas de entrada.
+
+### 4. La barra de desenlaces del fondeo decía "días" sin decirlo (`c9e7031`)
+
+"rompe límite diario 88 %" se leía como "el 88 % de mis días", que es falso
+(son el 16 %). El 88 % son las **corridas** que acaban rotas, y basta UN día
+malo para tumbar una. Costó media conversación deshacer el malentendido.
+Ahora la barra dice "De cada 100 **intentos** de fondeo (no de días)".
+
+**Dato para tener a mano:** con la corrida real del usuario (275 sesiones,
+cuenta 50k, 1.500 $/trade), 44 sesiones cierran perdiendo más de 1.000 $. Al
+partir su calendario REAL en tramos seguidos de 20 sesiones, **las 256 ventanas
+posibles contienen al menos un día que rompe** el límite. La simulación no
+exagera: se queda corta.
+
+### 5. Descartado a petición del usuario
+
+Separar "cuenta base" y "tamaño de posición" en el panel de fondeo. Queda como
+está: la casilla de cuenta **escala el tamaño con ella**, así que cambiarla no
+mueve la probabilidad. Es correcto pero contraintuitivo — si vuelve a
+preguntar, es esto.
+
+---
+
+## 📣 Para Álvaro (y su IA) — respuesta de Sailor, 2026-08-27
+
+Escrito para que lo leáis directamente. Todo lo de abajo está ya en `staging`
+(commit `9ef1de9`), así que si partís de ahí lo tenéis.
+
+### 1. Vuestro fix del SL estructural: ADOPTADO y verificado ✅
+
+Cherry-pick de `dfa6e51` y `c79993d` sobre `sailor-rama-desarrollo`. Base común
+`919ea1c`, **cero conflictos**: ninguno de vuestros 14 ficheros lo habíamos
+tocado nosotros. Están en staging como `eb550d0` y `a2282b4`.
+
+**Confirmamos que teníamos el mismo bug**, verificado leyendo nuestro código
+antes de aplicar nada: `portfolio_sim.py` calculaba el SL estructural sin
+validar el lado, y el corto rellenaba con `min(SL, high)` cumpliéndose la
+condición en la propia vela de entrada.
+
+No nos fiamos solo de vuestros tests — esto es lo que medimos por nuestra parte:
+
+| Comprobación | Resultado |
+|---|---|
+| `test_hs_invalid_sl_guard.py` + `test_sim_jit_equivalence.py` | **37/37** ✓ |
+| Suite completa (con `--continue-on-collection-errors`) | **103F / 354P / 15E** |
+| Baseline previo nuestro | 103F / **321P** / 15E |
+| Veredicto | 0 regresiones, **+33 tests** |
+| Reproducción propia (escenario NITO) | corto a 3,20 con PMH 2,48 → **0 trades**; con `Previous Max` (3,60) + `fallback_first_entry` → 1 trade, SL 3,60 **por encima** de la entrada ✓ |
+| Paridad Python↔JIT | Confirmada por lectura: `_sl_side_valid` ↔ `hs_fallback_code`, tabla compartida en `sim_dispatch.py` |
+| Los campos llegan al simulador | Sí, por los **dos** caminos: `backtest_service` (secuencial) y `backtest_signals` (slab/paralelo) |
+
+Los 2 errores de recolección extra respecto a vuestra cuenta son
+**preexistentes y nuestros**: `test_backtest_engine.py` y
+`test_backtest_integration.py` importan
+`filter_market_data_by_interval_and_dates`, que desapareció en el refactor
+`2e383a5`. No tienen que ver con vuestro cambio.
+
+Aviso interno propagado: cualquier corrida guardada nuestra anterior al 27/08
+con SL de Market Structure queda marcada como inflada y no comparable.
+
+### 2. Vuestro informe de divergencias: ítem 2 — YA RESUELTO, no mandéis parche ✅
+
+El glob de `anadir_dias_al_cache` con padding fijo lo confirmamos y **lo
+arreglamos por nuestra cuenta** en `27e8076`, antes de que llegara vuestro
+cherry-pick. Mismo enfoque que `919ea1c` (prueba `{m:02d}` y `str(m)`), más el
+log que allí sí pusimos y aquí faltaba: un mes sin parquet ya no se salta mudo.
+
+Lo implementamos nosotros en vez de aceptar el cherry-pick por ser cinco líneas
+de un patrón ya conocido, y así no arrastrar nada más de la rama. **No hace
+falta que preparéis el parche.**
+
+### 3. Ítem 1 (split de `pmh_gap_pct`): NO adoptado — coincidimos con vosotros ✅
+
+De acuerdo con vuestra propia recomendación. Nuestro `prev_close` ya viene
+ajustado del ETL y aplicarlo aquí doblaría el ajuste (el NVDA 2024-06-10 →
+910,77 % falso). Queda cerrado formalmente por ambas partes.
+
+### 4. Ítems 3 y 4: convergidos, sin acción ✅
+
+"Days por sesión" y el glob del cargador principal ya estaban en staging con
+nuestros SHAs (`7415eed` y `919ea1c`).
+
+### 5. Lo que os llega nuevo de nuestra parte en este push
+
+Nada de esto toca el motor de simulación, así que no debería chocaros:
+
+- **Renombrar estrategias** desde el Baúl y desde Robustez (`PATCH
+  /api/strategies/{id}/name`, solo `name` + `updated_at`).
+- **Dos campos que se caían mudos** (`2282509`): `size_by_sl` no estaba
+  declarado en el esquema `RiskManagement` y pydantic lo tiraba con
+  `extra="ignore"`; `pyramiding` se perdía en 4 de los 6 sitios de `page.tsx`
+  que rearman el borrador. **Ojo si tenéis estrategias guardadas con "Cálculo
+  de Shares por Distancia al SL": hasta hoy esa opción no se persistía.**
+- **Monte Carlo**: `_safe_hist` tumbaba la simulación con "Too many bins for
+  data range" cuando el compuesto desbordaba la equity a `inf` (`eab99cb`).
+- **Walk Forward**: los parámetros de hora se pedían y se pintaban en minutos
+  crudos (510 en vez de 08:30), tanto en las casillas como en la matriz 3D,
+  el mapa de calor y las tablas (`6d5ea81`, `93dd847`).
+- **Robustez**: bloque nuevo de probabilidad de ruina/objetivo **por
+  horizonte**, y fix del reescalado de la cuenta base en la prueba de fondeo,
+  que en modo aditivo encogía los umbrales pero no el tamaño de las apuestas
+  (`7ee4e48`).
+
+### 6. Lo que abre vuestro cambio, y que compartimos
+
+Coincidimos con vuestra nota final: **hay que re-optimizar con el motor
+honesto**. Cada trade rescatado por el respaldo puede perder toda la distancia
+hasta ese último alto, así que los parámetros buenos de antes no tienen por qué
+seguir siéndolo. Nosotros vamos a relanzar nuestras estrategias con SL
+estructural antes de sacar ninguna conclusión.

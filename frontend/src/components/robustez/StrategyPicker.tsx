@@ -6,6 +6,7 @@ import { color, font, radius } from "@/components/ui/tokens";
 import type { RobustezStrategy } from "@/lib/api_robustez";
 import { flattenConditions, formatUniverseRule, riskLines } from "@/lib/robustez/formatStrategy";
 import { Help } from "./help";
+import { RenameableName } from "./shared";
 
 /**
  * Parametros de EJECUCION de la corrida guardada: capital, comisiones,
@@ -84,6 +85,8 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   loadingRunFor: string | null;
+  /** Renombrado inline. Si se omite, el nombre se pinta sin lapiz. */
+  onRename?: (s: RobustezStrategy, newName: string) => Promise<void>;
 }
 
 const num = (v: number | null | undefined, digits = 2, suffix = "") =>
@@ -182,7 +185,7 @@ export function KeyVals({ rows }: { rows: Array<[string, string, React.ReactNode
   );
 }
 
-export default function StrategyPicker({ strategies, selectedId, onSelect, loadingRunFor }: Props) {
+export default function StrategyPicker({ strategies, selectedId, onSelect, loadingRunFor, onRename }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   if (!strategies.length) {
@@ -268,18 +271,26 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                   {isSelected && <Check style={{ width: 12, height: 12, color: color.copper, flexShrink: 0 }} />}
-                  <span
-                    style={{
-                      fontSize: 12.5,
-                      fontFamily: font.sans,
-                      color: color.textHigh,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {s.name || "Sin nombre"}
-                  </span>
+                  {onRename ? (
+                    <RenameableName
+                      name={s.name || "Sin nombre"}
+                      onRename={(n) => onRename(s, n)}
+                      textStyle={{ fontSize: 12.5, color: color.textHigh, minWidth: 0 }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: 12.5,
+                        fontFamily: font.sans,
+                        color: color.textHigh,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {s.name || "Sin nombre"}
+                    </span>
+                  )}
                   {loadingRunFor === s.id && (
                     <span style={{ fontSize: 10, color: color.copper, fontFamily: font.sans }}>cargando…</span>
                   )}

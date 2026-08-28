@@ -156,13 +156,28 @@ export function WfoParamMatrix({
   paramLabel,
   metricLabel,
   view,
+  formatValue,
 }: {
   windows: WfoWindow[];
   paramValues: number[];
   paramLabel: string;
   metricLabel: string;
   view: "3d" | "heatmap";
+  /** Como se lee un valor del eje. Un parametro de HORA viaja en minutos desde
+   *  medianoche (08:30 = 510) y sin esto los ejes pintaban el 510 crudo. */
+  formatValue?: (v: number) => string;
 }) {
+  // Marcas del eje X. Solo se tocan si hay formateador: sin el, todo se queda
+  // EXACTAMENTE como estaba (Plotly elige sus propias marcas).
+  const ejeX = formatValue
+    ? { tickmode: "array" as const, tickvals: paramValues, ticktext: paramValues.map(formatValue) }
+    : {};
+  // El globo del raton lee `%{x}` crudo, asi que la version formateada viaja
+  // aparte en `customdata` (una fila por ventana, un valor por punto).
+  const customX = formatValue
+    ? windows.map(() => paramValues.map(formatValue))
+    : undefined;
+  const marcaX = formatValue ? "%{customdata}" : "%{x}";
   const z = useMemo(
     () =>
       windows.map((w) =>
@@ -228,7 +243,8 @@ export function WfoParamMatrix({
               cmax: centered ? absMax : hi,
               colorbar,
               contours: { z: { show: true, usecolormap: true, project: { z: true }, width: 1 } },
-              hovertemplate: `${paramLabel}: %{x}<br>ventana %{y}<br>${metricLabel}: %{z:.3f}<extra></extra>`,
+              ...(customX ? { customdata: customX } : {}),
+              hovertemplate: `${paramLabel}: ${marcaX}<br>ventana %{y}<br>${metricLabel}: %{z:.3f}<extra></extra>`,
             },
           ]}
           layout={{
@@ -242,6 +258,7 @@ export function WfoParamMatrix({
                 showbackground: true,
                 backgroundcolor: "rgba(28,30,33,0.35)",
                 tickfont: { size: 9.5, color: "#6A6D72" },
+                ...ejeX,
               },
               yaxis: {
                 title: { text: "Ventana", font: { size: 11, color: "#8A8D92" } },
@@ -277,7 +294,8 @@ export function WfoParamMatrix({
               zmin: centered ? -absMax : lo,
               zmax: centered ? absMax : hi,
               colorbar,
-              hovertemplate: `${paramLabel}: %{x}<br>%{y}<br>${metricLabel}: %{z:.3f}<extra></extra>`,
+              ...(customX ? { customdata: customX } : {}),
+              hovertemplate: `${paramLabel}: ${marcaX}<br>%{y}<br>${metricLabel}: %{z:.3f}<extra></extra>`,
             },
             {
               type: "scatter",
@@ -297,6 +315,7 @@ export function WfoParamMatrix({
               title: { text: paramLabel, font: { size: 11, color: "#8A8D92" } },
               gridcolor: "#2C2F33",
               tickfont: { size: 9.5, color: "#6A6D72" },
+              ...ejeX,
             },
             yaxis: { gridcolor: "#2C2F33", tickfont: { size: 9.5, color: "#6A6D72" }, autorange: "reversed" },
           }}

@@ -539,14 +539,20 @@ def anadir_dias_al_cache(meses, log: Log) -> dict:
         carpeta = os.path.join(G.LOCAL_CACHE_DIR, "raw", str(y), f"{m:02d}")
         if not os.path.isdir(carpeta) or not glob.glob(os.path.join(carpeta, "*.parquet")):
             continue
-        # Las particiones del lago van SIN cero (month=8); se prueban ambos.
+        # Los DOS paddings, igual que en `cargar_meses_en_duckdb`: el lago
+        # nuestro escribe `month=01` pero DuckDB por defecto escribe `month=1`.
+        # Este glob se quedo con el padding fijo cuando se arreglo el del
+        # cargador principal, asi que una particion `month=8` hacia que la
+        # cache se saltara el mes EN SILENCIO. Reportado por Alvaro (item 2 de
+        # DIVERGENCIAS_ALVARO_VS_STAGING_20260827) y verificado aqui.
         patron_lago = None
         for pad in (f"{m:02d}", str(m)):
-            p = _g(os.path.join(cs, "intraday_1m", f"year={y}", f"month={pad}", "*.parquet"))
-            if glob.glob(p):
-                patron_lago = p
+            cand = _g(os.path.join(cs, "intraday_1m", f"year={y}", f"month={pad}", "*.parquet"))
+            if glob.glob(cand):
+                patron_lago = cand
                 break
         if not patron_lago:
+            log(f"[CACHE] SIN PARQUET EN EL LAGO: intraday_1m {y}-{m:02d} — mes saltado")
             continue
 
         try:

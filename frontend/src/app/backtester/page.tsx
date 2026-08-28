@@ -411,6 +411,7 @@ export default function Home() {
           market_sessions: def.market_sessions || ["rth"],
           custom_start_time: def.custom_start_time,
           custom_end_time: def.custom_end_time,
+          ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
         } as any;
       }
       return prev;
@@ -841,6 +842,7 @@ export default function Home() {
             market_sessions: def.market_sessions || ["rth"],
             custom_start_time: def.custom_start_time,
             custom_end_time: def.custom_end_time,
+            ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           } as any);
         } else {
           setDraftStrategy(null);
@@ -1349,6 +1351,7 @@ export default function Home() {
                       market_sessions: def.market_sessions || ["rth"],
                       custom_start_time: def.custom_start_time,
                       custom_end_time: def.custom_end_time,
+                      ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
                     } as any);
                     
                     setActiveSessions(def.market_sessions || ["rth"]);
@@ -1928,6 +1931,7 @@ export default function Home() {
                           market_sessions: def.market_sessions || ["rth"],
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
+                          ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
                         } as any;
                         setBuilderDraft(updatedDraft);
 

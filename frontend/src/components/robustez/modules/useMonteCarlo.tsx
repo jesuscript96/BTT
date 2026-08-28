@@ -19,6 +19,7 @@ import { InlineStats } from "@/components/portfolio/StatSheet";
 import { DistributionChart, SpaghettiChart } from "../charts/MonteCarloCharts";
 import { DrawdownCompare } from "../charts/DrawdownCompare";
 import { FundingSection, LossesSection } from "../charts/MonteCarloExtras";
+import { HorizonStudy } from "../charts/HorizonStudy";
 import { realLossStats } from "@/lib/robustez/loss_stats";
 import { Help, StaleNotice } from "../help";
 import { runRobustezMonteCarlo, type McMethod, type MonteCarloOut } from "@/lib/api_robustez";
@@ -437,6 +438,17 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
               ]}
             />
           </div>
+
+          {/* El horizonte, como VARIABLE: la ruina de arriba se mide sobre el
+              largo del backtest, que no elige el usuario. Va por SESION aunque
+              el bootstrap principal remuestree por trade — un fondeo se juega
+              con limites diarios. */}
+          <HorizonStudy
+            valoresDia={fundingValues}
+            initCash={out.init_cash}
+            riskPct={out.risk_pct}
+            esPct={useCompound}
+          />
         </section>
 
         {/* ── Perdidas dia a dia y probabilidades ── */}
@@ -463,6 +475,7 @@ export function useMonteCarlo({ run, loading }: ModuleCtx): ModuleParts {
             esPct={useCompound}
             riskPctDefault={compounding?.risk_pct || 1}
             nSesiones={real.fechas.length}
+            baseCash={out.init_cash}
           />
         )}
 

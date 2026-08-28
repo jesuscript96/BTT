@@ -486,17 +486,24 @@ const DEFAULT_FUNDING: FundingCfg = {
 /** Barra apilada con el reparto de desenlaces. */
 function OutcomeBar({ o }: { o: FundingOutcome }) {
   const partes = [
-    { pct: o.pass_pct, c: color.profit, label: "pasa" },
-    { pct: o.fail_daily_pct, c: color.loss, label: "rompe limite diario" },
-    { pct: o.fail_dd_pct, c: color.warning, label: "rompe drawdown" },
-    { pct: o.unresolved_pct, c: color.textMuted, label: "sin resolver" },
+    { pct: o.pass_pct, c: color.profit, label: "aprueban" },
+    { pct: o.fail_daily_pct, c: color.loss, label: "mueren por el límite diario" },
+    { pct: o.fail_dd_pct, c: color.warning, label: "mueren por drawdown" },
+    { pct: o.unresolved_pct, c: color.textMuted, label: "se quedan sin resolver" },
   ].filter((p) => p.pct > 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      {/* Sin esta linea, un "rompe limite diario 88%" se lee como "el 88% de
+          mis DIAS pierden mas del limite", que es falso y desconcierta: son
+          los INTENTOS que acaban rotos, y basta UN dia malo en todo el intento
+          para romperlo. Le paso al usuario el 2026-08-27. */}
+      <div style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>
+        De cada 100 <strong>intentos</strong> de fondeo (no de días):
+      </div>
       <div style={{ display: "flex", height: 9, borderRadius: 2, overflow: "hidden" }}>
         {partes.map((p) => (
-          <div key={p.label} style={{ width: `${p.pct}%`, background: p.c }} title={`${p.label}: ${p.pct}%`} />
+          <div key={p.label} style={{ width: `${p.pct}%`, background: p.c }} title={`${p.label}: ${p.pct}% de los intentos`} />
         ))}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 14px" }}>
@@ -551,9 +558,13 @@ export function FundingSection({
   nSesiones,
   riskLabel,
   riskHint,
+  baseCash,
 }: {
   /** R-multiplos por sesion (compound) o PnL en $ por sesion (additive). */
   valoresDia: number[];
+  /** Capital del que salen esos dolares. Imprescindible en ADITIVO: sin el,
+   *  cambiar la cuenta base encogia las reglas pero no las apuestas. */
+  baseCash?: number | null;
   /** Excursion adversa de cada sesion como fraccion de su apertura. Opcional. */
   maeFracs?: number[] | null;
   tradesPorDia?: number[] | null;
@@ -599,6 +610,7 @@ export function FundingSection({
         horizon_days: cfg.plazo === "fijo" ? cfg.horizonDays : null,
         simulations: cfg.sims,
         seed: null,
+        values_base_cash: baseCash ?? null,
       });
       setOut(res);
       setRanCfg(cfgKey);

@@ -1,7 +1,8 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { Pencil } from "lucide-react";
 import { color, font, radius } from "@/components/ui/tokens";
 
 /* ────────────────────────────────────────────────────────────────
@@ -374,6 +375,110 @@ export function Placeholder({ children }: { children: React.ReactNode }) {
     >
       <div style={{ maxWidth: 460 }}>{children}</div>
     </div>
+  );
+}
+
+/** Nombre con lapiz de renombrado inline: clic en el lapiz lo convierte en un
+ *  campo de texto, Enter/blur guarda (via `onRename`), Escape cancela. Lo
+ *  usan el Baul de Portfolio (StrategyShelf) y el listado de Robustez
+ *  (StrategyPicker), ambos con filas clicables — por eso corta la propagacion
+ *  del click en todos sus eventos. */
+export function RenameableName({
+  name,
+  onRename,
+  textStyle,
+}: {
+  name: string;
+  onRename: (newName: string) => Promise<void>;
+  textStyle?: React.CSSProperties;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(name);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setValue(name);
+  }, [name, editing]);
+
+  const cancel = () => {
+    setValue(name);
+    setFailed(false);
+    setEditing(false);
+  };
+
+  const commit = async () => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === name) {
+      cancel();
+      return;
+    }
+    setSaving(true);
+    setFailed(false);
+    try {
+      await onRename(trimmed);
+      setEditing(false);
+    } catch {
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        disabled={saving}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          // La fila (StrategyShelf/StrategyPicker) es un role="button" que
+          // escucha Espacio/Enter en su propio onKeyDown para desplegarse. Sin
+          // cortar la propagacion aqui, cada Espacio burbujea hasta la fila,
+          // que le hace preventDefault — el espacio nunca llega al input.
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        onBlur={commit}
+        style={{
+          fontSize: 12.5,
+          fontFamily: font.sans,
+          color: color.textHigh,
+          background: color.bgBase,
+          border: `0.5px solid ${failed ? color.loss : color.copper}`,
+          borderRadius: radius.xs,
+          padding: "1px 5px",
+          outline: "none",
+          minWidth: 140,
+          maxWidth: 320,
+        }}
+      />
+    );
+  }
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, ...textStyle }}>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+      <span
+        title="Renombrar"
+        onClick={(e) => {
+          e.stopPropagation();
+          setValue(name);
+          setEditing(true);
+        }}
+        style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}
+      >
+        <Pencil style={{ width: 11, height: 11, strokeWidth: 1.5, color: color.textMuted }} />
+      </span>
+    </span>
   );
 }
 

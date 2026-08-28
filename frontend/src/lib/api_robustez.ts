@@ -6,6 +6,7 @@
 // los trades se piden solo para la estrategia elegida.
 
 import { apiRequest } from "./api";
+import type { OptimizationParamUnit } from "./api_backtester";
 
 export interface RobustezRunMeta {
   run_id: string;
@@ -233,6 +234,44 @@ export function runRobustezMonteCarlo(body: {
   });
 }
 
+/* ── Horizonte: probabilidad de ruina / objetivo en X dias ───────────── */
+
+/** Curvas ACUMULADAS: `prob_*[i]` es el % de trayectorias que ya habia tocado
+ *  ese nivel el dia `days[i]`. Van siempre en paralelo (mismo indice). */
+export interface HorizonOut {
+  days: number[];
+  prob_ruin_pct: number[];
+  prob_target_pct: number[];
+  /** Objetivo alcanzado ANTES de arruinarse: el que aprueba un fondeo. */
+  prob_target_alive_pct: number[];
+  init_cash: number;
+  ruin_pct: number;
+  target_pct: number;
+  ruin_level: number;
+  target_level: number;
+  max_days: number;
+  simulations: number;
+  sample_size: number;
+}
+
+export function runRobustezHorizon(body: {
+  values: number[];
+  init_cash: number;
+  simulations: number;
+  mode: CompoundMode;
+  risk_pct: number;
+  ruin_pct: number;
+  target_pct: number;
+  max_days: number;
+  seed?: number | null;
+}): Promise<HorizonOut> {
+  return apiRequest<HorizonOut>("/robustness/montecarlo/horizon", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 120_000,
+  });
+}
+
 export function runRobustezStress(body: {
   trades: RobustezTrade[];
   params: Record<string, unknown>;
@@ -269,6 +308,10 @@ export interface FundingOut {
   history_days: number;
   mode: CompoundMode;
   risk_pct: number;
+  /** Factor aplicado a la serie en aditivo para llevarla de `values_base_cash`
+   *  a `account`. 1 = sin reescalar (o modo compuesto). */
+  scale: number;
+  values_base_cash: number | null;
   rules: {
     target_pct: number;
     target_usd: number;
@@ -303,6 +346,10 @@ export function runRobustezFunding(body: {
   horizon_days?: number | null;
   simulations: number;
   seed?: number | null;
+  /** Capital del backtest del que salen `values`. En ADITIVO reescala la serie
+   *  de dolares a `account`; sin esto, cambiar la cuenta encogia las reglas
+   *  pero no el tamaño de las apuestas. En compuesto se ignora. */
+  values_base_cash?: number | null;
 }): Promise<FundingOut> {
   return apiRequest<FundingOut>("/robustness/funding", {
     method: "POST",
@@ -484,6 +531,11 @@ export interface OptimizableParam {
   max: number;
   step: number;
   cheap: boolean;
+  /** Unidad del barrido. `time_of_day` = MINUTOS DESDE MEDIANOCHE, que hay que
+   *  pintar como HH:MM: un cierre a las 08:30 viaja como 510. El backend ya la
+   *  mandaba (`extract_parameters`), pero este tipo no la declaraba y Walk
+   *  Forward enseñaba el número crudo. */
+  unit?: OptimizationParamUnit;
 }
 
 export function getStrategyParameters(strategyId: string): Promise<{ parameters: OptimizableParam[] }> {

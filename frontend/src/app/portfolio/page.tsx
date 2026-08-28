@@ -24,6 +24,7 @@ import {
   type Bucket,
   type PortfolioStrategy,
 } from "@/lib/api_portfolio_lab";
+import { renameStrategy } from "@/lib/api";
 
 type Tab = "baul" | "portfolio" | "monitor" | "runs";
 
@@ -57,6 +58,17 @@ export default function PortfolioPage() {
       setError(e instanceof Error ? e.message : "No se pudo guardar la asignación");
     } finally {
       setBusyId(null);
+    }
+  }, []);
+
+  const renombrar = useCallback(async (s: PortfolioStrategy, newName: string) => {
+    setError(null);
+    try {
+      const actualizada = await renameStrategy(s.id, newName);
+      setStrategies((prev) => prev.map((x) => (x.id === s.id ? { ...x, name: actualizada.name } : x)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo renombrar la estrategia");
+      throw e;
     }
   }, []);
 
@@ -143,7 +155,7 @@ export default function PortfolioPage() {
           Cargando estrategias…
         </div>
       ) : tab === "baul" ? (
-        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} busyId={busyId} />
+        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} busyId={busyId} />
       ) : tab === "portfolio" ? (
         <PortfolioTab strategies={strategies} />
       ) : (
