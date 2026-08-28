@@ -1,9 +1,23 @@
 import os
+import shutil
 import tempfile
+import threading
 from google.cloud import storage
 from google.oauth2 import service_account
 from typing import Optional
 
+
+# Transferir users.duckdb entera con 5 s de plazo era irreal: en cuanto la DB crece
+# (en backtest_results se guarda el results_json COMPLETO de cada run) los 3 intentos
+# fallaban seguidos. Configurable por si hay que ajustarlo sin tocar codigo.
+GCS_TIMEOUT_SECONDS = int(os.getenv("GCS_TIMEOUT_SECONDS", "300"))
+
+# Solo una subida a la vez. Antes lo garantizaba el lock de la DB (la subida lo
+# retenia de principio a fin); ahora que la red va FUERA de ese lock hace falta
+# este, o dos subidas solapadas podrian pisarse en el bucket. No bloqueante a
+# proposito: si ya hay una en vuelo, esta se descarta y _dirty_since_upload se
+# queda puesto, asi que la siguiente escritura (o el apagado) la reintenta.
+_upload_in_flight = threading.Lock()
 
 _client_cache = None
 
@@ -141,8 +155,8 @@ def download_user_db() -> bool:
     try:
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(object_name)
-        if blob.exists(timeout=5):
-            blob.download_to_filename(local_file, timeout=5)
+        if blob.exists(timeout=GCS_TIMEOUT_SECONDS):
+            blob.download_to_filename(local_file, timeout=GCS_TIMEOUT_SECONDS)
             print(f"[INFO] Successfully downloaded {local_file}")
             _startup_download_ok = True
             return True
@@ -186,47 +200,79 @@ def upload_user_db(only_if_dirty: bool = False) -> bool:
     # flag set so the shutdown hook retries it.
     _dirty_since_upload = True
 
-    from app.database import get_user_db_lock
-    lock = get_user_db_lock()
-    with lock:
-        # Fold the WAL into the main file before uploading. DuckDB keeps recent
-        # writes in users.duckdb.wal; uploading only the main file ships a stale
-        # (often empty 12KB) database even when the live data is intact.
+    # Una subida en vuelo basta. Si ya hay otra, esta se descarta: _dirty_since_upload
+    # sigue puesto, asi que la proxima escritura o el apagado la reintentan.
+    if not _upload_in_flight.acquire(blocking=False):
+        print("[INFO] users.duckdb upload already in flight; skipping (stays dirty)")
+        return False
+
+    try:
+        from app.database import get_user_db_lock
+        lock = get_user_db_lock()
+
+        # ── Bajo el lock de la DB: SOLO trabajo local, nunca red. ────────────────
+        # Antes el `with lock:` envolvia tambien la subida a GCS, asi que cada
+        # guardado dejaba el lock cogido hasta ~19 s (3 intentos x 5 s + esperas).
+        # El POST siguiente —guardar el backtest— se quedaba esperando ahi y el
+        # cliente abortaba a los 20 s: la estrategia quedaba guardada y sus metricas
+        # no, que es como aparecian en el Baul filas sin datos. Aqui dentro solo se
+        # hace checkpoint y una copia local; la red va despues, ya sin lock.
+        snapshot = None
         try:
-            import duckdb
-            con = duckdb.connect(local_file)
-            con.execute("FORCE CHECKPOINT")
-            con.close()
-        except Exception as e:
-            print(f"[WARN] Could not checkpoint users.duckdb before upload: {e}")
+            with lock:
+                # Fold the WAL into the main file before uploading. DuckDB keeps recent
+                # writes in users.duckdb.wal; uploading only the main file ships a stale
+                # (often empty 12KB) database even when the live data is intact.
+                try:
+                    import duckdb
+                    con = duckdb.connect(local_file)
+                    con.execute("FORCE CHECKPOINT")
+                    con.close()
+                except Exception as e:
+                    print(f"[WARN] Could not checkpoint users.duckdb before upload: {e}")
 
-        local_size = os.path.getsize(local_file) if os.path.exists(local_file) else 0
-        if local_size < 50_000 and not _startup_download_ok:
-            print(f"[WARN] Refusing to upload suspiciously small DB ({local_size} bytes) - startup download may have failed")
-            return False
-
-        bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
-        object_name = "users.duckdb"
-
-        for attempt in range(3):
-            try:
-                client = _get_cached_client()
-                bucket = client.bucket(bucket_name)
-                blob = bucket.blob(object_name)
-                blob.upload_from_filename(local_file, timeout=5)
-                print(f"[INFO] Successfully uploaded users.duckdb to GCS")
-                _dirty_since_upload = False
-                return True
-            except PermissionError:
-                if attempt < 2:
-                    print(f"[WARN] users.duckdb locked, retrying in 2s...")
-                    time.sleep(2)
-                else:
-                    print(f"[ERROR] Could not upload users.duckdb after 3 attempts (file locked)")
+                local_size = os.path.getsize(local_file) if os.path.exists(local_file) else 0
+                if local_size < 50_000 and not _startup_download_ok:
+                    print(f"[WARN] Refusing to upload suspiciously small DB ({local_size} bytes) - startup download may have failed")
                     return False
-            except Exception as e:
-                print(f"[ERROR] Error uploading to GCS: {e}")
-                return False
+
+                # Copia coherente para subir: el fichero vivo puede cambiar en cuanto
+                # soltemos el lock, y subirlo mientras se escribe daria un fichero roto.
+                fd, snapshot = tempfile.mkstemp(prefix="users-upload-", suffix=".duckdb")
+                os.close(fd)
+                shutil.copy2(local_file, snapshot)
+
+            # ── Ya SIN el lock: nadie espera por la red. ─────────────────────────
+            bucket_name = os.getenv("GCS_BUCKET", "strategybuilderbbdd")
+            object_name = "users.duckdb"
+
+            for attempt in range(3):
+                try:
+                    client = _get_cached_client()
+                    bucket = client.bucket(bucket_name)
+                    blob = bucket.blob(object_name)
+                    blob.upload_from_filename(snapshot, timeout=GCS_TIMEOUT_SECONDS)
+                    print(f"[INFO] Successfully uploaded users.duckdb to GCS")
+                    _dirty_since_upload = False
+                    return True
+                except PermissionError:
+                    if attempt < 2:
+                        print(f"[WARN] users.duckdb locked, retrying in 2s...")
+                        time.sleep(2)
+                    else:
+                        print(f"[ERROR] Could not upload users.duckdb after 3 attempts (file locked)")
+                        return False
+                except Exception as e:
+                    print(f"[ERROR] Error uploading to GCS: {e}")
+                    return False
+        finally:
+            if snapshot and os.path.exists(snapshot):
+                try:
+                    os.unlink(snapshot)
+                except OSError as e:
+                    print(f"[WARN] Could not remove upload snapshot {snapshot}: {e}")
+    finally:
+        _upload_in_flight.release()
 
     return False
 

@@ -284,6 +284,9 @@ export function saveBacktest(data: {
   return apiRequest<{ id: string; status: string }>("/strategy-search/", {
     method: "POST",
     body: JSON.stringify(data),
+    // El payload lleva el results_json entero (todos los trades), asi que necesita
+    // mas margen que los 20 s por defecto de apiRequest.
+    timeoutMs: 120_000,
   });
 }
 

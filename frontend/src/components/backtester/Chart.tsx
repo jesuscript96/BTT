@@ -331,6 +331,54 @@ export default function Chart({
         color: c.close >= c.open ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)",
       })));
 
+      // ── V15: la linea del Stop Loss de cada trade ────────────────────────────
+      // El motor NO devuelve el precio del stop por trade (TradeRecord no lo lleva),
+      // asi que se reconstruye desde la config de la estrategia con la MISMA formula
+      // que usa engine.py (lineas 351-380):
+      //     largo   FIXED: entry - valor    PERCENT: entry * (1 - valor/100)
+      //     corto   FIXED: entry + valor    PERCENT: entry * (1 + valor/100)
+      //
+      // Solo se dibuja cuando el nivel es exactamente reproducible. Con ATR o
+      // Market Structure hace falta dato de mercado que aqui no hay, y con el
+      // trailing activo el stop se mueve durante el trade: en esos casos no se
+      // pinta NADA, porque una linea que no coincide con donde salto de verdad el
+      // stop es peor que no tener linea.
+      if (showTrades && dayTrades.length > 0) {
+        const rm = ((activeStrategy as unknown as Record<string, unknown>)?.risk_management
+          ?? {}) as Record<string, unknown>;
+        const hs = (rm.hard_stop ?? {}) as Record<string, unknown>;
+        const trailing = (rm.trailing_stop ?? {}) as Record<string, unknown>;
+        const tipo = String(hs.type ?? "Percentage");
+        const valor = Number(hs.value);
+        const stopUsado = rm.use_hard_stop !== false;
+        const trailingActivo = trailing.active === true;
+        const reproducible =
+          stopUsado &&
+          !trailingActivo &&
+          Number.isFinite(valor) &&
+          valor > 0 &&
+          (tipo === "Percentage" || tipo === "Fixed Amount");
+
+        if (reproducible) {
+          for (const t of dayTrades) {
+            if (t.entry_time.split(" ")[0] !== dayDateStr) continue;
+            const esLargo = String(t.direction).toLowerCase().startsWith("l");
+            const nivel = tipo === "Percentage"
+              ? t.entry_price * (esLargo ? 1 - valor / 100 : 1 + valor / 100)
+              : (esLargo ? t.entry_price - valor : t.entry_price + valor);
+            if (!Number.isFinite(nivel) || nivel <= 0) continue;
+            candleSeries.createPriceLine({
+              price: nivel,
+              color: "rgba(239, 68, 68, 0.55)",
+              lineWidth: 1,
+              lineStyle: 2,          // discontinua: es un nivel, no una serie
+              axisLabelVisible: true,
+              title: `SL ${valor}${tipo === "Percentage" ? "%" : "$"}`,
+            });
+          }
+        }
+      }
+
       // Trade markers (snap to nearest aggregated candle time)
       if (showTrades && dayTrades.length > 0) {
         const candleTimes = deduped.map(c => c.time as number);
@@ -905,7 +953,7 @@ export default function Chart({
       for (const c of activeCharts) { try { c.remove(); } catch {} }
       chartRef.current = null;
     };
-  }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
+  }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay, activeStrategy]);
 
   return (
     <div className="bg-[var(--card-bg)] rounded-lg border border-[var(--border)] overflow-hidden" style={{ marginTop: 24 }}>

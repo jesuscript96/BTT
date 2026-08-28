@@ -1690,6 +1690,11 @@ export default function Home() {
                             });
                           } catch (e) {
                             console.warn("No se pudieron guardar los resultados del backtest:", e);
+                            alert(
+                              "La estrategia se ha guardado, pero NO se han podido guardar sus " +
+                              "resultados: en el Baúl aparecerá sin métricas.\n\n" +
+                              "Vuelve a lanzar el backtest y guárdala de nuevo."
+                            );
                           }
                         }
 
@@ -1899,6 +1904,11 @@ export default function Home() {
                             });
                           } catch (e) {
                             console.warn("No se pudieron guardar los resultados del backtest:", e);
+                            alert(
+                              "La estrategia se ha guardado, pero NO se han podido guardar sus " +
+                              "resultados: en el Baúl aparecerá sin métricas.\n\n" +
+                              "Vuelve a lanzar el backtest y guárdala de nuevo."
+                            );
                           }
                         }
 
