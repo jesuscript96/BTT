@@ -37,6 +37,11 @@ class IndicatorType(str, Enum):
     ADX = "ADX"
     BOLLINGER_BANDS = "Bollinger Bands"
     DONCHIAN = "Donchian"
+    # Banda NIVEL (techo/suelo de la caja), mismo uso que Donchian; el nombre
+    # es el canonico de indicators.py ("Darvas Box", con alias "Darvas",
+    # "Caja Darvas"). El motor lo soporta desde 5fa80b9 pero faltaba aqui:
+    # guardar una estrategia con una condicion Darvas rebotaba en Pydantic.
+    DARVAS_BOX = "Darvas Box"
     PARABOLIC_SAR = "Parabolic SAR"
 
     # Volume
