@@ -8,10 +8,48 @@
 
 ---
 
+## ESTADO real a 2026-08-22 (madrugada) — LO HECHO
+
+Acceso **CERRADO/congelado** (billing `false`) hasta que Jesús ponga las vars de
+Vercel (mañana). Progreso verificado en prod:
+
+- ✅ **Código a prod:** `develop→main` mergeado y desplegado (main = `8cef41f`).
+- ✅ **Backend Clerk prod:** `pk_live/sk_live` puestas y verificadas (health 200,
+  JWKS `clerk.edgecute.com` 200, cert Let's Encrypt válido).
+- ✅ **DNS Clerk (Hostinger):** 5/5.
+- ✅ **Backend Stripe (Coolify), medido en el contenedor:**
+  `STRIPE_SECRET_KEY` (108 chars, cuenta correcta), `STRIPE_PRICE_ID_MONTHLY_EUR=
+  price_1U6pcTJXrEpYoMWAcnVTIJr9` (29,90 €/mes, prod `prod_V73jXOYpjeAvYs`),
+  `STRIPE_WEBHOOK_SECRET` (39 chars), `EDGECUTE_BILLING_DB_PATH` en **mount dedicado
+  montado y escribible**, `BILLING_ADMIN/COMPED_USER_IDS` vacíos, `BILLING_ENABLED=false`.
+- ✅ **Webhook Stripe creado por API:** endpoint `we_1U7JHzJXrEpYoMWA2RrKL1z2`,
+  10 eventos, URL `https://kvcfvkb3e9plgdcwgeq67w24.176.9.117.155.sslip.io/api/billing/webhook`.
+  (Script reproducible: `/root/create_webhook.sh` en el host de prod — idempotente,
+  lee la `STRIPE_SECRET_KEY` de dentro del contenedor, no la expone.)
+- ✅ **Mount:** `/data/btt_prod_billing` (host) → mismo path en contenedor (bind en
+  Coolify Storages). Dedicado, distinto de staging.
+- ✅ **Backup usuarios viejos:** 14 `email→user_id` en `/root/clerk_dev_dump.json`
+  (+ copia local). Necesario para el remapeo por email.
+- ✅ **`backend/scripts/clerk_remap.py`** ya en la imagen de prod.
+
+### 🔴 PENDIENTE (bloquea el go-live)
+1. **Frontend Vercel** sigue sirviendo `pk_test` (Clerk dev) → Jesús pone
+   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live…` + `CLERK_SECRET_KEY=sk_live…` +
+   `NEXT_PUBLIC_BILLING_ENABLED=false` en **Production** y **Redeploy SIN caché**.
+   Hasta entonces backend(prod) y frontend(dev) están desajustados → login roto.
+2. **Clerk prod → Sign-up = Restricted** mientras esté congelado.
+
+### Día del lanzamiento (interruptores)
+Abrir Clerk (Public) → re-registro → `clerk_remap` (dump prod → build-map → apply) →
+sembrar por email → `BILLING_ENABLED=true` (back) + `NEXT_PUBLIC_BILLING_ENABLED=true`
+(Vercel, redeploy sin caché) → global sign-out → e2e.
+
+---
+
 ## Paso 0 — Prerrequisito
 `develop` ya contiene **todo lo de main + billing Fase 2/3** (merge `main→develop` hecho
 2026-08-21, build verde). Por tanto el cutover de código es un **`develop→main` limpio**
-(sin divergencia, verificado con merge-tree).
+(sin divergencia, verificado con merge-tree). **HECHO 2026-08-22** (main = `8cef41f`).
 
 ---
 

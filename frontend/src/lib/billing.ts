@@ -71,6 +71,10 @@ export type BillingStage =
 export interface BillingSummary {
   tier: string;
   access: boolean;
+  // Trial days the user would get if they start now (preferential Path B days if
+  // any; 0 for a returning email). Drives the pre-checkout copy so a 14-day user
+  // never reads "7". Optional for backward-compat with older API responses.
+  trial_offer_days?: number;
   stage: BillingStage;
   plan: BillingPlan;
   subscription: BillingSubscription | null;
