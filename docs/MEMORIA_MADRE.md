@@ -1497,61 +1497,20 @@ hasta ese último alto, así que los parámetros buenos de antes no tienen por q
 seguir siéndolo. Nosotros vamos a relanzar nuestras estrategias con SL
 estructural antes de sacar ninguna conclusión.
 
-## 2026-08-29 — IA de pruebas de Álvaro (GLM/ZCode): «Backtest incompleto 2/7154» = ticker NULL en el lago
+## 2026-08-29 — Nota de equipo: ticker NULL en el lago compartido (origen GCS)
 
-Contexto: Álvaro reporta 503 «Backtest incompleto: 2 de 7154 ticker-días
-candidatos no tienen intradía disponible (100.0% completo)» al lanzar un
-backtest. Investigación con el motor real, solo lectura, scripts efímeros en
-`.zcode/scratch/`. Tres hallazgos; el primero es la causa del 503.
+Breve y al punto (el análisis exhaustivo queda en el local de Álvaro):
 
-### [HALLAZGO · 2026-08-29 · 01] 1.032 filas con ticker NULL en el lago daily_metrics (desde 2022-07-12) → 503 permanente con BACKTEST_STRICT_COMPLETENESS=true
-- **Reporta:** GLM (ZCode), IA de pruebas (para Álvaro)
-- **Severidad:** crítico
-- **Dónde:** dato de origen (parquet del lago `daily_metrics`, copia local de `gs://strategybuilderbbdd/cold_storage/daily_metrics`); se propaga a `daily_metrics_bygap` (materializada). En código: `backend/app/services/backtest_orchestrator.py:405-443` (reconciliación que rechaza) y `backend/app/db/gcs_cache.py:1006-1106` (`_fetch_and_cache_month`: un ticker NULL no puede tener caché ni matchar intradía → nunca se emite).
-- **Qué observé:** el lago ORIGEN contiene exactamente **1.032 filas con `ticker IS NULL` — una por día de bolsa, del 2022-07-12 al 2026-08-25** (2022:121, 2023:247, 2024:252, 2025:250, 2026:162). El bygap hereda las 1.032 (misma cifra, misma horquilla). Son filas con OHLC RTH real (volumen de millones), pero `pm_*` todo NaN, `prev_close` NaN, `eod_volume` 0, `transactions` 0, `gap_pct` 0. El dataset 43c06d3f (2025-01-01→2026-01-01, regla «RTH Range %» ≥ 70) pescó 2 de ellas (2025-06-04 con rth_range 86,68 %; 2025-06-24 con 117,10 %) → son candidatos imposibles (ningún stream puede emitir intradía para ticker NULL) → reconciliación 7.152/7.154 → con `BACKTEST_STRICT_COMPLETENESS=true` (activado en el `.env` local de Álvaro) rechazo 503 **en todos los runs de ese dataset, para siempre**. Calentar la caché NO puede arreglarlo nunca, al contrario de lo que sugiere el mensaje.
-- **Cómo reproducir:** (a) lanzar cualquier backtest del dataset `43c06d3f-1306-42d6-8488-d681150c77be` con `BACKTEST_STRICT_COMPLETENESS=true` → 503 (jobs fallidos de hoy: `d40e9ee5-0cbd-4ef9-bc67-93ce3ee7d9c1`, `e378bb75-83ec-4d2a-89d7-a8dc1c29e6c9`). (b) Query directa (solo lectura): `SELECT year(CAST("timestamp" AS DATE)) y, COUNT(*), COUNT(DISTINCT CAST("timestamp" AS DATE)) FROM read_parquet('<cold_storage>/daily_metrics/*/*/*.parquet', hive_partitioning=true) WHERE ticker IS NULL GROUP BY 1` → 1.032 en 1.032 días distintos. Scripts completos: `.zcode/scratch/hallazgo_none_ticker.py` y `.zcode/scratch/hallazgo_none_ticker2.py`.
-- **Evidencia:** log backend: `[COMPLETENESS] 2/7154 ... Muestra: ['None:2025-06-04', 'None:2025-06-24']` (el «ticker» faltante es literalmente `None`). Filas que pasan el WHERE exacto del dataset: 2025-06-04 (rth_open 3,83 / high 7,15 / low 3,83 / close 6,3963 / vol 3.332.376 / rth_range_pct 86,684) y 2025-06-24 (open 28,92 / high 31,48 / low 14,50 / close 14,73 / vol 7.980.512 / rth_range_pct 117,103). Sample completo de la fila 2025-06-04 en el lago origen: `ticker=None, pm_high=NaN, pm_low=NaN, pm_volume=NaN, prev_close=NaN, eod_volume=0.0, transactions=0.0, gap_pct=0.0`.
-- **Hipótesis de causa:** HIPÓTESIS — un instrumento real pierde su símbolo en la ingesta del lago desde el 2022-07-12 (p. ej. join contra la tabla maestra `tickers` que no lo resuelve) y desde entonces se escribe un fila diaria con ticker NULL. Los días con rango +86 % y +117 % son perfil exactamente BTT → es un candidato de trading invisible para toda la app desde 2022.
-- **Impacto:** (1) Con strict=true, TODO dataset cuyo filtro capture ≥1 fila NULL falla 503 de forma permanente (bloqueo total del flujo local de Álvaro). (2) Sin strict (prod): sin efecto en resultados (nunca tendrían intradía), pero `expected_ticker_days` inflado y completitud <100 % real. (3) **Calidad de dato del lago:** un instrumento real lleva ~4 años invisible a screener/datasets/backtests, y sigue creciendo un fila por día. (4) Verificado NO contaminado: `dataset_pairs` (users.duckdb) tiene 0 pares con ticker NULL.
-- **Código tocado:** NINGUNO (confirmado)
-- **Estado:** ABIERTO
-
-### [HALLAZGO · 2026-08-29 · 02] Mensaje de completitud autocontradictorio: «incompleto … (100.0% completo)»
-- **Reporta:** GLM (ZCode), IA de pruebas (para Álvaro)
-- **Severidad:** inconsistencia (menor, cosmética pero despista)
-- **Dónde:** `backend/app/services/backtest_orchestrator.py:416` (calcula `pct_complete = round(...,2)` = 99,97) y `:429`/`:439` (lo formatea `:.1f` → «100.0»).
-- **Qué observé:** el error del 503 dice «2 de 7154 … no tienen intradía disponible (100.0% completo)»: la completitud real es 99,97 %, pero al formatearla a 1 decimal se redondea a 100,0 % y el mensaje se contradice a sí mismo.
-- **Cómo reproducir:** cualquier run con 2/7154 faltantes (p. ej. el del hallazgo 01) → leer el detail del 503 o el log `[COMPLETENESS]`.
-- **Evidencia:** salida textual del 503 y del log en la sesión del 2026-08-29 (jobs d40e9ee5/e378bb75).
-- **Impacto:** confusión al diagnosticar; sugiere «todo completo» justo cuando se rechaza por incompleto.
-- **Código tocado:** NINGUNO (confirmado)
-- **Estado:** ABIERTO
-
-### [HALLAZGO · 2026-08-29 · 03] Caché de qualifying en disco con «:» en el nombre de fichero → vive en un Alternate Data Stream de NTFS en Windows
-- **Reporta:** GLM (ZCode), IA de pruebas (para Álvaro)
-- **Severidad:** inconsistencia (funciona por accidente; frágil)
-- **Dónde:** `backend/app/services/data_service.py:639` (`_qualifying_cache_key` devuelve `"qualifying:" + md5`) y `:695` (usa esa clave como nombre de fichero `.feather`); dir por defecto `/tmp/btt_qualifying_cache` (`:609-611`).
-- **Qué observé:** en Windows el «:» es ilegal en nombres de fichero; la escritura no falla porque NTFS lo interpreta como Alternate Data Stream: `C:\tmp\btt_qualifying_cache\qualifying` es un stub de **0 bytes** y el payload real (1,4 MB) vive en el stream `qualifying:b8432882….feather`. Lectura/escritura/TTL funcionan de casualidad; copiar/respaldar esa carpeta con herramientas no conscientes de ADS pierde el caché en silencio, y otros filesystems romperían la escritura directamente.
-- **Cómo reproducir:** en local Windows, correr un backtest con qualifying >100 MB de Redis (cae a disco) y hacer `dir C:\tmp\btt_qualifying_cache` → fichero `qualifying` de 0 bytes; el log dice `[DISK] qualifying cached (1.4MB) → /tmp/btt_qualifying_cache\qualifying:b8432882bc6f69c462a246d53860c725.feather`.
-- **Evidencia:** `dir` de hoy 2026-08-29 12:30 (coincide con los runs fallidos del hallazgo 01) + línea de log citada.
-- **Impacto:** caché de qualifying local frágil/opaco en Windows (todos los devs locales). Sin efecto en resultados del motor.
-- **Código tocado:** NINGUNO (confirmado)
-- **Estado:** ABIERTO
-
-### [HALLAZGO · 2026-08-29 · 01 → RESUELTO en rama de Álvaro + lago LOCAL de Álvaro] ticker NULL ya no tumba STRICT_COMPLETENESS; lago local purgado
-- **Reporta:** GLM (ZCode), IA de pruebas (para Álvaro)
-- **Severidad:** (cierre del hallazgo 01)
-- **Dónde:** fix en `backend/app/services/backtest_orchestrator.py` (commit `def8a9b`, rama `alvaro-rama-desarrollo`); purga de datos locales de Álvaro (fuera del repo).
-- **Qué se hizo (orden expresa de Álvaro, 2026-08-29: «arréglalo en mi rama y mi data»):**
-  1. **Fix defensivo (commit `def8a9b`):** la reconciliación de completitud excluye las filas fantasma (ticker NULL/NaN) de `q_keys` — ningún stream puede emitirlas jamás, así que no son descartes de intradía sino dato corrupto del origen — y las reporta aparte como `phantom_ticker_days` en `data_completeness` + warning en log. STRICT sigue protegiendo contra descartes REALES. De paso el % pasa a 2 decimales (cierra también el hallazgo 02: ya no dice «100.0% completo» cuando es 99,97 %).
-  2. **Purga del lago LOCAL:** bygap `base.parquet` reescrito sin las 1.032 filas NULL (19.260.313 → 19.259.281; backup en `base.parquet.bak_nullticker_20260829`) y `DELETE FROM daily_metrics WHERE ticker IS NULL` en `local_data.duckdb` (1.032 → 0). Cachés de qualifying limpiados (stub ADS de `C:\tmp`; Redis no existe en local).
-- **Evidencia de verificación:** qualifying del dataset 43c06d3f recomputado: 7.152 filas (antes 7.154), 0 tickers fantasma, 23 filas REALES del 2025-06-04 intactas. Job de verificación `06d1cd9c` (strategy RTH 2.3 - TTP, `look_ahead_prevention=true`): `succeeded`, `[COMPLETENESS] 100% — 7152/7152`, `data_completeness = {expected 7152, executed 7152, missing 0, phantom_ticker_days 0, pct 100.0}`, 2.405 trades. Dos re-runs de Álvaro desde la UI (`21c07e7f`, `145fd9a3`) también succeeded. Backend reiniciado y logueando `DISABLE_GCS_SYNC=true`.
-- **Impacto:** el 503 permanente desaparece para cualquier dataset, incluso si el lago local se vuelve a contaminar (el fix es defensivo: las filas NULL pasan a ser visibles como `phantom_ticker_days`, nunca un rechazo).
-- **PENDIENTE (fuera del alcance de Álvaro):** el lago de ORIGEN en GCS (`gs://strategybuilderbbdd/cold_storage/daily_metrics`) SIGUE teniendo las 1.032 filas ticker NULL (2022-07-12 → hoy, creciendo un fila por día). Es decisión del dueño del dato depurarlas en origen e investigar qué instrumento perdió su símbolo en la ingesta. Mientras no se purgue, cualquier regeneración del bygap/lago desde GCS re-importará los NULL (inofensivos ya para backtests, pero sucios).
-- **Código tocado:** solo lo autorizado por Álvaro en SU rama (commit `def8a9b`).
-- **Estado:** RESUELTO (rama Álvaro + local) / ABIERTO EN ORIGEN GCS (dueño del dato)
-
-### [HALLAZGO · 2026-08-29 · 02 → RESUELTO] mensaje «100.0% completo»
-- **Reporta:** GLM (ZCode), IA de pruebas (para Álvaro)
-- **Resuelto por:** el mismo commit `def8a9b` — los mensajes de completitud (log y detail del 503) usan ahora `:.2f` (99,97 % en vez de «100.0%»).
-- **Estado:** RESUELTO (commit `def8a9b`)
+- El lago de ORIGEN (`gs://strategybuilderbbdd/cold_storage/daily_metrics`)
+  acumula desde el 2022-07-12 **1.032 filas con `ticker IS NULL`** (una por día
+  de bolsa hasta hoy). Parece un instrumento real que perdió su símbolo en la
+  ingesta (días con rango +86 %/+117 % — perfil BTT — invisibles para
+  screener/datasets/backtests de todos, prod incluida). Pendiente del dueño del
+  lago: depurar en origen e identificar el instrumento.
+- La rama de Álvaro trae un fix defensivo (commit `def8a9b`): la reconciliación
+  de completitud del orquestador excluye esas filas fantasma y las reporta como
+  `phantom_ticker_days`, para que `BACKTEST_STRICT_COMPLETENESS=true` no
+  rechace datasets enteros por dato corrupto del lago.
+- Menor, ABIERTO: la caché de qualifying en disco usa `:` en el nombre de
+  fichero (`data_service.py:639/695`) → en Windows vive en un NTFS ADS;
+  funciona por accidente.
