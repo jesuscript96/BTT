@@ -1497,14 +1497,17 @@ hasta ese último alto, así que los parámetros buenos de antes no tienen por q
 seguir siéndolo. Nosotros vamos a relanzar nuestras estrategias con SL
 estructural antes de sacar ninguna conclusión.
 
-## 2026-08-29 — Nota de equipo: ticker NULL en el lago compartido (origen GCS)
+## 2026-08-29 — ⚠️ BUG PERSONAL de Álvaro (rama `alvaro-rama-desarrollo`) — NO NECESARIAMENTE LO NECESITA SAILOR (Jaime)
 
-Breve y al punto (el análisis exhaustivo queda en el local de Álvaro):
+> Nota para mí mismo / mi IA, por si vuelvo a necesitarlo. Solo un detalle roza
+> al equipo (marcado abajo). El análisis exhaustivo está en mi local
+> (`.zcode/MEMORIA_ALVARO_LOCAL.md`, no commiteado).
 
-- El lago de ORIGEN (`gs://strategybuilderbbdd/cold_storage/daily_metrics`)
-  acumula desde el 2022-07-12 **1.032 filas con `ticker IS NULL`** (una por día
-  de bolsa hasta hoy). Parece un instrumento real que perdió su símbolo en la
-  ingesta (días con rango +86 %/+117 % — perfil BTT — invisibles para
+- **Lo único que roza al equipo:** el lago de ORIGEN
+  (`gs://strategybuilderbbdd/cold_storage/daily_metrics`) acumula desde el
+  2022-07-12 **1.032 filas con `ticker IS NULL`** (una por día de bolsa hasta
+  hoy). Parece un instrumento real que perdió su símbolo en la ingesta (días
+  con rango +86 %/+117 % — perfil BTT — invisibles para
   screener/datasets/backtests de todos, prod incluida). Pendiente del dueño del
   lago: depurar en origen e identificar el instrumento.
 - La rama de Álvaro trae un fix defensivo (commit `def8a9b`): la reconciliación
