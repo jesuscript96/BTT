@@ -513,7 +513,7 @@ export default function InlineStrategyBuilder({
       alert("Universo guardado correctamente.");
     } catch (err) {
       console.error("Error saving universe:", err);
-      alert("Error al guardar el universo.");
+      alert(err instanceof Error && err.message ? err.message : "Error al guardar el universo.");
     } finally {
       setSavingUniv(false);
     }
