@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from uuid import uuid4
 from datetime import datetime
 import json
+import os
 import threading
 import time
 import pandas as pd
@@ -74,6 +75,21 @@ def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
             return
 
         total = len(pairs_df)
+
+        # Guard (incidente 2026-08-29): un dataset sin reglas (o ultra laxo)
+        # materializa el mercado entero (~1,4M pares/anyo) y su pre-cache
+        # streamea el lago completo en background — frames BROAD de 3,3GB en
+        # el mismo proceso que los backtests. Skip: el dataset sigue siendo
+        # usable, los backtests simplemente traen los datos on demand.
+        max_pairs = int(os.getenv("PRECACHE_MAX_PAIRS", "50000"))
+        if total > max_pairs:
+            print(
+                f"[PRECACHE] Dataset {dataset_id}: {total:,} pairs > "
+                f"PRECACHE_MAX_PAIRS={max_pairs:,} — skipping pre-cache (too broad)"
+            )
+            _write_precache_state(dataset_id, "skipped_too_broad", 0.0)
+            return
+
         print(f"[PRECACHE] Starting for dataset {dataset_id}: {total} pairs, {date_from} -> {date_to}")
         _write_precache_state(dataset_id, "running", 0.0)
 
@@ -257,6 +273,17 @@ def _insert_dataset_pairs(query_id: str, pairs_df) -> int:
 
 @router.post("/", response_model=SavedQuery)
 def create_saved_query(query: SavedQuery, user_id: Optional[str] = Depends(get_current_user_id)):
+    # Guard (incidente 2026-08-29): un dataset sin reglas selecciona TODOS los
+    # ticker-dia del rango (mercado entero, ~1,4M pares/anyo) y su pre-cache
+    # streamea el lago completo. Rechazar aqui es un click de correccion para
+    # el usuario; limpiar un dataset BROAD despues no lo es.
+    rules = (query.filters or {}).get("rules", [])
+    if not rules:
+        raise HTTPException(
+            status_code=422,
+            detail="El universo necesita al menos una regla: sin reglas seleccionaría el mercado entero (~1,4M pares) y su pre-cache saturaría la máquina.",
+        )
+
     # Phase A — check for existing query with same filters
     existing_id = None
     existing_name = None
@@ -284,7 +311,10 @@ def create_saved_query(query: SavedQuery, user_id: Optional[str] = Depends(get_c
         status = state.get("status") if state else None
         
         # If already completed or running, just return it immediately!
-        if status in ("completed", "running"):
+        # "skipped_too_broad" also returns early: re-saving the same filters
+        # must NOT re-pay the heavy pairs materialization nor retry the lake-wide
+        # pre-cache that was already skipped by the PRECACHE_MAX_PAIRS guard.
+        if status in ("completed", "running", "skipped_too_broad"):
             print(f"[DEDUPLICATE] Reusing existing dataset {existing_id} (status: {status})")
             return {"id": existing_id, "name": existing_name, "filters": query.filters}
             
