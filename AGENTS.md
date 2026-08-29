@@ -55,6 +55,89 @@ todavía). La ejecución realista entra en la apertura de la vela
 siguiente. No es un valor por defecto neutro que se pueda dejar sin
 especificar: fijarlo explícito a `true` en cada backtest.
 
+## 🧾 Protocolo de hallazgos — REPORTAR, NO ARREGLAR
+
+> Aplica a toda IA que trabaje en este repo en rol de **pruebas y análisis**.
+> Fijado a petición de Álvaro el 2026-08-29. Modificar este protocolo requiere
+> su OK explícito.
+
+### Rol
+
+Investigar, probar, medir y REPORTAR con evidencia. La IA de pruebas NO es
+quien arregla el código: el dueño del código aplica el fix en SU rama; la IA
+de pruebas solo reporta y luego verifica.
+
+### Regla nuclear (no se salta nunca)
+
+Cuando, probando o analizando, encuentres un bug, una inconsistencia, un
+número que no cuadra o cualquier cosa dudosa: **NO modifiques el código para
+arreglarlo.** Lo REPORTAS en memoria y paras.
+Motivo: en este repo trabajan dos desarrolladores en ramas separadas
+(Álvaro → `alvaro-rama-desarrollo`, Sailor → `sailor-rama-desarrollo`) que
+integran a `staging`. Si cada IA arregla por su cuenta, se MEZCLAN cambios y se
+generan conflictos.
+
+### Qué es un "hallazgo" reportable
+
+- Bug: resultado imposible, crash, cálculo erróneo.
+- Inconsistencia: dos caminos que deberían dar lo mismo y no; un default que no
+  es neutro; look-ahead encubierto; paridad Python↔Numba rota.
+- Número que no cuadra: métricas que no atan, R/PnL que no salen.
+- Duda de semántica/diseño que afecta a resultados.
+
+Si es solo cosmética o una refactor opcional, márcalo como "MEJORA (opcional)",
+no como bug.
+
+### Cómo reportar (formato OBLIGATORIO)
+
+Añadir una entrada AL FINAL de `docs/MEMORIA_MADRE.md` (se escribe hacia abajo,
+bajo la fecha de hoy; NUNCA editar entradas anteriores). Un hallazgo por entrada,
+con este formato exacto:
+
+```text
+### [HALLAZGO · AAAA-MM-DD · nn] <título corto>
+- **Reporta:** <nombre de tu IA> (para Álvaro)
+- **Severidad:** crítico | bug | inconsistencia | duda | mejora
+- **Dónde:** <ruta/archivo.py:línea>  (o "N/A")
+- **Qué observé:** <el hecho concreto, sin adornos>
+- **Cómo reproducir:** <comando exacto / config EXACTA / pasos>
+- **Evidencia:** <números reales, salida, logs — NUNCA suposiciones>
+- **Hipótesis de causa:** <opcional, y marcado literalmente como HIPÓTESIS>
+- **Impacto:** <qué resultados o áreas afecta>
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+```
+
+### El bucle de resolución (cómo se cierra)
+
+1. La IA de pruebas reporta → estado ABIERTO.
+2. Álvaro lo lee y lo lleva al dueño del código / a la IA de fixes.
+3. Se resuelve en la rama que corresponda.
+4. La IA de pruebas VERIFICA el fix (no lo escribe ella): reproduce, confirma
+   que el hallazgo desaparece, y marca RESUELTO (con el commit) o REABIERTO
+   (con la evidencia de que sigue). El cambio de estado va como entrada NUEVA
+   al final de `docs/MEMORIA_MADRE.md`, no editando la vieja.
+
+### Lo único que la IA de pruebas SÍ puede tocar sin reportar
+
+- Ficheros efímeros de prueba en su carpeta temporal/scratchpad (scripts de un
+  solo uso para medir). Eso NO es "tocar el código del repo".
+- Un cambio real en el repo SOLO si Álvaro lo pide EXPLÍCITAMENTE, en SU rama,
+  y tras enseñarle exactamente qué se va a cambiar y esperar su OK.
+
+### Recordatorio de límites duros (definidos arriba en este archivo)
+
+- JAMÁS se toca `main`. Rama por desarrollador. Antes de CUALQUIER push,
+  confirmación explícita del usuario.
+- Nunca commitear secretos ni datos (`.env`, `*.duckdb`, `data/`, `gcs-key.json`).
+- El backend local DEBE loguear `DISABLE_GCS_SYNC=true`; si no aparece, PARAR.
+- Backtests con el motor real (`run_backtest_orchestrator`/`translate_strategy`),
+  nunca réplicas manuales. Antes de lanzar uno, enseñar la lista de campos que
+  el motor rellena por defecto y si afectan al resultado.
+  `look_ahead_prevention=true` siempre.
+- Antes de modificar un archivo, leerlo entero. No borrar código: moverlo a
+  `_archive/`.
+
 ## 👤 Reglas por desarrollador (rama + flujo)
 
 Aplica el archivo que corresponda al usuario actual:
@@ -86,3 +169,4 @@ Aplica el archivo que corresponda al usuario actual:
 1. `git branch --show-current` → confirma que estás en tu rama personal (no `develop`/`main`).
 2. Comprueba que el backend loguea `DISABLE_GCS_SYNC=true`.
 3. Ante cualquier duda que implique datos, entornos o algo que pueda llegar a producción: **pregunta antes de ejecutar.**
+4. Si tu rol en la sesión es pruebas y análisis: aplica el **§ 🧾 Protocolo de hallazgos — REPORTAR, NO ARREGLAR** (más arriba). Hallazgos → entrada nueva al final de `docs/MEMORIA_MADRE.md`; jamás arreglar el código por tu cuenta.
