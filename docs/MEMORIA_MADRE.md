@@ -1452,3 +1452,75 @@ arrastrado). El script vive fuera del repo, a propósito.
   entrada) pero **no está enchufada al stop**. Conectarlo obliga a ampliar la
   firma del simulador, que va en paridad bit a bit Python↔JIT: no es un parche.
 - Los dos puntos flojos del lanzador (§6).
+
+---
+
+## 📣 2026-08-29 — REINICIO DE `staging`: se ha igualado a `sailor-rama-desarrollo`
+
+**Decisión de Jaume, tomada con la lista de consecuencias delante.** Es la
+segunda vez que se hace: la primera fue el 2026-08-26 (ver la cabecera de este
+documento). `staging` pasa a ser una **copia exacta** de
+`sailor-rama-desarrollo`, y este documento es el de Sailor.
+
+**Álvaro: nada de lo tuyo se ha perdido, pero sí se ha quitado de `staging`.**
+Todo sigue en tu rama y, además, en una etiqueta puesta a propósito antes de
+tocar nada:
+
+```
+staging-antes-del-reinicio-2026-08-29  ->  f1555b6
+```
+
+Con eso recuperas el estado exacto que tenía `staging` justo antes
+(`git checkout staging-antes-del-reinicio-2026-08-29`, o cherry-pick suelto de
+lo que quieras devolver). **Revísalo y reintegra lo que consideres**: la idea no
+es descartar tu trabajo, es partir de una base común y que tú decidas qué vuelve.
+
+### Qué había en `staging` que no está en esta base — 18 commits
+
+**a) Cuatro que YA están, con otro SHA. No hay nada que hacer.**
+
+| El tuyo | El nuestro |
+|---|---|
+| `dfa6e51` SL estructural: fills fantasma | `eb550d0` |
+| `c79993d` SL del trade pintado en el chart | `a2282b4` |
+| `40920cc` Days cuenta sesiones de calendario | `7415eed` |
+| `8777d17` globs de mes con/sin cero | `27e8076` + `919ea1c` |
+
+**b) Tres RECHAZADOS por acuerdo de las dos partes. No los devuelvas.**
+
+`19979bc` y `6c05066` (split del gap de PMH) y `970ea9f`
+(`LAKE_PREV_CLOSE_YA_AJUSTADO`). Aquí **doblarían el ajuste**: nuestro
+`prev_close` ya viene ajustado del ETL, y aplicarlo otra vez da gaps falsos (el
+caso NVDA 2024-06-10 → 910,77 %). Ya lo cerramos formalmente los dos el 27-ago.
+
+**c) Tres de código que Jaume ha decidido NO adoptar, a sabiendas.**
+
+- `dfb9f04` — profiler fino de sub-fases de `stream_build`
+- `bcc75ba` — warmup de indicadores al arrancar
+- `8cd3ad9` — pestaña «Últimas pruebas»
+
+Se le listaron uno a uno con lo que hacía cada uno y dijo que no. **No es un
+olvido ni un accidente del reinicio.** Si crees que alguno debe volver, es
+conversación, no bug.
+
+**d) Ocho de documentación tuya**, incluidos dos bloques de este mismo fichero
+(«2026-08-27 noche, 4ª parte» y «5ª parte»). Están en la etiqueta. Si quieres
+que vuelvan a `MEMORIA_MADRE.md`, se pegan al final y ya: el documento es
+append-only, no hay conflicto real.
+
+### Lo que sí te llevas de esta base
+
+Además de todo lo del 27, 28 y 29 que hay documentado más arriba, **dos commits
+tuyos que adoptamos tal cual, con tu autoría intacta**:
+
+- `2aefb06` — Darvas Box en el enum del schema (teníamos el mismo fallo)
+- `764277e` — «Guardar como nueva estrategia»
+- `e04d95e` — indicador Current Gap (%)
+- `a08f01e` — watchdog del backend local
+
+### Por qué se ha hecho así
+
+Los dos documentos habían divergido 373/329 líneas y cualquier fusión
+conflictaba en medio. Jaume prefirió una base común limpia y que la reconciliación
+la hagas tú mirando la etiqueta, en vez de arrastrar una fusión a ciegas. Queda
+dicho para que nadie lo lea como un descuido dentro de seis meses.
