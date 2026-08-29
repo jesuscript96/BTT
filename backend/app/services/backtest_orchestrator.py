@@ -403,12 +403,28 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         # es parcial y NO reproducible. Se reporta SIEMPRE en el payload; con
         # BACKTEST_STRICT_COMPLETENESS=true además se rechaza (503).
         try:
-            q_keys = set(
-                zip(
-                    qualifying["ticker"].astype(str),
-                    pd.to_datetime(qualifying["date"]).dt.strftime("%Y-%m-%d"),
-                )
+            # Candidatos fantasma: filas del qualifying con ticker NULL/NaN del
+            # lago (HALLAZGO 2026-08-29·01: 1.032 filas ticker NULL desde
+            # 2022-07-12 en daily_metrics). Ningún stream de intradía puede
+            # emitirlas JAMÁS, así que no son un descarte de datos: son dato
+            # corrupto del origen. Se excluyen de la reconciliación (con
+            # STRICT activo tumbarían el backtest para siempre) y se reportan
+            # aparte para que sigan siendo visibles.
+            _t_str = qualifying["ticker"].astype(str).str.strip()
+            _d_str = pd.to_datetime(qualifying["date"]).dt.strftime("%Y-%m-%d")
+            _phantom_mask = (
+                qualifying["ticker"].isna()
+                | _t_str.isin(["", "None", "nan", "NULL", "<NA>"])
             )
+            phantom_keys = set(zip(_t_str[_phantom_mask], _d_str[_phantom_mask]))
+            q_keys = set(zip(_t_str[~_phantom_mask], _d_str[~_phantom_mask]))
+            n_phantom = len(phantom_keys)
+            if n_phantom:
+                logger.warning(
+                    f"[COMPLETENESS] {n_phantom} ticker-días con ticker NULL/NaN "
+                    f"en el lago (fantasma) — excluidos de la reconciliación. "
+                    f"Muestra: {sorted(f'{t}:{d}' for t, d in phantom_keys)[:10]}"
+                )
             n_expected = len(q_keys)
             missing = q_keys - _executed_keys
             n_missing = len(missing)
@@ -419,6 +435,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                 "expected_ticker_days": n_expected,
                 "executed_ticker_days": n_executed,
                 "missing_ticker_days": n_missing,
+                "phantom_ticker_days": n_phantom,
                 "completeness_pct": pct_complete,
                 "missing_sample": missing_sample,
             }
@@ -426,7 +443,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                 logger.error(
                     f"[COMPLETENESS] {n_missing}/{n_expected} ticker-días candidatos "
                     f"SIN intradía → descartados en silencio (completitud "
-                    f"{pct_complete:.1f}%). El resultado es PARCIAL y no reproducible "
+                    f"{pct_complete:.2f}%). El resultado es PARCIAL y no reproducible "
                     f"hasta que la caché intradía esté completa. Muestra: "
                     f"{missing_sample[:10]}"
                 )
@@ -436,7 +453,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                         detail=(
                             f"Backtest incompleto: {n_missing} de {n_expected} "
                             f"ticker-días candidatos no tienen intradía disponible "
-                            f"({pct_complete:.1f}% completo). Con "
+                            f"({pct_complete:.2f}% completo). Con "
                             f"BACKTEST_STRICT_COMPLETENESS=true el motor rechaza "
                             f"resultados parciales — calienta la caché o revisa el lago."
                         ),
