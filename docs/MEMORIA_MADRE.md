@@ -1289,3 +1289,166 @@ operaciones). Las entradas saltadas no dejan rastro; solo se ven por ausencia.
   `n_groups = len(grouped)` y **no usa** `n_groups` en ninguna parte. Ese
   `len()` sobre un groupby materializa el índice de todos los grupos del mes.
   Se paga en los 25 meses para nada.
+
+---
+
+## 2026-08-29 — Dos adopciones de Álvaro, la marca de entrada del gráfico, y tres auditorías con datos
+
+Sesión de mañana. Tres cambios de código y cuatro diagnósticos medidos. Como
+siempre, lo que NO se tocó va al final con su porqué.
+
+### 1. Adoptados dos commits de Álvaro (`e04d95e` y `a08f01e`)
+
+Cherry-pick limpio, sin modificarlos, con su autoría.
+
+- **`e04d95e` — indicador «Current Gap (%)»**. El gap VIVO: a cuánto está el
+  precio de la vela respecto al cierre de ayer, actualizándose barra a barra.
+  A diferencia de «PM High Gap (%)», que se congela al acabar el premarket y
+  no se entera si el precio se desploma. Trae 4 pruebas propias.
+- **`a08f01e` — watchdog del backend local** (`run_backend_forever.bat`). Si
+  8010 está libre arranca uvicorn y lo revive a los 30 s si muere; si está
+  ocupado espera 60 s sin duplicar.
+  ⚠️ **Hoy no hace nada**: es un fichero del repo, y el `.vbs` que Álvaro usa
+  para registrarlo como tarea programada es local suyo. Si algún día se activa
+  en la máquina de Jaume, **chocará con el lanzador del escritorio**: el
+  «Forzado de apagado» mataría el backend y el watchdog lo resucitaría 30 s
+  después. Hay que ajustar uno de los dos ANTES de activarlo.
+
+**Verificación:** el cambio de Current Gap es puramente aditivo (un valor nuevo
+en el enum, una función nueva y una entrada en el dispatch); no toca ni una
+línea de ningún camino existente. 4 pruebas nuevas + 117 de paridad del motor +
+`tsc` limpio. El arreglo de Darvas del 28-ago sobrevive intacto en el mismo
+fichero.
+
+### 2. Borrado `test_backtest_engine.py` — roto desde febrero
+
+No se podía ni recolectar: importaba `Condition` y `Operator` de
+`app.schemas.strategy`, dos nombres que ya no existen. **Rompía la recolección
+de pytest entera**, así que se llevaba por delante cualquier tanda que lo
+incluyera.
+
+Sus 10 pruebas apuntan a `app.backtester.engine.BacktestEngine`, que el propio
+código marca como **MUERTO** en dos sitios (`routers/portfolio.py:15` y
+`services/portfolio_service.py:7`). Último commit que lo tocó: `d969d4f`,
+2026-02-08. Siete meses sin ejecutarse: no se pierde cobertura porque no había.
+
+Tras borrarlo la suite recolecta **474 pruebas**. Queda **otro igual**:
+`test_backtest_integration.py` (6 pruebas, 2026-02-22, mismo motor muerto y una
+función que ya no existe en ningún sitio). Pendiente de decisión.
+
+### 3. La marca de ENTRADA del gráfico mostraba el tamaño del primer parcial
+
+**Salió de una pregunta del usuario** («¿por qué piramida dos veces si dije
+una?»). La respuesta a eso era que no piramidaba dos veces —eran **dos trades**,
+porque una reentrada rearma la pirámide entera— pero al cuadrar las cantidades
+apareció esto.
+
+`_build_executions` tomaba `run[0]["size"]` como tamaño de la entrada. `run[0]`
+es el PRIMER LEG del trade, y con TP parciales ese leg es la cantidad del primer
+parcial, no la posición abierta.
+
+Medido (corrida con parciales 60/40): **CNEY 2024-09-11 abrió 1.666,67 acciones**
+(riesgo 300 $ ÷ 0,18 $ de distancia al stop) **y la marca decía 1.000** — justo
+el 60 % del primer parcial. Sumando las marcas parecía que **el 86 % de los
+trades cerraban más acciones de las que abrían**.
+
+**NO había error de dinero.** La función es informativa y no alimenta ninguna
+métrica. Comprobado reconstruyendo el PnL de CNEY a mano: 1.000 acc a 0,999
+(+111 $) + 666,67 acc a 1,29 (−120 $) − 0,11 $ de comisiones = **−9,11 $**,
+idéntico al `pnl` guardado. La posición real siempre fue la correcta.
+
+Arreglado con la identidad del propio motor (`sum(legs) = inicial + añadidos`,
+las reducciones de pirámide se cancelan solas porque también emiten leg).
+Un trade de un solo leg da el mismo número que antes → las estrategias sin
+parciales ni pirámide no cambian nada. 121 pruebas verdes.
+
+> **Regla para quien venga:** las marcas del gráfico **no son fuente de verdad
+> para cantidades**. El `pnl` del trade sí. Ante una discrepancia, reconstruir
+> el PnL con precios y tamaños antes de gritar «bug del motor».
+
+### 4. Medido: en premarket, «Previous Max» NUNCA está por encima del PMH
+
+Sobre **3.246 ticker-días y 72.449 velas de premarket**:
+
+```
+Previous Max  ==  PMH  →  66.919 velas  (92,4 %)
+Previous Max  <   PMH  →   5.530 velas  ( 7,6 %)
+Previous Max  >   PMH  →        0 velas  ( NUNCA )
+```
+
+No es casualidad de la muestra, es aritmética: el PMH es el máximo acumulado
+**incluyendo la vela actual** y Previous Max es el mismo máximo **una vela por
+detrás** (`cummax(high).shift(1)`). Persigue al PMH sin adelantarlo nunca. Los
+datos empiezan a las 04:00, que es justo cuando arranca el premarket, así que
+durante el PM los dos recorren las mismas barras.
+
+**Consecuencia práctica, y es importante:** en una estrategia que solo entra en
+premarket, poner **Previous Max como respaldo del PMH no puede rescatar
+absolutamente nada**. En un corto el stop debe quedar POR ENCIMA de la entrada;
+si el PMH no llega, Previous Max llega menos. El desplegable «si el nivel ya
+está rebasado al entrar» y su casilla están **inertes** en ese tipo de
+estrategia, marcados o sin marcar.
+
+Y lo mismo con HOD de respaldo: durante el premarket, el máximo del día **es**
+el PMH.
+
+Medido también al revés, por si la intuición decía otra cosa: con Previous Max
+como stop principal se pierden **más** entradas, no menos (0,141 % de las velas
+contra 0,065 % con PMH; 27 casos que el PMH salva y Previous Max no, y **cero**
+al revés).
+
+**Dónde SÍ sirve la función:** en estrategias que entran en RTH, donde el PMH se
+congela a las 09:30 y el máximo del día sigue subiendo — ahí los dos niveles se
+separan de verdad y el respaldo rescata.
+
+### 5. Revisado el Walk Forward: barre bien, pero tiene tres huecos
+
+El usuario sospechaba que «solo le devuelve el valor que ya tiene». **El barrido
+funciona**: construye la rejilla entera, corre un backtest real por combinación
+y ventana, y se queda con el máximo. Comprobada la sospecha más obvia —que la
+caché de señales congelara los parámetros de riesgo entre combinaciones— y **no
+pasa**: la caché guarda solo entradas/salidas y **vuelve a leer la gestión de
+riesgo en cada combinación**.
+
+Pero hay tres huecos reales:
+
+1. **Con un stop de estructura no se puede optimizar NADA del stop.** El
+   generador de parámetros hace `float(hs.get("value"))` y, como el valor es
+   texto (`"Previous Max"`), descarta el hard stop entero. **Y el `offset_pct`
+   —el margen del 10 %, que es la perilla más interesante— no se ofrece
+   tampoco.** Nadie lo conectó.
+2. **El eje de tiempo no se redondea a minutos enteros.** El optimizador normal
+   sí lo hace (`is_int` para `minutes`/`time_of_day`); `robustness_wfo._axis`
+   no. Con un rango estrecho y muchos pasos, varias combinaciones se escriben
+   como el mismo `HH:MM` → se pagan backtests para probar lo mismo.
+3. **`_param_analysis` solo analiza el PRIMER parámetro** (`best_params[0]`).
+   Si se barren dos, el segundo se optimiza pero no sale recomendación.
+
+### 6. El lanzador solo mira el puerto 3000
+
+Reportado como «la app no arranca». **No estaba rota**: `next dev` encontró la
+3000 ocupada por un resto de la sesión anterior, se mudó sola a la **3001** y
+siguió funcionando. El lanzador (`D:\lanzador_btt\arrancar_btt.ps1`) tiene
+`$PuertoWeb = 3000` fijo, esperó 180 s en una puerta por la que no iba a llegar
+nadie y dio por muerto un frontend vivo. Su propio log de apagado lo delataba:
+*"puerto 3000: ya estaba libre"*.
+
+Dos puntos flojos, los dos de una línea: **solo mira la 3000** (no detecta la
+puerta real) y **no comprueba que quede libre al apagar** (de ahí el resto
+arrastrado). El script vive fuera del repo, a propósito.
+
+### 7. Encontrado y NO arreglado
+
+- `test_backtest_integration.py`, roto igual que su hermano (§2).
+- Los tres huecos del Walk Forward (§5). Los dos primeros salen de la misma
+  carencia de fondo: **`hard_stop.value` guarda texto en vez de un nivel con
+  parámetros**, y de ahí que ni se pueda optimizar ni se pueda elegir la sesión
+  de referencia. Merecen un PRD propio, no parches.
+- **El nivel del stop no se puede medir por sesión.** Los niveles (`hod`,
+  `prev_high`…) se calculan sobre el día ENTERO desde las 04:00 y luego solo se
+  recortan a la sesión elegida; nunca se recalculan. En una estrategia de RTH,
+  «Previous Max» ya lleva dentro todo el máximo del premarket. La maquinaria
+  existe (`RTH High`/`RTH Low`/`High/Low from x time` funcionan en la lógica de
+  entrada) pero **no está enchufada al stop**. Conectarlo obliga a ampliar la
+  firma del simulador, que va en paridad bit a bit Python↔JIT: no es un parche.
+- Los dos puntos flojos del lanzador (§6).
