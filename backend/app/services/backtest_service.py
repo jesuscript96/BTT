@@ -1149,11 +1149,32 @@ def _build_executions(run: list[dict]) -> list[dict]:
     if not run:
         return []
     first = run[0]
+    # Tamaño de la ENTRADA. `first["size"]` es el tamaño del PRIMER LEG (la
+    # cantidad del primer parcial), no la posición que se abrió: con parciales
+    # la marca de entrada del gráfico mostraba una cifra menor que la real
+    # (medido: entrada de 1.666,67 acciones pintada como 1.000, el 60 % que se
+    # llevó el primer parcial). El dinero nunca estuvo mal —esta función es
+    # informativa—, pero el número de acciones sí.
+    #
+    # Todos los legs juntos cierran lo que se abrió, y una reducción de pirámide
+    # también emite su leg, así que se cancela sola:
+    #     sum(legs) = inicial + añadidos   ->   inicial = sum(legs) - añadidos
+    _size_legs = sum(float(leg.get("size") or 0.0) for leg in run)
+    _size_adds = sum(
+        float(pe.get("size") or 0.0)
+        for leg in run
+        for pe in (leg.get("pyr_executions") or [])
+        if pe.get("kind") == "add"
+    )
+    _entry_size = _size_legs - _size_adds
+    if not (_entry_size > 0):  # sin legs utilizables, se deja lo de antes
+        _entry_size = first.get("size")
+
     execs: list[dict] = [{
         "kind": "entry",
         "time_epoch": first.get("entry_time_epoch"),
         "price": first.get("entry_price"),
-        "size": first.get("size"),
+        "size": round(_entry_size, 6) if isinstance(_entry_size, float) else _entry_size,
         "label": "Entrada",
     }]
     # Los añadidos/reducciones de pirámide van colgados de alguna de las legs.
