@@ -1149,6 +1149,21 @@ export default function Home() {
     const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
     const uniqueDays = new Set(isTrades.map(t => t.date)).size;
 
+    // Streaks (trades and days) recomputed for the IS window — before, they
+    // silently inherited the full-period values with the filter active.
+    // Same convention as the backend: pnl > 0 wins (flat counts as loss),
+    // days net of locates, only days with trades.
+    let isMaxW = 0, isMaxL = 0, curW = 0, curL = 0;
+    isTrades.forEach(t => {
+      if (t.pnl > 0) { curW += 1; curL = 0; isMaxW = Math.max(isMaxW, curW); }
+      else { curL += 1; curW = 0; isMaxL = Math.max(isMaxL, curL); }
+    });
+    let isMaxWDays = 0, isMaxLDays = 0, curWD = 0, curLD = 0;
+    Array.from(dailyPnls.keys()).sort().forEach(date => {
+      if ((dailyPnls.get(date) ?? 0) > 0) { curWD += 1; curLD = 0; isMaxWDays = Math.max(isMaxWDays, curWD); }
+      else { curLD += 1; curWD = 0; isMaxLDays = Math.max(isMaxLDays, curLD); }
+    });
+
     const isMetrics = {
       ...result.aggregate_metrics,
       total_days: uniqueDays,
@@ -1169,6 +1184,10 @@ export default function Home() {
         : 0,
       calmar_ratio: maxDd !== 0 ? totalReturnPct / Math.abs(maxDd) : 0,
       dd_return_ratio: totalReturnPct !== 0 ? Math.abs(maxDd) / totalReturnPct : 0,
+      max_consecutive_wins: isMaxW,
+      max_consecutive_losses: isMaxL,
+      max_consecutive_winning_days: isMaxWDays,
+      max_consecutive_losing_days: isMaxLDays,
     };
 
     // Filter global_equity_expenses if present

@@ -1533,7 +1533,8 @@ def _aggregate_metrics(
         "sortino_ratio": 0, "calmar_ratio": 0, "dd_return_ratio": 0,
         "r_squared": 0, "avg_mae": 0, "max_profit_pct": 0,
         "avg_win": 0, "avg_loss": 0, "max_consecutive_wins": 0,
-        "max_consecutive_losses": 0, "expectancy": 0, "payoff_ratio": 0,
+        "max_consecutive_losses": 0, "max_consecutive_winning_days": 0,
+        "max_consecutive_losing_days": 0, "expectancy": 0, "payoff_ratio": 0,
         "avg_r_per_day": 0,
         "avg_r_ui": 0.0,
     }
@@ -1586,6 +1587,19 @@ def _aggregate_metrics(
     total_pnl = total_pnl_trades
     total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
 
+    # Daily PnL timeline (net of locates), computed once: the dense
+    # Sharpe/Sortino block below and the daily win/loss streaks must both see
+    # the same definition of "day".
+    daily_pnls: dict[str, float] = {}
+    for t in trades:
+        d = t.get("date", "")
+        if d:
+            daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
+    if locates_fee_by_date:
+        for d, fee in locates_fee_by_date.items():
+            if d in daily_pnls:
+                daily_pnls[d] -= fee
+
     # Build a continuous daily equity curve for accurate annualized volatility
     avg_sharpe = 0.0
     sortino_ratio = 0.0
@@ -1593,17 +1607,6 @@ def _aggregate_metrics(
 
     if total_days > 0 and trades:
         try:
-            # Reconstruct daily PnL timeline
-            daily_pnls: dict[str, float] = {}
-            for t in trades:
-                d = t.get("date", "")
-                if d:
-                    daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
-            if locates_fee_by_date:
-                for d, fee in locates_fee_by_date.items():
-                    if d in daily_pnls:
-                        daily_pnls[d] -= fee
-
             sorted_dates = sorted(daily_pnls.keys())
             first_date = pd.to_datetime(sorted_dates[0])
             last_date = pd.to_datetime(sorted_dates[-1])
@@ -1736,6 +1739,23 @@ def _aggregate_metrics(
             curr_wins = 0
             max_cons_losses = max(max_cons_losses, curr_losses)
 
+    # Consecutive winning/losing DAYS. Only days WITH trades count (a no-trade
+    # day doesn't break a run); day PnL is net of locates; a flat day (pnl == 0)
+    # falls in the losing branch, same convention as trades above.
+    max_cons_winning_days = 0
+    max_cons_losing_days = 0
+    curr_win_days = 0
+    curr_loss_days = 0
+    for d in sorted(daily_pnls.keys()):
+        if daily_pnls[d] > 0:
+            curr_win_days += 1
+            curr_loss_days = 0
+            max_cons_winning_days = max(max_cons_winning_days, curr_win_days)
+        else:
+            curr_loss_days += 1
+            curr_win_days = 0
+            max_cons_losing_days = max(max_cons_losing_days, curr_loss_days)
+
     return {
         "total_days": total_days,
         "total_trades": total_trades,
@@ -1761,6 +1781,8 @@ def _aggregate_metrics(
         "avg_loss": round(avg_loss, 2),
         "max_consecutive_wins": max_cons_wins,
         "max_consecutive_losses": max_cons_losses,
+        "max_consecutive_winning_days": max_cons_winning_days,
+        "max_consecutive_losing_days": max_cons_losing_days,
         "expectancy": round(expectancy, 2),
         "payoff_ratio": round(payoff_ratio, 4),
         "total_expenses": round(total_expenses, 2),

@@ -102,6 +102,13 @@ function getFriendlyMetricLabel(metric: string): string {
     "lead_gap_pct_1": "gap de apertura gap+1 %",
     "lead_rth_volume_1": "volumen rth gap+1",
     "lead_rth_range_pct_1": "rango rth gap+1 %",
+    "lag_rth_close_1": "cierre día anterior",
+    "lag_open_1": "apertura pm día anterior",
+    "lag_pmh_gap_pct_1": "gap pm high día anterior %",
+    "lag_pm_volume_1": "volumen premarket día anterior",
+    "lag_gap_pct_1": "gap de apertura día anterior %",
+    "lag_rth_volume_1": "volumen rth día anterior",
+    "lag_rth_range_pct_1": "rango rth día anterior %",
   };
   if (labelMap[m]) return labelMap[m];
   return m.replace(/_/g, " ").toLowerCase();
@@ -529,7 +536,7 @@ export default function InlineStrategyBuilder({
   });
 
   // Custom Universe Rules Form States
-  const [tempUnivDay, setTempUnivDay] = useState<'gap_day' | 'gap_plus_1_day' | 'gap_plus_2_day'>('gap_day');
+  const [tempUnivDay, setTempUnivDay] = useState<'gap_prev_day' | 'gap_day' | 'gap_plus_1_day' | 'gap_plus_2_day'>('gap_day');
   const [tempUnivParam, setTempUnivParam] = useState<string>('gap_pct');
   const [tempUnivOp, setTempUnivOp] = useState<string>('>=');
   const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
@@ -1096,6 +1103,7 @@ export default function InlineStrategyBuilder({
                           outline: 'none',
                         }}
                       >
+                        <option value="gap_prev_day">Gap -1</option>
                         <option value="gap_day">Gap Day</option>
                         <option value="gap_plus_1_day">Gap +1</option>
                         <option value="gap_plus_2_day">Gap +2</option>
@@ -1196,8 +1204,17 @@ export default function InlineStrategyBuilder({
 
                           let fieldName = "";
                           const lagSuffix = tempUnivDay === "gap_day" ? "" : tempUnivDay === "gap_plus_1_day" ? "_1" : "_2";
-                          
-                          if (tempUnivDay === "gap_day") {
+
+                          if (tempUnivDay === "gap_prev_day") {
+                            // Día anterior al gap (D-1): columnas lag_*_1
+                            if (tempUnivParam === "rth_close") fieldName = "lag_rth_close_1";
+                            else if (tempUnivParam === "pm_open") fieldName = "lag_open_1";
+                            else if (tempUnivParam === "pmh_gap_pct") fieldName = "lag_pmh_gap_pct_1";
+                            else if (tempUnivParam === "pm_volume") fieldName = "lag_pm_volume_1";
+                            else if (tempUnivParam === "gap_pct") fieldName = "lag_gap_pct_1";
+                            else if (tempUnivParam === "rth_volume") fieldName = "lag_rth_volume_1";
+                            else if (tempUnivParam === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
+                          } else if (tempUnivDay === "gap_day") {
                             if (tempUnivParam === "rth_close") fieldName = "Close Price";
                             else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
                             else if (tempUnivParam === "pmh_gap_pct") fieldName = "PMH Gap %";
@@ -1272,7 +1289,7 @@ export default function InlineStrategyBuilder({
                   {universeFilters.rules && universeFilters.rules.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                       {universeFilters.rules.map((r: any, idx: number) => {
-                        const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+                        const friendlyName = getFriendlyMetricLabel(r.metric);
                         const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
                         let friendlyVal = r.value;
                         const numVal = parseFloat(r.value);
@@ -2495,7 +2512,7 @@ export default function InlineStrategyBuilder({
                     </span>
 
                     {(universeFilters.rules || []).map((r: any, idx: number) => {
-                      const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+                      const friendlyName = getFriendlyMetricLabel(r.metric);
                       const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
                       let friendlyVal = r.value;
                       const numVal = parseFloat(r.value);

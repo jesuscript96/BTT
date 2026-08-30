@@ -25,6 +25,7 @@ from app.db.gcs_cache import (
     iter_intraday_groups_streamed,
     fetch_intraday_batch,
 )
+from app.services.qualifying_windows import stage2_prev_day_lag1_selects
 from app.redis_client import get_redis
 
 logger = logging.getLogger("backtester.data")
@@ -497,6 +498,16 @@ def _evaluate_postgap_preconditions(df: pd.DataFrame, preconditions: list) -> pd
 
 
 def _can_use_hot_cache(filters: dict) -> bool:
+    # Reglas lead_/lag_ (Gap ±N): sus columnas no existen en el parquet base
+    # del hot cache y _evaluate_rules_on_df las evalúa ANTES de calcular los
+    # shifts del re-anclaje, así que aquí se ignorarían EN SILENCIO y el hot
+    # cache serviría un universo sin ese filtro. Van por la vía autoritativa
+    # (DuckDB local / GCS). Ver hallazgo 2026-08-29 en docs/MEMORIA_MADRE.md.
+    for rule in filters.get("rules", []):
+        field = rule.get("field") or rule.get("metric")
+        if isinstance(field, str) and (field.startswith("lead_") or field.startswith("lag_")):
+            return False
+
     # Check top-level min_gap_pct
     min_gap_raw = filters.get("min_gap_pct")
     if min_gap_raw is not None:
@@ -834,6 +845,11 @@ def _fetch_qualifying_data_uncached(
                 'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
                 'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
                 'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
+
+                # LAG 1 del día anterior (Gap −1) filtrable por rules de universo.
+                # Fuentes compartidas con la vía GCS y la materialización de
+                # datasets (qualifying_windows) para que las tres no diverjan.
+                *stage2_prev_day_lag1_selects(),
 
                 # LEAD 1
                 'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',
