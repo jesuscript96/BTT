@@ -187,7 +187,14 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             type: newType,
                                             value: newValue
                                         },
-                                        size_by_sl: newType === RiskType.MARKET_STRUCTURE ? risk.size_by_sl : false
+                                        // El calculo por distancia al SL sirve para CUALQUIER stop
+                                        // que de un nivel de precio, no solo el estructural: con "%"
+                                        // la distancia es entrada x pct (el dimensionado clasico de
+                                        // "arriesgo X con un stop del Y%"). Los dos motores ya lo
+                                        // hacen igual (portfolio_sim.py y portfolio_sim_jit.py:722:
+                                        // `size = risk_amount / abs(entrada - stop)`). Antes, cambiar
+                                        // de Market Structure a % apagaba el interruptor en silencio.
+                                        size_by_sl: risk.size_by_sl
                                     });
                                 }}
                                 style={{
@@ -459,9 +466,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 4,
-                            opacity: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 1 : 0.4,
-                            pointerEvents: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 'auto' : 'none',
-                            transition: 'opacity 150ms ease',
                         }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
