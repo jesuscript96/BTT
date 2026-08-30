@@ -1595,3 +1595,89 @@ libre: Gap −1 + Vol. RTH → chip «volumen rth día anterior >= 1M»).
 explícito) e integración a staging por PR cuando él decida. El fix de fondo
 del hot-cache sigue ABIERTO (HALLAZGO 01); lo único tocado al respecto es el
 guard fail-safe descrito arriba.
+
+## 2026-08-29 (tarde) — Cambios entregados en `alvaro-rama-desarrollo` listos para revisión de Jaime → `staging`
+
+> Rama `alvaro-rama-desarrollo` pusheada a origin. NADA de esto está en
+> `staging` todavía: si Jaime lo ve adecuado, integra (merge/PR) y pushea.
+> El detalle local del incidente que motivó el fix 1 está en la memoria
+> local de Álvaro (`.zcode/`, fuera del repo por diseño); aquí solo lo que
+> afecta al equipo.
+
+### 1. Commit `9c0cb85` — fix(datasets): rechazar universos sin reglas y acotar pre-cache
+
+Protege la máquina (local y prod) de datasets "universo entero":
+
+- **`POST /api/queries/` con `rules: []` → 422** con mensaje accionable.
+  Antes, un dataset sin reglas materializaba TODO el mercado (~1,4M
+  pares/año) y su pre-cache streameaba el lago completo en background —
+  frames BROAD de 3,3GB por mes en el mismo proceso que los backtests.
+- **Cap de pre-cache**: `_precache_dataset_intraday` salta con estado
+  `skipped_too_broad` si el dataset supera `PRECACHE_MAX_PAIRS` (env,
+  default 50.000). El dataset sigue siendo usable; los backtests traen los
+  datos on demand.
+- La dedup de `create_saved_query` trata `skipped_too_broad` como
+  `completed`: re-guardar filtros idénticos no repaga la materialización.
+- `InlineStrategyBuilder`: el alert de error muestra el mensaje real del
+  backend (antes era genérico).
+- Verificado end-to-end: rules:[] → 422; dataset 1,38M pares → skip sin
+  stream; datasets válidos → dedup 200 OK.
+
+### 2. Commit `8063e0a` — feat(universo+metricas): filtros Gap -1 compartidos + rachas por día
+
+- **`qualifying_windows.py` (nuevo)**: definición ÚNICA de columnas LAG 1
+  (Gap -1) y LEAD 1/2 (Gap +1/+2) compartida por las tres vías del universo:
+  materialización de datasets (`query.py`), qualifying local (`data_service.py`)
+  y qualifying GCS (`gcs_cache.py`). Antes una vía podía no materializar la
+  columna y la regla se ignoraba en silencio o mataba la query.
+- **Guard en `_can_use_hot_cache`** (`data_service.py`): las reglas
+  `lead_*`/`lag_*` ya no entran al hot-cache y caen a la vía autoritativa
+  (más lenta, correcta). Es el guard fail-safe del HALLAZGO 01 — el fix de
+  fondo (evaluar rules tras los shifts) sigue ABIERTO.
+- **Wizard/InlineDatasetBuilder**: sección GAP-1 DAY en el configurador
+  (métricas `lag_*_1` del día anterior al gap).
+- **Métricas nuevas**: `max_consecutive_winning_days` /
+  `max_consecutive_losing_days` — PnL diario neto de locates, solo días con
+  trades cuentan, día plano (pnl==0) cuenta como perdedor. Y el backtester
+  ahora recompute TODAS las rachas en la ventana IS (antes heredaba
+  silenciosamente los valores del periodo completo con el filtro activo).
+- **Tests**: `test_prev_day_universe_filters.py` +
+  `test_daily_streak_metrics.py` — 14/14 pasando.
+- `.gitignore`: `/*.log` y `.zcode/` (locales por diseño, dejan de ensuciar
+  el status).
+
+### 3. Pendientes conocidos, NO incluidos en estos commits (reportados, sin tocar)
+
+- Cancel de backtest no interrumpe el mes en curso (job "cancelado" sigue y
+  compite con el relanzamiento).
+- Futures huérfanos del ThreadPool del stream intradía sobreviven al
+  abandono del generador (meses BROAD siguen masticando en background).
+- GCS listing HTTP 403 reintentado una vez por partición de mes (el fallo no
+  se cachea; fallback a disco funciona).
+- HALLAZGO 02 (abajo): inconsistencia de semántica de "PM High Gap (%)"
+  entre vías del motor.
+
+### [HALLAZGO · 2026-08-29 · 02] "PM High Gap (%)" significa cosas distintas según la vía del motor
+- **Reporta:** ZCode (para Álvaro; afecta a todo el equipo)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/backtester/engine.py:784-797` vs
+  `backend/app/services/indicators.py:~1290` y
+  `backend/app/services/strategy_engine.py:~160`
+- **Qué observé:** la vía `engine.py` calcula PM High Gap como
+  `(PMH_final_del_día − apertura_de_ayer) / apertura_de_ayer`, mientras que
+  `indicators.py` y `strategy_engine.py` (la vía rápida que corre los
+  backtests) usan `(PMH_acumulado_causal − cierre_de_ayer) / cierre_de_ayer`.
+  Dos denominadores distintos y PMH final vs corriendo: el mismo número no
+  representa lo mismo.
+- **Cómo reproducir:** leer las tres implementaciones citadas; contrastar el
+  valor de la condición "PM High Gap (%)" de una misma estrategia en cada vía.
+- **Evidencia:** código citado (semántica divergente, sin ejecución cruzada
+  aún — marcado como inconsistencia estructural).
+- **Hipótesis de causa:** HIPÓTESIS — `engine.py` es vía legado que quedó
+  sin actualizar cuando el indicador se hizo causal en las otras vías.
+- **Impacto:** backtests que pasen por la vía de `engine.py` ven un PMH Gap
+  distinto (y con PMH final = look-ahead intradía) que por la vía rápida.
+  Además bloquea/confunde el uso de "PM High Gap (%)" como target dinámico
+  (gap-vs-gap) hasta que las vías converjan.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
