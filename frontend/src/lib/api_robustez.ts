@@ -513,7 +513,18 @@ export interface WfoOut {
   windows_oos_positive: number;
   windows_total: number;
   consistency_pct: number;
-  param_configs?: Array<{ path: string; label: string; values: number[] }>;
+  param_configs?: Array<{
+    path: string;
+    label: string;
+    values: number[];
+    /** Unidad del eje. Viaja con el RESULTADO porque el formulario solo
+     *  conoce la del parametro seleccionado ahora mismo: barriendo dos, el
+     *  segundo se pintaba con la unidad del primero. */
+    unit?: OptimizationParamUnit | null;
+  }>;
+  /** Uno por parametro barrido. `param_analysis` se conserva con la forma de
+   *  siempre y solo trae el caso de un unico parametro. */
+  param_analyses?: WfoParamAnalysis[] | null;
   param_analysis?: WfoParamAnalysis | null;
   n_backtests?: number;
   signal_cache_used?: boolean;

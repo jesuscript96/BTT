@@ -648,16 +648,24 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
 # Grid sweep
 # ---------------------------------------------------------------------------
 
+# Parametros que solo admiten enteros. Estaba escrito dos veces palabra por
+# palabra (al castear el valor y al construir el eje) y el walk-forward no lo
+# tenia en absoluto. Un unico sitio, para que no se separen.
+_INT_PARAM_KEYS = {
+    "period", "period2", "period3", "offset", "consecutive_count",
+    "time_hour", "time_minute", "days_lookback", "orb_minutes",
+    "time_from_hour", "time_from_minute", "range_minutes",
+    "deviationLevel", "sma_period", "lookback",
+}
+
+
 def _set_nested_value(obj, path: str, value):
     """Set a value in a nested dict/list given a dot-separated path."""
     keys = path.split(".")
     
     # Cast value to int if it's an integer parameter
     last_key = keys[-1]
-    if last_key in {"period", "period2", "period3", "offset", "consecutive_count", 
-                    "time_hour", "time_minute", "days_lookback", "orb_minutes", 
-                    "time_from_hour", "time_from_minute", "range_minutes", 
-                    "deviationLevel", "sma_period", "lookback"}:
+    if last_key in _INT_PARAM_KEYS:
         try:
             value = int(round(float(value)))
         except (TypeError, ValueError):
@@ -821,10 +829,7 @@ def run_optimization_grid(
             # Check if this is an integer parameter
             is_int = False
             last_key = pc.get("path", "").split(".")[-1]
-            if last_key in {"period", "period2", "period3", "offset", "consecutive_count", 
-                            "time_hour", "time_minute", "days_lookback", "orb_minutes", 
-                            "time_from_hour", "time_from_minute", "range_minutes", 
-                            "deviationLevel", "sma_period", "lookback"}:
+            if last_key in _INT_PARAM_KEYS:
                 is_int = True
             # Take profit por tiempo (minutos) o por hora (minutos desde
             # medianoche): no existen los medios minutos.

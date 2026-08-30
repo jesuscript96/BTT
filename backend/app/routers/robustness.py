@@ -570,7 +570,15 @@ def wfo_full(req: WfoFullReq, user_id: Optional[str] = Depends(get_current_user_
         start_date=c["start_date"],
         end_date=c["end_date"],
     )
-    n = req.n_windows * (1 + int(np_prod([p.steps for p in req.params])))
+    # Los pasos que pide la pantalla NO son los backtests que se corren: un
+    # parametro entero redondea y deduplica su eje (15:30-15:35 en 10 pasos son
+    # 6 horas distintas, no 10). Se cuenta con el MISMO eje que usara el
+    # barrido, para no anunciar mas trabajo del que hay.
+    ejes = [
+        p.model_dump().get("values") or rw._axis(p.model_dump(), c["definition"])
+        for p in req.params
+    ]
+    n = req.n_windows * (1 + int(np_prod([len(e) for e in ejes])))
     return {"task_id": task_id, "n_backtests": n}
 
 

@@ -154,6 +154,7 @@ export function WfoParamMatrix({
   windows,
   paramValues,
   paramLabel,
+  paramIndex = 0,
   metricLabel,
   view,
   formatValue,
@@ -161,6 +162,9 @@ export function WfoParamMatrix({
   windows: WfoWindow[];
   paramValues: number[];
   paramLabel: string;
+  /** Que posicion de la combinacion pinta esta matriz. Barriendo un solo
+   *  parametro es 0 y no cambia nada. */
+  paramIndex?: number;
   metricLabel: string;
   view: "3d" | "heatmap";
   /** Como se lee un valor del eje. Un parametro de HORA viaja en minutos desde
@@ -182,11 +186,17 @@ export function WfoParamMatrix({
     () =>
       windows.map((w) =>
         paramValues.map((v) => {
-          const t = (w.trials || []).find((tr) => Math.abs((tr.params?.[0] ?? NaN) - v) < 1e-6);
-          return t?.score ?? null;
+          // Con un solo parametro hay UNA prueba por valor y esto es lo de
+          // siempre. Con varios hay una por combinacion del resto: se toma la
+          // mejor, que es lo que ese valor daba de si.
+          const puntos = (w.trials || [])
+            .filter((tr) => Math.abs((tr.params?.[paramIndex] ?? NaN) - v) < 1e-6)
+            .map((tr) => tr.score)
+            .filter((s): s is number => s != null && Number.isFinite(s));
+          return puntos.length ? Math.max(...puntos) : null;
         }),
       ),
-    [windows, paramValues],
+    [windows, paramValues, paramIndex],
   );
 
   const flat = z.flat().filter((v): v is number => v != null && Number.isFinite(v));
