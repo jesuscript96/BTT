@@ -194,30 +194,15 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
 def _compute_dataset_pairs(filters: dict):
     """Mitad cara: los pares (ticker, dia) que cumplen los filtros. No escribe."""
     from app.services.query_service import build_screener_query
+    from app.services.qualifying_windows import dataset_pairs_subquery_lagged_sql
 
     _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
 
-    subquery_lagged = """
-                (
-                    SELECT *,
-                           LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_1,
-                           LEAD(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_1,
-                           LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_1,
-                           LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_1,
-                           LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_1,
-                           LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_1,
-                           LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_open_1,
-                           
-                           LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_2,
-                           LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_2,
-                           LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_2,
-                           LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_2,
-                           LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_2,
-                           LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_2,
-                           LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_open_2
-                    FROM daily_metrics
-                ) dm_lagged
-                """
+    # LEAD 1/2 (Gap+1/+2) + LAG 1 (Gap -1). Definicion unica compartida con las
+    # vias qualifying (qualifying_windows) para que una metrica filtrable exista
+    # en todas: si una regla lag_* no estuviera aqui, la query cascaria con un
+    # Binder Error y el dataset quedaria sin pares.
+    subquery_lagged = dataset_pairs_subquery_lagged_sql()
     select_sql = f"""
         SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date
         FROM {subquery_lagged}

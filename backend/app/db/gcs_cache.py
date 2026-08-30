@@ -52,6 +52,7 @@ CACHE_DIR = os.getenv("CACHE_DIR", ".cache/intraday")
 LOCAL_LAKE_DIR = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/")
 
 from app.db.connection import get_connection
+from app.services.qualifying_windows import stage2_prev_day_lag1_selects
 
 logger = logging.getLogger("backtester.cache")
 
@@ -501,7 +502,21 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
     t0 = time.time()
 
     conn = get_connection()
-    year_paths = _daily_metrics_read_paths(conn, years, filters)
+    # Con reglas lag_ (Gap −1) el primer día del rango necesita SU día anterior
+    # para que LAG no dé NULL: leer también el año previo (solo paths, adelantando
+    # start_date para incluir el mes anterior). El hive_pred de abajo y el
+    # where_clause siguen acotando el RESULTADO al rango pedido — las filas del
+    # año previo solo participan en la ventana.
+    read_years, read_filters = years, filters
+    if "lag_" in where_clause and years:
+        d_from = filters.get("start_date") or filters.get("date_from")
+        read_years = set(years) | {min(years) - 1}
+        if d_from:
+            read_filters = dict(filters)
+            read_filters["start_date"] = (
+                pd.Timestamp(str(d_from)[:10]) - pd.Timedelta(days=10)
+            ).strftime("%Y-%m-%d")
+    year_paths = _daily_metrics_read_paths(conn, read_years, read_filters)
     logger.info(
         f"  qualifying query (years={list(years)}, {len(year_paths)} path group(s)): {where_clause}"
     )
@@ -546,6 +561,11 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
         'LAG(rth_low, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_low_2',
         'LAG(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_rth_volume_2',
         'LAG(pm_high, 2) OVER (PARTITION BY ticker ORDER BY "timestamp") as lag_pm_high_2',
+
+        # LAG 1 del día anterior (Gap −1) filtrable por rules de universo.
+        # Fuentes compartidas con la vía local y la materialización de datasets
+        # (qualifying_windows) para que las tres no diverjan.
+        *stage2_prev_day_lag1_selects(),
 
         # LEAD 1
         'LEAD(rth_open, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") as lead_rth_open_1',

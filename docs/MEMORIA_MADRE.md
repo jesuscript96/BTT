@@ -1859,3 +1859,105 @@ stop**, porque el generador hace `float(hs["value"])` y el valor es texto
 es un **punto fijo del gráfico** — no hay nada que barrer, porque el nivel
 siempre va a ser el mismo. Optimizar tiene sentido para un stop en %, y eso ya
 funciona. Queda fuera de alcance por decisión de producto, no por dificultad.
+
+---
+
+## 📣 2026-08-29 — Entradas de Álvaro, traídas con los cherry-picks del 31-ago
+
+> Estas dos secciones vienen de `alvaro-rama-desarrollo` junto con los commits
+> `9c0cb85` y `8063e0a`. Se conservan tal cual las escribió él. Están fuera de
+> orden cronológico a propósito: llegaron por cherry-pick el 31-ago, después de
+> que aquí ya se hubieran escrito las sesiones del 29, 30 y 31.
+
+- **Lo único que roza al equipo:** el lago de ORIGEN
+  (`gs://strategybuilderbbdd/cold_storage/daily_metrics`) acumula desde el
+  2022-07-12 **1.032 filas con `ticker IS NULL`** (una por día de bolsa hasta
+  hoy). Parece un instrumento real que perdió su símbolo en la ingesta (días
+  con rango +86 %/+117 % — perfil BTT — invisibles para
+  screener/datasets/backtests de todos, prod incluida). Pendiente del dueño del
+  lago: depurar en origen e identificar el instrumento.
+- La rama de Álvaro trae un fix defensivo (commit `def8a9b`): la reconciliación
+  de completitud del orquestador excluye esas filas fantasma y las reporta como
+  `phantom_ticker_days`, para que `BACKTEST_STRICT_COMPLETENESS=true` no
+  rechace datasets enteros por dato corrupto del lago.
+- Menor, ABIERTO: la caché de qualifying en disco usa `:` en el nombre de
+  fichero (`data_service.py:639/695`) → en Windows vive en un NTFS ADS;
+  funciona por accidente.
+
+### [HALLAZGO · 2026-08-29 · 01] Hot-cache RAM ignora en silencio las reglas lead_/lag_ (Gap ±N) y calcula sus shifts sobre un subconjunto prefiltrado
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/services/data_service.py:1043` (rules evaluadas antes de calcular las columnas shift, bloque de `:1045` en adelante) y `:500` (`_can_use_hot_cache`); origen del prefiltrado en `backend/app/services/cache_service.py:200` (`WHERE gap_pct >= 10.0`).
+- **Qué observé:** en la vía hot-cache RAM, `_evaluate_rules_on_df` se ejecuta ANTES de que existan las columnas `lead_*`/`lag_*` (se calculan después con `groupby().shift()`), y su guard `field in df.columns` descarta la regla sin aviso ni log. Además, esos shifts se calculan sobre el DataFrame YA filtrado por gap/fechas — y el hot cache base ya viene prefiltrado `gap_pct >= 10` — así que los "días adyacentes" del hot-cache no son los días adyacentes reales del ticker en el lago.
+- **Cómo reproducir:** backtest en un entorno con `DB_PROVIDER != local` (prod/staging) usando un dataset que active el hot-cache (`min_gap_pct >= 5`, o regla `Open Gap % >= 5` / `PMH Gap % >= 20`) y que ADEMÁS lleve reglas `lead_*` (filtros Gap+1/Gap+2 de "Añadir filtro de mercado"). El filtro lead se ignora y el universo sale más grande. En local NO ocurre: con `provider=local` y custom rules el flujo va por la vía autoritativa (DuckDB).
+- **Evidencia:** lectura de código: `data_service.py:1043` (`result = _evaluate_rules_on_df(result, rules)`) precede al bloque `:1045` "Compute LEAD/LAG columns if they don't exist in the hot cache", cuyo propio comentario dice "The hot_cache_daily_gaps.parquet doesn't have these columns pre-computed". Tests que fijan el guard nuevo: `backend/tests/test_prev_day_universe_filters.py::TestHotCacheGuard` (10/10 pass).
+- **Hipótesis de causa:** HIPÓTESIS — el hot-cache se diseñó para reglas del propio día del gap; el soporte de reglas `lead_*` llegó después sin recolocar la evaluación de rules respecto al cálculo de shifts.
+- **Impacto:** backtests de prod con gap ≥ 5% + reglas Gap+1/+2 (y, desde hoy, Gap−1) pueden recibir un universo SIN ese filtro aplicado — mismo patrón de no-determinismo silencioso que el 70R↔137R documentado en el propio `data_service.py`. También afecta al re-anclaje `apply_day=gap_1_day/gap_2_day` que usa esos shifts (universo hot-cache).
+- **Código tocado:** solo un guard fail-safe en `_can_use_hot_cache` (`data_service.py:500`, rama `alvaro-rama-desarrollo`, incluido en el plan que Álvaro aprobó): las reglas `lead_*`/`lag_*` ya NO entran al hot-cache y caen a la vía GCS autoritativa (más lenta, correcta). El fix de fondo (evaluar rules tras los shifts, o excluir esa vía del re-anclaje) queda para el dueño del código.
+- **Estado:** ABIERTO
+
+## 2026-08-29 — FEATURE «Gap −1» (filtros de mercado del día anterior) — SOLO EN rama `alvaro-rama-desarrollo`, NO APLICADA A STAGING
+
+> Reporte de lo modificado, a petición de Álvaro. La IA NO aplica nada a
+> staging (ni merge ni push — la integración la hace Álvaro por PR, como manda
+> AGENTS.md). El código vive sin commitear en la rama de Álvaro hasta que él
+> decida. Relacionado: HALLAZGO · 2026-08-29 · 01 (justo arriba), que salió
+> durante este trabajo.
+
+**Qué es.** Cuarta opción de día en «Añadir filtro de mercado» (en los tres
+builders: Config. libre, Wizard y Constructor de Datasets): **Gap −1 = día
+anterior al gap (D−1)**, combinable con los 7 parámetros existentes. Permite
+pedir universos tipo «volumen RTH del día anterior ≥ X», «el día anterior
+cerró RTH por encima/debajo de $Y», gap %, PMH gap %, primer precio PM y
+rango RTH de D−1. Cada regla viaja como columna `lag_<col>_1` (mismo
+mecanismo que los `lead_*_1/_2` de Gap+1/+2). Causal: el día anterior al gap
+es información conocida antes de operar.
+
+**Ficheros tocados** (los tres primeros existen porque TODAS las vías tienen
+que materializar las columnas `lag_`, o la regla casca o se ignora):
+- `backend/app/services/qualifying_windows.py` (NUEVO): definición ÚNICA de
+  los LAG 1, consumida por las tres vías para que no puedan divergir.
+- `backend/app/routers/query.py` (`_compute_dataset_pairs`): la subquery de
+  materialización de pares solo calculaba LEADs; ahora se genera desde
+  `qualifying_windows`. Sin esto, crear un dataset con regla `lag_*` fallaba
+  con Binder Error y el dataset quedaba sin pares.
+- `backend/app/services/data_service.py` y `backend/app/db/gcs_cache.py`:
+  LAG 1 que faltaban en el stage-2 del qualifying (vía local y vía GCS). En
+  GCS, si el WHERE lleva reglas `lag_`, se leen también los paths del año
+  anterior para que el primer día del rango tenga su día anterior real (el
+  predicate externo sigue acotando el RESULTADO al rango pedido).
+- `data_service.py` `_can_use_hot_cache` — **GUARD, ojo Sailor**: las reglas
+  `lead_*`/`lag_*` ya NO pasan por el hot-cache RAM (allí se ignoraban en
+  silencio — ver HALLAZGO 01). Efecto: en prod, un dataset gap ≥ 5% con reglas
+  lead_/lag_ ahora cae a la vía GCS autoritativa (más lenta, correcta). Cambia
+  comportamiento TAMBIÉN para los lead_ existentes, no solo para Gap −1.
+- Frontend: `InlineStrategyBuilder.tsx` y `WizardStrategyBuilder.tsx` (opción
+  de día + mapeo a `lag_*_1` + etiquetas legibles «… día anterior» en los
+  chips), `InlineDatasetBuilder.tsx` (sección GAP-1 DAY).
+
+**Semántica de las etiquetas de precio con Gap −1**: «Precio RTH ($)» es el
+CIERRE RTH del día anterior (`lag_rth_close_1`, cierre de sesión regular
+~16:00 ET; en el Wizard el label heredado dice «Precio Apertura RTH ($)» —
+engañoso, la métrica es el cierre; renombrarlo pendiente de decisión de
+Álvaro). «Precio PM ($)» es el PRIMER precio operado del premarket de D−1
+(`lag_open_1`), no una apertura RTH (que no existe como parámetro).
+
+**Compatibilidad**: nada se rompe — estrategias y datasets guardados intactos
+(las rules son JSON opaco; las subquerys solo AÑADEN columnas), motor de
+backtest, Numba y schema de BD sin tocar. Nota operativa: si algún entorno
+usa `QUALIFYING_WINDOWED_PARQUET`, regenerar ese parquet tras integrar
+(default OFF).
+
+**Verificación**: `backend/tests/test_prev_day_universe_filters.py` 10/10
+(incluida ejecución real del SQL de materialización sobre un mini-lago DuckDB
+in-memory: filtra bien y el primer día de cada ticker con LAG NULL queda
+fuera); `tsc --noEmit` limpio; 107 tests del motor OK (`test_backtest_golden`
+falla por entorno — HTTP 403 de GCS sin credenciales — y se verificó con
+stash que falla igual SIN estos cambios). UI verificada en navegador en los
+tres builders (opción nueva presente; flujo completo probado en Config.
+libre: Gap −1 + Vol. RTH → chip «volumen rth día anterior >= 1M»).
+
+**Pendiente de Álvaro**: commit + push en SU rama (la IA no pushea sin OK
+explícito) e integración a staging por PR cuando él decida. El fix de fondo
+del hot-cache sigue ABIERTO (HALLAZGO 01); lo único tocado al respecto es el
+guard fail-safe descrito arriba.
