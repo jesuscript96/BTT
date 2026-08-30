@@ -39,9 +39,10 @@ const PARAM_DESCRIPTIONS: Record<string, string> = {
   rth_range_pct: "Rango de la vela en la sesión regular (máximo a mínimo o porcentaje de movimiento)",
 };
 
-type SectionId = "gap_day" | "gap_plus_1_day" | "gap_plus_2_day";
+type SectionId = "gap_prev_day" | "gap_day" | "gap_plus_1_day" | "gap_plus_2_day";
 
 const SECTION_LABELS: Record<SectionId, string> = {
+  gap_prev_day: "GAP-1 DAY",
   gap_day: "GAP DAY",
   gap_plus_1_day: "GAP+1 DAY",
   gap_plus_2_day: "GAP+2 DAY",
@@ -140,6 +141,7 @@ export default function InlineDatasetBuilder({
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [tempName, setTempName] = useState("");
   const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string }>>>({
+    gap_prev_day: {},
     gap_day: {},
     gap_plus_1_day: {},
     gap_plus_2_day: {},
@@ -147,6 +149,7 @@ export default function InlineDatasetBuilder({
 
   const [includedConditions, setIncludedConditions] = useState<IncludedCondition[]>([]);
   const [expandedSections, setExpandedSections] = useState<Record<SectionId, boolean>>({
+    gap_prev_day: true,
     gap_day: true,
     gap_plus_1_day: true,
     gap_plus_2_day: true,
@@ -327,7 +330,16 @@ export default function InlineDatasetBuilder({
       let fieldName = "";
 
       // Map to exact DuckDB/Parquet columns
-      if (c.section === "gap_day") {
+      if (c.section === "gap_prev_day") {
+        // Día anterior al gap (D-1): columnas lag_*_1
+        if (c.paramKey === "rth_close") fieldName = "lag_rth_close_1";
+        else if (c.paramKey === "pm_open") fieldName = "lag_open_1";
+        else if (c.paramKey === "pmh_gap_pct") fieldName = "lag_pmh_gap_pct_1";
+        else if (c.paramKey === "pm_volume") fieldName = "lag_pm_volume_1";
+        else if (c.paramKey === "gap_pct") fieldName = "lag_gap_pct_1";
+        else if (c.paramKey === "rth_volume") fieldName = "lag_rth_volume_1";
+        else if (c.paramKey === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
+      } else if (c.section === "gap_day") {
         if (c.paramKey === "rth_close") fieldName = "Close Price";
         else if (c.paramKey === "pm_open") fieldName = "Min Open PM price";
         else if (c.paramKey === "pmh_gap_pct") fieldName = "PMH Gap %";
@@ -537,7 +549,7 @@ export default function InlineDatasetBuilder({
           </div>
         </div>
 
-        {(["gap_day", "gap_plus_1_day", "gap_plus_2_day"] as SectionId[]).map((sectionId) => {
+        {(["gap_prev_day", "gap_day", "gap_plus_1_day", "gap_plus_2_day"] as SectionId[]).map((sectionId) => {
           const isExpanded = expandedSections[sectionId];
           return (
             <div
@@ -628,7 +640,9 @@ export default function InlineDatasetBuilder({
                             onMouseEnter={(e) => {
                               let text = PARAM_DESCRIPTIONS[param.key];
                               if (param.key === "pm_open") {
-                                if (sectionId === "gap_day") {
+                                if (sectionId === "gap_prev_day") {
+                                  text = "Precio en el que comienza el Premarket del día anterior al gap";
+                                } else if (sectionId === "gap_day") {
                                   text = "Precio en el que comienza el Premarket del día del gap";
                                 } else if (sectionId === "gap_plus_1_day") {
                                   text = "Precio en el que comienza el Premarket del día del Gap +1";

@@ -212,6 +212,8 @@ export interface AggregateMetrics {
   avg_loss: number;
   max_consecutive_wins: number;
   max_consecutive_losses: number;
+  max_consecutive_winning_days: number;
+  max_consecutive_losing_days: number;
   expectancy: number;
   payoff_ratio: number;
   avg_r_per_day: number;
