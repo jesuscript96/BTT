@@ -1524,3 +1524,115 @@ Los dos documentos habían divergido 373/329 líneas y cualquier fusión
 conflictaba en medio. Jaume prefirió una base común limpia y que la reconciliación
 la hagas tú mirando la etiqueta, en vez de arrastrar una fusión a ciegas. Queda
 dicho para que nadie lo lea como un descuido dentro de seis meses.
+
+---
+
+## 2026-08-30 — Walk Forward: el eje de tiempo que repetía backtests y el análisis que desaparecía con dos parámetros
+
+Tres huecos quedaron apuntados el 29-ago en el **modo Completo** del Walk
+Forward. El barrido en sí **no estaba roto** (eso ya se auditó y quedó limpio:
+la caché de señales vuelve a leer la gestión de riesgo en cada combinación). Hoy
+se cierran el 2 y el 3. **El 1 sigue abierto** — con un stop de estructura no se
+puede optimizar nada del stop, porque el generador hace `float(hs["value"])` y
+`"Previous Max"` es texto; merece PRD porque toca la firma del simulador.
+
+### 1. El eje de un parámetro entero repetía combinaciones
+
+`robustness_wfo._axis()` generaba el eje con `np.linspace` crudo. El decimal se
+perdía después, al escribir el valor: `_encode_tp_value` → `_minutos_a_hhmm`
+hace `int(round(...))`. Resultado: valores distintos del eje colapsaban en el
+mismo minuto y **se pagaban backtests para probar exactamente lo mismo**, sin
+aviso — la barra de progreso contaba todos.
+
+Medido: barrer una hora de cierre de **15:30 a 15:35 en 10 pasos** daba 10
+combinaciones para **6 horas distintas**. Con 5 ventanas, 20 de los 55 backtests
+anunciados eran duplicados exactos.
+
+Y el gasto no era lo peor. Los duplicados entraban en la tabla de mesetas como
+**filas separadas con puntuación idéntica**, y como la meseta es una media móvil
+de tres vecinos, cada valor tenía de vecino a su propio gemelo: la curva salía
+más lisa de lo que era y **aparentaba una meseta que no existía**. La
+recomendación quedaba sesgada hacia «estable».
+
+El optimizador normal (`run_optimization_grid`) ya lo hacía bien: redondea a
+entero y deduplica con `sorted(set(...))`. Ahora `_axis` aplica **la misma
+regla**, y el conjunto de claves enteras —que estaba escrito palabra por palabra
+en dos sitios— vive en un único `_INT_PARAM_KEYS` en `optimization_service.py`.
+
+**Efecto colateral que hubo que cerrar:** la pantalla anunciaba
+`ventanas × (pasos+1)` backtests y al deduplicar se corren menos. El router
+cuenta ahora con los ejes de verdad y la línea previa dice «Hasta N».
+
+### 2. Con dos parámetros, el análisis por valor desaparecía ENTERO
+
+`robustness_wfo.py:325` hacía `_param_analysis(...) if len(param_configs) == 1
+else None`, y la pantalla escondía el bloque completo al recibir `null`. Barrer
+dos parámetros costaba `ventanas × pasos₁ × pasos₂` backtests y **no daba
+recomendación para ninguno de los dos**: ni valor recomendado, ni tabla por
+valor, ni estabilidad, ni el aviso de «el óptimo cayó en el borde del rango».
+
+El guardia no era un descuido: `_param_analysis` estaba escrito en una sola
+dimensión (recorría `values`, comparaba `params[0]` y `best_params[0]`), así que
+apagarlo evitaba analizar el primero ignorando que el segundo se movía.
+
+Ahora recibe la **posición del parámetro** dentro de la combinación. Con uno
+devuelve **el mismo diccionario que antes, campo por campo** (comprobado contra
+`HEAD`). Con varios, cada eje se lee **marginalizando** sobre los demás: la
+puntuación de un valor es la media de todas las combinaciones que lo contienen.
+Se devuelve `param_analyses` (uno por eje) y se conserva `param_analysis` con la
+forma de siempre.
+
+**Limitación asumida y escrita en el docstring:** marginalizar mezcla en `std`
+la dispersión entre ventanas con la que introduce el otro parámetro al moverse,
+y una **interacción** (un parámetro que solo funciona acompañado de cierto valor
+del otro) no se ve en una fila. Para eso hay que mirar la rejilla entera.
+
+### 3. La meseta se degeneraba en ejes cortos — fallo preexistente
+
+Encontrado de paso, existía desde el principio. Los extremos promediaban solo
+los dos vecinos que tenían, y eso los hacía **incomparables** con los de dentro
+(dos sumandos frente a tres):
+
+| Medias por valor | Meseta (antes) | Recomendaba |
+|---|---|---|
+| `0,1 · 1,1` | `0,6 · 0,6` | el primero — **el peor**, siempre, con 2 valores |
+| `0,2 · 1,0 · 0,2` | `0,6 · 0,47 · 0,6` | el primero — **el peor** |
+| `0,1 · 0,9 · 1,0 · 0,2` | `0,5 · 0,67 · 0,7 · 0,6` | el tercero — correcto |
+
+Arreglado: fuera de la rejilla se supone que el eje sigue **plano** (el extremo
+se repite a sí mismo), con lo que todos promedian tres sumandos; y a igualdad de
+meseta gana el que de verdad puntúa mejor. Los tres casos aciertan ahora, y el
+caso realista de 4+ valores **recomienda exactamente lo mismo que antes**.
+
+### 4. La pantalla ya deja barrer dos parámetros
+
+Hasta hoy el formulario mandaba siempre uno (`params: [{ ...sel }]`), así que el
+hueco 2 solo se alcanzaba llamando a la API a mano. Ahora hay un **segundo
+parámetro opcional**, que excluye de su lista el que ya está elegido y se suelta
+solo si el primero pasa a ser ese mismo. El aviso de coste escala con el
+producto de los dos ejes.
+
+También se corrigió algo latente: la **unidad** de cada eje viaja ahora con el
+resultado (`param_configs[].unit`). Antes salía del formulario, que solo conoce
+la del parámetro seleccionado en ese momento — con dos, el segundo se habría
+pintado con la unidad del primero (un `810` crudo en vez de `13:30`).
+
+### Verificación
+
+- **11 tests nuevos** en `backend/tests/test_wfo_axis_and_analysis.py`, entre
+  ellos la paridad del eje entero con la fórmula del optimizador y el análisis
+  marginal de dos ejes con puntuación aditiva (comprobable a mano).
+- `tsc --noEmit` limpio y `eslint` con **exactamente los mismos avisos
+  preexistentes** que antes de tocar nada.
+- **Barrido real en la pantalla**, estrategia «2.1B 50K (normalizada)»:
+  6 ventanas × (Parcial 1 Distancia %, 2 pasos) × (Parcial 2 Hora de cierre,
+  13:30–13:31 en 6 pasos). El formulario anunció **«Hasta 78 backtests»** y la
+  barra de progreso mostró **30** — los 6 pasos de la hora deduplicados a 2.
+  Antes habrían corrido los 78.
+
+### Ficheros
+
+`backend/app/services/robustness_wfo.py` · `backend/app/services/optimization_service.py`
+`backend/app/routers/robustness.py` · `backend/tests/test_wfo_axis_and_analysis.py`
+`frontend/src/components/robustez/modules/useWfo.tsx`
+`frontend/src/components/robustez/charts/WfoCharts.tsx` · `frontend/src/lib/api_robustez.ts`
