@@ -1636,3 +1636,95 @@ pintado con la unidad del primero (un `810` crudo en vez de `13:30`).
 `backend/app/routers/robustness.py` · `backend/tests/test_wfo_axis_and_analysis.py`
 `frontend/src/components/robustez/modules/useWfo.tsx`
 `frontend/src/components/robustez/charts/WfoCharts.tsx` · `frontend/src/lib/api_robustez.ts`
+
+---
+
+## 📣 2026-08-30 — Para Álvaro: qué lleva `sailor` que `staging` todavía no
+
+`staging` se igualó a `sailor-rama-desarrollo` el 29-ago. Desde entonces esta
+rama ha sumado **cinco cosas**. Ninguna toca la lógica de simulación salvo donde
+se dice; están listadas para que decidas cuáles adoptar.
+
+| # | Commit | Qué es | ¿Riesgo? |
+|---|---|---|---|
+| 1 | `d033c07` | Borrado `test_backtest_integration.py` | Ninguno |
+| 2 | `401f9a6` | «Shares por Distancia al SL» también con stop en % | Bajo, ver abajo |
+| 3 | `3e91992` | Walk Forward: eje que repetía backtests + análisis que desaparecía | Ninguno fuera del WFO |
+| 4 | `3e8739d` | Documentación de lo anterior | — |
+| 5 | *(este commit)* | Quitado el bloque «nivel rebasado al entrar» de la UI | Ninguno, ver abajo |
+
+### 1. `test_backtest_integration.py` borrado
+
+Gemelo de `test_backtest_engine.py` (borrado en `157435c`): no se podía ni
+recolectar desde febrero. Importa `app.backtester.engine.BacktestEngine`, que el
+propio código marca como muerto. No cubría nada que siguiera vivo.
+
+### 2. «Cálculo de Shares por Distancia al SL» también con el stop en %
+
+**Es el único de los cinco que cambia resultados**, y solo si activas el
+interruptor con un stop en %.
+
+Antes el interruptor solo estaba disponible con stop de *Market Structure*: con
+«%» el bloque salía atenuado y sin clic, y encima cambiar el tipo de stop a «%»
+apagaba `size_by_sl` en silencio. No había motivo técnico: **los dos motores ya
+lo calculaban igual** para cualquier stop que dé un nivel de precio
+(`portfolio_sim.py` y `portfolio_sim_jit.py:722`), con `size = riesgo /
+abs(entrada − stop)`. Con «%» la distancia es `entrada × pct`, que es el
+dimensionado clásico de "arriesgo X con un stop del Y %".
+
+Comprobado en los dos motores con un caso sintético (entrada 10 $, stop 2 %,
+riesgo 100 $): Python y JIT dan **500,0000 acciones** exactas. Paridad intacta.
+Las estrategias guardadas no cambian: el interruptor sigue apagado por defecto.
+
+### 3. Walk Forward — dos huecos cerrados
+
+Detalle completo en la entrada del 30-ago más arriba. En resumen: el eje de un
+parámetro entero no se redondeaba ni deduplicaba (15:30–15:35 en 10 pasos daba
+solo 6 horas distintas → **20 backtests duplicados de 50**, y las mesetas salían
+falsamente lisas porque cada valor tenía de vecino a su gemelo); y con dos
+parámetros el análisis por valor desaparecía entero. **Contenido en
+`robustness_wfo.py` y su pantalla; no toca el motor de simulación.**
+
+### 5. Quitado el bloque «Si el nivel ya está rebasado al entrar»
+
+`frontend/src/components/strategy-builder/RiskManagement.tsx`. Era el bloque que
+permitía elegir un **nivel de respaldo** cuando el stop estructural queda del
+lado ganador de la entrada. Se quita a petición de Jaume: comprobado que no
+aportaba.
+
+**No se ha tocado el motor.** `_structural_level`, `_sl_side_valid` y toda la
+lógica de respaldo (`hs_fallback_value`, `hs_fallback_first`) siguen exactamente
+igual en `portfolio_sim.py` y en el JIT. Se ha quitado **solo la interfaz**.
+
+**Por qué esto no deja un ajuste fantasma:** se revisaron las cuatro estrategias
+guardadas y **ninguna tiene `fallback_value`** (dos tienen `fallback_first_entry:
+true`, pero el simulador exige el valor para activar nada:
+`if hs_fallback_value and (...)`). Así que no hay estrategia cuyo comportamiento
+dependa de un ajuste que ya no se puede ver. Si algún día se quiere devolver,
+está en el historial y el motor lo sigue soportando.
+
+Verificado con `tsc --noEmit`: **0 errores**. La prop `bias` se mantiene en la
+interfaz para no romper a los llamadores, pero ya no se usa.
+
+### Aparte: el motor es causal — medido, no supuesto
+
+Trabajo de Jaume para un proyecto propio de avisos en vivo. **No aporta código a
+este repo**, pero el hallazgo sí interesa aquí porque es una propiedad del motor
+compartido.
+
+Se comparó `translate_strategy` evaluando el **día entero** (como hace
+`run_backtest`) contra el mismo motor evaluando **vela a vela**, quedándose solo
+con el último valor de cada evaluación. Si difirieran, el motor estaría usando
+información futura en esa vela.
+
+**73 ticker-días, entre 2019 y 2026, cero divergencias:**
+
+| Estrategia | Camino ejercitado | Días | Divergencias |
+|---|---|---|---|
+| 1B 50k | premercado, ventana de entrada, VWAP y acumulados | 49 | **0** |
+| 2.1B 50K | RTH, piramidación, stop estructural | 24 | **0** |
+
+Incluye días con más de 400 velas de señal. Esto confirma que los acumulados
+causales que se metieron en su día (PM High/Low, RTH High/Low/Open, PM High Gap)
+están bien: **ninguno filtra futuro**. Es una red de seguridad que conviene
+volver a pasar si alguien toca los indicadores de sesión.
