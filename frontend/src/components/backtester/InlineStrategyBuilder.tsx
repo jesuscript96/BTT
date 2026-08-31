@@ -432,7 +432,13 @@ export default function InlineStrategyBuilder({
       // se consideran "la misma" y el bloque no se repuebla al cambiar de una
       // a otra.
       pyramiding: stratObj.pyramiding,
-      advanced_model: (stratObj as any).advanced_model,
+      // `advanced_model` NO va en la firma, y es a proposito. El bloque solo
+      // emite su clave cuando ya tiene features; mientras no las tenga, el
+      // borrador sale SIN ella. Si estuviera aqui, cada tecla cambiaria la
+      // firma -> se rehidrataria -> `else setAdvancedModel(initialAdvancedModel)`
+      // -> se borrarian las fechas recien escritas. Bucle de ida y vuelta:
+      // escribes, se emite, vuelve vacio y te lo limpia (2026-08-31).
+      // Para distinguir dos estrategias basta con el resto de campos.
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
