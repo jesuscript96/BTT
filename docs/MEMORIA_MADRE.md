@@ -2156,3 +2156,60 @@ días sin señales, y en este modo no hay señales de las reglas — ese atajo s
 desactiva solo en este modo. Y el día se **muestrea** (~120 velas de las ~700)
 para entrenar: con miles de días, guardarlas todas son cientos de megas y la
 vela 301 no enseña nada que no enseñara la 300.
+
+## 2026-08-31 (noche) — Auditoría del bloque de modelos: DOS fugas, resultados inválidos
+
+Jaume corrió un backtest con el modelo y los números salieron «una auténtica
+locura». Pidió auditoría antes de creérselos. **Tenía razón: había dos fallos
+reales**, los dos introducidos con el bloque el mismo día. La auditoría se hizo
+primero en SOLO LECTURA (reproducciones contra el código instalado, sin tocar
+un fichero, con un backtest suyo aún en cola) y después se aplicaron los
+arreglos. Commit `09db5f7`.
+
+### Fuga 1 — el HMM sabía el volumen del futuro (la que infló la curva)
+
+`hmm_observations` normalizaba el volumen de cada vela por la **media del día
+entero** (`np.nanmean`). La vela de las 07:00 quedaba escalada por el volumen
+que llegaría por la tarde. Medido con dos días idénticos hasta la vela 330 (uno
+con spike de volumen posterior, otro sin él): **la probabilidad de estado que ve
+XGBoost en la misma vela difiere hasta en 0,86** de un máximo de 1.
+
+En este universo eso no es un matiz: el volumen total del día es LA información
+(¿va a ser un pump monstruo o va a morirse?). El modelo la explotaba y el
+backtest salía espectacular — e irreproducible en vivo, porque a las 07:00 ese
+dato no existe. Arreglo: volumen relativo a la **media acumulada hasta t**.
+
+### Fuga 2 — con sesión RTH, las etiquetas se emparejaban con la vela equivocada
+
+Los hooks del modelo corrían **antes** del recorte de sesión: la señal quedaba
+indexada sobre el día completo (premarket incluido) y el trade del simulador
+sobre el frame recortado — ~330 velas de desfase. Las parejas señal-trade no se
+encontraban nunca, **sin error y sin aviso**: el modelo entrenaba con parejas
+rotas o descartaba casi todo. Arreglo: los hooks van después del recorte y del
+`candle_delay` (mismo espacio de índices que los trades), las features se siguen
+calculando sobre el día completo, y la máscara de sesión traduce entre los dos
+espacios.
+
+### Blindaje adicional
+
+- **Slab y paralelo quedan excluidos cuando hay modelo**: sus caminos no tienen
+  los hooks y lo habrían ignorado en silencio (un resultado etiquetado como
+  «filtrado» sin haber filtrado nada).
+- Test de causalidad **de punta a punta**: el score completo (features + HMM +
+  XGBoost) del día cortado en la vela k coincide con el prefijo del score del
+  día entero. Más los dos tests de regresión de cada fuga.
+
+### La regla que queda
+
+> **Cualquier backtest con modelo anterior a `09db5f7` es inválido.** Con HMM
+> activado llevaba la fuga 1; con sesión recortada, la 2. Re-lanzar.
+
+### El motor principal, verificado intacto
+
+Sin el bloque, `parse_config` devuelve `None` y la llamada a `run_backtest` es
+idéntica a la de siempre. Suite completa: el mismo conjunto de 103 fallos de
+entorno que antes de que el bloque existiera (comparado en cada paso). Y en
+verde, nombrados: `sim_jit_equivalence`, `n2a_native`, `n2a_e2e`,
+`current_gap`, `fade_indicators`, `max_reentries`, `daily_loss_limit`,
+`daily_limit_sequential`, `locates`, `pm_lookahead` — **157 tests del camino
+secuencial de punta a punta**.
