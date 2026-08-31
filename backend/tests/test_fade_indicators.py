@@ -12,18 +12,19 @@ Lo que se cubre, y por que:
 
   1. La ARITMETICA de cada modo, contra numeros escritos a mano.
   2. La CAUSALIDAD: "% Session Fade" es NaN hasta que abre la sesion siguiente.
-     Es la propiedad que lo separa del "PM High Gap (%)" de engine.py, que usa
-     el PMH final del dia (hallazgo 02 del 2026-08-29, sin arreglar a proposito).
+     Antes de ese instante el dato NO existe, y cualquier condicion que lo use
+     evalua False. Es la propiedad que hay que proteger si alguien lo toca.
   3. El REANCLAJE de "% Fade": si la referencia sube, el fade vuelve a caer.
-  4. PARIDAD services/indicators.py <-> backtester/engine.py. Es la regla del
-     repo para cualquier indicador: la via viva y la legacy no pueden divergir.
+  4. Un dia ALEATORIO, no solo casos escritos a mano. (Hasta el 2026-08-31
+     esto comparaba ademas contra `backtester/engine.py`; ese motor se borro
+     por ser codigo muerto, asi que solo queda la via viva — que es la que
+     dispara los backtests.)
   5. Que la refactorizacion de "Previous max"/"Previous min" (el bucle por barra
      paso a ser vectorizado, y ahora lo comparte "% Fade") NO cambio su valor.
 """
 import numpy as np
 import pandas as pd
 
-from app.backtester.engine import BacktestEngine
 from app.schemas.strategy import IndicatorConfig, IndicatorType
 from app.services.indicators import compute_indicator
 
@@ -44,28 +45,19 @@ def _day(start: str, closes, highs=None, opens=None, volumes=None) -> pd.DataFra
     })
 
 
-def _legacy(df: pd.DataFrame, **cfg) -> pd.Series:
-    """La via de backtester/engine.py. `_resolve_indicator` no usa estado del
-    motor mientras no haya Heikin-Ashi, asi que basta con la instancia cruda."""
-    eng = object.__new__(BacktestEngine)
-    return eng._resolve_indicator(IndicatorConfig(**cfg), df)
-
-
 def _vivo(df: pd.DataFrame, name: str, **kw) -> pd.Series:
     """La via de services/indicators.py, la que dispara los backtests."""
     return compute_indicator(name, df, **kw)
 
 
-def _paridad(df: pd.DataFrame, name: str, **kw):
-    """Ambas vias, ya comprobado que coinciden. Devuelve la serie."""
-    vivo = np.asarray(_vivo(df, name, **kw), dtype=np.float64)
-    cfg = {k: v for k, v in kw.items() if v is not None}
-    leg = np.asarray(_legacy(df, name=name, **cfg), dtype=np.float64)
-    assert np.allclose(vivo, leg, equal_nan=True), (
-        f"{name} {kw}: la via viva y la legacy divergen\n"
-        f"  vivo={vivo[:12]}\n  legacy={leg[:12]}"
-    )
-    return vivo
+def _serie(df: pd.DataFrame, name: str, **kw):
+    """La serie de la via viva, comprobando de paso que la configuracion pasa
+    por pydantic — que es la capa que devuelve 422 si algo falta en el enum.
+
+    Hasta el 2026-08-31 esto comparaba ademas contra `backtester/engine.py`.
+    Aquel motor se borro por codigo muerto, asi que ya solo hay una via."""
+    IndicatorConfig(name=name, **{k: v for k, v in kw.items() if v is not None})
+    return np.asarray(_vivo(df, name, **kw), dtype=np.float64)
 
 
 # ── 1 y 2. "% Session Fade" ───────────────────────────────────────────────
@@ -84,7 +76,7 @@ def test_session_fade_pm_aritmetica_y_causalidad():
     opens[90] = 90.0                            # apertura de mercado
     df = _day("2024-11-12 08:00", closes, opens=opens)
 
-    fade = _paridad(df, "% Session Fade", session_ref="pm")
+    fade = _serie(df, "% Session Fade", session_ref="pm")
 
     assert np.isnan(fade[:90]).all(), "durante el premercado el fade no existe todavia"
     esperado = (120.0 - 90.0) / 120.0 * 100.0
@@ -98,7 +90,7 @@ def test_session_fade_pm_es_constante_tras_la_apertura():
     opens = np.concatenate([pm, rth]).copy()
     df = _day("2024-11-12 08:00", np.concatenate([pm, rth]), opens=opens)
 
-    fade = _paridad(df, "% Session Fade", session_ref="pm")
+    fade = _serie(df, "% Session Fade", session_ref="pm")
     esperado = (110.0 - 100.0) / 110.0 * 100.0
     assert np.allclose(fade[90:], esperado), "solo cuenta la vela de apertura"
 
@@ -111,7 +103,7 @@ def test_session_fade_rth_mide_hasta_la_apertura_del_after():
     opens = np.concatenate([rth, am]).copy()
     df = _day("2024-11-12 15:00", np.concatenate([rth, am]), opens=opens)
 
-    fade = _paridad(df, "% Session Fade", session_ref="rth")
+    fade = _serie(df, "% Session Fade", session_ref="rth")
 
     assert np.isnan(fade[:60]).all(), "en RTH todavia no ha abierto el after"
     esperado = (50.0 - 30.0) / 50.0 * 100.0
@@ -130,7 +122,7 @@ def test_session_fade_full_coge_el_maximo_venga_de_donde_venga():
     after = _day("2024-11-12 16:00", np.full(5, 60.0), opens=np.full(5, 60.0))
     df = pd.concat([df, after], ignore_index=True)
 
-    fade = _paridad(df, "% Session Fade", session_ref="full")
+    fade = _serie(df, "% Session Fade", session_ref="full")
 
     assert np.isnan(fade[:len(closes)]).all(), "no existe hasta que abre el after"
     esperado = (150.0 - 60.0) / 150.0 * 100.0
@@ -150,8 +142,8 @@ def test_session_fade_full_vs_rth_dan_numeros_distintos():
     df = pd.concat([df, after], ignore_index=True)
 
     i = len(closes)
-    full = _paridad(df, "% Session Fade", session_ref="full")
-    rth_only = _paridad(df, "% Session Fade", session_ref="rth")
+    full = _serie(df, "% Session Fade", session_ref="full")
+    rth_only = _serie(df, "% Session Fade", session_ref="rth")
 
     assert np.allclose(full[i], (200.0 - 50.0) / 200.0 * 100.0)       # 75%
     assert np.allclose(rth_only[i], (100.0 - 50.0) / 100.0 * 100.0)   # 50%
@@ -164,14 +156,14 @@ def test_session_fade_negativo_si_abre_por_encima():
     opens = np.concatenate([pm, rth]).copy()
     df = _day("2024-11-12 08:00", np.concatenate([pm, rth]), opens=opens)
 
-    fade = _paridad(df, "% Session Fade", session_ref="pm")
+    fade = _serie(df, "% Session Fade", session_ref="pm")
     assert np.allclose(fade[90:], -10.0), "abrir un 10% arriba es un fade de -10"
 
 
 def test_session_fade_sin_sesion_siguiente_es_todo_nan():
     """Un dia que acaba antes de las 09:30 no tiene fade de premercado."""
     df = _day("2024-11-12 08:00", np.linspace(100.0, 120.0, 60))
-    fade = _paridad(df, "% Session Fade", session_ref="pm")
+    fade = _serie(df, "% Session Fade", session_ref="pm")
     assert np.isnan(fade).all()
 
 
@@ -182,7 +174,7 @@ def test_fade_previous_max_aritmetica():
     closes = np.array([100.0, 110.0, 105.0, 90.0, 95.0])
     df = _day("2024-11-12 08:00", closes)
 
-    fade = _paridad(df, "% Fade", fade_ref="previous_max", ap_session="ap.PM")
+    fade = _serie(df, "% Fade", fade_ref="previous_max", ap_session="ap.PM")
 
     # max previo: [nan, 100, 110, 110, 110]
     assert np.isnan(fade[0]), "en la primera barra no hay maximo previo"
@@ -196,7 +188,7 @@ def test_fade_previous_max_se_reancla_al_hacer_maximo_nuevo():
     """Sube, cae un 20%, vuelve a maximos: el fade tiene que volver a bajar."""
     closes = np.array([100.0, 100.0, 80.0, 80.0, 130.0, 120.0])
     df = _day("2024-11-12 08:00", closes)
-    fade = _paridad(df, "% Fade", fade_ref="previous_max", ap_session="ap.PM")
+    fade = _serie(df, "% Fade", fade_ref="previous_max", ap_session="ap.PM")
 
     assert np.allclose(fade[2], 20.0), "cae de 100 a 80 = 20%"
     # Tras el maximo de 130, el fade se mide contra 130, no contra 100.
@@ -208,7 +200,7 @@ def test_fade_previous_max_respeta_ap_session():
     closes = np.concatenate([np.full(90, 200.0), np.array([100.0, 90.0, 95.0])])
     df = _day("2024-11-12 08:00", closes)
 
-    fade = _paridad(df, "% Fade", fade_ref="previous_max", ap_session="ap.RTH")
+    fade = _serie(df, "% Fade", fade_ref="previous_max", ap_session="ap.RTH")
 
     assert np.isnan(fade[:91]).all(), "el maximo de RTH no existe antes de las 09:30"
     # 09:31: el maximo previo es el de las 09:30 (100), no el 200 del premercado.
@@ -224,7 +216,7 @@ def test_fade_vwap_cross_ancla_en_la_vela_del_cruce():
     closes = np.array([100.0, 100.0, 100.0, 100.0, 90.0, 80.0, 70.0])
     df = _day("2024-11-12 08:00", closes)
 
-    fade = _paridad(df, "% Fade", fade_ref="vwap_cross")
+    fade = _serie(df, "% Fade", fade_ref="vwap_cross")
 
     # Con precio plano a 100 no hay cruce: NaN hasta que el precio se va abajo.
     assert np.isnan(fade[:4]).all(), "sin cruce todavia no hay desde donde medir"
@@ -239,7 +231,7 @@ def test_fade_vwap_cross_se_reancla_en_cada_cruce():
     """Cruza abajo, vuelve a cruzar arriba: la referencia cambia."""
     closes = np.array([100.0, 100.0, 90.0, 85.0, 120.0, 130.0, 110.0])
     df = _day("2024-11-12 08:00", closes)
-    fade = _paridad(df, "% Fade", fade_ref="vwap_cross")
+    fade = _serie(df, "% Fade", fade_ref="vwap_cross")
 
     # Tras volver arriba del VWAP el fade es negativo (precio por encima del ancla).
     assert fade[5] < 0, "por encima del ancla el fade es negativo"
@@ -249,11 +241,11 @@ def test_fade_vwap_cross_sin_volumen_no_inventa_cruces():
     """Velas sin volumen: el VWAP es NaN y el paso NaN->numero no es un cruce."""
     closes = np.array([100.0, 100.0, 100.0, 90.0])
     df = _day("2024-11-12 08:00", closes, volumes=np.array([0.0, 0.0, 1000.0, 1000.0]))
-    fade = _paridad(df, "% Fade", fade_ref="vwap_cross")
+    fade = _serie(df, "% Fade", fade_ref="vwap_cross")
     assert np.isnan(fade[:3]).all(), "el arranque del VWAP no cuenta como cruce"
 
 
-# ── 4. Paridad y 5. la refactorizacion de Previous max ────────────────────
+# ── 4. Dia aleatorio y 5. la refactorizacion de Previous max ─────────────
 
 def _previous_extreme_bucle(df, values, ap_session, which):
     """El bucle por barra que habia antes de vectorizar (copia literal)."""
@@ -295,19 +287,20 @@ def test_previous_max_min_vectorizado_da_lo_mismo_que_el_bucle():
         assert np.allclose(obtenido_min, esperado_min, equal_nan=True), f"Previous min {sesion}"
 
 
-def test_paridad_vias_con_dia_aleatorio():
-    """Paridad viva<->legacy sobre ruido, no solo sobre casos escritos a mano."""
+def test_dia_aleatorio_no_revienta_ningun_modo():
+    """Ruido, no solo casos escritos a mano: los cinco modos tienen que
+    calcularse sin excepciones y pasando por pydantic."""
     rng = np.random.default_rng(11)
     closes = 50.0 + np.cumsum(rng.normal(0, 0.4, 540))       # 08:00 -> 17:00
     df = _day("2024-11-12 08:00", closes, highs=closes + 0.3,
               volumes=rng.uniform(100, 5000, 540))
 
-    _paridad(df, "% Session Fade", session_ref="pm")
-    _paridad(df, "% Session Fade", session_ref="rth")
-    _paridad(df, "% Session Fade", session_ref="full")
-    _paridad(df, "% Fade", fade_ref="previous_max", ap_session="ap.PM")
-    _paridad(df, "% Fade", fade_ref="previous_max", ap_session="ap.RTH")
-    _paridad(df, "% Fade", fade_ref="vwap_cross")
+    _serie(df, "% Session Fade", session_ref="pm")
+    _serie(df, "% Session Fade", session_ref="rth")
+    _serie(df, "% Session Fade", session_ref="full")
+    _serie(df, "% Fade", fade_ref="previous_max", ap_session="ap.PM")
+    _serie(df, "% Fade", fade_ref="previous_max", ap_session="ap.RTH")
+    _serie(df, "% Fade", fade_ref="vwap_cross")
 
 
 def test_defectos_de_los_parametros():

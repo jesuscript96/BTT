@@ -32,8 +32,10 @@ El simulador que se usa de verdad (`portfolio_sim_jit._core_simulate_jit`)
 aplica `slip = precio * slippage`, SIN dividir entre cien: para el, `slippage`
 es una FRACCION. Pero el campo de la pagina de Backtester se titula
 "Slippage (%)", asi que un 0,001 escrito ahi acaba siendo un 0,1% real, cien
-veces mas de lo que parece. (`app/backtester/engine.py`, la via de portfolio,
-SI divide entre cien — las dos vias no usan la misma unidad.)
+veces mas de lo que parece. (El motor viejo `app/backtester/engine.py` SI
+dividia entre cien — las dos vias no usaban la misma unidad. Ese fichero se
+borro el 2026-08-31 por codigo muerto; lo que describe el resto de esta nota,
+que es la unidad de ESTA via, sigue igual.)
 
 Aqui se trabaja SIEMPRE en porcentaje de verdad y se convierte al entrar al
 motor con `_slip(pct)`. Asi "0,5" significa medio por ciento, que es lo que

@@ -21,9 +21,87 @@ from app.services.strategy_engine import translate_strategy, _parse_risk_managem
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
 from app.services.sim_dispatch import simulate
-from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_condition
+# Lo usa `find_elapsed_time_condition`, que vino aqui al borrar el motor viejo.
+from app.schemas.strategy import IndicatorType
 
 logger = logging.getLogger("backtester.engine")
+
+
+# Estas dos vivian en `app/backtester/engine.py` junto al motor viejo. Al
+# borrar aquel (2026-08-31, era codigo muerto) se traen aqui tal cual: no
+# tienen nada que ver con el motor, solo leen la definicion de la estrategia
+# buscando una condicion de "Elapsed Time", y este fichero es su unico
+# consumidor.
+def find_elapsed_time_condition(group) -> tuple[float, str]:
+    if not group:
+        return -1.0, "GREATER_THAN_OR_EQUAL"
+    
+    conditions = []
+    if isinstance(group, dict):
+        conditions = group.get("conditions", [])
+    elif hasattr(group, "conditions"):
+        conditions = group.conditions or []
+    else:
+        return -1.0, "GREATER_THAN_OR_EQUAL"
+        
+    for cond in conditions:
+        cond_type = None
+        if isinstance(cond, dict):
+            cond_type = cond.get("type")
+        elif hasattr(cond, "type"):
+            cond_type = cond.type
+            
+        if cond_type == "group":
+            val, comp = find_elapsed_time_condition(cond)
+            if val > 0:
+                return val, comp
+        else:
+            source = None
+            if isinstance(cond, dict):
+                source = cond.get("source")
+            elif hasattr(cond, "source"):
+                source = cond.source
+                
+            if source:
+                name = None
+                if isinstance(source, dict):
+                    name = source.get("name")
+                elif hasattr(source, "name"):
+                    name = source.name
+                
+                name_val = name.value if hasattr(name, "value") else name
+                if name_val == "Elapsed Time" or name_val == IndicatorType.ELAPSED_TIME:
+                    target = None
+                    if isinstance(cond, dict):
+                        target = cond.get("target")
+                    elif hasattr(cond, "target"):
+                        target = cond.target
+                        
+                    comparator = "GREATER_THAN_OR_EQUAL"
+                    if isinstance(cond, dict):
+                        comparator = cond.get("comparator", "GREATER_THAN_OR_EQUAL")
+                    elif hasattr(cond, "comparator"):
+                        comparator = getattr(cond.comparator, "value", getattr(cond.comparator, "name", cond.comparator)) or "GREATER_THAN_OR_EQUAL"
+                    
+                    val = 60.0
+                    if target is not None:
+                        try:
+                            val = float(target)
+                        except (TypeError, ValueError):
+                            if isinstance(target, dict):
+                                val = float(target.get("elapsed_minutes", 60.0))
+                            elif hasattr(target, "elapsed_minutes"):
+                                val = float(target.elapsed_minutes or 60.0)
+                    
+                    if hasattr(comparator, "value"):
+                        comparator = comparator.value
+                    return val, str(comparator)
+    return -1.0, "GREATER_THAN_OR_EQUAL"
+
+
+def find_elapsed_time_minutes(group) -> float:
+    val, _ = find_elapsed_time_condition(group)
+    return val
 
 # Pre-computed time boundaries for patch mask (avoid recreating per iteration)
 _PATCH_START = datetime.time(8, 0)

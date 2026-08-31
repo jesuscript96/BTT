@@ -4,7 +4,8 @@ Portfolio de estrategias — fusión ponderada por % de equity.
 PRD: PRD_portfolio_ANTIGRAVITY.md (§3 = corazón de la combinación).
 
 Capa NUEVA encima del simulador single-strategy vivo (sim_dispatch /
-portfolio_sim_jit). NO toca ni revive BacktestEngine (muerto).
+portfolio_sim_jit). El viejo BacktestEngine, que esta capa nunca tocaba, se
+borro el 2026-08-31 por ser codigo muerto.
 
 Modelo de sizing (fase 1): % de equity como TAMAÑO de posición. Cada trade
 abre notional = p_k · base_equity. El PnL$ se calcula como
