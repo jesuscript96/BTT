@@ -2037,3 +2037,85 @@ pantalla de elección y el modo `wizard`. Dos detalles que había que atar:
 
 Total del día: **10.400 líneas menos**, sin una sola regresión (mismo conjunto
 de 103 fallos de entorno antes y después).
+
+## 2026-08-31 (tarde) — Bloque «Modelos avanzados»: XGBoost como filtro
+
+Petición de Jaume: poder aplicar un modelo a una estrategia existente y ver el
+resultado **fuera de muestra** como si fuera un backtest normal. Modo filtro
+terminado; el modo «estrategia» (el modelo decidiendo solo) queda declarado en
+la interfaz pero devuelve un aviso de que no está implementado.
+
+### Cómo está montado, y por qué así
+
+**Entrenar y probar son la MISMA `run_backtest`, llamada dos veces con
+universos distintos.** De ahí salen tres propiedades sin escribir código:
+
+- Lo que se devuelve —equity, trades, métricas, gráfico— es el periodo de
+  prueba y nada más: al motor simplemente no se le dan los días de
+  entrenamiento. No hay que filtrar métricas a posteriori.
+- El entrenamiento no puede contaminarse: literalmente no ha visto esos días.
+- Si alguien cambia el motor, las dos pasadas cambian igual.
+
+Por eso el bloque tiene **sus propias fechas** y no reutiliza el deslizador
+IS/OOS del panel: ese reparte UN backtest en dos tramos y las métricas que
+enseña son las del IS. La interfaz avisa de que hay que dejarlo al 100 % IS.
+
+**El punto de contacto con el motor es UNO:** una máscara sobre `entries_arr`,
+en el mismo sitio donde ya filtra el swing. El modelo solo QUITA entradas,
+nunca añade, así que el peor caso posible es operar menos. Simulador, gestión
+de riesgo, métricas, gráfico y Walk Forward quedan intactos.
+
+Va **después** del filtro de swing, a petición de Jaume: con swing el frame
+abarca varios días y es el swing quien impide abrir en los posteriores. Si el
+modelo corriera antes, juzgaría señales que el swing va a descartar igualmente.
+
+### El hallazgo: el HMM de librería tiene look-ahead
+
+`predict` (Viterbi) y `predict_proba` (forward-backward) de `hmmlearn` miran la
+secuencia **entera**: el estado que asignan a las 09:35 está calculado sabiendo
+lo que pasó a las 15:00 de ese mismo día. **Da igual con qué periodo se haya
+entrenado** — el futuro entra por la inferencia, no por el entrenamiento.
+
+Por eso la recursión hacia delante está escrita a mano. Hay un test que lo
+demuestra recalculando con el día cortado, y **otro que comprueba que la función
+de la librería SÍ falla esa prueba**, para que nadie la sustituya por comodidad
+dentro de seis meses.
+
+### Decisiones de diseño que no son evidentes
+
+- **Se eligen indicadores, no rangos.** Encontrar los cortes («RSI > 68 con
+  volumen alto») es exactamente lo que hace un árbol de decisión; dárselos
+  hechos es hacerle el trabajo peor y le impide encontrar uno mejor.
+- **Los niveles de precio entran como distancia en %.** Un VWAP crudo haría que
+  el modelo memorizara «18,40 dólares», que no se traslada a otro ticker.
+- **Las señales que no llegaron a operarse se descartan**, no se etiquetan como
+  perdedoras: «no se ejecutó» no es «salió mal».
+- **El recuento de señales vetadas lo lleva el propio modelo**, gratis. Correr
+  la prueba otra vez sin modelo solo para restar es un backtest entero más, así
+  que esa comparación va apagada por defecto.
+- **La configuración se valida antes de cargar un solo dato**, y sus errores van
+  como 400 con el texto: el diagnóstico del frontend pinta los 5xx como
+  `Response Data: {}` y parecen un error mudo.
+
+### Tiempos, medidos
+
+El modelo es prácticamente gratis; **el coste es el lago**. XGBoost con 1.000
+operaciones tarda 0,13 s; el HMM sobre un millón de velas, 15 s; la inferencia
+por vela, 0,2 ms. **Un backtest con modelo ≈ 2× uno normal**, por las dos
+pasadas.
+
+### Verificación y dependencias
+
+30 tests nuevos. Suite completa sin regresiones, `tsc` limpio, bloque
+comprobado en la app. **No se ha corrido todavía un backtest real de punta a
+punta** con el bloque activo (hace falta dataset y minutos de lago).
+
+Tres dependencias nuevas: `xgboost`, `scikit-learn`, `hmmlearn`. Comprobado con
+un simulacro previo que **no tocan numpy, pandas ni scipy** — solo añaden.
+
+### Lo que falta
+
+1. El modo «estrategia» (standalone).
+2. **Persistencia del modelo entrenado.** Hoy se entrena en cada backtest, así
+   que una estrategia guardada con modelo no puede reproducir un run viejo.
+   Haría falta versionar los binarios y que la estrategia guarde el id.
