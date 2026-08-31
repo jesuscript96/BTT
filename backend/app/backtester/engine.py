@@ -832,6 +832,101 @@ class BacktestEngine:
             series = running.groupby([source_df['ticker'], source_df['timestamp'].dt.date]).shift(1)
             if len(series) == len(df):
                 series.index = df.index
+        elif name == IndicatorType.SESSION_FADE:
+            # Caida de una sesion entera, en positivo. Paridad OBLIGATORIA con
+            # `_compute_raw("% Session Fade")` de services/indicators.py, que es
+            # la via que DISPARA; esta es la legacy.
+            #
+            # Se implementa CAUSAL a proposito (maximo acumulado, no el del dia
+            # cerrado), al contrario que el PM_HIGH_GAP de mas arriba, que sigue
+            # usando el PMH final y el open de ayer. Ese es el hallazgo 02 del
+            # 2026-08-29 y no se toca aqui: arreglarlo cambia backtests viejos.
+            sess = (getattr(config, 'session_ref', None) or 'pm')
+            if sess == 'rth':
+                peak_from, peak_to, open_from = 570, 960, 960
+            elif sess == 'full':
+                # Dia entero de negociacion: da igual si el maximo se hizo en
+                # premarket o en RTH; se mide hasta la apertura del after.
+                peak_from, peak_to, open_from = 240, 960, 960
+            else:  # 'pm' por defecto
+                peak_from, peak_to, open_from = 240, 570, 570
+
+            def calc_session_fade(g):
+                if g.empty:
+                    return pd.Series(np.nan, index=g.index)
+                ts = pd.to_datetime(g['timestamp'])
+                m = (ts.dt.hour * 60 + ts.dt.minute).to_numpy()
+                peak = np.where(
+                    (m >= peak_from) & (m < peak_to),
+                    g['high'].to_numpy(dtype=np.float64), np.nan,
+                )
+                peak = np.fmax.accumulate(peak)
+                # Apertura de la sesion siguiente: NaN hasta que abre. Es lo que
+                # hace causal al indicador — para cuando existe, el maximo de
+                # referencia ya esta cerrado.
+                nxt = np.full(len(g), np.nan)
+                opened = m >= open_from
+                if opened.any():
+                    i0 = int(np.argmax(opened))
+                    nxt[i0:] = float(g['open'].to_numpy(dtype=np.float64)[i0])
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    out = np.where(peak != 0, (peak - nxt) / peak * 100.0, np.nan)
+                return pd.Series(out, index=g.index)
+
+            series = source_df.groupby(
+                ['ticker', source_df['timestamp'].dt.date], group_keys=False
+            ).apply(calc_session_fade, include_groups=False)
+            if len(series) == len(df):
+                series.index = df.index
+        elif name == IndicatorType.FADE:
+            # Caida viva desde una referencia que se reancla sola. Paridad
+            # OBLIGATORIA con `_compute_raw("% Fade")` de services/indicators.py.
+            fref = (getattr(config, 'fade_ref', None) or 'previous_max')
+            ap_sess_f = getattr(config, 'ap_session', 'ap.PM') or 'ap.PM'
+
+            def calc_fade(g):
+                if g.empty:
+                    return pd.Series(np.nan, index=g.index)
+                c = g['close'].to_numpy(dtype=np.float64)
+                if fref == 'vwap_cross':
+                    v = g['volume'].to_numpy(dtype=np.float64)
+                    tp = ((g['high'] + g['low'] + g['close']) / 3.0).to_numpy(dtype=np.float64)
+                    cum_v = np.cumsum(v)
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        vw = np.where(cum_v != 0, np.cumsum(tp * v) / cum_v, np.nan)
+                    valid = ~np.isnan(c) & ~np.isnan(vw)
+                    above = c > vw
+                    crossed = np.zeros(len(c), dtype=bool)
+                    if len(c) > 1:
+                        # Un NaN a cualquier lado no es un cruce: sin esto, la
+                        # primera vela con volumen contaria como cruce.
+                        crossed[1:] = (above[1:] != above[:-1]) & valid[1:] & valid[:-1]
+                    ref = pd.Series(np.where(crossed, vw, np.nan), index=g.index).ffill().to_numpy()
+                else:
+                    ts = pd.to_datetime(g['timestamp'])
+                    hh = ts.dt.hour.to_numpy()
+                    mm = ts.dt.minute.to_numpy()
+                    if ap_sess_f == 'ap.RTH':
+                        start = (hh > 9) | ((hh == 9) & (mm >= 30))
+                    elif ap_sess_f == 'ap.AM':
+                        start = hh >= 16
+                    else:  # ap.PM default
+                        start = np.ones(len(g), dtype=bool)
+                    started = np.maximum.accumulate(start.astype(bool))
+                    ref = np.fmax.accumulate(
+                        np.where(started, g['high'].to_numpy(dtype=np.float64), np.nan)
+                    )
+                    # shift(1): el maximo "previo" no incluye la barra actual.
+                    ref = pd.Series(ref, index=g.index).shift(1).to_numpy()
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    out = np.where(ref != 0, (ref - c) / ref * 100.0, np.nan)
+                return pd.Series(out, index=g.index)
+
+            series = source_df.groupby(
+                ['ticker', source_df['timestamp'].dt.date], group_keys=False
+            ).apply(calc_fade, include_groups=False)
+            if len(series) == len(df):
+                series.index = df.index
         elif name == IndicatorType.RTH_HIGH:
             if 'rth_high' in df.columns:
                 series = df['rth_high']

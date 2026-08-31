@@ -46,6 +46,12 @@ export enum IndicatorType {
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
     PM_HIGH_GAP = "PM High Gap (%)",
     CURRENT_GAP = "Current Gap (%)",
+    // Caida de una sesion entera, congelada: del maximo de la sesion a la
+    // apertura de la siguiente (PM -> open de mercado, RTH -> open del after).
+    SESSION_FADE = "% Session Fade",
+    // Caida viva desde una referencia que se reancla sola: el maximo previo o
+    // el VWAP en la vela en que el precio lo cruzo.
+    FADE = "% Fade",
 
     // Indicators
     SMA = "SMA",
@@ -164,8 +170,15 @@ export interface IndicatorConfig {
     min_r_squared?: number;        // Min R² for trend line quality
     min_pivots?: number;           // Min swing highs required to fit lines
 
-    // "Elapsed time from last High": ancla del reloj
+    // "Elapsed time from last High": ancla del reloj.
+    // "% Session Fade" lo reutiliza para elegir la sesion que se desinfla:
+    // "pm" (PM High -> apertura de mercado) o "rth" (max. RTH -> open del after).
     session_ref?: "full" | "pm" | "rth";
+
+    // "% Fade": desde donde se mide la caida. "previous_max" usa el maximo previo
+    // (con la sesion de `ap_session`); "vwap_cross", el precio del VWAP en la
+    // vela en que el precio lo cruzo por ultima vez.
+    fade_ref?: "previous_max" | "vwap_cross";
 
     // Squeeze: direccion del spike. El indicador devuelve SIEMPRE positivo el
     // movimiento en la direccion elegida, para que la condicion se lea igual

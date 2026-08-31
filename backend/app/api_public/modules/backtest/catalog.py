@@ -33,6 +33,7 @@ _CATEGORY = {
         "Heikin-Ashi", "HA Close", "HA Open", "HA High", "HA Low", "Triangle Ascending",
         "Triangle Descending", "Triangle Symmetric", "Ret % AM", "Candle Range %",
         "Elapsed time from last High", "Elapsed Time", "PM High Gap (%)", "Current Gap (%)",
+        "% Session Fade", "% Fade",
     ],
     "Time": [
         "Time of Day", "Range of Time", "High/Low from x time", "High/Low from hour-time",
@@ -53,6 +54,8 @@ _PARAMS = {
     "High of last X days": ["days_lookback"], "Low of last X days": ["days_lookback"],
     "Max N Bars": ["period"], "Opening Range +": ["orb_minutes"], "Opening Range -": ["orb_minutes"],
     "Squeeze": ["range_minutes", "squeeze_direction"],
+    "% Session Fade": ["session_ref"],
+    "% Fade": ["fade_ref", "ap_session"],
 }
 
 

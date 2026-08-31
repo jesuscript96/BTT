@@ -31,6 +31,35 @@ const isVolumeIndicator = (name?: string): boolean => {
     );
 };
 
+/** Indicadores cuyo valor ES un porcentaje: el resumen de la condicion escribe
+ *  "> 20%" en vez de "> 20". Antes esta lista estaba copiada literal en cinco
+ *  sitios (aqui dos veces, InlineStrategyBuilder, StrategiesTable y el wizard) y
+ *  ya se habian desincronizado: Squeeze solo llevaba el "%" en uno de ellos. */
+export const isPercentIndicator = (name?: string): boolean => {
+    if (!name) return false;
+    return (
+        name === IndicatorType.PM_HIGH_GAP ||
+        name === IndicatorType.CURRENT_GAP ||
+        name === IndicatorType.SQUEEZE ||
+        name === IndicatorType.SESSION_FADE ||
+        name === IndicatorType.FADE
+    );
+};
+
+/** Indicadores que solo admiten >, <, >= y <= contra una cifra fija: son una
+ *  medida, no un nivel de precio, asi que cruzarlos no significa nada. Squeeze
+ *  queda FUERA a proposito — su lista de destinos en indicatorValidation ya lo
+ *  deja standalone y no se le tocan los comparadores. */
+export const isMeasureIndicator = (name?: string): boolean => {
+    if (!name) return false;
+    return (
+        name === IndicatorType.PM_HIGH_GAP ||
+        name === IndicatorType.CURRENT_GAP ||
+        name === IndicatorType.SESSION_FADE ||
+        name === IndicatorType.FADE
+    );
+};
+
 const ALLOWED_CROSSES_INDICATORS: IndicatorType[] = [
     IndicatorType.BAR_CLOSE,
     IndicatorType.BAR_OPEN,
@@ -79,6 +108,14 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         // (cazar el disparo). La ventana va en MINUTOS DE RELOJ, no en velas.
         case IndicatorType.SQUEEZE:
             return { range_minutes: 5, squeeze_direction: "up" };
+        // Fade de premercado: es el caso que se mira a diario (cuanto se
+        // desinflo el PM antes de abrir el mercado).
+        case IndicatorType.SESSION_FADE:
+            return { session_ref: "pm" };
+        // Fade vivo contra el maximo previo, con la misma sesion por defecto que
+        // "Previous Max" para que los dos digan lo mismo cuando se combinan.
+        case IndicatorType.FADE:
+            return { fade_ref: "previous_max", ap_session: "ap.RTH" };
         default:
             return {};
     }
@@ -111,6 +148,8 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.TRIANGLE_SYMMETRIC,
         IndicatorType.PM_HIGH_GAP,
         IndicatorType.CURRENT_GAP,
+        IndicatorType.SESSION_FADE,
+        IndicatorType.FADE,
     ],
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
@@ -179,6 +218,8 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.TRIANGLE_SYMMETRIC]: "◇ Triangle Symmetric",
     [IndicatorType.PM_HIGH_GAP]: "PM High Gap (%)",
     [IndicatorType.CURRENT_GAP]: "Current Gap (%)",
+    [IndicatorType.SESSION_FADE]: "% Session Fade",
+    [IndicatorType.FADE]: "% Fade",
     // Indicators
     [IndicatorType.SMA]: "SMA",
     [IndicatorType.EMA]: "EMA",
@@ -246,7 +287,9 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
     [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
     [IndicatorType.CURRENT_GAP]: "Gap vivo del precio respecto al cierre de ayer: % de diferencia entre el precio actual (cierre de la vela que se evalúa) y el cierre del día anterior. A diferencia del PM High Gap, sigue al precio durante todo el día (PM y RTH) y baja si el precio baja.",
-    
+    [IndicatorType.SESSION_FADE]: "Cuánto se desinfló una sesión ENTERA, en positivo (20 = cayó un 20%). Con «Premarket» mide del PM High a la apertura de mercado; con «Mercado (RTH)», del máximo de la sesión regular a la apertura del After. Es un número congelado: nace en el instante en que abre la sesión siguiente y ya no cambia en todo el día. Antes de ese instante NO existe, así que cualquier condición que lo use es falsa (no se puede saber el fade del premercado a las 07:00). Sale negativo si la apertura fue por encima del máximo.",
+    [IndicatorType.FADE]: "Cuánto ha caído el precio AHORA desde una referencia, en positivo (20 = está un 20% por debajo). Con «Máximo previo» la referencia es el máximo hecho hasta la vela anterior, así que se reancla sola: cada nuevo máximo devuelve el fade a cero. Con «Cruce del VWAP» la referencia es el precio del VWAP en la vela en que el precio lo cruzó por última vez, y se mantiene fija hasta el cruce siguiente (por eso el fade sigue creciendo aunque el VWAP baje). Negativo = el precio está por encima de la referencia.",
+
     // Technical Indicators
     [IndicatorType.SMA]: "Media Móvil Simple.",
     [IndicatorType.EMA]: "Media Móvil Exponencial.",
@@ -743,6 +786,85 @@ export const IndicatorParams = ({
                                 </select>
                             </div>
                         );
+                    case IndicatorType.SESSION_FADE:
+                        return (
+                            <select
+                                value={value.session_ref || 'pm'}
+                                onChange={(e) => onChange({ ...value, session_ref: e.target.value as "full" | "pm" | "rth" })}
+                                style={{
+                                    width: '100%',
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 10px',
+                                    fontSize: 'var(--ec-fs-select)',
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                }}
+                                title="Qué sesión se desinfla. Premarket: del PM High a la apertura de mercado (existe a partir de las 09:30). Mercado: del máximo del RTH a la apertura del After. Día completo: del máximo del día ENTERO (premarket y mercado juntos, el que sea más alto) a la apertura del After — el desinflado real del día."
+                            >
+                                <option value="pm">Premarket → apertura de mercado</option>
+                                <option value="rth">Mercado (RTH) → apertura del After</option>
+                                <option value="full">Día completo (PM + RTH) → apertura del After</option>
+                            </select>
+                        );
+                    case IndicatorType.FADE:
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <select
+                                    value={value.fade_ref || 'previous_max'}
+                                    onChange={(e) => onChange({ ...value, fade_ref: e.target.value as "previous_max" | "vwap_cross" })}
+                                    style={{
+                                        flex: '1 1 130px',
+                                        minWidth: '130px',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 10px',
+                                        fontSize: 'var(--ec-fs-select)',
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                    }}
+                                    title="Desde dónde se mide la caída. El máximo previo se reancla en cada máximo nuevo; el cruce del VWAP, en cada cruce."
+                                >
+                                    <option value="previous_max">Desde el máximo previo</option>
+                                    <option value="vwap_cross">Desde el cruce del VWAP</option>
+                                </select>
+                                {/* La sesión solo pinta con "máximo previo": el cruce del VWAP
+                                    se ancla en el cruce, no en el arranque de una sesión. */}
+                                {(value.fade_ref || 'previous_max') === 'previous_max' && (
+                                    <select
+                                        value={value.ap_session || 'ap.RTH'}
+                                        onChange={(e) => onChange({ ...value, ap_session: e.target.value as "ap.PM" | "ap.RTH" | "ap.AM" })}
+                                        style={{
+                                            flex: '1 1 90px',
+                                            minWidth: '90px',
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '5px 10px',
+                                            fontSize: 'var(--ec-fs-select)',
+                                            fontWeight: 500,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                        }}
+                                        title="Desde cuándo empieza a contar el máximo, igual que en «Previous Max»."
+                                    >
+                                        <option value="ap.PM">ap.PM</option>
+                                        <option value="ap.RTH">ap.RTH</option>
+                                        <option value="ap.AM">ap.AM</option>
+                                    </select>
+                                )}
+                            </div>
+                        );
                     case IndicatorType.OPENING_RANGE_PLUS:
                     case IndicatorType.OPENING_RANGE_MINUS:
                     case IndicatorType.OPENING_RANGE_AM_PLUS:
@@ -1089,11 +1211,7 @@ export const TargetInput = ({
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
     const isVol = isFixed && isVolumeIndicator(sourceIndicatorName);
-    const isPercent = isFixed && (
-        sourceIndicatorName === IndicatorType.PM_HIGH_GAP ||
-        sourceIndicatorName === IndicatorType.SQUEEZE ||
-        sourceIndicatorName === IndicatorType.CURRENT_GAP
-    );
+    const isPercent = isFixed && isPercentIndicator(sourceIndicatorName);
 
     const [localText, setLocalText] = React.useState("");
     const [isFocused, setIsFocused] = React.useState(false);
@@ -1343,7 +1461,7 @@ export const ConditionRow = ({
                     comparator: Comparator.LT,
                     target: 30
                 });
-            } else if (newSource.name === IndicatorType.PM_HIGH_GAP || newSource.name === IndicatorType.CURRENT_GAP) {
+            } else if (isMeasureIndicator(newSource.name)) {
                 const isValidComp = [Comparator.LT, Comparator.GT, Comparator.LTE, Comparator.GTE].includes(condition.comparator);
                 onChange({
                     ...condition,
@@ -1456,7 +1574,7 @@ export const ConditionRow = ({
                                     {Object.values(Comparator)
                                         .filter(c => {
                                             if (c.includes('DISTANCE')) return false;
-                                            if (condition.source.name === IndicatorType.PM_HIGH_GAP || condition.source.name === IndicatorType.CURRENT_GAP) {
+                                            if (isMeasureIndicator(condition.source.name)) {
                                                 return c === Comparator.LT || c === Comparator.GT || c === Comparator.LTE || c === Comparator.GTE;
                                             }
                                             if (c === Comparator.CROSSES_ABOVE || c === Comparator.CROSSES_BELOW) {
@@ -1676,15 +1794,22 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
         // Squeeze lleva la ventana y la direccion EN el resumen a proposito:
         // dos condiciones de Squeeze con distinta direccion son estrategias
         // opuestas, y sin esto se leerian identicas.
+        // Los fades llevan su modo EN el resumen por el mismo motivo que el
+        // Squeeze: «% Session Fade» de premercado y del dia completo son cosas
+        // distintas, y sin esto las dos condiciones se leerian identicas.
         const sourceStr = c.source.name === IndicatorType.SQUEEZE
             ? `Squeeze ${c.source.squeeze_direction === 'down' ? '↓' : '↑'} ${c.source.range_minutes ?? 5} min`
+            : c.source.name === IndicatorType.SESSION_FADE
+            ? `% Session Fade (${c.source.session_ref === 'rth' ? 'RTH' : c.source.session_ref === 'full' ? 'día completo' : 'PM'})`
+            : c.source.name === IndicatorType.FADE
+            ? `% Fade (${c.source.fade_ref === 'vwap_cross' ? 'cruce VWAP' : `máx. previo ${c.source.ap_session || 'ap.RTH'}`})`
             : `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
         if (typeof c.target === 'number') {
             if (isVolumeIndicator(c.source.name)) {
                 targetStr = `${(c.target / 1000000).toString()}M`;
-            } else if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.SQUEEZE || c.source.name === IndicatorType.CURRENT_GAP) {
+            } else if (isPercentIndicator(c.source.name)) {
                 targetStr = `${c.target}%`;
             } else {
                 targetStr = String(c.target);

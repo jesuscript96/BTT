@@ -24,7 +24,7 @@ import type {
   PostGapPrecondition,
   PyramidingConfig,
 } from "@/types/strategy";
-import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
+import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow, isPercentIndicator } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock, Save } from "lucide-react";
 import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 
@@ -210,7 +210,7 @@ function getLeafConditions(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
+            if (isPercentIndicator(c.source.name)) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);

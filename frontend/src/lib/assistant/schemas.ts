@@ -67,6 +67,8 @@ const IndicatorConfigSchema: JSONSchema = {
         squeeze_direction: { type: 'string', enum: ['up', 'down'], description: 'Squeeze: dirección del spike. El valor sale siempre positivo en la dirección elegida.' },
         elapsed_minutes: { type: 'number', description: 'Minutos transcurridos (Elapsed time from last High).' },
         ap_session: { type: 'string', enum: ['ap.PM', 'ap.RTH', 'ap.AM'], description: 'Sesión de referencia para variables PM/RTH/AM.' },
+        session_ref: { type: 'string', enum: ['pm', 'rth', 'full'], description: '"% Session Fade": qué sesión se desinfla. "pm" = del PM High a la apertura de mercado; "rth" = del máximo del RTH a la apertura del After; "full" = del máximo del día entero (PM + RTH) a la apertura del After.' },
+        fade_ref: { type: 'string', enum: ['previous_max', 'vwap_cross'], description: '"% Fade": desde dónde se mide la caída. "previous_max" = el máximo previo (usa ap_session); "vwap_cross" = el VWAP de la vela en que el precio lo cruzó por última vez.' },
     },
 };
 

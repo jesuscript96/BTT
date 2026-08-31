@@ -73,6 +73,12 @@ function normalizeIndicatorName(name: string): string {
         "squeeze": "Squeeze",
         "spike": "Squeeze",
         "spike de precio": "Squeeze",
+        "session fade": "% Session Fade",
+        "fade de sesion": "% Session Fade",
+        "fade de sesión": "% Session Fade",
+        "%session fade": "% Session Fade",
+        "fade": "% Fade",
+        "%fade": "% Fade",
     };
     const key = name.toLowerCase().trim();
     if (LEGACY_MAP[key]) {

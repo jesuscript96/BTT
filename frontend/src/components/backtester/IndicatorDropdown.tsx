@@ -60,6 +60,13 @@ const INDICATOR_COLORS: Record<string, { bg: string; text: string; accent: strin
   DOLLAR_VOLUME: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
   SQUEEZE: { bg: "bg-fuchsia-50", text: "text-fuchsia-800", accent: "text-fuchsia-600", border: "border-fuchsia-200" },
   HEIKIN_ASHI: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
+  // Los fades comparten familia de color (naranja los de sesion, rojo los
+  // vivos) para que se distingan de un vistazo en el desplegable.
+  SESSION_FADE_PM: { bg: "bg-orange-50", text: "text-orange-800", accent: "text-orange-600", border: "border-orange-200" },
+  SESSION_FADE_RTH: { bg: "bg-orange-50", text: "text-orange-800", accent: "text-orange-600", border: "border-orange-200" },
+  SESSION_FADE_FULL: { bg: "bg-orange-50", text: "text-orange-800", accent: "text-orange-600", border: "border-orange-200" },
+  FADE_PREV_MAX: { bg: "bg-red-50", text: "text-red-800", accent: "text-red-600", border: "border-red-200" },
+  FADE_VWAP: { bg: "bg-red-50", text: "text-red-800", accent: "text-red-600", border: "border-red-200" },
 };
 
 const DEFAULT_COLOR = { bg: "bg-gray-50", text: "text-gray-800", accent: "text-gray-600", border: "border-gray-200" };

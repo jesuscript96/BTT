@@ -25,7 +25,7 @@ import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import { getAllowedTargets } from "@/lib/indicatorValidation";
-import { INDICATOR_LABELS, COMPARATOR_LABELS, INDICATOR_CATEGORIES, INDICATOR_DESCRIPTIONS, getDefaultParamsForIndicator } from "@/components/strategy-builder/ConditionBuilder";
+import { INDICATOR_LABELS, COMPARATOR_LABELS, INDICATOR_CATEGORIES, INDICATOR_DESCRIPTIONS, getDefaultParamsForIndicator, isPercentIndicator, isMeasureIndicator } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock, Plus, Trash2, Info, Sparkles, Database, SlidersHorizontal } from "lucide-react";
 
 export interface WizardDraft {
@@ -446,7 +446,7 @@ function getConditionStrings(group: ConditionGroup, timeframe: string): string[]
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
+            if (isPercentIndicator(c.source.name)) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);
@@ -500,7 +500,7 @@ function getConditionTags(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP || c.source.name === IndicatorType.CURRENT_GAP) {
+            if (isPercentIndicator(c.source.name)) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);
@@ -2738,6 +2738,13 @@ export default function WizardStrategyBuilder({
         case IndicatorType.OPENING_RANGE_AM_PLUS:
         case IndicatorType.OPENING_RANGE_AM_MINUS:
           return { orb_minutes: getVal("orb_minutes", 30) };
+        // El wizard todavia no tiene controles propios para estos dos (mismo
+        // hueco que Squeeze y Darvas), pero al menos emiten su defecto explicito
+        // en vez de {}: asi la condicion que sale del wizard significa algo.
+        case IndicatorType.SESSION_FADE:
+          return { session_ref: "pm" };
+        case IndicatorType.FADE:
+          return { fade_ref: "previous_max", ap_session: getVal("ap_session", "ap.RTH") };
         case IndicatorType.TRIANGLE_ASCENDING:
         case IndicatorType.TRIANGLE_DESCENDING:
         case IndicatorType.TRIANGLE_SYMMETRIC:
@@ -3392,7 +3399,7 @@ export default function WizardStrategyBuilder({
                 }}
               >
                 {(wizardMode === "comparison"
-                  ? ((wizardSource === IndicatorType.PM_HIGH_GAP || wizardSource === IndicatorType.CURRENT_GAP)
+                  ? (isMeasureIndicator(wizardSource)
                      ? comparatorOptions.filter(opt => [Comparator.GT, Comparator.LT, Comparator.GTE, Comparator.LTE].includes(opt.value as Comparator))
                      : [
                          IndicatorType.BAR_CLOSE,
@@ -3502,7 +3509,7 @@ export default function WizardStrategyBuilder({
                           }}>M</span>
                         </div>
                       </div>
-                    ) : (wizardSource === IndicatorType.PM_HIGH_GAP || wizardSource === IndicatorType.CURRENT_GAP) ? (
+                    ) : isMeasureIndicator(wizardSource) ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6 }}>
                         <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Valor (en %):</span>
                         <div style={{ position: "relative", width: "100%" }}>

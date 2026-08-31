@@ -1274,6 +1274,7 @@ def _compute_from_config(
         min_pivots=cfg.get("min_pivots"),
         session_ref=cfg.get("session_ref"),
         squeeze_direction=cfg.get("squeeze_direction"),
+        fade_ref=cfg.get("fade_ref"),
     )
 
 
