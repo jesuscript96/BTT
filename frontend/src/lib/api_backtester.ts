@@ -36,6 +36,30 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+/** El texto legible de un error del backend, venga como venga.
+ *
+ * FastAPI permite `HTTPException(detail=...)` con texto O con un objeto, y aquí
+ * se usan las dos formas. El guardia de memoria del backtest, por ejemplo,
+ * manda `{code, message, available_gb}`. Todo el frontend daba por hecho que
+ * `detail` era texto, así que ese 503 llegaba como un objeto: la consola lo
+ * pintaba `Response Data: {}` y el aviso al usuario salía vacío. El backend
+ * SIEMPRE explicaba el motivo; era el frontend quien lo tiraba.
+ */
+export function mensajeDeError(error: unknown, porDefecto = "Error del servidor"): string {
+  const data = (error as { response?: { data?: unknown } })?.response?.data as
+    | { detail?: unknown; message?: unknown }
+    | undefined;
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail) return detail;
+  if (detail && typeof detail === "object") {
+    const m = (detail as { message?: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  if (typeof data?.message === "string" && data.message) return data.message;
+  const m = (error as { message?: unknown })?.message;
+  return typeof m === "string" && m ? m : porDefecto;
+}
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -56,6 +80,9 @@ api.interceptors.response.use(
         `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
         `Status: ${error.response?.status || "N/A"}\n` +
         `Message: ${error.message || "N/A"}\n` +
+        // El motivo, en TEXTO. Como objeto la consola lo colapsaba a `{}` y
+        // parecia que el backend no habia dicho nada.
+        `Motivo: ${mensajeDeError(error, "(el backend no dio detalle)")}\n` +
         `Response Data:`,
         error.response?.data || "No data"
       );

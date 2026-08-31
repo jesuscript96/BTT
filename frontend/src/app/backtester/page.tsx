@@ -34,6 +34,7 @@ import {
   fetchBacktestEquity,
   fetchDayCandles,
   fetchMultiDayCandles,
+  mensajeDeError,
   type BacktestResult,
   type BacktestJobResponse,
   type DayCandles,
@@ -566,8 +567,10 @@ export default function Home() {
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        msg = axiosErr.response?.data?.detail || "Error del servidor";
+        // `detail` puede ser texto U OBJETO (el guardia de memoria manda
+        // {code, message, available_gb}). Antes se asumia texto y ese 503
+        // llegaba al usuario como un aviso vacio.
+        msg = mensajeDeError(err);
       } else if (err && typeof err === "object" && "message" in err) {
         const errMsg = (err as { message: string }).message;
         if (errMsg.includes("timeout")) {
@@ -841,8 +844,10 @@ export default function Home() {
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        msg = axiosErr.response?.data?.detail || "Error del servidor";
+        // `detail` puede ser texto U OBJETO (el guardia de memoria manda
+        // {code, message, available_gb}). Antes se asumia texto y ese 503
+        // llegaba al usuario como un aviso vacio.
+        msg = mensajeDeError(err);
       } else if (err && typeof err === "object" && "message" in err) {
         const errMsg = (err as { message: string }).message;
         if (errMsg.includes("timeout")) {
