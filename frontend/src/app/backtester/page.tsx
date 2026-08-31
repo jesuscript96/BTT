@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import BacktestPanel, { type BacktestPanelParams } from "@/components/backtester/BacktestPanel";
 import InlineStrategyBuilder, { type Draft } from "@/components/backtester/InlineStrategyBuilder";
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
-import StrategyModeSelector from "@/components/strategy-builder/StrategyModeSelector";
 import { GraduationCap } from "lucide-react";
 import { useUser } from "@/lib/authCompat";
 import { usePostHog } from "posthog-js/react";
@@ -17,9 +16,7 @@ import {
   RESET_CONFIG,
   FILL_CONFIG_EVENT,
   FILL_DATASET_EVENT,
-  WIZARD_SET_STEP_EVENT,
 } from "@/components/backtester/helper/exampleBacktest";
-import WizardStrategyBuilder from "@/components/strategy-builder/WizardStrategyBuilder";
 import MetricsCard from "@/components/backtester/MetricsCard";
 import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
@@ -66,7 +63,9 @@ function BacktestUsageIndicator() {
 }
 
 export default function Home() {
-  const [mode, setMode] = useState<"config" | "builder_choice" | "builder" | "wizard" | "dataset">("config");
+  // El wizard y su pantalla de eleccion se quitaron el 2026-08-31: solo se usaba
+  // el modo libre, asi que "Nueva Estrategia" y "Configurar" entran directos.
+  const [mode, setMode] = useState<"config" | "builder" | "dataset">("config");
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
   // ── Edgie assistant integration (AssistantBus) ───────────────
   useAssistantAction({
@@ -105,7 +104,7 @@ export default function Home() {
   const [strategySessionKey, setStrategySessionKey] = useState<string>("init");
 
   useEffect(() => {
-    if (mode !== 'builder' && mode !== 'wizard' && mode !== 'dataset') {
+    if (mode !== 'builder' && mode !== 'dataset') {
       setDrawerExpanded(false);
     }
   }, [mode]);
@@ -172,9 +171,6 @@ export default function Home() {
     fillConfig: () => {
       configFilledRef.current = true;
       window.dispatchEvent(new CustomEvent(FILL_CONFIG_EVENT, { detail: EXAMPLE_CONFIG }));
-    },
-    setWizardStep: (step: string) => {
-      window.dispatchEvent(new CustomEvent(WIZARD_SET_STEP_EVENT, { detail: { step } }));
     },
     // Telemetría del tour: PostHog sabe QUIÉN lo consume (user_id/email/tier) y
     // HASTA DÓNDE llega (eventos de inicio, paso visto y fin completado/saltado).
@@ -937,7 +933,13 @@ export default function Home() {
           }
         }
         if (saved.selectedDay !== undefined) setSelectedDay(saved.selectedDay);
-        if (saved.mode) setMode(saved.mode);
+        // Sesiones guardadas ANTES de quitar el wizard pueden traer 'wizard' o
+        // 'builder_choice'; sin esto la pagina se quedaria en un modo que ya no
+        // existe y el cajon no se abriria nunca.
+        if (saved.mode) {
+          const m = (saved.mode === 'wizard' || saved.mode === 'builder_choice') ? 'builder' : saved.mode;
+          setMode(m);
+        }
         if (saved.builderDraft) setBuilderDraft(saved.builderDraft);
       }
     } catch (e) {
@@ -1283,9 +1285,9 @@ export default function Home() {
                 }
                 setLoadedStrategyId(null);
                 setMode((prev) => {
-                  const isOpening = !(prev === 'builder' || prev === 'builder_choice' || prev === 'wizard');
+                  const isOpening = prev !== 'builder';
                   if (isOpening) {
-                    return 'builder_choice';
+                    return 'builder';
                   }
                   return 'config';
                 });
@@ -1304,7 +1306,7 @@ export default function Home() {
 
                 let wasOpen = false;
                 setMode((prev) => {
-                  wasOpen = (prev === 'builder' || prev === 'wizard' || prev === 'builder_choice');
+                  wasOpen = (prev === 'builder');
                   if (wasOpen) {
                     return 'config';
                   }
@@ -1316,10 +1318,10 @@ export default function Home() {
                 }
 
                 if (strategyId === "draft" || strategyId.startsWith("draft_") || strategyId === "wizard_draft" || strategyId.startsWith("wizard_draft_")) {
-                  setMode('builder_choice');
+                  setMode('builder');
                 } else {
                   if (strategyId === loadedStrategyId && builderDraft) {
-                    setMode('builder_choice');
+                    setMode('builder');
                     return;
                   }
                   try {
@@ -1373,7 +1375,7 @@ export default function Home() {
                     setActiveCustomStartTime(def.custom_start_time || "09:30");
                     setActiveCustomEndTime(def.custom_end_time || "16:00");
                     
-                    setMode('builder_choice');
+                    setMode('builder');
                   } catch (err) {
                     alert("Error al cargar la estrategia para configurar.");
                   }
@@ -2006,7 +2008,7 @@ export default function Home() {
         </main>
 
         {/* Backdrop blur overlay for the main content area */}
-        {(mode === 'builder_choice' || mode === 'builder' || mode === 'wizard' || mode === 'dataset') && (
+        {(mode === 'builder' || mode === 'dataset') && (
           <div
             onClick={() => { if (!helperActive) setMode('config'); }}
             style={{
@@ -2028,88 +2030,40 @@ export default function Home() {
           top: 0,
           left: 280,
           bottom: 0,
-          width: (mode === 'builder' || mode === 'wizard') && drawerExpanded ? 680 : 550,
+          width: mode === 'builder' && drawerExpanded ? 680 : 550,
           backgroundColor: 'var(--color-ec-bg-sidebar)',
           borderRight: '0.5px solid var(--color-ec-border)',
           zIndex: 40,
-          transform: (mode === 'builder_choice' || mode === 'builder' || mode === 'wizard') ? 'translateX(0)' : 'translateX(-100%)',
+          transform: mode === 'builder' ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '10px 0 30px rgba(0, 0, 0, 0.15)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}>
-          <div
-            key={strategySessionKey}
-            style={{
-              display: 'flex',
-              width: '200%',
-              height: '100%',
-              transform: (mode === 'builder' || mode === 'wizard') ? 'translateX(-50%)' : 'translateX(0)',
-              transition: 'transform 350ms cubic-bezier(0.16, 1, 0.3, 1)',
-            }}
-          >
-            {/* Panel 1: Mode Selector */}
-            <div style={{
-              width: '50%',
-              height: '100%',
-              flexShrink: 0,
-              opacity: mode === 'builder_choice' ? 1 : 0,
-              transition: 'opacity 280ms ease-out',
-            }}>
-              <StrategyModeSelector
+          {/* Un solo panel. Hasta el 2026-08-31 esto era un carrusel de dos
+              (pantalla de eleccion + constructor) que se deslizaba; al quitar el
+              wizard sobra el deslizamiento y el constructor ocupa el cajon
+              entero. `onBack` ahora cierra el cajon, que antes volvia a la
+              pantalla de eleccion. */}
+          <div key={strategySessionKey} style={{ width: '100%', height: '100%' }}>
+            {mode === 'builder' && (
+              <InlineStrategyBuilder
                 onBack={() => setMode('config')}
-                onSelectFree={() => setMode('builder')}
-                onSelectWizard={() => setMode('wizard')}
+                onTest={async (draft) => {
+                  setDraftStrategy(draft);
+                  setMode('config');
+                  await handleRunWithDraft(draft);
+                }}
+                marketSessions={activeSessions}
+                customStartTime={activeCustomStartTime}
+                customEndTime={activeCustomEndTime}
+                onDraftChange={handleDraftChange}
+                initialStrategy={builderDraft || activeStrategy || undefined}
+                onExpandedChange={setDrawerExpanded}
+                defaultDatasetId={selectedDatasetId}
               />
-            </div>
-            {/* Panel 2: Strategy Builder OR Wizard */}
-            <div style={{
-              width: '50%',
-              height: '100%',
-              flexShrink: 0,
-              opacity: (mode === 'builder' || mode === 'wizard') ? 1 : 0,
-              transition: 'opacity 280ms ease-out',
-            }}>
-              {mode === 'wizard' && (
-                <div style={{ height: '100%' }}>
-                  <WizardStrategyBuilder
-                    onBack={() => setMode('builder_choice')}
-                    onTest={async (draft) => {
-                      setDraftStrategy(draft as Draft);
-                      setMode('config');
-                      await handleRunWithDraft(draft as Draft);
-                    }}
-                    onDraftChange={handleDraftChange}
-                    marketSessions={activeSessions}
-                    customStartTime={activeCustomStartTime}
-                    customEndTime={activeCustomEndTime}
-                    initialStrategy={builderDraft || activeStrategy || undefined}
-                    onExpandedChange={setDrawerExpanded}
-                    defaultDatasetId={selectedDatasetId}
-                  />
-                </div>
-              )}
-              {mode === 'builder' && (
-                <div style={{ height: '100%' }}>
-                  <InlineStrategyBuilder
-                    onBack={() => setMode('builder_choice')}
-                    onTest={async (draft) => {
-                      setDraftStrategy(draft);
-                      setMode('config');
-                      await handleRunWithDraft(draft);
-                    }}
-                    marketSessions={activeSessions}
-                    customStartTime={activeCustomStartTime}
-                    customEndTime={activeCustomEndTime}
-                    onDraftChange={handleDraftChange}
-                    initialStrategy={builderDraft || activeStrategy || undefined}
-                    onExpandedChange={setDrawerExpanded}
-                    defaultDatasetId={selectedDatasetId}
-                  />
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
 

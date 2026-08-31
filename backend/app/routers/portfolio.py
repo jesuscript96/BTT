@@ -12,7 +12,8 @@ Portfolio de estrategias — endpoints (PRD_portfolio_ANTIGRAVITY §4).
                                     (search_mode='portfolio') → aparece en el Baúl.
 
 Reutiliza el job store de backtest (backtest_jobs) y persist_backtest_row.
-NO toca BacktestEngine (muerto). Toda persistencia en try/except log-only.
+Toda persistencia en try/except log-only. (El viejo BacktestEngine, que este
+modulo nunca tocaba, se borro el 2026-08-31 por ser codigo muerto.)
 """
 import logging
 import threading

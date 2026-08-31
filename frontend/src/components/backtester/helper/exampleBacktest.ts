@@ -149,8 +149,6 @@ export const EXAMPLE_CONFIG: ExampleConfig = {
 // Nombres de los eventos del contrato "rellenar formulario" (revividos por el helper).
 export const FILL_DATASET_EVENT = "fill-dataset-builder";
 export const FILL_CONFIG_EVENT = "fill-backtest-form";
-/** Posiciona el Wizard en un sub-paso concreto (lo escucha WizardStrategyBuilder). */
-export const WIZARD_SET_STEP_EVENT = "wizard-set-step";
 
 // ── Limpieza al salir del tour ───────────────────────────────────
 // El tour es una demostración: al cerrarse NO debe dejar el ejemplo metido en
