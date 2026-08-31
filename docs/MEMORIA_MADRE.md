@@ -1961,3 +1961,39 @@ libre: Gap −1 + Vol. RTH → chip «volumen rth día anterior >= 1M»).
 explícito) e integración a staging por PR cuando él decida. El fix de fondo
 del hot-cache sigue ABIERTO (HALLAZGO 01); lo único tocado al respecto es el
 guard fail-safe descrito arriba.
+
+### 6. Adoptados los dos commits de Álvaro del 30-ago
+
+Jaume da el visto bueno y entran por cherry-pick suelto (nunca merge de la rama:
+son 30 commits con conflicto seguro en el documento). Autoría de Álvaro
+conservada.
+
+| Commit aquí | Original | Qué trae |
+|---|---|---|
+| `e872c70` | `9c0cb85` | rechazar universos sin reglas + cap de pre-cache |
+| `54186e2` | `8063e0a` | filtros Gap −1 compartidos por las tres vías + rachas por día |
+
+**El único conflicto fue `docs/MEMORIA_MADRE.md`**, como estaba previsto. Se
+resolvió **conservando los dos lados**: las entradas de Álvaro del 29-ago están
+ahora al final, bajo una cabecera que explica que llegaron por cherry-pick y por
+eso van fuera de orden cronológico.
+
+**Verificación de que no corrompe nada:**
+- Los 14 tests que traen sus commits (`test_prev_day_universe_filters.py` y
+  `test_daily_streak_metrics.py`): **14/14 en verde** aquí.
+- Suite completa antes y después de los cherry-picks: **el conjunto de fallos es
+  IDÉNTICO** (los mismos 103, todos dependientes del lago local y de GCS). Los
+  pases suben de 384 a 400 = sus 14 tests + 2 míos del modo `full`.
+- `tsc --noEmit`: 0 errores.
+- Comprobado en la app en marcha: la sección **«GAP-1 DAY»** aparece en el
+  configurador de dataset con sus siete métricas (Open price, Open PM price, PM
+  High Gap, Premarket total volume, Gap, RTH Total volume, Bar RTH Range).
+
+**Consecuencia que conviene tener presente:** cualquier dataset que use una regla
+`Gap −1` deja de pasar por el hot-cache y va por la vía autoritativa, más lenta.
+Es deliberado y es lo correcto — por el camino rápido ese filtro **se ignoraba en
+silencio** y el universo salía sin filtrar.
+
+**Sigue ABIERTO el HALLAZGO 02 de Álvaro** («PM High Gap (%)» significa cosas
+distintas en `engine.py` y en la vía rápida). No se ha tocado: arreglarlo cambia
+los backtests viejos, y es una decisión de producto que Jaume no ha tomado.
