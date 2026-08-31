@@ -416,3 +416,27 @@ def test_una_vela_sin_futuro_no_se_etiqueta():
     df = _barras([100, 100, 100])
     y = label_triple_barrier(df, np.array([2]), "long", 0.20, 0.20, 0)
     assert y.tolist() == [-1], "-1 = no se sabe, y se descarta al entrenar"
+
+
+# ── 7. Mensajes que se explican solos ─────────────────────────────────────
+
+def test_un_rango_al_reves_se_caza_por_su_nombre():
+    """Un «hasta» anterior al «desde» da cero dias SIEMPRE, y el mensaje de «no
+    hay ni un dia» hacia pensar en el dataset en vez de en las fechas."""
+    with pytest.raises(AdvancedModelError, match="al revés.*prueba|prueba.*al revés"):
+        parse_config({**_CFG, "test_from": "2025-08-26", "test_to": "2025-08-25"})
+    with pytest.raises(AdvancedModelError, match="al revés"):
+        parse_config({**_CFG, "train_from": "2024-06-30", "train_to": "2024-01-01"})
+
+
+def test_si_la_ventana_queda_fuera_el_mensaje_dice_QUE_hay_disponible():
+    """La causa nº1 de una ventana vacia es que el «Rango de fechas global» de
+    la estrategia recorta el universo antes de llegar aqui. Sin decirlo, no hay
+    forma de adivinarlo desde el mensaje."""
+    universo_corto = _universo(desde="2024-01-01", dias=100)   # hasta 2024-04-09
+    cfg = parse_config(_CFG)                                    # prueba en julio+
+    with pytest.raises(AdvancedModelError) as e:
+        run_with_model(cfg, universo_corto, _Motor(), {})
+    msg = str(e.value)
+    assert "2024-01-01" in msg and "2024-04-09" in msg, "falta el rango disponible"
+    assert "Rango de fechas global" in msg, "falta la causa mas probable"

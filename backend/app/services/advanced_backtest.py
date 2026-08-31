@@ -77,6 +77,17 @@ def parse_config(raw: dict | None) -> dict | None:
             raise AdvancedModelError(
                 "Faltan fechas: hay que fijar el periodo de entrenamiento y el "
                 "de prueba.")
+    # Un rango al revés (el «hasta» antes que el «desde») da SIEMPRE cero días,
+    # y el mensaje de "no hay ni un día" no deja ver que el problema son las
+    # fechas y no el dataset. Se caza aquí, con nombre y apellidos.
+    for etiqueta, a, b in (("entrenamiento", cfg["train_from"], cfg["train_to"]),
+                           ("prueba", cfg["test_from"], cfg["test_to"])):
+        if a > b:
+            raise AdvancedModelError(
+                f"Las fechas del periodo de {etiqueta} están al revés: empieza "
+                f"el {a} y termina el {b}. Revisa que el «hasta» sea posterior "
+                f"al «desde».")
+
     if cfg["train_to"] >= cfg["test_from"]:
         raise AdvancedModelError(
             f"El entrenamiento (hasta {cfg['train_to']}) se solapa con la "
@@ -166,18 +177,37 @@ def run_with_model(cfg: dict, qualifying_df: pd.DataFrame, run_fn, run_kwargs: d
     prueba), con un informe del modelo colgado en `advanced_model`."""
     standalone = cfg["mode"] == "standalone"
 
+    # El rango REAL que llega aquí, que no es el del dataset: el orquestador ya
+    # recortó `qualifying` con el «Rango de fechas global» de la estrategia.
+    # Es la causa nº1 de que una ventana salga vacía, y sin decirlo el mensaje
+    # de error no hay forma de adivinarlo.
+    if qualifying_df is None or qualifying_df.empty:
+        raise AdvancedModelError(
+            "El universo llegó vacío: no hay ningún día con el que trabajar. "
+            "Revisa los filtros del dataset y el rango de fechas global.")
+    _f = pd.to_datetime(qualifying_df["date"]).dt.strftime("%Y-%m-%d")
+    disponible = f"{_f.min()} → {_f.max()}"
+
+    def _falta(cual: str, desde: str, hasta: str) -> str:
+        pista = (
+            f" El backtest solo tiene días entre {disponible}, que es lo que "
+            f"dejan el dataset y el «Rango de fechas global» de la estrategia. "
+            f"Si el modelo necesita fechas de fuera de ahí, **amplía primero el "
+            f"rango global**: el bloque no puede usar días que el backtest no "
+            f"carga."
+        )
+        return (f"No hay ni un día en el periodo de {cual} ({desde} → {hasta})."
+                + pista)
+
     train_qual = _rebanada(qualifying_df, cfg["train_from"], cfg["train_to"])
     test_qual = _rebanada(qualifying_df, cfg["test_from"], cfg["test_to"])
 
     if train_qual is None or train_qual.empty:
         raise AdvancedModelError(
-            f"No hay ni un día en el periodo de entrenamiento "
-            f"({cfg['train_from']} → {cfg['train_to']}). Revisa que el dataset "
-            f"cubra esas fechas.")
+            _falta("entrenamiento", cfg["train_from"], cfg["train_to"]))
     if test_qual is None or test_qual.empty:
         raise AdvancedModelError(
-            f"No hay ni un día en el periodo de prueba "
-            f"({cfg['test_from']} → {cfg['test_to']}).")
+            _falta("prueba", cfg["test_from"], cfg["test_to"]))
 
     avisos: list[str] = []
 

@@ -195,7 +195,12 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             # aqui, con el motivo escrito, antes de cargar nada.
             from app.services.advanced_backtest import validate_strategy as _val_modelo
             _val_modelo(_cfg_modelo, strategy_def)
-            logger.info("[MODELO] bloque activo, modo=%s", _cfg_modelo["mode"])
+            # Las CUATRO fechas al log: si una ventana sale vacia, esto dice si
+            # el problema son las fechas o el rango global de la estrategia.
+            logger.info("[MODELO] modo=%s | entrena %s->%s | prueba %s->%s | umbral=%s | global %s->%s",
+                        _cfg_modelo["mode"], _cfg_modelo["train_from"], _cfg_modelo["train_to"],
+                        _cfg_modelo["test_from"], _cfg_modelo["test_to"],
+                        _cfg_modelo["threshold"], req.start_date, req.end_date)
 
         # ── PHASE 1: qualifying data (from local cache — fast) ──
         t_fetch = time.time()
