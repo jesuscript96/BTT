@@ -435,8 +435,19 @@ class AlarmEngine:
 
     # ── utilidades de estado para la API ─────────────────────────────────────
     def status(self) -> Dict[str, Any]:
+        # `screener_ws_connected` es el diagnóstico de «¿por qué no salta nada?»:
+        # sin stream no hay barras y las alarmas de modo BAR no se evalúan jamás.
+        # En false lo normal es que este entorno no tenga la clave de Massive, o
+        # que otro backend con la MISMA clave esté expulsando a este (Massive
+        # admite una sola conexión por clave).
+        try:
+            from app.services.live_screener_service import live_screener_service
+            ws_connected = live_screener_service.ws_connected
+        except Exception:  # noqa: BLE001
+            ws_connected = False
         return {
             "running": self._started,
+            "screener_ws_connected": ws_connected,
             "active_alarms": len(self._alarms),
             "watched_tickers": sorted(self._watched),
             "series_live": len(self._bars),
