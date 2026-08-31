@@ -1997,3 +1997,43 @@ silencio** y el universo salía sin filtrar.
 **Sigue ABIERTO el HALLAZGO 02 de Álvaro** («PM High Gap (%)» significa cosas
 distintas en `engine.py` y en la vía rápida). No se ha tocado: arreglarlo cambia
 los backtests viejos, y es una decisión de producto que Jaume no ha tomado.
+
+### 7. RSI y MACD, y dos borrados grandes
+
+**RSI y las tres líneas del MACD, expuestos.** Sorpresa al mirarlo: el backend
+**ya los calculaba** —y hasta por la vía rápida— y el gráfico **ya los pintaba**.
+Lo único que faltaba era que aparecieran en el desplegable de condiciones. Y
+«MACD Signal» / «MACD Histogram» tampoco estaban en el enum del BACKEND, así que
+guardar una estrategia con ellos habría devuelto 422 (el fallo de Darvas otra
+vez). Las tres líneas son **nombres distintos, no un parámetro**: así las tiene
+el motor. `macd_line` de `IndicatorConfig` queda marcado como ajuste fantasma —
+no lo lee nadie, no conectarle UI.
+
+**Borrado `app/backtester/engine.py` (1.905 líneas).** Código muerto: nadie
+instanciaba `BacktestEngine`, y este documento y dos módulos ya lo decían. Se
+van con él siete scripts y dos tests. Lo único vivo que tenía —
+`find_elapsed_time_condition/minutes`, que solo leen la definición de la
+estrategia— se movió a `backtest_service.py`.
+
+> **Para Álvaro:** con esto, el **HALLAZGO 02** (el «PM High Gap (%)» divergente
+> entre vías) **queda cerrado por desaparición de una de las dos vías**. La que
+> tenía el look-ahead y el denominador raro era justo `engine.py`. Ya no hay dos
+> semánticas: solo queda la causal.
+>
+> **Aviso honesto:** `swing_option` se queda **sin ningún test**. El que había
+> probaba `engine.run()`, o sea una implementación que no se ejecuta — era
+> confianza falsa, pero conviene saber que ahora no hay red.
+
+**Borrado el modo Wizard (7.044 + 347 líneas).** Jaume solo usa el modo libre.
+«Nueva Estrategia» y «Configurar» entran directos al constructor; desaparecen la
+pantalla de elección y el modo `wizard`. Dos detalles que había que atar:
+
+1. Las sesiones guardadas con `mode: 'wizard'` se traducen a `'builder'` al
+   restaurar. Sin eso la página quedaría en un modo inexistente y el cajón no se
+   abriría nunca.
+2. **El tutorial guiado usaba el Wizard en 6 de sus 9 pasos.** No se ha perdido:
+   se rehízo sobre el constructor libre con las anclas que este **ya tenía**
+   (`st-bias`, `st-sessions`, `st-entry`, `st-risk`), comprobadas en el DOM.
+
+Total del día: **10.400 líneas menos**, sin una sola regresión (mismo conjunto
+de 103 fallos de entorno antes y después).
