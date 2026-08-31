@@ -313,6 +313,24 @@ export function AlarmsPanel() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <span style={LABEL}>Tickers concretos (opcional)</span>
+            <Input
+              placeholder="XYZ, ABC — vacío para vigilar según el universo"
+              value={(draft.watchlist ?? []).join(", ")}
+              onChange={(e) => setDraft({
+                ...draft,
+                watchlist: e.target.value.split(",").map((t) => t.trim().toUpperCase()).filter(Boolean),
+              })}
+              style={{ fontSize: 11 }}
+            />
+            <span style={HINT}>
+              Si pones tickers, la alarma solo mira esos. Es la vía rápida para
+              «avísame de este» y para probar una alarma nueva sin esperar a que
+              aparezca un setup.
+            </span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             <span style={LABEL}>Universo (opcional)</span>
             <span style={HINT}>
               Qué tickers vigilar hoy. Una vez que uno entra, se queda dentro el resto
@@ -356,6 +374,64 @@ export function AlarmsPanel() {
                      style={{ fontSize: 11 }} />
               <span style={HINT}>Sin tope, un fade que oscila alrededor del VWAP avisa diez veces por hora.</span>
             </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <span style={LABEL}>Stop y tamaño en el aviso (opcional)</span>
+            <span style={HINT}>
+              Todo esto es calculable sin saber si estás dentro: el nivel del stop
+              es un dato de mercado y el riesgo es configuración.
+            </span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <Select
+                value={draft.sizing?.stop_ref ?? ""}
+                onChange={(e) => setDraft({
+                  ...draft, sizing: { ...draft.sizing, stop_ref: e.target.value || undefined },
+                })}
+                style={{ flex: 2, minWidth: 150, fontSize: 11 }}
+              >
+                <option value="">Sin stop en el aviso</option>
+                {catalog?.fields.filter((f) => f.unit === "$").map((f) => (
+                  <option key={f.key} value={f.key}>Stop en {f.label.toLowerCase()}</option>
+                ))}
+              </Select>
+              <Input type="number" step="any" placeholder="% offset"
+                     value={String(draft.sizing?.stop_offset_pct ?? "")}
+                     onChange={(e) => setDraft({
+                       ...draft,
+                       sizing: { ...draft.sizing, stop_offset_pct: Number(e.target.value) },
+                     })}
+                     style={{ width: 84, fontSize: 11 }} />
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <Input type="number" step="any" placeholder="Riesgo $ por trade"
+                     value={String(draft.sizing?.risk_usd ?? "")}
+                     onChange={(e) => setDraft({
+                       ...draft,
+                       sizing: { ...draft.sizing, risk_usd: Number(e.target.value) || undefined },
+                     })}
+                     style={{ flex: 1, minWidth: 120, fontSize: 11 }} />
+              <Input type="number" step="any" placeholder="…o nominal $ por trade"
+                     value={String(draft.sizing?.notional_usd ?? "")}
+                     onChange={(e) => setDraft({
+                       ...draft,
+                       sizing: { ...draft.sizing, notional_usd: Number(e.target.value) || undefined },
+                     })}
+                     style={{ flex: 1, minWidth: 120, fontSize: 11 }} />
+            </div>
+            <span style={HINT}>
+              Elige uno de los dos. Con entrada 3,42 $ y stop 3,85 $, «riesgo 300 $»
+              da 697 acciones y «nominal 300 $» da 88: no son lo mismo.
+            </span>
+            {draftSide === "short" && (
+              <Input type="number" step="any" placeholder="Coste por paquete de locates $ (opcional)"
+                     value={String(draft.sizing?.locate_package_cost ?? "")}
+                     onChange={(e) => setDraft({
+                       ...draft,
+                       sizing: { ...draft.sizing, locate_package_cost: Number(e.target.value) || undefined },
+                     })}
+                     style={{ fontSize: 11 }} />
+            )}
           </div>
 
           {error && (
