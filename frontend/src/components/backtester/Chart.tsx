@@ -52,6 +52,8 @@ import {
   calculateAccumDollarVolume,
   calculateDollarVolume,
   calculateSqueeze,
+  calculateSessionFade,
+  calculateFade,
   calculateHeikinAshi,
 } from "@/lib/indicators";
 
@@ -1079,6 +1081,36 @@ export default function Chart({
                 const d = calculateSqueeze(deduped, inst.params.minutes ?? 5);
                 if (d.length > 0) {
                   const s = subChart.addSeries(LineSeries, { color: "#c026d3", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              // Los fades se pintan con la linea del 0: por encima es caida y
+              // por debajo es que el precio esta sobre la referencia, que es
+              // justo lo que se quiere ver de un vistazo.
+              case "SESSION_FADE_PM":
+              case "SESSION_FADE_RTH":
+              case "SESSION_FADE_FULL": {
+                const d = calculateSessionFade(
+                  deduped,
+                  inst.indicatorId === "SESSION_FADE_RTH" ? "rth"
+                    : inst.indicatorId === "SESSION_FADE_FULL" ? "full" : "pm",
+                );
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#f97316", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "FADE_PREV_MAX":
+              case "FADE_VWAP": {
+                const d = calculateFade(
+                  deduped, inst.indicatorId === "FADE_VWAP" ? "vwap_cross" : "previous_max",
+                );
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#e11d48", lineWidth: 2 });
                   s.setData(d);
                   s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
                 }

@@ -117,7 +117,13 @@ class IndicatorType(str, Enum):
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
     PM_HIGH_GAP = "PM High Gap (%)"
     CURRENT_GAP = "Current Gap (%)"
-    
+    # Caida de una sesion entera, congelada: del maximo de la sesion a la
+    # apertura de la siguiente (PM->open de mercado, o RTH->open del after).
+    SESSION_FADE = "% Session Fade"
+    # Caida viva desde una referencia que se reancla sola: el maximo previo o
+    # el VWAP en la vela en que el precio lo cruzo.
+    FADE = "% Fade"
+
     # Time / Others
     TIME_OF_DAY = "Time of Day"
     RANGE_OF_TIME = "Range of Time"
@@ -255,7 +261,14 @@ class IndicatorConfig(BaseModel):
     min_pivots: Optional[int] = None
     # "Elapsed time from last High": ancla del reloj — "full" (día completo,
     # comportamiento histórico), "pm" (PMH del día) o "rth" (máximo RTH).
+    # "% Session Fade" reutiliza este campo para elegir la sesión que se desinfla:
+    # "pm" (PM High -> apertura de mercado) o "rth" (máximo RTH -> apertura del
+    # after). "full" no aplica ahí y se trata como "pm".
     session_ref: Optional[Literal["full", "pm", "rth"]] = None
+    # "% Fade": desde dónde se mide la caída. "previous_max" usa el máximo previo
+    # (con la sesión de `ap_session`); "vwap_cross" usa el precio del VWAP en la
+    # vela en que el precio lo cruzó por última vez.
+    fade_ref: Optional[Literal["previous_max", "vwap_cross"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

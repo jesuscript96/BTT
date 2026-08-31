@@ -1728,3 +1728,134 @@ Incluye días con más de 400 velas de señal. Esto confirma que los acumulados
 causales que se metieron en su día (PM High/Low, RTH High/Low/Open, PM High Gap)
 están bien: **ninguno filtra futuro**. Es una red de seguridad que conviene
 volver a pasar si alguien toca los indicadores de sesión.
+
+## 2026-08-31 — Dos indicadores de caída, y tres decisiones de rama
+
+### 1. Indicadores nuevos: «% Session Fade» y «% Fade»
+
+Los pidió Jaume para operar el desinflado de los gaps. Los dos devuelven un
+**porcentaje de CAÍDA en positivo**, para que la condición se lea igual que se
+dice en voz alta («se desinfló más de un 20%» → `% Fade > 20`). Negativo
+significa que el precio está por encima de la referencia.
+
+**`% Session Fade`** — caída de una sesión ENTERA, congelada. Parámetro
+`session_ref`:
+
+| Modo | Fórmula | Existe a partir de |
+|---|---|---|
+| `pm` | `(PM High − apertura de mercado) / PM High × 100` | 09:30 |
+| `rth` | `(máx. RTH − apertura del After) / máx. RTH × 100` | 16:00 |
+| `full` | `(máx. del día 04:00-16:00 − apertura del After) / máx. × 100` | 16:00 |
+
+El modo `full` mide el **desinflado real del día**, sin que importe si el máximo
+se hizo en premarket o en la sesión regular. Cuando el máximo del día es el PM
+High —lo normal en un gap que se muere— `full` y `rth` dan números muy
+distintos, y `full` es el que describe lo que pasó de verdad.
+
+**Es causal sin necesidad de trucos**, y conviene entender por qué: la apertura
+de la sesión siguiente es NaN hasta que esa sesión abre, y para entonces el
+máximo de referencia ya está cerrado y no puede cambiar. Antes de ese instante
+el indicador no existe y cualquier condición que lo use evalúa False. No se
+puede saber el fade del premercado a las 07:00, y el indicador lo refleja.
+
+**`% Fade`** — caída VIVA, con una referencia que se reancla sola. Parámetro
+`fade_ref`:
+
+- `previous_max` → `(máximo previo − close) / máximo previo × 100`. Usa
+  `ap_session` igual que «Previous Max», y el mismo `shift(1)` (el máximo no
+  incluye la barra actual). Cada máximo nuevo devuelve el fade a cero.
+- `vwap_cross` → `(VWAP de la vela del último cruce − close) / ese VWAP × 100`.
+  La referencia es el VWAP **de la vela en que el precio cruzó**, no el VWAP
+  vivo: por eso el fade sigue creciendo aunque el VWAP también baje. Se reancla
+  en cada cruce nuevo. NaN antes del primer cruce del día.
+
+Un detalle que costó pensar: en el cruce del VWAP, un NaN a cualquiera de los
+dos lados **no cuenta como cruce**. Sin ese guardia, la primera vela con volumen
+(el VWAP pasa de NaN a número) se contaría como un cruce falso y anclaría ahí.
+
+**Las 17 capas tocadas** (el mapa completo, por si sirve para el siguiente):
+
+- Backend: `schemas/strategy.py` (enum + `fade_ref`), `services/indicators.py`
+  (3 helpers nuevos + 2 ramas de cálculo), `backtester/engine.py` (motor
+  legacy), `services/strategy_engine.py` (reenvío del parámetro en
+  `_compute_from_config` — si falta, el parámetro se pierde en silencio),
+  `api_public/.../catalog.py`.
+- Frontend: `types/strategy.ts`, `ConditionBuilder.tsx` (categoría, etiqueta,
+  descripción, defectos y los dos selectores), `WizardStrategyBuilder.tsx`,
+  `indicatorRegistry.ts`, `lib/indicators.ts`, `Chart.tsx`,
+  `IndicatorDropdown.tsx`, `indicatorValidation.ts`, `assistant/schemas.ts`,
+  `assistant/strategyGuard.ts`, `InlineStrategyBuilder.tsx`,
+  `StrategiesTable.tsx`.
+
+No hacen falta en `optimization_service.py`: sus dos parámetros son texto, no
+números, así que no hay nada que barrer.
+
+**Van por el camino clásico a propósito.** Ninguno está en
+`_RAW_INDICATOR_DISPATCH`, así que una estrategia que los use da
+`has_special=True` y se va entera a la vía legacy: **correcta, solo que sin el
+acelerón**. Meterlos en el dispatch sería una optimización, nunca una
+corrección.
+
+**De propina, una limpieza.** El mismo `if` de «este indicador es un
+porcentaje» estaba copiado literal en **cinco sitios** de cuatro ficheros, y ya
+se habían desincronizado: Squeeze llevaba el sufijo `%` en el resumen del
+`ConditionBuilder` pero no en el del wizard, el de la tabla ni el del
+`InlineStrategyBuilder`. Ahora hay dos predicados exportados,
+`isPercentIndicator` e `isMeasureIndicator`, y las cinco copias los usan. Efecto
+lateral visible: **Squeeze ya muestra el `%` en los cuatro resúmenes**.
+
+### 2. Verificación
+
+- **`backend/tests/test_fade_indicators.py`, 15 tests.** Aritmética de los
+  cuatro modos, causalidad, reanclaje, y **paridad `services/indicators.py` ↔
+  `backtester/engine.py`** (incluido un día aleatorio de 480 velas, no solo
+  casos escritos a mano).
+- **Paridad gráfico ↔ backend, medida.** La regla del repo tras lo de Darvas.
+  540 velas dispersas de un día real (35% de minutos ausentes, velas con volumen
+  0), los cuatro modos: **1.441 valores comparados, cero divergencias**, y los
+  NaN caen exactamente en las mismas velas. Se comparó el JS **compilado del
+  fichero real**, no una copia a mano.
+- `tsc --noEmit`: 0 errores. Suite del backend: **sin regresiones** (los 103
+  fallos de este árbol son los mismos con y sin el cambio — dependen del lago
+  local y de GCS; se comprobó con `git stash`).
+
+**Ojo con una trampa al medir esto:** `test_run_backtest_slab_equivalence` pasa
+en un worktree limpio y falla en el árbol de trabajo, porque depende del estado
+local del lago. Parece una regresión y no lo es. La única forma honesta de
+comparar es con el mismo árbol, no con dos.
+
+### 3. `Previous max` / `Previous min`: bucle por barra → vectorizado
+
+Los dos hacían un bucle Python barra a barra. Ahora comparten helper
+(`_previous_extreme_series`) con `% Fade`, para que no puedan divergir. **La
+equivalencia está medida**, no supuesta: un test compara el resultado nuevo
+contra una copia literal del bucle viejo, sobre 200 velas aleatorias y en las
+tres sesiones (`ap.PM`, `ap.RTH`, `ap.AM`). Ni un decimal de diferencia — los
+backtests viejos siguen dando lo mismo.
+
+### 4. Para Álvaro: tres commits que Jaume descarta
+
+De la lista de cosas que quedaban por traer de la rama de Álvaro,
+**Jaume descarta estos tres**, hoy, a conciencia. Se anotan aquí por si alguna
+vez algo no cuadra entre las dos ramas y el rastro lleva por aquí:
+
+| Commit | Qué era | Por qué no |
+|---|---|---|
+| `dfb9f04` | profiler fino de sub-fases de `stream_build` (gated) | No le aporta |
+| `bcc75ba` | warmup de indicadores al arrancar | No le aporta |
+| `8cd3ad9` | pestaña «Últimas pruebas» (reabrir runs auto-guardados) | No le aporta |
+
+**No están en ninguna rama viva.** Salen de la etiqueta
+`staging-antes-del-reinicio-2026-08-29` → `f1555b6` si algún día se quieren.
+Esto no es un juicio sobre el código: es que Jaume no los necesita.
+
+### 5. Walk Forward: el hueco del stop estructural se cierra como «no aplica»
+
+Quedaba abierto que **con un stop de estructura no se puede optimizar nada del
+stop**, porque el generador hace `float(hs["value"])` y el valor es texto
+(`"Previous Max"`). Se había apuntado que merecía un PRD.
+
+**Jaume lo cierra: no lo merece.** Un stop por «Premarket High» o «Previous Max»
+es un **punto fijo del gráfico** — no hay nada que barrer, porque el nivel
+siempre va a ser el mismo. Optimizar tiene sentido para un stop en %, y eso ya
+funciona. Queda fuera de alcance por decisión de producto, no por dificultad.
