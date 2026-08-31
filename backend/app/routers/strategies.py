@@ -42,6 +42,8 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
                 # Solo se escribe la clave si la estrategia piramida, para que
                 # una definicion sin piramide quede byte-identica a las de antes.
                 **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
+                # Igual con el modelo avanzado: sin el, la definicion no cambia.
+                **({"advanced_model": strategy.advanced_model} if strategy.advanced_model else {}),
             })
 
             con.execute(
@@ -105,6 +107,8 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                 # Solo se escribe la clave si la estrategia piramida, para que
                 # una definicion sin piramide quede byte-identica a las de antes.
                 **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
+                # Igual con el modelo avanzado: sin el, la definicion no cambia.
+                **({"advanced_model": strategy.advanced_model} if strategy.advanced_model else {}),
             })
 
             con.execute(

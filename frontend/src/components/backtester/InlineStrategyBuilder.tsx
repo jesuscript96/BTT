@@ -6,6 +6,7 @@ import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
 import { PyramidingBuilder } from "@/components/strategy-builder/PyramidingBuilder";
+import { AdvancedModelBuilder, AdvancedModelConfig, initialAdvancedModel } from "@/components/strategy-builder/AdvancedModelBuilder";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
   initialEntryLogic,
@@ -153,6 +154,8 @@ export interface Draft {
   universe_filters?: any;
   // Solo presente si la piramidación está activa con niveles (regla nº1).
   pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[] };
+  // Igual que pyramiding: solo viaja si el bloque está encendido.
+  advanced_model?: any;
 }
 
 function getGroupSummaryText(group: ConditionGroup): string {
@@ -429,6 +432,7 @@ export default function InlineStrategyBuilder({
       // se consideran "la misma" y el bloque no se repuebla al cambiar de una
       // a otra.
       pyramiding: stratObj.pyramiding,
+      advanced_model: (stratObj as any).advanced_model,
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -449,6 +453,11 @@ export default function InlineStrategyBuilder({
       setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) });
     } else {
       setPyramiding(initialPyramiding);
+    }
+    if ((stratObj as any).advanced_model) {
+      setAdvancedModel({ ...initialAdvancedModel, active: true, ...(stratObj as any).advanced_model });
+    } else {
+      setAdvancedModel(initialAdvancedModel);
     }
     if (stratObj.market_sessions) {
       setLocalMarketSessions(stratObj.market_sessions);
@@ -583,6 +592,11 @@ export default function InlineStrategyBuilder({
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(stratObj?.entry_logic || initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(stratObj?.exit_logic || initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
+  const [advancedModel, setAdvancedModel] = useState<AdvancedModelConfig>(
+    (stratObj as any)?.advanced_model
+      ? { ...initialAdvancedModel, active: true, ...(stratObj as any).advanced_model }
+      : initialAdvancedModel
+  );
   const [pyramiding, setPyramiding] = useState<PyramidingConfig>(
     stratObj?.pyramiding
       ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) }
@@ -701,11 +715,32 @@ export default function InlineStrategyBuilder({
       dataset_id: resolvedDatasetId,
       universe_filters: universeFilters,
       ...pyramidingForPayload(),
+      ...advancedModelForPayload(),
     });
-  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, advancedModel, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
 
   // La clave `pyramiding` solo viaja si el toggle está ON y hay niveles con
   // condiciones: sin piramidar, el draft queda EXACTAMENTE como siempre.
+  // Misma regla que la piramidacion: la clave solo viaja si el bloque esta
+  // encendido Y tiene con que trabajar. Apagado, la definicion queda
+  // byte-identica a las de siempre y el backtest corre por el camino normal.
+  const advancedModelForPayload = () =>
+    advancedModel.active && (advancedModel.features.length > 0 || advancedModel.hmm_enabled)
+      ? { advanced_model: {
+            enabled: true,
+            mode: advancedModel.mode,
+            train_from: advancedModel.train_from,
+            train_to: advancedModel.train_to,
+            test_from: advancedModel.test_from,
+            test_to: advancedModel.test_to,
+            threshold: advancedModel.threshold,
+            features: advancedModel.features,
+            hmm_enabled: advancedModel.hmm_enabled,
+            hmm_states: advancedModel.hmm_states,
+            compare_without_model: advancedModel.compare_without_model,
+          } }
+      : {};
+
   const pyramidingForPayload = () =>
     pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
       ? { pyramiding: {
@@ -727,6 +762,7 @@ export default function InlineStrategyBuilder({
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
     setPyramiding(initialPyramiding);
+    setAdvancedModel(initialAdvancedModel);
     setTempFromTime("09:30");
     setTempToTime("16:00");
   };
@@ -754,6 +790,7 @@ export default function InlineStrategyBuilder({
       dataset_id: resolvedDatasetId,
       universe_filters: universeFilters,
       ...pyramidingForPayload(),
+      ...advancedModelForPayload(),
     } as any;
   };
 
@@ -2345,6 +2382,8 @@ export default function InlineStrategyBuilder({
         <div data-helper="st-risk" style={{ display: 'contents' }}>
         <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} bias={bias} />
         </div>
+        {/* Modelos avanzados: el ultimo bloque, debajo de "Otros parametros". */}
+        <AdvancedModelBuilder config={advancedModel} onChange={setAdvancedModel} />
       </div>
 
       {/* Strategy Summary Panel */}

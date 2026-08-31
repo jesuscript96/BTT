@@ -9,6 +9,8 @@ import pandas as pd
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
+
+from app.services.advanced_backtest import AdvancedModelError
 from pydantic import BaseModel
 
 from app.services.data_service import (
@@ -178,6 +180,16 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         strategy_def = strategy["definition"]
         preconditions = strategy_def.get("postgap_preconditions", [])
         apply_day = strategy_def.get("apply_day", "gap_day")
+
+        # Modelos avanzados: se valida AQUI, antes de cargar un solo dato.
+        # Una configuracion imposible (fechas solapadas, sin features) tiene que
+        # fallar en un segundo, no despues de varios minutos de lago.
+        from app.services.advanced_backtest import parse_config as _parse_modelo
+        _sdef_modelo = strategy["definition"]
+        _cfg_modelo = _parse_modelo(_sdef_modelo.get("advanced_model")
+                                    if isinstance(_sdef_modelo, dict) else None)
+        if _cfg_modelo is not None:
+            logger.info("[MODELO] bloque activo, modo=%s", _cfg_modelo["mode"])
 
         # ── PHASE 1: qualifying data (from local cache — fast) ──
         t_fetch = time.time()
@@ -366,8 +378,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         custom_start_time = req.custom_start_time or _sdef.get("custom_start_time")
         custom_end_time = req.custom_end_time or _sdef.get("custom_end_time")
 
-        results = run_backtest(
-            qualifying_df=qualifying,
+        _bt_kwargs = dict(
             strategy_def=strategy_def,
             init_cash=req.init_cash,
             risk_r=req.risk_r,
@@ -384,11 +395,47 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locate_type=req.locate_type,
             max_locates=req.max_locates,
             look_ahead_prevention=req.look_ahead_prevention,
-            day_group_iter=intraday_stream,
-            n_groups_hint=n_qualifying,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,
         )
+
+        # ── Modelos avanzados (2026-08-31) ────────────────────────────────
+        # Sin el bloque `advanced_model`, esto es EXACTAMENTE la llamada de
+        # siempre: mismos argumentos, mismo stream, mismo resultado.
+        if _cfg_modelo is None:
+            results = run_backtest(
+                qualifying_df=qualifying,
+                day_group_iter=intraday_stream,
+                n_groups_hint=n_qualifying,
+                **_bt_kwargs,
+            )
+        else:
+            # Cada pasada necesita su PROPIO stream: `intraday_stream` es un
+            # generador de un solo uso y el de arriba ya no sirve. Se crea uno
+            # por ventana, y acotado a las fechas de esa ventana — asi la pasada
+            # de entrenamiento no arrastra los meses de la de prueba ni al reves.
+            from app.services.advanced_backtest import run_with_model
+
+            def _pasada(qualifying_df=None, **extra):
+                if qualifying_df is None or qualifying_df.empty:
+                    return {"trades": [], "aggregate_metrics": {}, "day_results": [],
+                            "equity_curves": []}
+                _f = qualifying_df["date"].astype(str)
+                stream = _tracked_stream(
+                    get_intraday_stream(qualifying_df, _f.min(), _f.max()))
+                return run_backtest(
+                    qualifying_df=qualifying_df,
+                    day_group_iter=stream,
+                    n_groups_hint=len(qualifying_df),
+                    **_bt_kwargs,
+                    **extra,
+                )
+
+            logger.info("[MODELO] modo=%s entrena %s→%s, prueba %s→%s",
+                        _cfg_modelo["mode"], _cfg_modelo["train_from"],
+                        _cfg_modelo["train_to"], _cfg_modelo["test_from"],
+                        _cfg_modelo["test_to"])
+            results = run_with_model(_cfg_modelo, qualifying, _pasada, {})
 
         backtest_progress[req.dataset_id] = {
             "status": "completed",
@@ -462,6 +509,14 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         )
     except HTTPException:
         raise
+    except AdvancedModelError as e:
+        # Un modelo mal configurado (fechas que se solapan, sin features, un
+        # periodo de entrenamiento vacio) es culpa de la configuracion, no un
+        # fallo del servidor. Va como 400 y con el texto tal cual, porque el
+        # diagnostico del frontend pinta los 5xx como "Response Data: {}" y
+        # parece un error mudo.
+        logger.warning("[MODELO] configuracion invalida: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         if isinstance(e, RuntimeError) and str(e) == "BACKTEST_CANCELLED":
             from app.routers.backtest import backtest_progress

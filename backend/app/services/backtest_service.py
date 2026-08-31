@@ -168,6 +168,16 @@ def run_backtest(
     monthly_expenses: float = 0.0,
     _signal_cache: dict | None = None,
     progress_callback=None,
+    # ── Modelos avanzados (2026-08-31) ────────────────────────────────────
+    # Los dos son OPCIONALES y, en None, esta funcion se comporta EXACTAMENTE
+    # igual que siempre: ni una rama nueva se ejecuta.
+    #   · entry_model      — veta entradas que no superan el umbral del modelo.
+    #                        Es una mascara sobre `entries`, igual que el swing.
+    #   · feature_collector — recoge material de entrenamiento durante la
+    #                        pasada, para no tener que recorrer los datos dos
+    #                        veces.
+    entry_model=None,
+    feature_collector=None,
 ) -> dict:
     if strategy_def:
         rm = strategy_def.get("risk_management", {})
@@ -823,6 +833,41 @@ def run_backtest(
             if len(entries_arr) == len(is_subsequent_np):
                 entries_arr = entries_arr.copy()
                 entries_arr[is_subsequent_np] = False
+
+        # ── Modelos avanzados ─────────────────────────────────────────────
+        # DESPUES del swing, y el orden importa (lo pidio Jaume el 31-ago).
+        #
+        # Con swing activo el frame abarca VARIOS dias: el del gap y los
+        # siguientes, para que un trade cerrado en EOD pueda continuar. El
+        # filtro de swing es el que impide ABRIR posiciones nuevas en esos dias
+        # posteriores; la posicion abierta sigue su curso y esto no la toca.
+        #
+        # Si el modelo corriera antes, juzgaria señales de dias que el swing va
+        # a descartar igualmente: entrenaria con ruido y el informe de "entradas
+        # vetadas" mentiria. Corriendo despues ve exactamente las mismas
+        # candidatas que acabarian en operacion.
+        #
+        # Son dos mecanismos independientes y separados a proposito: el swing
+        # decide QUE DIAS pueden abrir, el modelo decide CUALES de esas merecen
+        # la pena. Al tocar uno, no hay que mirar el otro.
+        if feature_collector is not None and np.any(entries_arr):
+            try:
+                feature_collector.collect(ticker, date, entries_arr, mini_df, daily_stats)
+            except Exception:
+                logger.exception("[MODELO] fallo recogiendo features en %s %s", ticker, date)
+        if entry_model is not None and np.any(entries_arr):
+            try:
+                # El modelo solo QUITA entradas, nunca añade: el peor caso es
+                # operar menos, jamas operar algo que las reglas no encontraron.
+                entries_arr = entry_model.mask(entries_arr, mini_df, daily_stats)
+            except Exception:
+                # Un fallo del modelo no puede inventar operaciones: este dia se
+                # queda sin entradas y el backtest sigue.
+                logger.exception("[MODELO] fallo aplicando el veto en %s %s", ticker, date)
+                entries_arr = np.zeros_like(entries_arr, dtype=bool)
+            if not np.any(entries_arr):
+                del mini_df
+                continue
 
         # --- Trim DataFrame and signals to the selected market session window ---
         # This is done AFTER signal translation so indicators have full-day context.

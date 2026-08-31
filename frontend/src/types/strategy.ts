@@ -319,6 +319,9 @@ export interface Strategy {
     risk_management: RiskManagement;
     // Solo presente si la piramidación está activa y con niveles válidos.
     pyramiding?: { timeframe: Timeframe; mode?: 'individual' | 'sequential'; levels: PyramidLevel[] };
+    // Modelos avanzados (XGBoost / HMM). Solo presente si el bloque esta
+    // encendido; sin el, la estrategia es identica a las de siempre.
+    advanced_model?: any;
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
