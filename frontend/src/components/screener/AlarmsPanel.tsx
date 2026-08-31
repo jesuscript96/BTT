@@ -18,8 +18,8 @@ import { Button, Input, Select } from "@/components/ui";
 import {
   Alarm, AlarmCatalog, AlarmCondition, AlarmDefinition,
   createAlarm, createTelegramLink, deleteAlarm, getAlarmCatalog,
-  getTelegramStatus, listAlarms, sendTelegramTest, TelegramStatus,
-  unlinkTelegram, updateAlarm,
+  getTelegramStatus, listAlarms, replayAlarm, type ReplayResult, sendTelegramTest,
+  TelegramStatus, unlinkTelegram, updateAlarm,
 } from "@/lib/api_alarms";
 
 const LABEL: React.CSSProperties = {
@@ -124,6 +124,10 @@ export function AlarmsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [testSent, setTestSent] = useState(false);
+  const [replayTicker, setReplayTicker] = useState("");
+  const [replayDate, setReplayDate] = useState("");
+  const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+  const [replaying, setReplaying] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -436,6 +440,57 @@ export function AlarmsPanel() {
 
           {error && (
             <span style={{ fontSize: 11.5, color: "var(--color-ec-loss)" }}>{error}</span>
+          )}
+
+          {/* Probar contra un día pasado. Es la única forma de probar el motor
+              cuando el WebSocket de Massive no está disponible en este entorno
+              (la cuenta solo admite una conexión por clave). */}
+          {editing.id && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5,
+                          paddingTop: 10, borderTop: "1px solid var(--color-ec-border)" }}>
+              <span style={LABEL}>Probar con un día pasado</span>
+              <div style={ROW}>
+                <Input placeholder="Ticker" value={replayTicker}
+                       onChange={(e) => setReplayTicker(e.target.value.toUpperCase())}
+                       style={{ width: 96, fontSize: 11 }} />
+                <Input type="date" value={replayDate}
+                       onChange={(e) => setReplayDate(e.target.value)}
+                       style={{ fontSize: 11 }} />
+                <Button variant="secondary" disabled={replaying || !replayTicker || !replayDate}
+                        style={{ fontSize: 11 }}
+                        onClick={async () => {
+                          setReplaying(true); setReplayResult(null); setError(null);
+                          try {
+                            setReplayResult(await replayAlarm(editing.id, replayTicker, replayDate, true));
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : "No se pudo reproducir.");
+                          } finally { setReplaying(false); }
+                        }}>
+                  {replaying ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : null}
+                  {replaying ? "Reproduciendo…" : "Reproducir"}
+                </Button>
+              </div>
+              {replayResult && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4,
+                              padding: 8, borderRadius: 4,
+                              background: "var(--color-ec-bg-surface)" }}>
+                  <span style={{ fontSize: 11.5, color: "var(--color-ec-text-high)" }}>
+                    {replayResult.bars} barras · universo{" "}
+                    {replayResult.entered_universe ? "superado" : "NO superado"} ·{" "}
+                    <b>{replayResult.signals.length} señal(es)</b>
+                  </span>
+                  {replayResult.signals.slice(0, 5).map((sig, i) => (
+                    <span key={i} style={{ fontSize: 11, fontFamily: "monospace",
+                                           color: "var(--color-ec-copper)" }}>
+                      {sig.fired_minute} ET @ {sig.price}
+                      {sig.sizing?.stop ? ` · stop ${sig.sizing.stop}` : ""}
+                      {sig.sizing?.shares ? ` · ${sig.sizing.shares} acc.` : ""}
+                    </span>
+                  ))}
+                  <span style={HINT}>{replayResult.note}</span>
+                </div>
+              )}
+            </div>
           )}
 
           <div style={{ ...ROW, justifyContent: "flex-end" }}>

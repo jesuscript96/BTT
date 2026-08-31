@@ -101,6 +101,38 @@ export const listAlarmEvents = (sessionDate?: string) =>
     `/alarms/events/list${sessionDate ? `?session_date=${sessionDate}` : ""}`,
   ).then((r) => r.events);
 
+export interface ReplaySignal {
+  ticker: string;
+  price: number | null;
+  fired_minute: string;
+  reasons: string[];
+  sizing: Record<string, number | undefined>;
+  message: string;
+}
+
+export interface ReplayResult {
+  ticker: string;
+  date: string;
+  mode: string;
+  bars: number;
+  prev_close: number | null;
+  entered_universe: boolean;
+  signals: ReplaySignal[];
+  delivered?: boolean;
+  note: string;
+}
+
+/**
+ * Pasa un día real por el motor y devuelve lo que HABRÍA avisado.
+ * No es un backtest: no simula ejecuciones ni calcula rendimiento.
+ */
+export const replayAlarm = (id: string, ticker: string, date: string, deliver = false) =>
+  apiRequest<ReplayResult>(`/alarms/${id}/replay`, {
+    method: "POST",
+    body: JSON.stringify({ ticker, date, deliver }),
+    timeoutMs: 60_000,
+  });
+
 export const getTelegramStatus = () => apiRequest<TelegramStatus>("/alarms/telegram/status");
 
 export const createTelegramLink = () =>
