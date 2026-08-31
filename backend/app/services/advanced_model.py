@@ -231,6 +231,9 @@ class TrainedModel:
     # entero de espera. Es LA cifra que dice si el umbral está bien puesto.
     n_seen: int = 0
     n_kept: int = 0
+    # True en modo «estrategia»: el modelo PONE las entradas en vez de
+    # filtrarlas. El motor lo consulta para no saltarse los dias sin señales.
+    generates: bool = False
 
     def score(self, df: pd.DataFrame, daily_stats: dict | None,
               cache: dict | None = None) -> np.ndarray:
@@ -258,6 +261,95 @@ class TrainedModel:
         self.n_kept += int(filtradas.sum())
         return filtradas
 
+    def generate(self, df: pd.DataFrame, daily_stats: dict | None,
+                 cache: dict | None = None) -> np.ndarray:
+        """Modo «estrategia»: las entradas las pone el modelo, no las reglas.
+
+        A diferencia de `mask`, aquí no hay nada que filtrar — se decide vela a
+        vela. Las SALIDAS siguen viniendo de la gestión de riesgo (stop, take
+        profit, hora): el modelo dice cuándo entrar, no cuándo salir.
+        """
+        p = self.score(df, daily_stats, cache)
+        entradas = p >= self.threshold
+        # La última vela no puede abrir posición: el relleno va en la apertura
+        # de la siguiente y no existe.
+        if len(entradas):
+            entradas[-1] = False
+        self.n_seen += len(entradas)
+        self.n_kept += int(entradas.sum())
+        return entradas
+
+
+def label_triple_barrier(
+    df: pd.DataFrame, candidatos: np.ndarray, direccion: str,
+    sl_stop: float | None, tp_stop: float | None, horizonte: int,
+) -> np.ndarray:
+    """¿Habría salido bien entrar en esta vela? 1 = sí, 0 = no, -1 = no se sabe.
+
+    Simula desde cada vela candidata con **el stop y el take profit que ha
+    puesto el usuario** —los mismos valores que `_parse_risk_management` le da
+    al simulador, no una interpretación aparte— y mira qué pasa PRIMERO:
+
+        toca el objetivo  → 1
+        toca el stop      → 0
+        se acaba el plazo → el signo de lo que llevara
+
+    Por qué esto y no «¿subió un X% en N minutos?»: ese atajo **ignora el
+    camino**. Una vela desde la que el precio primero cae un 20% (te salta el
+    stop, estás fuera) y luego sube un 5% saldría etiquetada como BUENA. El
+    modelo aprendería a buscar justo esas, y en real comerías stop tras stop
+    mientras el backtest presume de aciertos.
+
+    Si en la misma vela se tocan los dos, gana el STOP: es lo pesimista, y con
+    velas de un minuto no se puede saber cuál llegó antes.
+    """
+    n = len(df)
+    if n == 0 or candidatos.size == 0:
+        return np.empty(0, dtype=np.int8)
+
+    open_ = np.asarray(df["open"], dtype=np.float64)
+    high = np.asarray(df["high"], dtype=np.float64)
+    low = np.asarray(df["low"], dtype=np.float64)
+    close = np.asarray(df["close"], dtype=np.float64)
+    corto = str(direccion).lower() in ("short", "corto", "-1")
+
+    etiquetas = np.full(candidatos.size, -1, dtype=np.int8)
+    for k, i in enumerate(candidatos):
+        # El relleno va en la apertura de la vela SIGUIENTE, igual que el motor.
+        j = int(i) + 1
+        if j >= n:
+            continue
+        entrada = open_[j]
+        if not np.isfinite(entrada) or entrada <= 0:
+            continue
+        fin = min(n, j + horizonte) if horizonte > 0 else n
+        if fin <= j:
+            continue
+
+        if corto:
+            nivel_stop = entrada * (1 + sl_stop) if sl_stop else None
+            nivel_tp = entrada * (1 - tp_stop) if tp_stop else None
+            toca_stop = (high[j:fin] >= nivel_stop) if nivel_stop else None
+            toca_tp = (low[j:fin] <= nivel_tp) if nivel_tp else None
+        else:
+            nivel_stop = entrada * (1 - sl_stop) if sl_stop else None
+            nivel_tp = entrada * (1 + tp_stop) if tp_stop else None
+            toca_stop = (low[j:fin] <= nivel_stop) if nivel_stop else None
+            toca_tp = (high[j:fin] >= nivel_tp) if nivel_tp else None
+
+        i_stop = int(np.argmax(toca_stop)) if toca_stop is not None and toca_stop.any() else None
+        i_tp = int(np.argmax(toca_tp)) if toca_tp is not None and toca_tp.any() else None
+
+        if i_stop is not None and (i_tp is None or i_stop <= i_tp):
+            etiquetas[k] = 0          # empate -> gana el stop (pesimista)
+        elif i_tp is not None:
+            etiquetas[k] = 1
+        else:
+            salida = close[fin - 1]
+            ganancia = (salida - entrada) if not corto else (entrada - salida)
+            etiquetas[k] = 1 if ganancia > 0 else 0
+    return etiquetas
+
 
 @dataclass
 class FeatureCollector:
@@ -273,8 +365,14 @@ class FeatureCollector:
     """
     feature_defs: list[dict]
     con_hmm: bool = False
+    # Modo "standalone": no hay reglas de entrada, asi que las candidatas no las
+    # marca la estrategia. Se muestrea el dia (una de cada `paso` velas) y cada
+    # muestra se etiqueta con la triple barrera del stop/TP del usuario.
+    standalone: bool = False
+    muestras_por_dia: int = 120
     _filas: dict = field(default_factory=dict)       # (ticker, date) -> (idx, X)
     _obs: dict = field(default_factory=dict)         # (ticker, date) -> obs
+    _etiquetas: dict = field(default_factory=dict)   # (ticker, date) -> y
 
     def collect(self, ticker: str, date: str, entries: np.ndarray,
                 df: pd.DataFrame, daily_stats: dict | None,
@@ -285,6 +383,35 @@ class FeatureCollector:
         X = build_feature_matrix(df, daily_stats, self.feature_defs, cache)
         self._filas[(ticker, date)] = (candidatos, X[candidatos] if X.size else
                                        np.empty((candidatos.size, 0)))
+        if self.con_hmm:
+            self._obs[(ticker, date)] = hmm_observations(df)
+
+    def collect_standalone(self, ticker: str, date: str, df: pd.DataFrame,
+                           daily_stats: dict | None, direccion: str,
+                           sl_stop: float | None, tp_stop: float | None,
+                           horizonte: int, cache: dict | None = None) -> None:
+        """Material de entrenamiento cuando NO hay reglas de entrada.
+
+        Se muestrea el día en vez de coger las ~700 velas: con miles de días,
+        guardarlas todas son cientos de megas y no aporta nada — velas
+        consecutivas se parecen tanto que la número 301 no enseña nada nuevo
+        sobre la 300.
+        """
+        n = len(df)
+        if n < 3:
+            return
+        paso = max(1, n // max(1, self.muestras_por_dia))
+        candidatos = np.arange(0, n - 1, paso, dtype=np.int64)
+        y = label_triple_barrier(df, candidatos, direccion, sl_stop, tp_stop, horizonte)
+        util = y >= 0                      # -1 = no se pudo etiquetar
+        if not util.any():
+            return
+        candidatos, y = candidatos[util], y[util]
+
+        X = build_feature_matrix(df, daily_stats, self.feature_defs, cache)
+        self._filas[(ticker, date)] = (candidatos, X[candidatos] if X.size else
+                                       np.empty((candidatos.size, 0)))
+        self._etiquetas[(ticker, date)] = y
         if self.con_hmm:
             self._obs[(ticker, date)] = hmm_observations(df)
 
@@ -302,6 +429,30 @@ class FeatureCollector:
         reentradas) **se descartan**, no se marcan como perdedoras: "no se
         ejecutó" no es "salió mal", y meterlas envenenaría el aprendizaje.
         """
+        probas_std: dict = {}
+        if self.standalone:
+            # Las etiquetas ya se calcularon al recoger (triple barrera): aquí
+            # solo hay que pegar las columnas del HMM si las hay.
+            if hmm is not None:
+                for clave, obs in self._obs.items():
+                    probas_std[clave] = hmm_filtered_proba(hmm, obs)
+            filas, etiquetas = [], []
+            for clave, (candidatos, X) in self._filas.items():
+                y = self._etiquetas.get(clave)
+                if y is None or len(y) != len(candidatos):
+                    continue
+                p = probas_std.get(clave)
+                if p is not None:
+                    dentro = candidatos < len(p)
+                    candidatos, X, y = candidatos[dentro], X[dentro], y[dentro]
+                    X = np.column_stack([X, p[candidatos]]) if X.size else p[candidatos]
+                if len(X):
+                    filas.append(X)
+                    etiquetas.append(y)
+            if not filas:
+                return np.empty((0, 0)), np.empty(0), 0
+            return np.vstack(filas), np.concatenate(etiquetas).astype(np.int32), 0
+
         # Trades por día, ordenados por la vela en que abrieron.
         por_dia: dict = {}
         for t in trades:

@@ -91,6 +91,68 @@ def parse_config(raw: dict | None) -> dict | None:
     return cfg
 
 
+def _tiene_condiciones(bloque: dict | None) -> bool:
+    """¿Hay condiciones de verdad, o es un bloque vacío?"""
+    if not isinstance(bloque, dict):
+        return False
+    raiz = bloque.get("root_condition") or bloque.get("conditions")
+    if isinstance(raiz, dict):
+        raiz = raiz.get("conditions")
+    return bool(raiz)
+
+
+def validate_strategy(cfg: dict, strategy_def: dict) -> None:
+    """Comprueba que la estrategia y el modelo no se pisan. Lanza si se pisan.
+
+    En modo «estrategia» el modelo pone las ENTRADAS. Todo lo que también las
+    ponga entra en conflicto, y hay que pararlo ANTES de correr el backtest: si
+    se dejara pasar, el resultado sería una mezcla de dos sistemas y no se
+    sabría de quién es el mérito ni la culpa (petición de Jaume, 31-ago).
+
+    Lo que SÍ se respeta y no se toca: stop loss, take profit (total y
+    parciales), trailing, salida por hora, límite de pérdida diaria,
+    reentradas, locates, comisiones y slippage. Todo eso lo aplica el simulador
+    de siempre, exactamente igual que en cualquier otra estrategia.
+    """
+    if cfg["mode"] != "standalone":
+        return
+
+    choques: list[str] = []
+    if _tiene_condiciones(strategy_def.get("entry_logic")):
+        choques.append("la lógica de ENTRADA (las entradas las pone el modelo)")
+    if _tiene_condiciones(strategy_def.get("exit_logic")):
+        choques.append("la lógica de SALIDA (se sale por stop, take profit u hora)")
+    pyr = strategy_def.get("pyramiding")
+    if isinstance(pyr, dict) and pyr.get("levels"):
+        choques.append("la PIRAMIDACIÓN (añade entradas por condiciones)")
+    rm = strategy_def.get("risk_management") or {}
+    if (rm.get("swing_option") or {}).get("active"):
+        choques.append("la opción SWING (no está contemplada con modelos)")
+
+    if choques:
+        raise AdvancedModelError(
+            "El modo «estrategia» choca con lo que tienes configurado: "
+            + "; ".join(choques)
+            + ". Apaga esos bloques, o cambia el modelo al modo «filtro», que "
+              "sí trabaja SOBRE tus reglas en vez de sustituirlas."
+        )
+
+    # El stop no es un detalle: es lo que hace honesta la etiqueta. Sin él, un
+    # ejemplo se marcaria como bueno aunque por el camino el precio se hubiera
+    # ido un 30% en contra — justo el error que produce backtests preciosos y
+    # cuentas vacias.
+    tiene_stop = bool(rm.get("use_hard_stop") and (rm.get("hard_stop") or {}).get("value"))
+    tiene_trailing = bool((rm.get("trailing_stop") or {}).get("active"))
+    if not (tiene_stop or tiene_trailing):
+        raise AdvancedModelError(
+            "El modo «estrategia» necesita un STOP configurado. Es lo que se usa "
+            "para decidir si una entrada fue buena: sin él, una vela desde la que "
+            "el precio primero se desploma y luego rebota contaría como acierto, "
+            "cuando en real te habría saltado el stop. Pon tu stop y vuelve a "
+            "lanzar."
+        )
+
+
 def _rebanada(qualifying_df: pd.DataFrame, desde: str, hasta: str) -> pd.DataFrame:
     """Los ticker-días de una ventana. Es todo el 'reparto' que hace falta."""
     if qualifying_df is None or qualifying_df.empty:
@@ -102,10 +164,7 @@ def _rebanada(qualifying_df: pd.DataFrame, desde: str, hasta: str) -> pd.DataFra
 def run_with_model(cfg: dict, qualifying_df: pd.DataFrame, run_fn, run_kwargs: dict) -> dict:
     """Las dos pasadas. Devuelve el resultado de la SEGUNDA (el periodo de
     prueba), con un informe del modelo colgado en `advanced_model`."""
-    if cfg["mode"] != "filter":
-        raise AdvancedModelError(
-            "El modo «estrategia» (HMM + features decidiendo por su cuenta) "
-            "todavía no está implementado. Por ahora solo el modo filtro.")
+    standalone = cfg["mode"] == "standalone"
 
     train_qual = _rebanada(qualifying_df, cfg["train_from"], cfg["train_to"])
     test_qual = _rebanada(qualifying_df, cfg["test_from"], cfg["test_to"])
@@ -125,7 +184,8 @@ def run_with_model(cfg: dict, qualifying_df: pd.DataFrame, run_fn, run_kwargs: d
     # ── Pasada 1: entrenamiento ───────────────────────────────────────────
     t0 = time.time()
     collector = FeatureCollector(feature_defs=cfg["features"],
-                                 con_hmm=cfg["hmm_enabled"])
+                                 con_hmm=cfg["hmm_enabled"],
+                                 standalone=standalone)
     res_train = run_fn(qualifying_df=train_qual, feature_collector=collector,
                        **run_kwargs)
     t_train_run = time.time() - t0
@@ -133,7 +193,7 @@ def run_with_model(cfg: dict, qualifying_df: pd.DataFrame, run_fn, run_kwargs: d
     logger.info("[MODELO] pasada de entrenamiento: %d trades en %.1fs",
                 len(trades_train), t_train_run)
 
-    if not trades_train:
+    if not standalone and not trades_train:
         raise AdvancedModelError(
             "La estrategia no hizo ni una operación en el periodo de "
             "entrenamiento, así que no hay nada de lo que aprender. Alarga el "
@@ -157,6 +217,9 @@ def run_with_model(cfg: dict, qualifying_df: pd.DataFrame, run_fn, run_kwargs: d
 
     if len(X) == 0:
         raise AdvancedModelError(
+            "No se pudo etiquetar ni un ejemplo en el periodo de entrenamiento. "
+            "Revisa que el dataset tenga días ahí y que la estrategia tenga stop."
+            if standalone else
             "No se pudo emparejar ninguna señal con su operación. Es raro: "
             "revisa que la estrategia opere de verdad en ese periodo.")
 
@@ -186,7 +249,7 @@ def run_with_model(cfg: dict, qualifying_df: pd.DataFrame, run_fn, run_kwargs: d
         booster=booster, feature_defs=cfg["features"],
         threshold=cfg["threshold"], hmm=hmm, hmm_states=len(hmm_info),
         feature_names=nombres, importances=importances_of(booster, nombres),
-        n_train_rows=len(y), n_train_pos=n_pos,
+        n_train_rows=len(y), n_train_pos=n_pos, generates=standalone,
     )
 
     # ── Pasada 2: prueba, con el veto puesto ──────────────────────────────

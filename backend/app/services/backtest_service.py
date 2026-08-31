@@ -179,6 +179,11 @@ def run_backtest(
     entry_model=None,
     feature_collector=None,
 ) -> dict:
+    # En modo «estrategia» las entradas las pone el modelo, asi que un dia
+    # sin señales de las reglas NO es un dia que saltarse.
+    _modelo_genera = bool(entry_model is not None and getattr(entry_model, 'generates', False))
+    _recoge_standalone = bool(feature_collector is not None and getattr(feature_collector, 'standalone', False))
+    _sin_reglas = _modelo_genera or _recoge_standalone
     if strategy_def:
         rm = strategy_def.get("risk_management", {})
         if rm.get("size_by_sl") is not None:
@@ -779,7 +784,7 @@ def run_backtest(
             sig_pyramid_levels = cached.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
 
-            if not np.any(entries_arr):
+            if not np.any(entries_arr) and not _sin_reglas:
                 del mini_df
                 continue
 
@@ -793,7 +798,7 @@ def run_backtest(
             except Exception:
                 del mini_df
                 continue
-            if not signals["entries"].any():
+            if not signals["entries"].any() and not _sin_reglas:
                 del mini_df, signals
                 continue
 
@@ -850,12 +855,30 @@ def run_backtest(
         # Son dos mecanismos independientes y separados a proposito: el swing
         # decide QUE DIAS pueden abrir, el modelo decide CUALES de esas merecen
         # la pena. Al tocar uno, no hay que mirar el otro.
-        if feature_collector is not None and np.any(entries_arr):
+        if feature_collector is not None:
             try:
-                feature_collector.collect(ticker, date, entries_arr, mini_df, daily_stats)
+                if _recoge_standalone:
+                    # Sin reglas: se muestrea el dia y se etiqueta con TU stop y
+                    # TU take profit, los mismos que acaba de parsear el motor.
+                    _horiz = int(sig_tp_time_limit) if isinstance(sig_tp_time_limit, (int, float)) and sig_tp_time_limit else 0
+                    feature_collector.collect_standalone(
+                        ticker, date, mini_df, daily_stats, sig_direction,
+                        sig_sl_stop, sig_tp_stop, _horiz)
+                elif np.any(entries_arr):
+                    feature_collector.collect(ticker, date, entries_arr, mini_df, daily_stats)
             except Exception:
                 logger.exception("[MODELO] fallo recogiendo features en %s %s", ticker, date)
-        if entry_model is not None and np.any(entries_arr):
+
+        if _modelo_genera:
+            try:
+                entries_arr = entry_model.generate(mini_df, daily_stats)
+            except Exception:
+                logger.exception("[MODELO] fallo generando entradas en %s %s", ticker, date)
+                entries_arr = np.zeros(len(mini_df), dtype=bool)
+            if not np.any(entries_arr):
+                del mini_df
+                continue
+        elif entry_model is not None and np.any(entries_arr):
             try:
                 # El modelo solo QUITA entradas, nunca añade: el peor caso es
                 # operar menos, jamas operar algo que las reglas no encontraron.

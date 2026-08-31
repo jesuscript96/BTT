@@ -148,11 +148,16 @@ export const AdvancedModelBuilder = React.memo(({ config, onChange }: Props) => 
                             style={{ ...CAMPO, width: '100%', cursor: 'pointer' }}
                         >
                             <option value="filter">XGBoost sobre esta estrategia (filtra sus entradas)</option>
-                            <option value="standalone">HMM + features + XGBoost como estrategia — aún no disponible</option>
+                            <option value="standalone">HMM + features + XGBoost como estrategia (el modelo pone las entradas)</option>
                         </select>
                         {config.mode === "standalone" && (
-                            <span style={{ fontSize: 10, color: 'var(--color-ec-copper)', fontFamily: 'var(--color-ec-sans)' }}>
-                                Este modo todavía no está implementado; el backtest se detendrá con ese aviso.
+                            <span style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', fontFamily: 'var(--color-ec-sans)', lineHeight: 1.4 }}>
+                                Las entradas las decide el modelo, así que hay que tener
+                                <strong> apagadas la lógica de entrada, la de salida, la piramidación
+                                y el swing</strong> — si no, el backtest se detiene y te dice cuál
+                                sobra. <strong>Necesita un stop configurado</strong>: es lo que se usa
+                                para decidir si una entrada fue buena. Se sale por tu stop, tu take
+                                profit o tu hora, como en cualquier otra estrategia.
                             </span>
                         )}
                     </div>

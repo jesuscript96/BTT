@@ -189,6 +189,12 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         _cfg_modelo = _parse_modelo(_sdef_modelo.get("advanced_model")
                                     if isinstance(_sdef_modelo, dict) else None)
         if _cfg_modelo is not None:
+            # Y que la estrategia no se pise con el modelo: en modo «estrategia»
+            # las entradas las pone el, asi que una logica de entrada, la
+            # piramidacion o el swing serian dos sistemas compitiendo. Se para
+            # aqui, con el motivo escrito, antes de cargar nada.
+            from app.services.advanced_backtest import validate_strategy as _val_modelo
+            _val_modelo(_cfg_modelo, strategy_def)
             logger.info("[MODELO] bloque activo, modo=%s", _cfg_modelo["mode"])
 
         # ── PHASE 1: qualifying data (from local cache — fast) ──
