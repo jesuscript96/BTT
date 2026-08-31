@@ -74,6 +74,15 @@ export enum IndicatorType {
     // Squeeze: % que ha movido el precio en una ventana de RELOJ (minutos).
     // No es un nivel: es una cifra, asi que solo se compara contra un numero.
     SQUEEZE = "Squeeze",
+
+    // Momentum clasico. El backend ya los calculaba (y por la via rapida), pero
+    // no estaban en ESTE enum, asi que no se podian usar en las condiciones.
+    // Las tres lineas del MACD son nombres distintos, no un parametro: es como
+    // las tiene el motor. `macd_line` de IndicatorConfig no lo lee nadie.
+    RSI = "RSI",
+    MACD = "MACD",
+    MACD_SIGNAL = "MACD Signal",
+    MACD_HISTOGRAM = "MACD Histogram",
 }
 
 export enum Comparator {

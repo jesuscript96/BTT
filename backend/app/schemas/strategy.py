@@ -21,6 +21,13 @@ class IndicatorType(str, Enum):
     # Momentum
     RSI = "RSI"
     MACD = "MACD"
+    # Las tres lineas del MACD son NOMBRES distintos, no un parametro: asi las
+    # tiene `services/indicators.py` y asi las despacha la via rapida
+    # (`_RAW_INDICATOR_DISPATCH`). Faltaban en el enum, asi que guardar una
+    # estrategia con la Signal o el Histograma habria rebotado 422 — el mismo
+    # fallo que tuvo Darvas Box en su dia.
+    MACD_SIGNAL = "MACD Signal"
+    MACD_HISTOGRAM = "MACD Histogram"
     STOCHASTIC = "Stochastic"
     MOMENTUM = "Momentum"
     CCI = "CCI"
@@ -233,6 +240,11 @@ class IndicatorConfig(BaseModel):
     calc_on_heikin: Optional[bool] = False
 
     # Added specific parameters
+    # AJUSTE FANTASMA: nadie lee `macd_line`. No llega a `compute_indicator` ni
+    # existe alli como parametro. La linea del MACD se elige por el NOMBRE del
+    # indicador ("MACD" / "MACD Signal" / "MACD Histogram"). Se conserva el campo
+    # para no invalidar estrategias antiguas que lo lleven en su JSON, pero NO
+    # conectarle una UI: no haria nada.
     macd_line: Optional[Literal["Signal", "MACD Line", "Histogram"]] = None
     band_line: Optional[Literal["Upper", "Lower", "Basis"]] = None
     orb_minutes: Optional[int] = None

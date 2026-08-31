@@ -67,7 +67,14 @@ const ALLOWED_CROSSES_INDICATORS: IndicatorType[] = [
     IndicatorType.LOW_BAR,
     IndicatorType.SMA,
     IndicatorType.EMA,
-    IndicatorType.VWAP
+    IndicatorType.VWAP,
+    // El uso clasico del MACD ES un cruce (linea contra su señal, o el
+    // histograma contra cero), asi que sin esto el indicador queda a medias.
+    IndicatorType.MACD,
+    IndicatorType.MACD_SIGNAL,
+    IndicatorType.MACD_HISTOGRAM,
+    // Y el RSI se cruza contra sus niveles (70/30).
+    IndicatorType.RSI,
 ];
 
 export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
@@ -108,6 +115,15 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         // (cazar el disparo). La ventana va en MINUTOS DE RELOJ, no en velas.
         case IndicatorType.SQUEEZE:
             return { range_minutes: 5, squeeze_direction: "up" };
+        case IndicatorType.RSI:
+            return { period: 14 };
+        // MACD: rapida 12, lenta 26, señal 9 — los periodos clasicos. Los tres
+        // se pasan igual para las tres lineas, porque las tres salen del mismo
+        // calculo; lo unico que cambia es cual de las tres se devuelve.
+        case IndicatorType.MACD:
+        case IndicatorType.MACD_SIGNAL:
+        case IndicatorType.MACD_HISTOGRAM:
+            return { period: 12, period2: 26, period3: 9 };
         // Fade de premercado: es el caso que se mira a diario (cuanto se
         // desinflo el PM antes de abrir el mercado).
         case IndicatorType.SESSION_FADE:
@@ -160,6 +176,8 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.DOLLAR_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
         IndicatorType.SQUEEZE,
+        IndicatorType.RSI, IndicatorType.MACD,
+        IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM,
     ],
 };
 
@@ -235,6 +253,10 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.ATR]: "ATR",
     [IndicatorType.SQUEEZE]: "Squeeze",
+    [IndicatorType.RSI]: "RSI",
+    [IndicatorType.MACD]: "MACD",
+    [IndicatorType.MACD_SIGNAL]: "MACD Signal",
+    [IndicatorType.MACD_HISTOGRAM]: "MACD Histograma",
 };
 
 interface TooltipContextType {
@@ -304,6 +326,10 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.RVOL]: "Volumen relativo de la barra respecto a su hora histórica.",
     [IndicatorType.VOLUME]: "Volumen individual de la barra actual.",
     [IndicatorType.ATR]: "Rango Medio Verdadero.",
+    [IndicatorType.RSI]: "Índice de Fuerza Relativa (0-100). Mide si el precio viene subiendo con más fuerza de la que baja en las últimas N velas. Por encima de 70 se considera sobrecomprado y por debajo de 30 sobrevendido, pero en un pump esos niveles se saturan durante horas: úsalo como medida de agotamiento, no como señal por sí solo.",
+    [IndicatorType.MACD]: "Línea MACD: diferencia entre la media exponencial rápida (12) y la lenta (26). Por encima de cero el impulso es alcista; por debajo, bajista. Lo clásico es cruzarla con su Señal.",
+    [IndicatorType.MACD_SIGNAL]: "Señal del MACD: media exponencial (9) de la propia línea MACD. Sola no dice mucho — su uso natural es que la línea MACD la cruce por arriba (impulso al alza) o por abajo (a la baja).",
+    [IndicatorType.MACD_HISTOGRAM]: "Histograma del MACD: la distancia entre la línea MACD y su Señal. Cuando cruza el cero es exactamente el cruce de las otras dos, y su tamaño dice cuánta fuerza tiene el movimiento. Es el más cómodo de los tres para una condición contra una cifra.",
     [IndicatorType.SQUEEZE]: "Spike de precio: cuánto se ha movido el cierre respecto al de hace X MINUTOS DE RELOJ (no velas). Devuelve el porcentaje SIEMPRE en positivo en la dirección elegida, así que «Squeeze > 10» significa «se ha disparado más de un 10%» tanto arriba como abajo. Solo se compara contra una cifra. Ojo: mide punta a punta, así que un zigzag dentro de la ventana cuenta el neto (100→110→104,5→114,95 son +15%), pero una caída seguida de una subida dentro de la misma ventana se compensan."
 };
 
@@ -620,10 +646,54 @@ export const IndicatorParams = ({
             {/* Specific Params */}
             {(() => {
                 switch (value.name) {
+                    case IndicatorType.MACD:
+                    case IndicatorType.MACD_SIGNAL:
+                    case IndicatorType.MACD_HISTOGRAM: {
+                        // Tres periodos: rapida, lenta y señal. Las tres lineas
+                        // salen del MISMO calculo, asi que los tres campos
+                        // aparecen igual en las tres — lo unico que cambia es
+                        // cual de las tres series se devuelve.
+                        const campo = (
+                            clave: "period" | "period2" | "period3",
+                            etiqueta: string, defecto: number, ayuda: string,
+                        ) => (
+                            <input
+                                key={clave}
+                                type="number"
+                                min={1}
+                                value={value[clave] ?? ''}
+                                onChange={(e) => onChange({ ...value, [clave]: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                onFocus={(e) => e.target.select()}
+                                placeholder={etiqueta}
+                                title={`${ayuda} (por defecto ${defecto})`}
+                                style={{
+                                    flex: '1 1 60px',
+                                    minWidth: '60px',
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 10px',
+                                    fontSize: 'var(--ec-fs-select)',
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                }}
+                            />
+                        );
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                {campo("period", "Rápida", 12, "Media exponencial rápida")}
+                                {campo("period2", "Lenta", 26, "Media exponencial lenta")}
+                                {campo("period3", "Señal", 9, "Media de la propia línea MACD")}
+                            </div>
+                        );
+                    }
                     case IndicatorType.SMA:
                     case IndicatorType.EMA:
                     case IndicatorType.ATR:
                     case IndicatorType.RVOL:
+                    case IndicatorType.RSI:
                         return (
                             <input
                                 type="number"
