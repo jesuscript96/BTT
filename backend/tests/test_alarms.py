@@ -241,3 +241,38 @@ def test_los_eventos_tambien_van_por_dueno(store_tmp):
     st.record_event(a["id"], "user_A", "XYZ", "2026-08-31", 3.42, {"x": 1})
     assert len(st.list_events("user_A")) == 1
     assert st.list_events("user_B") == []
+
+
+# ── reproducción histórica ───────────────────────────────────────────────────
+def test_la_reproduccion_es_causal():
+    """El pmh_gap de la reproducción usa el máximo de premarket ACUMULADO hasta
+    esa barra, no el del día entero. Si usara el final, avisaría a las 5:00 de
+    algo que no se sabía hasta las 8:00 y no se parecería a lo que hace el motor
+    en vivo — que es justo lo que la reproducción debe demostrar."""
+    from app.services.alarms.replay import _instant_from_replay
+
+    s = SessionBars("XYZ", "2026-08-31")
+    _feed(s, 300, [1.5])       # premarket: máximo 1,5
+    _feed(s, 301, [2.0])       # cierra la 300
+    ctx = _instant_from_replay(s, s.last_bar, prev_close=1.0,
+                               day_high=1.5, day_low=1.5, day_volume=1000)
+    assert ctx["pmh_gap_pct"] == pytest.approx(50.0)   # 1,5 sobre 1,0
+
+    _feed(s, 302, [4.0])       # el máximo sube DESPUÉS
+    _feed(s, 303, [3.0])
+    ctx_tarde = _instant_from_replay(s, s.last_bar, prev_close=1.0,
+                                     day_high=4.0, day_low=1.5, day_volume=4000)
+    assert ctx_tarde["pmh_gap_pct"] == pytest.approx(300.0)
+
+
+def test_la_reproduccion_no_promete_lo_que_no_sabe():
+    """`gap_pct` y `rvol` necesitan la apertura RTH y la media de 20 sesiones.
+    Se devuelven en None explícitamente: una condición sobre ellos no se cumple,
+    en vez de cumplirse con un valor inventado."""
+    from app.services.alarms.replay import _instant_from_replay
+
+    s = SessionBars("XYZ", "2026-08-31")
+    _feed(s, 300, [1.5])
+    _feed(s, 301, [2.0])
+    ctx = _instant_from_replay(s, s.last_bar, 1.0, 1.5, 1.5, 1000)
+    assert ctx["gap_pct"] is None and ctx["rvol"] is None

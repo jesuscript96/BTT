@@ -72,13 +72,40 @@ Está cubierto por `tests/test_alarms.py::test_el_chat_id_viaja_con_su_dueno`.
 
 ## Probar
 
+### Sin WebSocket: reproducir un día real
+
+Massive admite **una conexión WS por API key**. Si QA y producción levantan las
+dos el screener con la misma clave, se expulsan en bucle (cierre 1008) y ninguno
+sirve — lo que deja la rama de QA sin forma de probar alarmas de verdad.
+
+Para eso está `POST /api/alarms/{id}/replay`: pide las barras de un día por REST
+y las mete por el MISMO camino que el stream (`SessionBars` → `snapshot()` →
+`evaluate()`). Mismo anclaje a las 04:00, mismo VWAP acumulado, mismo
+enfriamiento. Funciona a cualquier hora y en fin de semana.
+
+```bash
+curl -X POST https://TU-BACKEND/api/alarms/<ALARM_ID>/replay \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"ticker":"LGHL","date":"2026-07-27","deliver":true}'
+```
+
+`deliver: true` manda además la primera señal a tu Telegram, marcada como
+reproducción, para ver el mensaje real.
+
+**No es un backtest** y no debe presentarse como tal: no simula ejecuciones, no
+aplica slippage ni comisiones y no calcula rendimiento. Solo dice a qué horas y
+precios habría avisado.
+
+### Tests
+
 ```bash
 cd backend && python -m pytest tests/test_alarms.py -q
 ```
 
-19 tests: barras (cierre, ancla, VWAP acumulado, máximo corrido, barrido de
+21 tests: barras (cierre, ancla, VWAP acumulado, máximo corrido, barrido de
 barras huérfanas), evaluador (las cuatro condiciones de la 1B, None, cruces,
-compatibilidad con el modelo antiguo) y aislamiento entre usuarios.
+compatibilidad con el modelo antiguo), aislamiento entre usuarios y causalidad
+de la reproducción.
 
 ## Ejemplo: la 1B como alarma
 

@@ -132,6 +132,56 @@ def list_events(session_date: Optional[str] = Query(default=None),
     return {"events": store.list_events(user_id, session_date, limit)}
 
 
+# ── Reproducción sobre un día histórico ──────────────────────────────────────
+class ReplayPayload(BaseModel):
+    ticker: str
+    date: str                      # YYYY-MM-DD, sesión ET
+    deliver: bool = False          # además, mandar la primera señal a tu Telegram
+
+
+@router.post("/{alarm_id}/replay")
+async def replay(alarm_id: str, payload: ReplayPayload,
+                 user_id: Optional[str] = Depends(get_current_user_id)):
+    """Pasa un día real por el motor y devuelve lo que HABRÍA avisado.
+
+    Existe porque Massive solo admite una conexión WS por API key: si QA y
+    producción levantan las dos el screener con la misma clave, se expulsan en
+    bucle y la rama de QA se queda sin manera de probar alarmas de verdad. Esto
+    ejercita el motor real —mismo anclaje a las 04:00, mismo VWAP, mismo
+    enfriamiento— sin tocar el WebSocket, a cualquier hora y también en fin de
+    semana.
+
+    No es un backtest: no simula ejecuciones ni calcula rendimiento.
+    """
+    from app.services.alarms.replay import ReplayError, replay_alarm
+
+    alarm = store.get_alarm(user_id, alarm_id)
+    if alarm is None:
+        raise HTTPException(status_code=404, detail="Alarma no encontrada")
+    try:
+        result = await replay_alarm(alarm, payload.ticker, payload.date)
+    except ReplayError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ALARMS] replay falló: %s", e)
+        raise HTTPException(status_code=502, detail="No se pudieron traer los datos históricos.")
+
+    # `deliver` manda UNA señal al Telegram del propio usuario, para ver el
+    # mensaje real. Va marcada como reproducción para que no se confunda con una
+    # señal en vivo.
+    if payload.deliver and result["signals"]:
+        link = store.get_link(user_id)
+        if link and not link.get("broken"):
+            first = result["signals"][0]
+            await telegram.send_message(
+                link["chat_id"],
+                f"🧪 <b>Reproducción</b> · {payload.ticker} {payload.date}\n"
+                f"<i>No es una señal en vivo</i>\n\n{first['message']}",
+            )
+            result["delivered"] = True
+    return result
+
+
 # ── Telegram ─────────────────────────────────────────────────────────────────
 @router.get("/telegram/status")
 def telegram_status(user_id: Optional[str] = Depends(get_current_user_id)):
