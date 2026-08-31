@@ -199,6 +199,10 @@ def run_backtest(
         _bsig.slab_stream_enabled()
         and _signal_cache is None
         and qualifying_df is not None and not qualifying_df.empty
+        # Los hooks de modelos avanzados viven en el bucle secuencial. Si el
+        # slab corriera con modelo, lo IGNORARIA en silencio: el resultado
+        # saldria etiquetado como "filtrado" sin haber filtrado nada.
+        and entry_model is None and feature_collector is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -457,7 +461,8 @@ def run_backtest(
     # intacto y, cuando se usa esta rama, opera sobre un group_source ya agotado
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
-    if (not _slab_mode) and _bsig.should_parallelize(_signal_cache, _n_workers):
+    if (not _slab_mode) and entry_model is None and feature_collector is None \
+            and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
             "strategy_def": strategy_def,
@@ -839,58 +844,13 @@ def run_backtest(
                 entries_arr = entries_arr.copy()
                 entries_arr[is_subsequent_np] = False
 
-        # ── Modelos avanzados ─────────────────────────────────────────────
-        # DESPUES del swing, y el orden importa (lo pidio Jaume el 31-ago).
-        #
-        # Con swing activo el frame abarca VARIOS dias: el del gap y los
-        # siguientes, para que un trade cerrado en EOD pueda continuar. El
-        # filtro de swing es el que impide ABRIR posiciones nuevas en esos dias
-        # posteriores; la posicion abierta sigue su curso y esto no la toca.
-        #
-        # Si el modelo corriera antes, juzgaria señales de dias que el swing va
-        # a descartar igualmente: entrenaria con ruido y el informe de "entradas
-        # vetadas" mentiria. Corriendo despues ve exactamente las mismas
-        # candidatas que acabarian en operacion.
-        #
-        # Son dos mecanismos independientes y separados a proposito: el swing
-        # decide QUE DIAS pueden abrir, el modelo decide CUALES de esas merecen
-        # la pena. Al tocar uno, no hay que mirar el otro.
-        if feature_collector is not None:
-            try:
-                if _recoge_standalone:
-                    # Sin reglas: se muestrea el dia y se etiqueta con TU stop y
-                    # TU take profit, los mismos que acaba de parsear el motor.
-                    _horiz = int(sig_tp_time_limit) if isinstance(sig_tp_time_limit, (int, float)) and sig_tp_time_limit else 0
-                    feature_collector.collect_standalone(
-                        ticker, date, mini_df, daily_stats, sig_direction,
-                        sig_sl_stop, sig_tp_stop, _horiz)
-                elif np.any(entries_arr):
-                    feature_collector.collect(ticker, date, entries_arr, mini_df, daily_stats)
-            except Exception:
-                logger.exception("[MODELO] fallo recogiendo features en %s %s", ticker, date)
-
-        if _modelo_genera:
-            try:
-                entries_arr = entry_model.generate(mini_df, daily_stats)
-            except Exception:
-                logger.exception("[MODELO] fallo generando entradas en %s %s", ticker, date)
-                entries_arr = np.zeros(len(mini_df), dtype=bool)
-            if not np.any(entries_arr):
-                del mini_df
-                continue
-        elif entry_model is not None and np.any(entries_arr):
-            try:
-                # El modelo solo QUITA entradas, nunca añade: el peor caso es
-                # operar menos, jamas operar algo que las reglas no encontraron.
-                entries_arr = entry_model.mask(entries_arr, mini_df, daily_stats)
-            except Exception:
-                # Un fallo del modelo no puede inventar operaciones: este dia se
-                # queda sin entradas y el backtest sigue.
-                logger.exception("[MODELO] fallo aplicando el veto en %s %s", ticker, date)
-                entries_arr = np.zeros_like(entries_arr, dtype=bool)
-            if not np.any(entries_arr):
-                del mini_df
-                continue
+        # Para los modelos avanzados (hooks mas abajo): el frame COMPLETO del
+        # dia y la mascara de sesion. Los indicadores necesitan el dia entero
+        # (premarket incluido) para calcular con contexto, pero los indices de
+        # los trades del simulador viven en el frame RECORTADO — el modelo
+        # necesita las dos coordenadas para no descuadrarse.
+        _df_full = mini_df
+        _sess_mask_np = None
 
         # --- Trim DataFrame and signals to the selected market session window ---
         # This is done AFTER signal translation so indicators have full-day context.
@@ -923,6 +883,7 @@ def run_backtest(
             
             # Apply mask to signals
             session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
+            _sess_mask_np = session_mask_np
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
             if sig_pyramid_levels:
@@ -961,6 +922,57 @@ def run_backtest(
                                 exits_arr = np.zeros_like(exits_arr)
                 except (ValueError, TypeError):
                     pass
+
+        # ── Modelos avanzados ─────────────────────────────────────────────
+        # AQUI y no antes, y la posicion es parte de la correccion (31-ago,
+        # tarde): tiene que ser DESPUES del recorte de sesion y del
+        # candle_delay, porque a partir de este punto `entries_arr` esta en el
+        # MISMO espacio de indices que los trades que emitira el simulador. La
+        # primera version corria antes del recorte: con una estrategia RTH, la
+        # señal quedaba en el indice del dia completo (premarket incluido) y el
+        # trade en el del frame recortado — las etiquetas de entrenamiento se
+        # emparejaban con la vela equivocada, sin error y sin aviso.
+        #
+        # Las FEATURES se calculan sobre `_df_full` (el dia entero, para que
+        # PM High, % Fade, etc. tengan contexto) y `_sess_mask_np` traduce
+        # entre los dos espacios. Tambien va despues del swing: el modelo debe
+        # juzgar solo señales que podrian llegar a operarse.
+        if feature_collector is not None:
+            try:
+                if _recoge_standalone:
+                    # Sin reglas: se muestrea el dia y se etiqueta con TU stop y
+                    # TU take profit, los mismos que acaba de parsear el motor.
+                    # Las barreras se miden sobre el frame RECORTADO, que es el
+                    # que simula (la salida EOD es el fin de la sesion elegida).
+                    _horiz = int(sig_tp_time_limit) if isinstance(sig_tp_time_limit, (int, float)) and sig_tp_time_limit else 0
+                    feature_collector.collect_standalone(
+                        ticker, date, _df_full, daily_stats, sig_direction,
+                        sig_sl_stop, sig_tp_stop, _horiz,
+                        session_mask=_sess_mask_np, df_trimmed=mini_df)
+                elif np.any(entries_arr):
+                    feature_collector.collect(ticker, date, entries_arr, _df_full,
+                                              daily_stats, session_mask=_sess_mask_np)
+            except Exception:
+                logger.exception("[MODELO] fallo recogiendo features en %s %s", ticker, date)
+
+        if _modelo_genera:
+            try:
+                entries_arr = entry_model.generate(_df_full, daily_stats,
+                                                   session_mask=_sess_mask_np)
+            except Exception:
+                logger.exception("[MODELO] fallo generando entradas en %s %s", ticker, date)
+                entries_arr = np.zeros(len(mini_df), dtype=bool)
+        elif entry_model is not None and np.any(entries_arr):
+            try:
+                # El modelo solo QUITA entradas, nunca añade: el peor caso es
+                # operar menos, jamas operar algo que las reglas no encontraron.
+                entries_arr = entry_model.mask(entries_arr, _df_full, daily_stats,
+                                               session_mask=_sess_mask_np)
+            except Exception:
+                # Un fallo del modelo no puede inventar operaciones: este dia se
+                # queda sin entradas y el backtest sigue.
+                logger.exception("[MODELO] fallo aplicando el veto en %s %s", ticker, date)
+                entries_arr = np.zeros_like(entries_arr, dtype=bool)
 
         # If we have no entries, skip simulation
         if not np.any(entries_arr):

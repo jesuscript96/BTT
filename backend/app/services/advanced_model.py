@@ -132,8 +132,16 @@ def hmm_observations(df: pd.DataFrame) -> np.ndarray:
     with np.errstate(divide="ignore", invalid="ignore"):
         ret = np.where(prev != 0, (close - prev) / prev * 100.0, 0.0)
         rango = np.where(close != 0, (high - low) / close * 100.0, 0.0)
-    media_vol = np.nanmean(vol) if len(vol) else 0.0
-    vol_rel = vol / media_vol if media_vol > 0 else np.zeros_like(vol)
+        # Volumen relativo a la media ACUMULADA hasta la vela t, no a la del
+        # dia entero. La primera version usaba np.nanmean(vol) — la media del
+        # dia COMPLETO — y eso era un look-ahead de libro: la vela de las 07:00
+        # quedaba escalada por el volumen que llegaria por la tarde, y en este
+        # universo (gaps, pumps) el volumen total del dia es ORO. Un modelo con
+        # esa señal daba resultados espectaculares e irreproducibles en vivo.
+        # Detectado en la auditoria del 31-ago tras un backtest "demasiado
+        # bueno" de Jaume; hay dos tests que impiden que vuelva.
+        media_acum = np.cumsum(np.nan_to_num(vol, nan=0.0)) / np.arange(1, len(vol) + 1)
+        vol_rel = np.where(media_acum > 0, vol / media_acum, 0.0)
 
     obs = np.column_stack([ret, rango, vol_rel])
     return np.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
@@ -249,11 +257,20 @@ class TrainedModel:
         return self.booster.predict_proba(X)[:, 1]
 
     def mask(self, entries: np.ndarray, df: pd.DataFrame,
-             daily_stats: dict | None, cache: dict | None = None) -> np.ndarray:
-        """El veto: deja pasar solo las entradas que superan el listón."""
+             daily_stats: dict | None, cache: dict | None = None,
+             session_mask: np.ndarray | None = None) -> np.ndarray:
+        """El veto: deja pasar solo las entradas que superan el listón.
+
+        `entries` vive en el espacio RECORTADO a la sesión (el del simulador);
+        `df` es el día COMPLETO (las features necesitan el premarket para tener
+        contexto). `session_mask` traduce entre los dos: la puntuación se
+        calcula sobre el día entero y se recorta a las velas de la sesión.
+        """
         if not np.any(entries):
             return entries
         p = self.score(df, daily_stats, cache)
+        if session_mask is not None and len(session_mask) == len(p):
+            p = p[np.asarray(session_mask, dtype=bool)]
         if len(p) != len(entries):
             return entries
         filtradas = entries & (p >= self.threshold)
@@ -262,14 +279,18 @@ class TrainedModel:
         return filtradas
 
     def generate(self, df: pd.DataFrame, daily_stats: dict | None,
-                 cache: dict | None = None) -> np.ndarray:
+                 cache: dict | None = None,
+                 session_mask: np.ndarray | None = None) -> np.ndarray:
         """Modo «estrategia»: las entradas las pone el modelo, no las reglas.
 
         A diferencia de `mask`, aquí no hay nada que filtrar — se decide vela a
         vela. Las SALIDAS siguen viniendo de la gestión de riesgo (stop, take
-        profit, hora): el modelo dice cuándo entrar, no cuándo salir.
+        profit, hora): el modelo dice cuándo entrar, no cuándo salir. Devuelve
+        el array en el espacio recortado a la sesión, que es el del simulador.
         """
         p = self.score(df, daily_stats, cache)
+        if session_mask is not None and len(session_mask) == len(p):
+            p = p[np.asarray(session_mask, dtype=bool)]
         entradas = p >= self.threshold
         # La última vela no puede abrir posición: el relleno va en la apertura
         # de la siguiente y no existe.
@@ -370,47 +391,79 @@ class FeatureCollector:
     # muestra se etiqueta con la triple barrera del stop/TP del usuario.
     standalone: bool = False
     muestras_por_dia: int = 120
-    _filas: dict = field(default_factory=dict)       # (ticker, date) -> (idx, X)
+    # (ticker, date) -> (idx_locales, X, idx_dia_completo). Dos sistemas de
+    # coordenadas A PROPOSITO: los indices locales son los del frame recortado
+    # a la sesion (el espacio de `entry_idx` de los trades del simulador); los
+    # del dia completo apuntan a la misma vela dentro del df entero, que es
+    # donde se calculan las features y las observaciones del HMM. La primera
+    # version solo guardaba uno y con sesion RTH las etiquetas se emparejaban
+    # con la vela equivocada.
+    _filas: dict = field(default_factory=dict)
     _obs: dict = field(default_factory=dict)         # (ticker, date) -> obs
     _etiquetas: dict = field(default_factory=dict)   # (ticker, date) -> y
 
+    @staticmethod
+    def _a_dia_completo(idx_locales: np.ndarray,
+                        session_mask: np.ndarray | None) -> np.ndarray:
+        """Traduce índices del frame recortado al df del día completo."""
+        if session_mask is None:
+            return idx_locales
+        return np.flatnonzero(np.asarray(session_mask, dtype=bool))[idx_locales]
+
     def collect(self, ticker: str, date: str, entries: np.ndarray,
                 df: pd.DataFrame, daily_stats: dict | None,
+                session_mask: np.ndarray | None = None,
                 cache: dict | None = None) -> None:
+        """`entries` en espacio recortado; `df` es el día COMPLETO."""
         candidatos = np.flatnonzero(entries)
         if candidatos.size == 0:
             return
+        full_idx = self._a_dia_completo(candidatos, session_mask)
         X = build_feature_matrix(df, daily_stats, self.feature_defs, cache)
-        self._filas[(ticker, date)] = (candidatos, X[candidatos] if X.size else
-                                       np.empty((candidatos.size, 0)))
+        self._filas[(ticker, date)] = (
+            candidatos,
+            X[full_idx] if X.size else np.empty((candidatos.size, 0)),
+            full_idx,
+        )
         if self.con_hmm:
             self._obs[(ticker, date)] = hmm_observations(df)
 
     def collect_standalone(self, ticker: str, date: str, df: pd.DataFrame,
                            daily_stats: dict | None, direccion: str,
                            sl_stop: float | None, tp_stop: float | None,
-                           horizonte: int, cache: dict | None = None) -> None:
+                           horizonte: int, cache: dict | None = None,
+                           session_mask: np.ndarray | None = None,
+                           df_trimmed: pd.DataFrame | None = None) -> None:
         """Material de entrenamiento cuando NO hay reglas de entrada.
 
         Se muestrea el día en vez de coger las ~700 velas: con miles de días,
         guardarlas todas son cientos de megas y no aporta nada — velas
         consecutivas se parecen tanto que la número 301 no enseña nada nuevo
         sobre la 300.
+
+        Las BARRERAS se miden sobre el frame recortado (`df_trimmed`), que es
+        el que simula de verdad: la salida EOD es el final de la sesión
+        elegida, no las 20:00. Las features, sobre el día completo.
         """
-        n = len(df)
+        base = df_trimmed if df_trimmed is not None else df
+        n = len(base)
         if n < 3:
             return
         paso = max(1, n // max(1, self.muestras_por_dia))
         candidatos = np.arange(0, n - 1, paso, dtype=np.int64)
-        y = label_triple_barrier(df, candidatos, direccion, sl_stop, tp_stop, horizonte)
+        y = label_triple_barrier(base, candidatos, direccion, sl_stop, tp_stop, horizonte)
         util = y >= 0                      # -1 = no se pudo etiquetar
         if not util.any():
             return
         candidatos, y = candidatos[util], y[util]
 
+        full_idx = self._a_dia_completo(candidatos, session_mask)
         X = build_feature_matrix(df, daily_stats, self.feature_defs, cache)
-        self._filas[(ticker, date)] = (candidatos, X[candidatos] if X.size else
-                                       np.empty((candidatos.size, 0)))
+        self._filas[(ticker, date)] = (
+            candidatos,
+            X[full_idx] if X.size else np.empty((candidatos.size, 0)),
+            full_idx,
+        )
         self._etiquetas[(ticker, date)] = y
         if self.con_hmm:
             self._obs[(ticker, date)] = hmm_observations(df)
@@ -437,15 +490,17 @@ class FeatureCollector:
                 for clave, obs in self._obs.items():
                     probas_std[clave] = hmm_filtered_proba(hmm, obs)
             filas, etiquetas = [], []
-            for clave, (candidatos, X) in self._filas.items():
+            for clave, (candidatos, X, full_idx) in self._filas.items():
                 y = self._etiquetas.get(clave)
                 if y is None or len(y) != len(candidatos):
                     continue
                 p = probas_std.get(clave)
                 if p is not None:
-                    dentro = candidatos < len(p)
-                    candidatos, X, y = candidatos[dentro], X[dentro], y[dentro]
-                    X = np.column_stack([X, p[candidatos]]) if X.size else p[candidatos]
+                    # Las probas del HMM van indexadas por el DIA COMPLETO,
+                    # que es donde se calcularon las observaciones.
+                    dentro = full_idx < len(p)
+                    X, y, full_idx = X[dentro], y[dentro], full_idx[dentro]
+                    X = np.column_stack([X, p[full_idx]]) if X.size else p[full_idx]
                 if len(X):
                     filas.append(X)
                     etiquetas.append(y)
@@ -469,12 +524,14 @@ class FeatureCollector:
 
         filas, etiquetas = [], []
         descartadas = 0
-        for clave, (candidatos, X) in self._filas.items():
+        for clave, (candidatos, X, full_idx) in self._filas.items():
             operados = por_dia.get(clave, [])
             probas = probas_cache.get(clave)
             for j, idx in enumerate(candidatos):
                 # El trade que abrió en esta vela o en la siguiente (el relleno
                 # va en la apertura de la vela siguiente por anti-look-ahead).
+                # `idx` y `entry_idx` viven AMBOS en el espacio recortado a la
+                # sesión — es la condición que la primera versión rompía.
                 pnl = None
                 for entry_idx, p in operados:
                     if entry_idx in (idx, idx + 1):
@@ -484,8 +541,8 @@ class FeatureCollector:
                     descartadas += 1
                     continue
                 fila = X[j]
-                if probas is not None and idx < len(probas):
-                    fila = np.concatenate([fila, probas[idx]])
+                if probas is not None and full_idx[j] < len(probas):
+                    fila = np.concatenate([fila, probas[full_idx[j]]])
                 filas.append(fila)
                 etiquetas.append(1 if pnl > 0 else 0)
 
