@@ -954,6 +954,8 @@ export default function WizardStrategyBuilder({
         setWizardComparator(Comparator.GT);
       }
     }
+    // OJO: tercera copia de ALLOWED_CROSSES_INDICATORS (la de ConditionBuilder
+    // es la buena). Si se toca una, hay que tocar la otra.
     const isCrossAllowed = [
       IndicatorType.BAR_CLOSE,
       IndicatorType.BAR_OPEN,
@@ -961,7 +963,11 @@ export default function WizardStrategyBuilder({
       IndicatorType.LOW_BAR,
       IndicatorType.SMA,
       IndicatorType.EMA,
-      IndicatorType.VWAP
+      IndicatorType.VWAP,
+      IndicatorType.MACD,
+      IndicatorType.MACD_SIGNAL,
+      IndicatorType.MACD_HISTOGRAM,
+      IndicatorType.RSI,
     ].includes(wizardSource);
 
     if (!isCrossAllowed && (wizardComparator === Comparator.CROSSES_ABOVE || wizardComparator === Comparator.CROSSES_BELOW)) {
@@ -2739,7 +2745,14 @@ export default function WizardStrategyBuilder({
         case IndicatorType.SMA:
         case IndicatorType.EMA:
         case IndicatorType.ATR:
+        case IndicatorType.RSI:
           return { period: getVal("period", 14) };
+        case IndicatorType.MACD:
+        case IndicatorType.MACD_SIGNAL:
+        case IndicatorType.MACD_HISTOGRAM:
+          // El wizard no tiene campos para los tres periodos: emite los
+          // clasicos (12/26/9), que es lo que se usa el 99% de las veces.
+          return { period: 12, period2: 26, period3: 9 };
         case IndicatorType.RVOL:
           return { period: getVal("period", 20) };
         case IndicatorType.BOLLINGER_BANDS:
@@ -3049,6 +3062,7 @@ export default function WizardStrategyBuilder({
         case IndicatorType.EMA:
         case IndicatorType.ATR:
         case IndicatorType.RVOL:
+        case IndicatorType.RSI:
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 8 }}>
               <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-ec-text-secondary)" }}>Período (Velas):</span>
