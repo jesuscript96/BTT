@@ -142,6 +142,10 @@ class LiveScreenerService:
         self._session: str = current_session()
         self._top_cache: Dict[str, tuple] = {}  # tab -> (ts, rows)
         self._tasks: List[asyncio.Task] = []
+        # Consumidores del stream de agregados (hoy: el motor de alarmas). Se
+        # invocan FUERA del lock y con el evento crudo; cualquier trabajo pesado
+        # es responsabilidad del consumidor, no de este hilo.
+        self._agg_listeners: List[Any] = []
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def start(self) -> None:
@@ -172,6 +176,42 @@ class LiveScreenerService:
         self._stop = True
         for t in self._tasks:
             t.cancel()
+
+    # ── suscripción al stream (motor de alarmas) ─────────────────────────────
+    def add_aggregate_listener(self, fn) -> None:
+        """Registra un consumidor del stream de agregados.
+
+        Existe para que el motor de alarmas se cuelgue de ESTA conexión en vez de
+        abrir otra: Massive admite una sola conexión por clase de activo y una
+        segunda provoca el kick-loop 1008 que ya se ve en los logs."""
+        if fn not in self._agg_listeners:
+            self._agg_listeners.append(fn)
+
+    def remove_aggregate_listener(self, fn) -> None:
+        try:
+            self._agg_listeners.remove(fn)
+        except ValueError:
+            pass
+
+    def snapshot_metrics(self) -> List[Dict[str, Any]]:
+        """Métricas de TODO el universo (no solo del top 50 de una pestaña).
+
+        El filtro de universo de una alarma tiene que poder ver un ticker con gap
+        del 55% aunque no entre en la tabla visible. Se copia la lista bajo lock y
+        se calcula fuera, igual que get_top."""
+        with self._lock:
+            states = list(self._states.values())
+        out: List[Dict[str, Any]] = []
+        for st in states:
+            m = self._metrics(st)
+            if m is not None:
+                out.append(m)
+        return out
+
+    def metrics_for(self, ticker: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            st = self._states.get(ticker)
+        return self._metrics(st) if st is not None else None
 
     @property
     def ws_connected(self) -> bool:
@@ -553,6 +593,13 @@ class LiveScreenerService:
                 if hi is not None:
                     st.pre_high = hi if st.pre_high is None else max(st.pre_high, hi)
             st.updated_at = time.time()
+        # Fuera del lock a propósito: un consumidor lento no puede bloquear la
+        # ingesta del screener, y nunca debe poder tumbarla con una excepción.
+        for fn in self._agg_listeners:
+            try:
+                fn(ev)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[LIVE] listener de agregados falló: %s", e)
 
     # ── leaderboard ──────────────────────────────────────────────────────────
     def _metrics(self, st: TickerLiveState) -> Optional[Dict[str, Any]]:

@@ -29,6 +29,8 @@ import { ChatBot } from "./ChatBot";
 import { LocatesCalculator } from "./LocatesCalculator";
 import { Pill, Badge, Modal, Button, Input, Select } from "@/components/ui";
 import { track, EVENTS } from "@/lib/analytics";
+import { AlarmsPanel } from "./screener/AlarmsPanel";
+import { openAlarmsSocket, type LiveAlarmEvent } from "@/lib/api_alarms";
 
 // ─── Types ──────────────────────────────────────────────────
 type TabKey = "premarket" | "gainers" | "losers" | "aftermarket";
@@ -742,6 +744,41 @@ export default function Screener() {
       });
     }
   }, [records]);
+
+  // Canal de alarmas de servidor. Reutiliza el mismo toast y el mismo beep que
+  // los avisos rápidos del grid: para el usuario es «una alarma», venga de donde
+  // venga. Reconecta sola si la conexión se cae.
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = async () => {
+      if (closed) return;
+      ws = await openAlarmsSocket((event: LiveAlarmEvent) => {
+        if (event.type !== "alarm" || !event.ticker) return;
+        const ticker = event.ticker;
+        setAlarmToasts((prev) => [
+          ...prev,
+          { id: `${ticker}-${Date.now()}`, ticker, change: event.price ?? 0 },
+        ]);
+        const cfg = alarmConfigRef.current;
+        if (event.sound !== false && cfg.soundEnabled) playBeep(cfg.volume);
+      });
+      if (ws) {
+        ws.onclose = () => { if (!closed) retry = setTimeout(() => { void connect(); }, 5000); };
+      } else if (!closed) {
+        retry = setTimeout(() => { void connect(); }, 5000);
+      }
+    };
+    void connect();
+
+    return () => {
+      closed = true;
+      if (retry) clearTimeout(retry);
+      ws?.close();
+    };
+  }, []);
 
   // Auto-descartar los toasts de alarma (uno cada 4 s mientras haya).
   useEffect(() => {
@@ -1947,6 +1984,13 @@ export default function Screener() {
           <span style={{ fontSize: 10.5, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
             El navegador solo reproduce sonido tras un clic tuyo; al activar el sonido aquí ya queda desbloqueado para esta sesión.
           </span>
+
+          {/* Alarmas de servidor: AMPLÍAN los avisos rápidos de arriba, no los
+              sustituyen. Aquellos viven en el navegador y solo ven la tabla
+              abierta; estas viven en el servidor, ven el universo entero y
+              llegan a Telegram con el navegador cerrado. */}
+          <div style={{ height: 1, background: "var(--color-ec-border)", margin: "4px 0" }} />
+          <AlarmsPanel />
         </div>
       </Modal>
 
