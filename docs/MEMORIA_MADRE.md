@@ -2119,3 +2119,40 @@ un simulacro previo que **no tocan numpy, pandas ni scipy** — solo añaden.
 2. **Persistencia del modelo entrenado.** Hoy se entrena en cada backtest, así
    que una estrategia guardada con modelo no puede reproducir un run viejo.
    Haría falta versionar los binarios y que la estrategia guarde el id.
+
+### Modo «estrategia» completado, con guardas
+
+Jaume fijó la especificación y es la buena: **el stop lo pone él, no el modelo.**
+El etiquetado (`label_triple_barrier`) simula desde cada vela con **su** stop y
+**su** take profit —los mismos valores que `_parse_risk_management` le entrega
+al simulador, no una interpretación aparte— y mira qué pasa primero: toca
+objetivo (buena), toca stop (mala), o se acaba el plazo (el signo de lo que
+llevara). Empate en la misma vela: gana el stop, que es lo pesimista.
+
+**Por qué no el atajo fácil.** La tentación es etiquetar con «¿subió un X% en N
+minutos?». Eso **ignora el camino**: una vela desde la que el precio primero cae
+un 20% —stop saltado, estás fuera— y luego sube saldría marcada como BUENA. El
+modelo aprendería a buscar justo esas y en real comerías stop tras stop mientras
+el backtest presume de aciertos. Hay un test dedicado a ese caso concreto.
+
+**Las guardas, que también las pidió él.** En modo «estrategia» el backtest se
+para ANTES de cargar un solo dato si están activas la lógica de entrada, la de
+salida, la piramidación o el swing: todas ponen entradas, y el resultado sería
+una mezcla de dos sistemas de la que no se sabría de quién es el mérito. El
+mensaje dice cuál sobra y ofrece la alternativa. Y se exige un stop configurado.
+
+**Lo que sí se respeta, tal cual:** stop, take profit total y parcial, trailing,
+salida por hora, límite de pérdida diaria, reentradas, locates, comisiones y
+slippage. Lo aplica el simulador de siempre, exactamente igual que en cualquier
+otra estrategia.
+
+**Una decisión que se tomó sin preguntar, por si algún día chirría:** las
+SALIDAS no las da el modelo, vienen de la gestión de riesgo. Un modelo de salida
+necesitaría su propia etiqueta («¿fue bueno salir aquí?»), que es un segundo
+problema de modelado entero.
+
+**Dos detalles de implementación que no son evidentes:** el motor se salta los
+días sin señales, y en este modo no hay señales de las reglas — ese atajo se
+desactiva solo en este modo. Y el día se **muestrea** (~120 velas de las ~700)
+para entrenar: con miles de días, guardarlas todas son cientos de megas y la
+vela 301 no enseña nada que no enseñara la 300.
