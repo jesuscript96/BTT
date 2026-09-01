@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, BellOff, Radio, Trash2 } from "lucide-react";
 
 import { color, font, hairline, ErrorBox, Loading } from "@/components/ui";
+import { API_BASE } from "@/lib/api";
 import {
   accionesAlPrecio,
   cambiarEstado,
@@ -44,8 +45,31 @@ const SONIDO_KEY = "botAlertas.sonido.v1";
 const REFRESCO_MS = 2000;
 /** Sin latido en este tiempo, el bot se considera caido aunque figure encendido. */
 const LATIDO_VIVO_MS = 30_000;
-/** Cuanto se queda iluminada una fila recien llegada. */
+/** Cuanto tarda una fila en volver a su fondo normal. */
 const DESTACADO_MS = 12_000;
+
+/**
+ * Destellos de fila, como animacion del NAVEGADOR y no recalculando el color en
+ * React: asi el degradado es continuo de verdad y no cuesta un re-render cada
+ * pocos milisegundos.
+ *
+ * Ambar para la prealerta, rojo para la alerta confirmada. Muy diluidos (0,16 de
+ * opacidad) — tienen que leerse de reojo, no gritar: en una sesion movida la
+ * tabla entera estaria parpadeando.
+ */
+const ANIMACIONES = `
+@keyframes bot-flash-prealerta {
+  from { background-color: rgba(210,160,84,0.16); }
+  to   { background-color: rgba(210,160,84,0); }
+}
+@keyframes bot-flash-alerta {
+  from { background-color: rgba(201,77,63,0.16); }
+  to   { background-color: rgba(201,77,63,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-fila-prealerta, .bot-fila-alerta { animation: none !important; }
+}
+`;
 
 /** Alto fijo de las rejillas. Fijo A PROPOSITO: si creciera con cada aviso, la
  *  pagina se estiraria sin fin y habria que buscar la barra de estado. */
@@ -143,6 +167,10 @@ export default function CuadroMandos() {
 
   const vistosRef = useRef<Set<string>>(new Set());
   const audioRef = useRef<AudioContext | null>(null);
+  // El sonido se lee de una ref, no del estado: si el efecto del WebSocket
+  // dependiera del estado, silenciar reabriría la conexión por un simple clic.
+  const sonidoRef = useRef(true);
+  useEffect(() => { sonidoRef.current = sonido; }, [sonido]);
 
   useEffect(() => {
     try {
@@ -202,42 +230,101 @@ export default function CuadroMandos() {
     return () => { vivo = false; };
   }, []);
 
-  /* ── Refresco: estado y avisos ──────────────────────────────────────── */
+  /* ── Novedades: el servidor EMPUJA, la página no pregunta ───────────
+   *
+   * Antes se consultaba cada 2 s y un aviso tardaba hasta 2 s en aparecer:
+   * Telegram, que es un empujón directo, llegaba antes. En una prealerta el
+   * margen útil son segundos, así que esa espera importaba.
+   *
+   * Se mantiene la vía de consulta como respaldo por si el WebSocket no
+   * conecta (proxy, extensión del navegador): mejor lento que en blanco.
+   */
+  const aplicar = useCallback((e: EstadoBot, eventos: EventoAlerta[]) => {
+    setEstado(e);
+    // Solo suena y se ilumina lo que no se había visto. En la primera carga se
+    // marcan todos como vistos: si no, al abrir la página sonarían de golpe
+    // todos los avisos del día.
+    //
+    // LA CLAVE LLEVA EL ESTADO. Al confirmarse, una prealerta conserva su id;
+    // con la clave sin estado se daría por vista y la confirmación —el momento
+    // que de verdad importa— pasaría sin destello ni sonido.
+    const clave = (x: EventoAlerta) => `${x.id}|${x.estado}`;
+    const primeraVez = vistosRef.current.size === 0;
+    const nuevos = eventos.filter((x) => !vistosRef.current.has(clave(x)));
+    eventos.forEach((x) => vistosRef.current.add(clave(x)));
+    if (!primeraVez && nuevos.length) {
+      const aEjecutar = nuevos.filter((x) => x.tipo !== "salida");
+      if (aEjecutar.length) {
+        const ahora = Date.now();
+        setDestacados((prev) => ({
+          ...prev, ...Object.fromEntries(aEjecutar.map((x) => [clave(x), ahora])),
+        }));
+      }
+      if (sonidoRef.current) {
+        pitar();
+        document.title = `(${nuevos.length}) Alertas · BTT`;
+        setTimeout(() => { document.title = "Alertas · BTT"; }, 8000);
+      }
+    }
+    setEventos(eventos);
+  }, [pitar]);
+
   useEffect(() => {
-    let vivo = true;
+    // El histórico de otro día no llega por WebSocket (que emite lo último):
+    // ahí se pide una vez y ya está, porque no cambia.
+    if (fecha) {
+      let vivo = true;
+      listarEventos(fecha).then((r) => { if (vivo) setEventos(r.eventos); }).catch(() => {});
+      return () => { vivo = false; };
+    }
+
+    let parado = false;
+    let reconectar: ReturnType<typeof setTimeout> | null = null;
+    let respaldo: ReturnType<typeof setInterval> | null = null;
+    let ws: WebSocket | null = null;
+
+    const conectar = () => {
+      if (parado) return;
+      try {
+        ws = new WebSocket(`${API_BASE.replace(/^http/, "ws")}/bot-alerts/live`);
+      } catch {
+        reconectar = setTimeout(conectar, 2000);
+        return;
+      }
+      ws.onopen = () => {
+        if (respaldo) { clearInterval(respaldo); respaldo = null; }
+      };
+      ws.onmessage = (m) => {
+        try {
+          const d = JSON.parse(m.data);
+          if (d?.estado) aplicar(d.estado, Array.isArray(d.eventos) ? d.eventos : []);
+        } catch { /* trama malformada: se ignora */ }
+      };
+      ws.onclose = () => {
+        if (parado) return;
+        // Mientras esté caído, se vuelve a preguntar: lento, pero no en blanco.
+        if (!respaldo) respaldo = setInterval(tick, REFRESCO_MS);
+        reconectar = setTimeout(conectar, 2000);
+      };
+      ws.onerror = () => { try { ws?.close(); } catch { /* noop */ } };
+    };
+
     const tick = async () => {
       try {
-        const [e, ev] = await Promise.all([leerEstado(), listarEventos(fecha || undefined)]);
-        if (!vivo) return;
-        setEstado(e);
-        // Solo suena y se ilumina lo que no se habia visto. En la primera carga
-        // se marcan todos como vistos: si no, al abrir la pagina sonarian de
-        // golpe todos los avisos del dia.
-        const primeraVez = vistosRef.current.size === 0;
-        const nuevos = ev.eventos.filter((x) => !vistosRef.current.has(x.id));
-        ev.eventos.forEach((x) => vistosRef.current.add(x.id));
-        if (!primeraVez && nuevos.length) {
-          const aEjecutar = nuevos.filter((x) => x.tipo !== "salida");
-          if (aEjecutar.length) {
-            const ahora = Date.now();
-            setDestacados((prev) => ({
-              ...prev,
-              ...Object.fromEntries(aEjecutar.map((x) => [x.id, ahora])),
-            }));
-          }
-          if (sonido) {
-            pitar();
-            document.title = `(${nuevos.length}) Alertas · BTT`;
-            setTimeout(() => { document.title = "Alertas · BTT"; }, 8000);
-          }
-        }
-        setEventos(ev.eventos);
-      } catch { /* un fallo suelto no debe romper la pagina; se reintenta */ }
+        const [e, ev] = await Promise.all([leerEstado(), listarEventos()]);
+        if (!parado) aplicar(e, ev.eventos);
+      } catch { /* un fallo suelto no rompe la página */ }
     };
-    tick();
-    const id = setInterval(tick, REFRESCO_MS);
-    return () => { vivo = false; clearInterval(id); };
-  }, [fecha, sonido, pitar]);
+
+    tick();          // primer pintado inmediato
+    conectar();
+    return () => {
+      parado = true;
+      if (reconectar) clearTimeout(reconectar);
+      if (respaldo) clearInterval(respaldo);
+      try { ws?.close(); } catch { /* noop */ }
+    };
+  }, [fecha, aplicar]);
 
   /* ── Apagar la iluminacion pasado su tiempo ─────────────────────────── */
   useEffect(() => {
@@ -326,6 +413,7 @@ export default function CuadroMandos() {
       <thead>
         <tr>
           <Th ancho={56}>Hora</Th>
+          <Th ancho={86}>Estado</Th>
           <Th ancho={82}>Tipo</Th>
           <Th ancho={70}>Ticker</Th>
           <Th ancho={62}>Lado</Th>
@@ -353,16 +441,30 @@ export default function CuadroMandos() {
           );
           const tonoTipo = e.tipo === "entrada" ? color.copper
             : e.tipo === "piramide" ? color.info : color.textMuted;
-          const encendida = destacados[e.id] != null;
+          const encendida = destacados[`${e.id}|${e.estado}`] != null;
+          const espera = e.estado === "prealerta";
+          // Al llegar, la fila se enciende y se va apagando sola: ámbar si es
+          // prealerta, rojo si es la alerta confirmada.
+          //
+          // La `key` incluye el estado A PROPÓSITO: al pasar de prealerta a
+          // alerta, React remonta la fila y el navegador vuelve a lanzar la
+          // animación — ahora en rojo. Con la key fija cambiaría el color pero
+          // no habría destello, y el momento importante (la confirmación) se
+          // vería menos que la prealerta que lo precedió.
+          const anim = encendida
+            ? {
+                animation: `bot-flash-${espera ? "prealerta" : "alerta"} `
+                  + `${DESTACADO_MS}ms ease-out forwards`,
+              }
+            : {};
           return (
-            <tr key={e.id} style={encendida ? {
-              // Iluminada: cobre muy diluido + una barra a la izquierda. Se
-              // apaga sola pasados unos segundos.
-              background: "rgba(216,122,61,0.10)",
-              boxShadow: `inset 2px 0 0 ${color.copper}`,
-              transition: "background 500ms ease",
-            } : { transition: "background 900ms ease" }}>
+            <tr key={`${e.id}|${e.estado}`}
+                className={espera ? "bot-fila-prealerta" : "bot-fila-alerta"}
+                style={anim}>
               <Td mono dim>{hora(e.momento)}</Td>
+              <Td tono={espera ? color.warning : color.textSecondary}>
+                {espera ? "Prealerta" : "Alerta"}
+              </Td>
               <Td tono={tonoTipo}>
                 {e.tipo === "piramide"
                   ? (e.accion_piramide === "reduce" ? "Reducir" : "Añadir")
@@ -403,6 +505,7 @@ export default function CuadroMandos() {
 
   return (
     <div style={{ padding: "20px 26px 60px", maxWidth: 1680, margin: "0 auto" }}>
+      <style dangerouslySetInnerHTML={{ __html: ANIMACIONES }} />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <Radio style={{ width: 19, height: 19, color: color.copper, strokeWidth: 1.5 }} />
         <h1 style={{

@@ -71,6 +71,12 @@ export interface EventoAlerta {
    * aviso de verdad ese dia o fue una prueba.
    */
   modo: "vivo" | "reproduccion";
+  /**
+   * 'prealerta' mientras la vela se esta formando, 'alerta' cuando cierra.
+   * La misma fila pasa de una a otra: comparten id, asi que la confirmacion
+   * actualiza la fila en vez de anyadir una nueva.
+   */
+  estado: "prealerta" | "alerta";
 }
 
 export function listarEventos(fecha?: string, limite = 500): Promise<{ eventos: EventoAlerta[] }> {

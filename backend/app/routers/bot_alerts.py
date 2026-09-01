@@ -14,10 +14,12 @@ estrategias no se editan con el bot encendido, le basta con leerla al arrancar.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user_id, scope_clause
@@ -26,6 +28,7 @@ from app.services import bot_alerts_service as bas
 from app.services import bot_alerts_telegram as tg
 
 router = APIRouter()
+logger = logging.getLogger("btt.bot_alerts")
 
 
 # Se lee EN CADA PETICION, no al importar: el import puede ocurrir antes de que
@@ -118,6 +121,10 @@ class EventoIn(BaseModel):
     posicion_total: Optional[float] = None
     origen: str = "portfolio"      # portfolio | incubadora
     modo: str = "vivo"             # vivo | reproduccion
+    # prealerta = la vela aun se esta formando; alerta = ha cerrado y se
+    # confirma. Comparten id, asi que la segunda ACTUALIZA la fila de la
+    # primera en vez de anyadir otra.
+    estado: str = "alerta"
 
 
 class EventosReq(BaseModel):
@@ -229,6 +236,68 @@ def latido(req: LatidoReq):
             return {"ok": True}
         finally:
             con.close()
+
+
+@router.websocket("/live")
+async def live(websocket: WebSocket):
+    """Empuja a la pagina en cuanto algo cambia.
+
+    POR QUE NO VALE QUE LA PAGINA PREGUNTE: consultando cada 2 s, un aviso tarda
+    hasta 2 s en aparecer. Telegram, que es un empujon directo, llega antes — y
+    en una prealerta el margen util son segundos. Aqui se vigila un contador en
+    memoria muchas veces por segundo (comparar un entero no cuesta nada y NO
+    toca la base de datos) y se emite solo cuando de verdad ha cambiado algo.
+
+    Se manda un primer paquete al conectar para que la pagina pinte sin esperar.
+    """
+    _guard()
+    await websocket.accept()
+
+    # El estado de Telegram se consulta UNA vez por conexion: es una llamada de
+    # red a la API de Telegram y no cambia mientras la pagina esta abierta.
+    # Meterla en cada envio anyadia medio segundo a cada aviso.
+    tg_estado = tg.probar() if os.getenv("TELEGRAM_BOT_TOKEN") else {
+        "ok": False, "detalle": "sin token configurado", "enviando": False,
+    }
+
+    def _paquete() -> dict:
+        """Camino CALIENTE: memoria pura mientras la cache este viva.
+
+        Solo se abre conexion si la cache esta fria (primer envio tras arrancar
+        o tras una limpieza). En este proyecto no existen las conexiones de solo
+        lectura, asi que abrir una en cada envio volveria a bloquear al bot.
+        """
+        estado = bas.estado_cacheado()
+        eventos = bas.eventos_cacheados(None)
+        if estado is None or eventos is None:
+            con = get_user_db_connection(read_only=True)
+            try:
+                estado = bas.get_estado(con)
+                eventos = bas.listar_eventos(con, None, 500)
+            finally:
+                con.close()
+        return {
+            "version": bas.version(),
+            "estado": {**estado, "telegram": tg_estado},
+            "eventos": eventos,
+        }
+
+    ultima = -1
+    try:
+        while True:
+            v = bas.version()
+            if v != ultima:
+                ultima = v
+                await websocket.send_json(await asyncio.to_thread(_paquete))
+            # 50 ms. Parece agresivo y no lo es: mientras no haya novedades esto
+            # solo compara un entero en memoria — no toca la base de datos ni la
+            # red. A 200 ms la latencia de punta a punta salia en 414 ms y el
+            # aviso llegaba antes a Telegram que a la pantalla.
+            await asyncio.sleep(0.05)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[BOT] ws cliente: %s", exc)
 
 
 @router.get("/vigiladas")

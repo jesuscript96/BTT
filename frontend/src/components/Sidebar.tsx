@@ -5,7 +5,6 @@ import {
     LayoutDashboard,
     Play,
     Briefcase,
-    Radar,
     KeyRound,
     MessageSquarePlus,
     Flame,
@@ -165,19 +164,13 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </div>
                 )}
 
-                {/* Screener */}
-                {allowed("screener.access") && (
-                    <Link
-                        href="/screener"
-                        style={{
-                            ...linkBase(isCollapsed),
-                            ...linkActive("/screener"),
-                        }}
-                    >
-                        <Radar style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                        <span style={labelFade(isCollapsed)}>Screener</span>
-                    </Link>
-                )}
+                {/* La pagina del Screener se retiro en esta rama (2026-09-01):
+                    es un proyecto propio y no se usa. El SERVICIO que la
+                    alimentaba (live_screener_service) SE CONSERVA a proposito:
+                    mantiene por ticker el cierre de ayer, el maximo de
+                    premercado y el volumen acumulado desde el WebSocket, que es
+                    justo lo que necesita el bot de alertas. Borrarlo obligaria
+                    a reescribirlo. El endpoint /api/screener/live tambien sigue. */}
 
                 {/* Market Analysis */}
                 <Link

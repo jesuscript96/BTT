@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import ssl
+import time
 from typing import TYPE_CHECKING, Iterable
 
 import httpx
@@ -117,9 +118,19 @@ def formatear(ev: "Evento") -> str:
     tk = _esc(ev.ticker)
     est = _esc(ev.estrategia or "")
 
+    # PREALERTA: misma estructura, con una cabecera que la distinga de un
+    # vistazo y el rombo naranja en lugar del icono del lado. Telegram no tiene
+    # tamanyos de letra, asi que «grande» se consigue con negrita y mayusculas.
+    prea = getattr(ev, "estado", "alerta") == "prealerta"
+    cabecera = ["🔸 <b>PREALERTA</b>", ""] if prea else []
+
     if ev.tipo == "entrada":
+        # El rombo va SOLO en la cabecera de prealerta. En la linea del ticker
+        # se mantiene el triangulo del lado, igual que en una alerta: asi el
+        # icono siempre significa lo mismo (largo o corto) y no hay que
+        # reaprenderlo segun el estado del aviso.
         icono = "🔺" if largo else "🔻"
-        lineas = [
+        lineas = cabecera + [
             f"{icono} <b>Ticker:</b> {tk}  ({lado})",
             "",
             f"Precio: <b>{_num(ev.precio)}</b>",
@@ -136,7 +147,7 @@ def formatear(ev: "Evento") -> str:
         reduce = ev.accion_piramide == "reduce"
         icono = "➖" if reduce else "➕"
         verbo = "REDUCIR" if reduce else "AÑADIR"
-        lineas = [
+        lineas = cabecera + [
             f"{icono} <b>Ticker:</b> {tk}  ({verbo})",
             "",
             f"Precio: <b>{_num(ev.precio)}</b>",
@@ -200,12 +211,26 @@ def enviar_eventos(eventos: Iterable["Evento"]) -> int:
     return sum(1 for ev in eventos if enviar_texto(formatear(ev)))
 
 
+_cache_probar: tuple[float, dict] | None = None
+TTL_PROBAR = 60.0
+
+
 def probar() -> dict:
     """Comprueba la configuracion sin mandar nada al grupo.
 
     Usa getMe, que solo valida el token. Para saber si el bot puede escribir en
     el grupo hace falta un envio real — eso lo decide el usuario.
+
+    CACHEADO 60 s: esto es una llamada de RED a la API de Telegram, y la pagina
+    pedia el estado cada 2 segundos. Con la red lenta, cada peticion se comia
+    hasta 10 s de espera y el navegador acababa dando «request timed out».
+    El token y el grupo no cambian mientras la app corre.
     """
+    global _cache_probar
+    ahora = time.time()
+    if _cache_probar is not None and ahora - _cache_probar[0] < TTL_PROBAR:
+        return dict(_cache_probar[1])
+
     token, chat = _cfg()
     if not token:
         return {"ok": False, "detalle": "falta TELEGRAM_BOT_TOKEN"}
@@ -214,12 +239,16 @@ def probar() -> dict:
         if r.status_code != 200:
             return {"ok": False, "detalle": f"token rechazado ({r.status_code})"}
         nombre = (r.json().get("result") or {}).get("username")
-        return {
+        res = {
             "ok": True,
             "bot": nombre,
             "chat_id": chat or "(sin configurar)",
             "enviando": envio_activo(),
             "detalle": motivo_inactivo() or "listo",
         }
+        _cache_probar = (ahora, res)
+        return dict(res)
     except Exception as exc:  # noqa: BLE001
+        # Un fallo NO se cachea: si es un corte pasajero, el siguiente intento
+        # debe volver a probar en vez de dar por muerto a Telegram un minuto.
         return {"ok": False, "detalle": f"error de red: {exc}"}

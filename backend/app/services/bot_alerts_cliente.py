@@ -63,6 +63,7 @@ def evento_a_dict(ev: Any, origen: str, modo: str) -> dict:
         "posicion_total": ev.posicion_total,
         "origen": origen,
         "modo": modo,
+        "estado": getattr(ev, "estado", "alerta"),
     }
 
 

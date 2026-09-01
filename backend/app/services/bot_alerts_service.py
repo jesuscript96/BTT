@@ -17,6 +17,7 @@ init_db.py ni el esquema compartido. En produccion simplemente no existe.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import threading
 from typing import Any, Optional
@@ -114,6 +115,14 @@ def ensure_eventos_table(con) -> None:
         # ensuciarian el historico real haciendose pasar por avisos de verdad.
         con.execute("ALTER TABLE bot_alert_eventos ADD COLUMN IF NOT EXISTS origen VARCHAR DEFAULT 'portfolio'")
         con.execute("ALTER TABLE bot_alert_eventos ADD COLUMN IF NOT EXISTS modo VARCHAR DEFAULT 'vivo'")
+        # `estado`: 'prealerta' mientras la vela se esta formando, 'alerta'
+        # cuando cierra y se confirma.
+        #
+        # NO HACE FALTA NADA MAS PARA QUE LA FILA SE TRANSFORME EN VEZ DE
+        # DUPLICARSE: el id es ticker|estrategia|momento|tipo, asi que la
+        # prealerta del segundo 50 y la alerta del cierre de ESE MISMO minuto
+        # comparten id, y el INSERT OR REPLACE actualiza la fila que ya existe.
+        con.execute("ALTER TABLE bot_alert_eventos ADD COLUMN IF NOT EXISTS estado VARCHAR DEFAULT 'alerta'")
         # Estado del bot. Una sola fila: la pagina escribe `vigilando` y el bot
         # lo consulta. Asi la pagina lo enciende sin tener que hablar con el
         # proceso del bot, que vive aparte y no expone nada hacia dentro.
@@ -133,6 +142,44 @@ def ensure_eventos_table(con) -> None:
         _DDL_EVENTOS_DONE = True
 
 
+# ── Cache en memoria ─────────────────────────────────────────────────────────
+#
+# EL CUADRO DE MANDOS CONSULTA CADA 2 SEGUNDOS, y sin esta cache eso BLOQUEA las
+# escrituras. El motivo esta en `database.get_user_db_connection`: ignora el
+# parametro `read_only` y abre TODAS las conexiones en modo escritura, y DuckDB
+# solo admite un escritor. Medido: con la pagina abierta, un DELETE se quedaba
+# esperando mas de 60 s; con la pagina cerrada, 0,2 s.
+#
+# La cache es fiable porque el backend es el UNICO que escribe en estas tablas:
+# el bot no toca el fichero, publica por HTTP y pasa por aqui.
+_CACHE_LOCK = threading.Lock()
+_cache_eventos: dict[str, list[dict]] = {}   # fecha (o "" = ultimos) -> filas
+_cache_estado: Optional[dict] = None
+
+# Contador que sube con CADA cambio. El WebSocket lo vigila para empujar a la
+# pagina en el momento en que algo cambia, en vez de que ella pregunte cada
+# 2 s: en una prealerta, donde el margen son segundos, esa espera se nota.
+# Comparar un entero es gratis, asi que se puede mirar muchas veces por segundo
+# sin tocar la base de datos.
+_version = 0
+
+
+def version() -> int:
+    with _CACHE_LOCK:
+        return _version
+
+
+def _marcar_cambio() -> None:
+    global _version
+    _version += 1
+
+
+def _invalidar_cache_eventos() -> None:
+    with _CACHE_LOCK:
+        _cache_eventos.clear()
+        _marcar_cambio()
+
+
 def guardar_eventos(con, eventos: list[dict]) -> int:
     """Guarda una tanda de avisos. Devuelve cuantos entraron.
 
@@ -150,7 +197,7 @@ def guardar_eventos(con, eventos: list[dict]) -> int:
             e.get("precio"), e.get("acciones"), e.get("stop"), e.get("riesgo_usd"),
             e.get("motivo"), e.get("nivel"), e.get("accion_piramide"),
             e.get("posicion_total"), e.get("origen") or "portfolio",
-            e.get("modo") or "vivo",
+            e.get("modo") or "vivo", e.get("estado") or "alerta",
         )
         for e in eventos
     ]
@@ -158,15 +205,39 @@ def guardar_eventos(con, eventos: list[dict]) -> int:
         "INSERT OR REPLACE INTO bot_alert_eventos "
         "(id, fecha, momento, tipo, ticker, strategy_id, estrategia, direccion, "
         " precio, acciones, stop, riesgo_usd, motivo, nivel, accion_piramide, "
-        " posicion_total, origen, modo) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " posicion_total, origen, modo, estado) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         filas,
     )
+    _invalidar_cache_eventos()
     return len(filas)
+
+
+def eventos_cacheados(fecha: Optional[str] = None) -> Optional[list[dict]]:
+    """Lo que hay en cache, o None si esta fria. SIN tocar la base de datos.
+
+    Existe para que el WebSocket no abra una conexion en cada envio: en este
+    proyecto NO hay conexiones de solo lectura (ver la nota de la cache), asi
+    que abrirla —aunque luego no se use— vuelve a competir con las escrituras
+    del bot. Con esto, el camino caliente es memoria pura.
+    """
+    with _CACHE_LOCK:
+        return _cache_eventos.get(fecha or "")
+
+
+def estado_cacheado() -> Optional[dict]:
+    """Igual que `eventos_cacheados`, para el estado."""
+    with _CACHE_LOCK:
+        return dict(_cache_estado) if _cache_estado is not None else None
 
 
 def listar_eventos(con, fecha: Optional[str] = None, limite: int = 500) -> list[dict]:
     """Avisos de una fecha (o los ultimos, si no se da). Mas reciente primero."""
+    clave = fecha or ""
+    cacheado = eventos_cacheados(fecha)
+    if cacheado is not None:
+        return cacheado
+
     ensure_eventos_table(con)
     if fecha:
         sql = ("SELECT * FROM bot_alert_eventos WHERE fecha = CAST(? AS DATE) "
@@ -177,7 +248,15 @@ def listar_eventos(con, fecha: Optional[str] = None, limite: int = 500) -> list[
         params = [limite]
     cur = con.execute(sql, params)
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    filas = [dict(zip(cols, r)) for r in cur.fetchall()]
+    # Las fechas vienen como date/datetime y hay que poder serializarlas a JSON.
+    for f in filas:
+        for k in ("fecha", "momento", "recibido_at"):
+            if f.get(k) is not None:
+                f[k] = str(f[k])
+    with _CACHE_LOCK:
+        _cache_eventos[clave] = filas
+    return filas
 
 
 def fechas_con_eventos(con, limite: int = 60) -> list[str]:
@@ -196,10 +275,18 @@ def borrar_eventos_antes(con, fecha: str) -> int:
         "SELECT COUNT(*) FROM bot_alert_eventos WHERE fecha < CAST(? AS DATE)", [fecha]
     ).fetchone()[0]
     con.execute("DELETE FROM bot_alert_eventos WHERE fecha < CAST(? AS DATE)", [fecha])
+    _invalidar_cache_eventos()
     return int(n)
 
 
 def get_estado(con) -> dict:
+    """Estado del bot. Cacheado por el mismo motivo que los eventos: la pagina
+    lo pide cada 2 s y cada consulta abre una conexion de escritura."""
+    global _cache_estado
+    with _CACHE_LOCK:
+        if _cache_estado is not None:
+            return dict(_cache_estado)
+
     ensure_eventos_table(con)
     r = con.execute(
         "SELECT vigilando, latido_at, tickers_seguidos, fuente, detalle "
@@ -208,31 +295,50 @@ def get_estado(con) -> dict:
     if not r:
         return {"vigilando": False, "latido_at": None, "tickers_seguidos": 0,
                 "fuente": None, "detalle": None}
-    return {
+    estado = {
         "vigilando": bool(r[0]),
         "latido_at": str(r[1]) if r[1] else None,
         "tickers_seguidos": int(r[2] or 0),
         "fuente": r[3],
         "detalle": r[4],
     }
+    with _CACHE_LOCK:
+        _cache_estado = estado
+    return dict(estado)
+
+
+def _refrescar_estado_cache(**cambios) -> None:
+    """Actualiza la cache del estado sin volver a leer de la base."""
+    global _cache_estado
+    with _CACHE_LOCK:
+        if _cache_estado is None:
+            _cache_estado = {"vigilando": False, "latido_at": None,
+                             "tickers_seguidos": 0, "fuente": None, "detalle": None}
+        _cache_estado.update(cambios)
+        _marcar_cambio()
 
 
 def set_vigilando(con, vigilando: bool) -> dict:
     """Lo que pulsa la pagina. El bot lo consulta y actua en consecuencia."""
     ensure_eventos_table(con)
     con.execute("UPDATE bot_alert_estado SET vigilando = ? WHERE id = 1", [bool(vigilando)])
-    return get_estado(con)
+    _refrescar_estado_cache(vigilando=bool(vigilando))
+    with _CACHE_LOCK:
+        return dict(_cache_estado or {})
 
 
 def latido(con, tickers: int, fuente: str, detalle: str = "") -> None:
     """El bot dice que sigue vivo. Sin esto la pagina no puede distinguir
     'apagado' de 'colgado'."""
     ensure_eventos_table(con)
+    ahora = datetime.datetime.now()
     con.execute(
         "UPDATE bot_alert_estado SET latido_at = CURRENT_TIMESTAMP, "
         "tickers_seguidos = ?, fuente = ?, detalle = ? WHERE id = 1",
         [int(tickers), fuente, detalle],
     )
+    _refrescar_estado_cache(latido_at=str(ahora), tickers_seguidos=int(tickers),
+                            fuente=fuente, detalle=detalle)
 
 
 def get_watch(con) -> dict[str, dict]:

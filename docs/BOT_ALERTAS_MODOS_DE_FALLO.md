@@ -81,6 +81,23 @@ Todas las llamadas del cliente van envueltas y devuelven un valor por defecto en
 vez de lanzar. Un fallo de red no puede hacerle perder la vela siguiente, que es
 justo el minuto que hay que operar.
 
+### La página no lee de la base de datos
+
+`database.get_user_db_connection(read_only=True)` **ignora ese parámetro** y abre
+todas las conexiones en modo escritura. DuckDB solo admite un escritor, así que
+una página que consulta cada 2 segundos **bloquea las escrituras del bot**.
+
+> **Medido el 2026-09-01:** con el cuadro de mandos abierto, publicar un aviso se
+> quedaba esperando más de 60 s hasta agotar el tiempo; con la página cerrada,
+> 0,2 s. Parecía que el backend se caía.
+
+Por eso los eventos y el estado se sirven de una **caché en memoria**, invalidada
+al escribir. Es fiable porque el backend es el único que escribe en esas tablas.
+Tras el arreglo: 0,63 s en el peor caso con la página abierta.
+
+**Cuidado al añadir endpoints que se consulten a menudo**: en este proyecto no
+existen las lecturas baratas contra `users.duckdb`.
+
 ### El latido distingue «apagado» de «colgado»
 
 El bot manda una señal de vida cada pocos segundos. Sin ella, la página no

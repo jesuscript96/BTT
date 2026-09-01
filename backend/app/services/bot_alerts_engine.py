@@ -63,6 +63,10 @@ class Evento:
     momento: Any                    # timestamp de la vela que lo dispara
     precio: float                   # ultimo precio conocido (cierre de la vela)
     direccion: str                  # 'Long' | 'Short'
+    # 'prealerta' mientras la vela se esta formando, 'alerta' al cerrar. Vale
+    # para entradas Y para piramides: el anyadido tambien se decide al cierre,
+    # asi que tambien se puede preavisar.
+    estado: str = "alerta"
     # Entradas y piramides:
     acciones: Optional[float] = None
     # Solo en entradas:
