@@ -21,6 +21,13 @@ class IndicatorType(str, Enum):
     # Momentum
     RSI = "RSI"
     MACD = "MACD"
+    # Las tres lineas del MACD son NOMBRES distintos, no un parametro: asi las
+    # tiene `services/indicators.py` y asi las despacha la via rapida
+    # (`_RAW_INDICATOR_DISPATCH`). Faltaban en el enum, asi que guardar una
+    # estrategia con la Signal o el Histograma habria rebotado 422 — el mismo
+    # fallo que tuvo Darvas Box en su dia.
+    MACD_SIGNAL = "MACD Signal"
+    MACD_HISTOGRAM = "MACD Histogram"
     STOCHASTIC = "Stochastic"
     MOMENTUM = "Momentum"
     CCI = "CCI"
@@ -117,7 +124,13 @@ class IndicatorType(str, Enum):
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
     PM_HIGH_GAP = "PM High Gap (%)"
     CURRENT_GAP = "Current Gap (%)"
-    
+    # Caida de una sesion entera, congelada: del maximo de la sesion a la
+    # apertura de la siguiente (PM->open de mercado, o RTH->open del after).
+    SESSION_FADE = "% Session Fade"
+    # Caida viva desde una referencia que se reancla sola: el maximo previo o
+    # el VWAP en la vela en que el precio lo cruzo.
+    FADE = "% Fade"
+
     # Time / Others
     TIME_OF_DAY = "Time of Day"
     RANGE_OF_TIME = "Range of Time"
@@ -227,6 +240,11 @@ class IndicatorConfig(BaseModel):
     calc_on_heikin: Optional[bool] = False
 
     # Added specific parameters
+    # AJUSTE FANTASMA: nadie lee `macd_line`. No llega a `compute_indicator` ni
+    # existe alli como parametro. La linea del MACD se elige por el NOMBRE del
+    # indicador ("MACD" / "MACD Signal" / "MACD Histogram"). Se conserva el campo
+    # para no invalidar estrategias antiguas que lo lleven en su JSON, pero NO
+    # conectarle una UI: no haria nada.
     macd_line: Optional[Literal["Signal", "MACD Line", "Histogram"]] = None
     band_line: Optional[Literal["Upper", "Lower", "Basis"]] = None
     orb_minutes: Optional[int] = None
@@ -255,7 +273,14 @@ class IndicatorConfig(BaseModel):
     min_pivots: Optional[int] = None
     # "Elapsed time from last High": ancla del reloj — "full" (día completo,
     # comportamiento histórico), "pm" (PMH del día) o "rth" (máximo RTH).
+    # "% Session Fade" reutiliza este campo para elegir la sesión que se desinfla:
+    # "pm" (PM High -> apertura de mercado) o "rth" (máximo RTH -> apertura del
+    # after). "full" no aplica ahí y se trata como "pm".
     session_ref: Optional[Literal["full", "pm", "rth"]] = None
+    # "% Fade": desde dónde se mide la caída. "previous_max" usa el máximo previo
+    # (con la sesión de `ap_session`); "vwap_cross" usa el precio del VWAP en la
+    # vela en que el precio lo cruzó por última vez.
+    fade_ref: Optional[Literal["previous_max", "vwap_cross"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

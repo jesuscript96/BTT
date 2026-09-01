@@ -1497,11 +1497,750 @@ hasta ese último alto, así que los parámetros buenos de antes no tienen por q
 seguir siéndolo. Nosotros vamos a relanzar nuestras estrategias con SL
 estructural antes de sacar ninguna conclusión.
 
-## 2026-08-29 — ⚠️ BUG PERSONAL de Álvaro (rama `alvaro-rama-desarrollo`) — NO NECESARIAMENTE LO NECESITA SAILOR (Jaime)
+---
 
-> Nota para mí mismo / mi IA, por si vuelvo a necesitarlo. Solo un detalle roza
-> al equipo (marcado abajo). El análisis exhaustivo está en mi local
-> (`.zcode/MEMORIA_ALVARO_LOCAL.md`, no commiteado).
+## 2026-08-28 — Resumen de estrategia guardada, dos fixes de Álvaro adoptados, y tres auditorías medidas
+
+Sesión mixta: un arreglo propio, la adopción de dos parches del socio, y tres
+diagnósticos con números que NO tocan código. Lo que no se arregló queda
+listado al final con su porqué.
+
+### 1. El resumen de una estrategia guardada anunciaba parciales que no existían
+
+**Síntoma del usuario:** en el desplegable de una estrategia guardada (Robustez
+y Portfolio) el take profit salía bien, pero debajo aparecía «TP parciales» con
+la configuración de una versión ANTERIOR de esa misma estrategia, ya
+sobrescrita. Sospechaba que el guardado no sobrescribía bien.
+
+**El guardado sobrescribe bien.** En `users.duckdb` hay una sola fila para esa
+estrategia, sin duplicados, y `PUT /api/strategies/{id}` reescribe la
+definición entera, no hace merge. Comprobado con `updated_at`.
+
+Lo que sí pasa es que el JSON **arrastra** `partial_take_profits` de la versión
+vieja: el builder conserva el array en memoria al volver de «Parcial» a
+«Completo» (para que no pierdas la configuración si cambias de idea) y lo manda
+tal cual. **El motor lo ignora** — `strategy_engine.py:820` y `:1379` solo lo
+leen si `tp_mode == "Partial"`, y `optimization_service.py:485` tampoco expone
+esos parámetros fuera de ese modo. Los backtests eran correctos.
+
+El fallo estaba solo en el texto: `lib/robustez/formatStrategy.ts` pintaba la
+línea mirando únicamente si el array existía. Ahora usa **la misma puerta que
+el motor** (`use_take_profit is not False`, luego `tp_mode == "Partial"`), y
+además muestra «desactivado» cuando no hay TP, como ya hacía el hard stop.
+
+De paso, en esa misma línea, el disparo de un parcial por hora se pintaba como
+`30% a +HOUR:09:00%`. Ahora: `30% a las 09:00`. Los cuatro formatos que
+reconoce `_parse_partial_tps` (%, `TIME:`, `HOUR:`, `EOD`) se traducen.
+
+Un solo fichero, usado por `robustez/StrategyPicker.tsx` y
+`portfolio/StrategyShelf.tsx`. `tsc` limpio; verificado ejecutando `riskLines`
+contra la definición literal guardada en la base de datos.
+
+**Decisión consciente: NO se limpia el array al guardar.** Borrarlo en modo
+Completo haría perder la configuración de parciales al recargar la estrategia.
+Queda como está a propósito.
+
+### 2. Adoptados los dos fixes de Álvaro (`2aefb06` y `764277e`) — teníamos los dos
+
+Cherry-pick limpio de los dos, sin modificarlos.
+
+- **Darvas Box en el enum del schema.** El indicador estaba en el motor
+  (`indicators.py`, canónico «Darvas Box» + alias) y en el frontend
+  (`IndicatorType.DARVAS_BOX`), pero **no** en `schemas/strategy.py`. El
+  backtest corría y el guardado devolvía 422. Es exactamente el patrón de «un
+  campo se cae en silencio si no está declarado en las tres capas».
+  Verificado: una estrategia con condición Darvas ya valida, y un indicador
+  inventado sigue rebotando (contraprueba).
+- **«Guardar como nueva estrategia»** en el modal de sobrescritura.
+
+`tsc` limpio tras los dos.
+
+### 3. Auditoría: por qué un backtest tardó ~13 minutos
+
+Medido en vivo con `py-spy` sobre el proceso del backend (tres volcados de pila)
+y con las marcas de tiempo de la caché.
+
+| Tramo | Coste | Evitable |
+|---|---|---|
+| Datos en frío (dataset nuevo → 25 meses de parquet crudo) | ~7 min | Sí: relanzar el mismo dataset |
+| Piramidación → motor Python en las dos mitades | ~3 min | Sí: quitarla si la prueba no la necesita |
+| Sin paralelismo | multiplica todo | No, hoy |
+
+- **Datos en frío.** El dataset se creó a las 13:18 → universo nuevo → tickers
+  que no estaban en la caché por ticker-mes (`D:\tmp\btt_intraday_cache`; ojo:
+  `CACHE_DIR` está definido DOS veces en `gcs_cache.py`, líneas 37 y 799, y
+  gana la segunda). Escribió ~5.700 ficheros entre las 13:22 y las 13:29,
+  leyendo a ~100 MB/s. La barra de progreso no se mueve durante ese tramo
+  porque solo cuenta pares ya simulados.
+- **Piramidación.** Confirmado por pila:
+  `_evaluate_pyramid_levels → _resample_if_needed → pandas resample.agg`.
+  Dos puertas ya documentadas en el código la echan del camino rápido:
+  `strategy_engine.py:414` (fuerza `has_special=True` → nada de path nativo) y
+  `sim_dispatch.py:44` (con niveles de pirámide siempre `portfolio_sim`, nunca
+  el kernel Numba, aunque `BACKTEST_NUMBA_SIM=1`). Es el P3 conocido.
+- **Un núcleo de veinte — esto NO estaba apuntado.** `backtest_signals.py:765`
+  (y las otras dos vías del fichero) exigen `fork` / `forkserver`. En esta
+  máquina `multiprocessing.get_all_start_methods()` devuelve **`['spawn']`**,
+  así que **ninguna** vía paralela se activa: cae siempre al bucle secuencial
+  en línea. Además hay un segundo cerrojo antes: `BACKTEST_PARALLEL_WORKERS`
+  vale 1 por defecto (opt-in explícito, por riesgo de OOM en BROAD).
+  Ritmo medido del bucle: **39,6 pares/s** (de 4.960 a 6.743 en 45 s).
+
+  Matiz honesto: el propio código deja escrito que con spawn «a 1.200 pares el
+  spawn cuesta más que el trabajo» — pero eso se midió con el camino rápido,
+  donde cada par es baratísimo. Con piramidación el coste por par es otro orden
+  de magnitud y la cuenta puede darse la vuelta. **Sin medir. No tocar el motor
+  hasta medirlo.**
+
+### 4. Auditoría del slippage: la unidad es correcta y el coste cuadra al milímetro
+
+El usuario sospechaba que el slippage degradaba demasiado. **No hay bug.**
+
+**Unidad.** `BacktestPanel.tsx:696` y `:792` envían `slippage / 100`; el motor
+aplica `slip = precio × slippage` (`portfolio_sim_jit.py:650` y `:592`).
+Escribir 1 en la casilla «Slippage (%)» = 1% peor en la entrada y 1% peor en
+cada salida. Es lo que la etiqueta promete.
+
+**Prueba aritmética** sobre tres runs de la misma estrategia con las **mismas
+1.883 operaciones** (solo cambia el slippage):
+
+| Slippage | R media | PF |
+|---|---|---|
+| 0,05 % | +0,243 | 1,701 |
+| 0,50 % | +0,195 | 1,546 |
+| 1,00 % | +0,145 | 1,391 |
+
+Coste calculado a mano operación a operación: 0,005 / 0,050 / 0,097 R. Caídas
+reales de R media: 0,048 y 0,050. **Cuadra.**
+
+**La fórmula que lo explica:** `coste en R = 2 × slippage ÷ distancia al stop`.
+Con stops al ~23% (Previous Max + 10%), un 1% de slippage cuesta ~0,09 R contra
+una ventaja bruta de +0,24 R: se lleva el 40%. Con un stop al 2%, el mismo 1%
+costaría **1 R por operación**. La sensibilidad no es al slippage, es al
+cociente. Y con piramidación y TP parciales **se paga en cada añadido y en cada
+salida parcial**, no dos veces por operación.
+
+**Trampa metodológica detectada en los runs del usuario:** los backtests «sin
+slippage» se corrieron con `risk_r=1` y los «con slippage» con `risk_r=300`.
+Además, con `risk_r=1` la columna `r_multiple` deja de ser R y pasa a ser
+dólares (`r_multiple = pnl / risk_r`). Para comparar costes hay que mover una
+sola variable y mirar R media o PF, nunca el % de retorno (se mueve con el
+capital inicial: dos runs idénticos daban +681% y +136% simplemente por 10.000$
+contra 50.000$ — los mismos 68.154$ ganados).
+
+### 5. Aclarado (sin cambio): la guarda del SL estructural consume el flanco de señal
+
+Sobre el bloque «Si el nivel ya está rebasado al entrar» de `eb550d0`.
+
+`Previous Max` es `cummax(high).shift(1)` — el máximo del día hasta la vela
+anterior, no un pivote. Con offset +10%, en corto el nivel se considera
+rebasado solo si el precio de entrada supera `Previous Max × 1,10`.
+
+Lo que conviene tener claro: al saltarse la entrada, el código hace
+`prev_signal = current_signal; continue`, y las entradas disparan por flanco
+(`is_signal_trigger = current_signal and not prev_signal`). Es decir, **el
+disparo se consume**: aunque en la vela siguiente el Previous Max ya se haya
+puesto al día y el stop fuera válido, no entra. Hace falta que la condición se
+apague y se vuelva a encender. En una estrategia de gaps, donde la buena del
+día puede ser una sola señal, eso puede costar el día entero.
+
+La entrada saltada **no** gasta reentrada (`total_trades` no sube).
+
+Pendiente ofrecido y no ejecutado: medir cuántas señales se pierden hoy
+(correr la misma estrategia con y sin respaldo y comparar el nº de
+operaciones). Las entradas saltadas no dejan rastro; solo se ven por ausencia.
+
+### 6. Encontrado y NO arreglado (a la espera de decisión)
+
+- **Trampa de ×100 latente.** En `app/backtester/page.tsx:500` y `:545` el
+  valor por defecto es `slippage: p?.slippage ?? 0.01` — 0,01 en unidades del
+  MOTOR, o sea 1%, mientras que el valor por defecto del panel es 0,01 **en la
+  casilla**, o sea 0,01%. Cien veces. Lo mismo con `fees ?? 0.01`. **No
+  dispara hoy**: `p` es `panelParamsRef.current`, que el panel rellena al
+  montarse. Es una trampa esperando un cambio en el orden de carga.
+- **Trabajo muerto en cada mes del stream.** `db/gcs_cache.py:1298` hace
+  `n_groups = len(grouped)` y **no usa** `n_groups` en ninguna parte. Ese
+  `len()` sobre un groupby materializa el índice de todos los grupos del mes.
+  Se paga en los 25 meses para nada.
+
+---
+
+## 2026-08-29 — Dos adopciones de Álvaro, la marca de entrada del gráfico, y tres auditorías con datos
+
+Sesión de mañana. Tres cambios de código y cuatro diagnósticos medidos. Como
+siempre, lo que NO se tocó va al final con su porqué.
+
+### 1. Adoptados dos commits de Álvaro (`e04d95e` y `a08f01e`)
+
+Cherry-pick limpio, sin modificarlos, con su autoría.
+
+- **`e04d95e` — indicador «Current Gap (%)»**. El gap VIVO: a cuánto está el
+  precio de la vela respecto al cierre de ayer, actualizándose barra a barra.
+  A diferencia de «PM High Gap (%)», que se congela al acabar el premarket y
+  no se entera si el precio se desploma. Trae 4 pruebas propias.
+- **`a08f01e` — watchdog del backend local** (`run_backend_forever.bat`). Si
+  8010 está libre arranca uvicorn y lo revive a los 30 s si muere; si está
+  ocupado espera 60 s sin duplicar.
+  ⚠️ **Hoy no hace nada**: es un fichero del repo, y el `.vbs` que Álvaro usa
+  para registrarlo como tarea programada es local suyo. Si algún día se activa
+  en la máquina de Jaume, **chocará con el lanzador del escritorio**: el
+  «Forzado de apagado» mataría el backend y el watchdog lo resucitaría 30 s
+  después. Hay que ajustar uno de los dos ANTES de activarlo.
+
+**Verificación:** el cambio de Current Gap es puramente aditivo (un valor nuevo
+en el enum, una función nueva y una entrada en el dispatch); no toca ni una
+línea de ningún camino existente. 4 pruebas nuevas + 117 de paridad del motor +
+`tsc` limpio. El arreglo de Darvas del 28-ago sobrevive intacto en el mismo
+fichero.
+
+### 2. Borrado `test_backtest_engine.py` — roto desde febrero
+
+No se podía ni recolectar: importaba `Condition` y `Operator` de
+`app.schemas.strategy`, dos nombres que ya no existen. **Rompía la recolección
+de pytest entera**, así que se llevaba por delante cualquier tanda que lo
+incluyera.
+
+Sus 10 pruebas apuntan a `app.backtester.engine.BacktestEngine`, que el propio
+código marca como **MUERTO** en dos sitios (`routers/portfolio.py:15` y
+`services/portfolio_service.py:7`). Último commit que lo tocó: `d969d4f`,
+2026-02-08. Siete meses sin ejecutarse: no se pierde cobertura porque no había.
+
+Tras borrarlo la suite recolecta **474 pruebas**. Queda **otro igual**:
+`test_backtest_integration.py` (6 pruebas, 2026-02-22, mismo motor muerto y una
+función que ya no existe en ningún sitio). Pendiente de decisión.
+
+### 3. La marca de ENTRADA del gráfico mostraba el tamaño del primer parcial
+
+**Salió de una pregunta del usuario** («¿por qué piramida dos veces si dije
+una?»). La respuesta a eso era que no piramidaba dos veces —eran **dos trades**,
+porque una reentrada rearma la pirámide entera— pero al cuadrar las cantidades
+apareció esto.
+
+`_build_executions` tomaba `run[0]["size"]` como tamaño de la entrada. `run[0]`
+es el PRIMER LEG del trade, y con TP parciales ese leg es la cantidad del primer
+parcial, no la posición abierta.
+
+Medido (corrida con parciales 60/40): **CNEY 2024-09-11 abrió 1.666,67 acciones**
+(riesgo 300 $ ÷ 0,18 $ de distancia al stop) **y la marca decía 1.000** — justo
+el 60 % del primer parcial. Sumando las marcas parecía que **el 86 % de los
+trades cerraban más acciones de las que abrían**.
+
+**NO había error de dinero.** La función es informativa y no alimenta ninguna
+métrica. Comprobado reconstruyendo el PnL de CNEY a mano: 1.000 acc a 0,999
+(+111 $) + 666,67 acc a 1,29 (−120 $) − 0,11 $ de comisiones = **−9,11 $**,
+idéntico al `pnl` guardado. La posición real siempre fue la correcta.
+
+Arreglado con la identidad del propio motor (`sum(legs) = inicial + añadidos`,
+las reducciones de pirámide se cancelan solas porque también emiten leg).
+Un trade de un solo leg da el mismo número que antes → las estrategias sin
+parciales ni pirámide no cambian nada. 121 pruebas verdes.
+
+> **Regla para quien venga:** las marcas del gráfico **no son fuente de verdad
+> para cantidades**. El `pnl` del trade sí. Ante una discrepancia, reconstruir
+> el PnL con precios y tamaños antes de gritar «bug del motor».
+
+### 4. Medido: en premarket, «Previous Max» NUNCA está por encima del PMH
+
+Sobre **3.246 ticker-días y 72.449 velas de premarket**:
+
+```
+Previous Max  ==  PMH  →  66.919 velas  (92,4 %)
+Previous Max  <   PMH  →   5.530 velas  ( 7,6 %)
+Previous Max  >   PMH  →        0 velas  ( NUNCA )
+```
+
+No es casualidad de la muestra, es aritmética: el PMH es el máximo acumulado
+**incluyendo la vela actual** y Previous Max es el mismo máximo **una vela por
+detrás** (`cummax(high).shift(1)`). Persigue al PMH sin adelantarlo nunca. Los
+datos empiezan a las 04:00, que es justo cuando arranca el premarket, así que
+durante el PM los dos recorren las mismas barras.
+
+**Consecuencia práctica, y es importante:** en una estrategia que solo entra en
+premarket, poner **Previous Max como respaldo del PMH no puede rescatar
+absolutamente nada**. En un corto el stop debe quedar POR ENCIMA de la entrada;
+si el PMH no llega, Previous Max llega menos. El desplegable «si el nivel ya
+está rebasado al entrar» y su casilla están **inertes** en ese tipo de
+estrategia, marcados o sin marcar.
+
+Y lo mismo con HOD de respaldo: durante el premarket, el máximo del día **es**
+el PMH.
+
+Medido también al revés, por si la intuición decía otra cosa: con Previous Max
+como stop principal se pierden **más** entradas, no menos (0,141 % de las velas
+contra 0,065 % con PMH; 27 casos que el PMH salva y Previous Max no, y **cero**
+al revés).
+
+**Dónde SÍ sirve la función:** en estrategias que entran en RTH, donde el PMH se
+congela a las 09:30 y el máximo del día sigue subiendo — ahí los dos niveles se
+separan de verdad y el respaldo rescata.
+
+### 5. Revisado el Walk Forward: barre bien, pero tiene tres huecos
+
+El usuario sospechaba que «solo le devuelve el valor que ya tiene». **El barrido
+funciona**: construye la rejilla entera, corre un backtest real por combinación
+y ventana, y se queda con el máximo. Comprobada la sospecha más obvia —que la
+caché de señales congelara los parámetros de riesgo entre combinaciones— y **no
+pasa**: la caché guarda solo entradas/salidas y **vuelve a leer la gestión de
+riesgo en cada combinación**.
+
+Pero hay tres huecos reales:
+
+1. **Con un stop de estructura no se puede optimizar NADA del stop.** El
+   generador de parámetros hace `float(hs.get("value"))` y, como el valor es
+   texto (`"Previous Max"`), descarta el hard stop entero. **Y el `offset_pct`
+   —el margen del 10 %, que es la perilla más interesante— no se ofrece
+   tampoco.** Nadie lo conectó.
+2. **El eje de tiempo no se redondea a minutos enteros.** El optimizador normal
+   sí lo hace (`is_int` para `minutes`/`time_of_day`); `robustness_wfo._axis`
+   no. Con un rango estrecho y muchos pasos, varias combinaciones se escriben
+   como el mismo `HH:MM` → se pagan backtests para probar lo mismo.
+3. **`_param_analysis` solo analiza el PRIMER parámetro** (`best_params[0]`).
+   Si se barren dos, el segundo se optimiza pero no sale recomendación.
+
+### 6. El lanzador solo mira el puerto 3000
+
+Reportado como «la app no arranca». **No estaba rota**: `next dev` encontró la
+3000 ocupada por un resto de la sesión anterior, se mudó sola a la **3001** y
+siguió funcionando. El lanzador (`D:\lanzador_btt\arrancar_btt.ps1`) tiene
+`$PuertoWeb = 3000` fijo, esperó 180 s en una puerta por la que no iba a llegar
+nadie y dio por muerto un frontend vivo. Su propio log de apagado lo delataba:
+*"puerto 3000: ya estaba libre"*.
+
+Dos puntos flojos, los dos de una línea: **solo mira la 3000** (no detecta la
+puerta real) y **no comprueba que quede libre al apagar** (de ahí el resto
+arrastrado). El script vive fuera del repo, a propósito.
+
+### 7. Encontrado y NO arreglado
+
+- `test_backtest_integration.py`, roto igual que su hermano (§2).
+- Los tres huecos del Walk Forward (§5). Los dos primeros salen de la misma
+  carencia de fondo: **`hard_stop.value` guarda texto en vez de un nivel con
+  parámetros**, y de ahí que ni se pueda optimizar ni se pueda elegir la sesión
+  de referencia. Merecen un PRD propio, no parches.
+- **El nivel del stop no se puede medir por sesión.** Los niveles (`hod`,
+  `prev_high`…) se calculan sobre el día ENTERO desde las 04:00 y luego solo se
+  recortan a la sesión elegida; nunca se recalculan. En una estrategia de RTH,
+  «Previous Max» ya lleva dentro todo el máximo del premarket. La maquinaria
+  existe (`RTH High`/`RTH Low`/`High/Low from x time` funcionan en la lógica de
+  entrada) pero **no está enchufada al stop**. Conectarlo obliga a ampliar la
+  firma del simulador, que va en paridad bit a bit Python↔JIT: no es un parche.
+- Los dos puntos flojos del lanzador (§6).
+
+---
+
+## 📣 2026-08-29 — REINICIO DE `staging`: se ha igualado a `sailor-rama-desarrollo`
+
+**Decisión de Jaume, tomada con la lista de consecuencias delante.** Es la
+segunda vez que se hace: la primera fue el 2026-08-26 (ver la cabecera de este
+documento). `staging` pasa a ser una **copia exacta** de
+`sailor-rama-desarrollo`, y este documento es el de Sailor.
+
+**Álvaro: nada de lo tuyo se ha perdido, pero sí se ha quitado de `staging`.**
+Todo sigue en tu rama y, además, en una etiqueta puesta a propósito antes de
+tocar nada:
+
+```
+staging-antes-del-reinicio-2026-08-29  ->  f1555b6
+```
+
+Con eso recuperas el estado exacto que tenía `staging` justo antes
+(`git checkout staging-antes-del-reinicio-2026-08-29`, o cherry-pick suelto de
+lo que quieras devolver). **Revísalo y reintegra lo que consideres**: la idea no
+es descartar tu trabajo, es partir de una base común y que tú decidas qué vuelve.
+
+### Qué había en `staging` que no está en esta base — 18 commits
+
+**a) Cuatro que YA están, con otro SHA. No hay nada que hacer.**
+
+| El tuyo | El nuestro |
+|---|---|
+| `dfa6e51` SL estructural: fills fantasma | `eb550d0` |
+| `c79993d` SL del trade pintado en el chart | `a2282b4` |
+| `40920cc` Days cuenta sesiones de calendario | `7415eed` |
+| `8777d17` globs de mes con/sin cero | `27e8076` + `919ea1c` |
+
+**b) Tres RECHAZADOS por acuerdo de las dos partes. No los devuelvas.**
+
+`19979bc` y `6c05066` (split del gap de PMH) y `970ea9f`
+(`LAKE_PREV_CLOSE_YA_AJUSTADO`). Aquí **doblarían el ajuste**: nuestro
+`prev_close` ya viene ajustado del ETL, y aplicarlo otra vez da gaps falsos (el
+caso NVDA 2024-06-10 → 910,77 %). Ya lo cerramos formalmente los dos el 27-ago.
+
+**c) Tres de código que Jaume ha decidido NO adoptar, a sabiendas.**
+
+- `dfb9f04` — profiler fino de sub-fases de `stream_build`
+- `bcc75ba` — warmup de indicadores al arrancar
+- `8cd3ad9` — pestaña «Últimas pruebas»
+
+Se le listaron uno a uno con lo que hacía cada uno y dijo que no. **No es un
+olvido ni un accidente del reinicio.** Si crees que alguno debe volver, es
+conversación, no bug.
+
+**d) Ocho de documentación tuya**, incluidos dos bloques de este mismo fichero
+(«2026-08-27 noche, 4ª parte» y «5ª parte»). Están en la etiqueta. Si quieres
+que vuelvan a `MEMORIA_MADRE.md`, se pegan al final y ya: el documento es
+append-only, no hay conflicto real.
+
+### Lo que sí te llevas de esta base
+
+Además de todo lo del 27, 28 y 29 que hay documentado más arriba, **dos commits
+tuyos que adoptamos tal cual, con tu autoría intacta**:
+
+- `2aefb06` — Darvas Box en el enum del schema (teníamos el mismo fallo)
+- `764277e` — «Guardar como nueva estrategia»
+- `e04d95e` — indicador Current Gap (%)
+- `a08f01e` — watchdog del backend local
+
+### Por qué se ha hecho así
+
+Los dos documentos habían divergido 373/329 líneas y cualquier fusión
+conflictaba en medio. Jaume prefirió una base común limpia y que la reconciliación
+la hagas tú mirando la etiqueta, en vez de arrastrar una fusión a ciegas. Queda
+dicho para que nadie lo lea como un descuido dentro de seis meses.
+
+---
+
+## 2026-08-30 — Walk Forward: el eje de tiempo que repetía backtests y el análisis que desaparecía con dos parámetros
+
+Tres huecos quedaron apuntados el 29-ago en el **modo Completo** del Walk
+Forward. El barrido en sí **no estaba roto** (eso ya se auditó y quedó limpio:
+la caché de señales vuelve a leer la gestión de riesgo en cada combinación). Hoy
+se cierran el 2 y el 3. **El 1 sigue abierto** — con un stop de estructura no se
+puede optimizar nada del stop, porque el generador hace `float(hs["value"])` y
+`"Previous Max"` es texto; merece PRD porque toca la firma del simulador.
+
+### 1. El eje de un parámetro entero repetía combinaciones
+
+`robustness_wfo._axis()` generaba el eje con `np.linspace` crudo. El decimal se
+perdía después, al escribir el valor: `_encode_tp_value` → `_minutos_a_hhmm`
+hace `int(round(...))`. Resultado: valores distintos del eje colapsaban en el
+mismo minuto y **se pagaban backtests para probar exactamente lo mismo**, sin
+aviso — la barra de progreso contaba todos.
+
+Medido: barrer una hora de cierre de **15:30 a 15:35 en 10 pasos** daba 10
+combinaciones para **6 horas distintas**. Con 5 ventanas, 20 de los 55 backtests
+anunciados eran duplicados exactos.
+
+Y el gasto no era lo peor. Los duplicados entraban en la tabla de mesetas como
+**filas separadas con puntuación idéntica**, y como la meseta es una media móvil
+de tres vecinos, cada valor tenía de vecino a su propio gemelo: la curva salía
+más lisa de lo que era y **aparentaba una meseta que no existía**. La
+recomendación quedaba sesgada hacia «estable».
+
+El optimizador normal (`run_optimization_grid`) ya lo hacía bien: redondea a
+entero y deduplica con `sorted(set(...))`. Ahora `_axis` aplica **la misma
+regla**, y el conjunto de claves enteras —que estaba escrito palabra por palabra
+en dos sitios— vive en un único `_INT_PARAM_KEYS` en `optimization_service.py`.
+
+**Efecto colateral que hubo que cerrar:** la pantalla anunciaba
+`ventanas × (pasos+1)` backtests y al deduplicar se corren menos. El router
+cuenta ahora con los ejes de verdad y la línea previa dice «Hasta N».
+
+### 2. Con dos parámetros, el análisis por valor desaparecía ENTERO
+
+`robustness_wfo.py:325` hacía `_param_analysis(...) if len(param_configs) == 1
+else None`, y la pantalla escondía el bloque completo al recibir `null`. Barrer
+dos parámetros costaba `ventanas × pasos₁ × pasos₂` backtests y **no daba
+recomendación para ninguno de los dos**: ni valor recomendado, ni tabla por
+valor, ni estabilidad, ni el aviso de «el óptimo cayó en el borde del rango».
+
+El guardia no era un descuido: `_param_analysis` estaba escrito en una sola
+dimensión (recorría `values`, comparaba `params[0]` y `best_params[0]`), así que
+apagarlo evitaba analizar el primero ignorando que el segundo se movía.
+
+Ahora recibe la **posición del parámetro** dentro de la combinación. Con uno
+devuelve **el mismo diccionario que antes, campo por campo** (comprobado contra
+`HEAD`). Con varios, cada eje se lee **marginalizando** sobre los demás: la
+puntuación de un valor es la media de todas las combinaciones que lo contienen.
+Se devuelve `param_analyses` (uno por eje) y se conserva `param_analysis` con la
+forma de siempre.
+
+**Limitación asumida y escrita en el docstring:** marginalizar mezcla en `std`
+la dispersión entre ventanas con la que introduce el otro parámetro al moverse,
+y una **interacción** (un parámetro que solo funciona acompañado de cierto valor
+del otro) no se ve en una fila. Para eso hay que mirar la rejilla entera.
+
+### 3. La meseta se degeneraba en ejes cortos — fallo preexistente
+
+Encontrado de paso, existía desde el principio. Los extremos promediaban solo
+los dos vecinos que tenían, y eso los hacía **incomparables** con los de dentro
+(dos sumandos frente a tres):
+
+| Medias por valor | Meseta (antes) | Recomendaba |
+|---|---|---|
+| `0,1 · 1,1` | `0,6 · 0,6` | el primero — **el peor**, siempre, con 2 valores |
+| `0,2 · 1,0 · 0,2` | `0,6 · 0,47 · 0,6` | el primero — **el peor** |
+| `0,1 · 0,9 · 1,0 · 0,2` | `0,5 · 0,67 · 0,7 · 0,6` | el tercero — correcto |
+
+Arreglado: fuera de la rejilla se supone que el eje sigue **plano** (el extremo
+se repite a sí mismo), con lo que todos promedian tres sumandos; y a igualdad de
+meseta gana el que de verdad puntúa mejor. Los tres casos aciertan ahora, y el
+caso realista de 4+ valores **recomienda exactamente lo mismo que antes**.
+
+### 4. La pantalla ya deja barrer dos parámetros
+
+Hasta hoy el formulario mandaba siempre uno (`params: [{ ...sel }]`), así que el
+hueco 2 solo se alcanzaba llamando a la API a mano. Ahora hay un **segundo
+parámetro opcional**, que excluye de su lista el que ya está elegido y se suelta
+solo si el primero pasa a ser ese mismo. El aviso de coste escala con el
+producto de los dos ejes.
+
+También se corrigió algo latente: la **unidad** de cada eje viaja ahora con el
+resultado (`param_configs[].unit`). Antes salía del formulario, que solo conoce
+la del parámetro seleccionado en ese momento — con dos, el segundo se habría
+pintado con la unidad del primero (un `810` crudo en vez de `13:30`).
+
+### Verificación
+
+- **11 tests nuevos** en `backend/tests/test_wfo_axis_and_analysis.py`, entre
+  ellos la paridad del eje entero con la fórmula del optimizador y el análisis
+  marginal de dos ejes con puntuación aditiva (comprobable a mano).
+- `tsc --noEmit` limpio y `eslint` con **exactamente los mismos avisos
+  preexistentes** que antes de tocar nada.
+- **Barrido real en la pantalla**, estrategia «2.1B 50K (normalizada)»:
+  6 ventanas × (Parcial 1 Distancia %, 2 pasos) × (Parcial 2 Hora de cierre,
+  13:30–13:31 en 6 pasos). El formulario anunció **«Hasta 78 backtests»** y la
+  barra de progreso mostró **30** — los 6 pasos de la hora deduplicados a 2.
+  Antes habrían corrido los 78.
+
+### Ficheros
+
+`backend/app/services/robustness_wfo.py` · `backend/app/services/optimization_service.py`
+`backend/app/routers/robustness.py` · `backend/tests/test_wfo_axis_and_analysis.py`
+`frontend/src/components/robustez/modules/useWfo.tsx`
+`frontend/src/components/robustez/charts/WfoCharts.tsx` · `frontend/src/lib/api_robustez.ts`
+
+---
+
+## 📣 2026-08-30 — Para Álvaro: qué lleva `sailor` que `staging` todavía no
+
+`staging` se igualó a `sailor-rama-desarrollo` el 29-ago. Desde entonces esta
+rama ha sumado **cinco cosas**. Ninguna toca la lógica de simulación salvo donde
+se dice; están listadas para que decidas cuáles adoptar.
+
+| # | Commit | Qué es | ¿Riesgo? |
+|---|---|---|---|
+| 1 | `d033c07` | Borrado `test_backtest_integration.py` | Ninguno |
+| 2 | `401f9a6` | «Shares por Distancia al SL» también con stop en % | Bajo, ver abajo |
+| 3 | `3e91992` | Walk Forward: eje que repetía backtests + análisis que desaparecía | Ninguno fuera del WFO |
+| 4 | `3e8739d` | Documentación de lo anterior | — |
+| 5 | *(este commit)* | Quitado el bloque «nivel rebasado al entrar» de la UI | Ninguno, ver abajo |
+
+### 1. `test_backtest_integration.py` borrado
+
+Gemelo de `test_backtest_engine.py` (borrado en `157435c`): no se podía ni
+recolectar desde febrero. Importa `app.backtester.engine.BacktestEngine`, que el
+propio código marca como muerto. No cubría nada que siguiera vivo.
+
+### 2. «Cálculo de Shares por Distancia al SL» también con el stop en %
+
+**Es el único de los cinco que cambia resultados**, y solo si activas el
+interruptor con un stop en %.
+
+Antes el interruptor solo estaba disponible con stop de *Market Structure*: con
+«%» el bloque salía atenuado y sin clic, y encima cambiar el tipo de stop a «%»
+apagaba `size_by_sl` en silencio. No había motivo técnico: **los dos motores ya
+lo calculaban igual** para cualquier stop que dé un nivel de precio
+(`portfolio_sim.py` y `portfolio_sim_jit.py:722`), con `size = riesgo /
+abs(entrada − stop)`. Con «%» la distancia es `entrada × pct`, que es el
+dimensionado clásico de "arriesgo X con un stop del Y %".
+
+Comprobado en los dos motores con un caso sintético (entrada 10 $, stop 2 %,
+riesgo 100 $): Python y JIT dan **500,0000 acciones** exactas. Paridad intacta.
+Las estrategias guardadas no cambian: el interruptor sigue apagado por defecto.
+
+### 3. Walk Forward — dos huecos cerrados
+
+Detalle completo en la entrada del 30-ago más arriba. En resumen: el eje de un
+parámetro entero no se redondeaba ni deduplicaba (15:30–15:35 en 10 pasos daba
+solo 6 horas distintas → **20 backtests duplicados de 50**, y las mesetas salían
+falsamente lisas porque cada valor tenía de vecino a su gemelo); y con dos
+parámetros el análisis por valor desaparecía entero. **Contenido en
+`robustness_wfo.py` y su pantalla; no toca el motor de simulación.**
+
+### 5. Quitado el bloque «Si el nivel ya está rebasado al entrar»
+
+`frontend/src/components/strategy-builder/RiskManagement.tsx`. Era el bloque que
+permitía elegir un **nivel de respaldo** cuando el stop estructural queda del
+lado ganador de la entrada. Se quita a petición de Jaume: comprobado que no
+aportaba.
+
+**No se ha tocado el motor.** `_structural_level`, `_sl_side_valid` y toda la
+lógica de respaldo (`hs_fallback_value`, `hs_fallback_first`) siguen exactamente
+igual en `portfolio_sim.py` y en el JIT. Se ha quitado **solo la interfaz**.
+
+**Por qué esto no deja un ajuste fantasma:** se revisaron las cuatro estrategias
+guardadas y **ninguna tiene `fallback_value`** (dos tienen `fallback_first_entry:
+true`, pero el simulador exige el valor para activar nada:
+`if hs_fallback_value and (...)`). Así que no hay estrategia cuyo comportamiento
+dependa de un ajuste que ya no se puede ver. Si algún día se quiere devolver,
+está en el historial y el motor lo sigue soportando.
+
+Verificado con `tsc --noEmit`: **0 errores**. La prop `bias` se mantiene en la
+interfaz para no romper a los llamadores, pero ya no se usa.
+
+### Aparte: el motor es causal — medido, no supuesto
+
+Trabajo de Jaume para un proyecto propio de avisos en vivo. **No aporta código a
+este repo**, pero el hallazgo sí interesa aquí porque es una propiedad del motor
+compartido.
+
+Se comparó `translate_strategy` evaluando el **día entero** (como hace
+`run_backtest`) contra el mismo motor evaluando **vela a vela**, quedándose solo
+con el último valor de cada evaluación. Si difirieran, el motor estaría usando
+información futura en esa vela.
+
+**73 ticker-días, entre 2019 y 2026, cero divergencias:**
+
+| Estrategia | Camino ejercitado | Días | Divergencias |
+|---|---|---|---|
+| 1B 50k | premercado, ventana de entrada, VWAP y acumulados | 49 | **0** |
+| 2.1B 50K | RTH, piramidación, stop estructural | 24 | **0** |
+
+Incluye días con más de 400 velas de señal. Esto confirma que los acumulados
+causales que se metieron en su día (PM High/Low, RTH High/Low/Open, PM High Gap)
+están bien: **ninguno filtra futuro**. Es una red de seguridad que conviene
+volver a pasar si alguien toca los indicadores de sesión.
+
+## 2026-08-31 — Dos indicadores de caída, y tres decisiones de rama
+
+### 1. Indicadores nuevos: «% Session Fade» y «% Fade»
+
+Los pidió Jaume para operar el desinflado de los gaps. Los dos devuelven un
+**porcentaje de CAÍDA en positivo**, para que la condición se lea igual que se
+dice en voz alta («se desinfló más de un 20%» → `% Fade > 20`). Negativo
+significa que el precio está por encima de la referencia.
+
+**`% Session Fade`** — caída de una sesión ENTERA, congelada. Parámetro
+`session_ref`:
+
+| Modo | Fórmula | Existe a partir de |
+|---|---|---|
+| `pm` | `(PM High − apertura de mercado) / PM High × 100` | 09:30 |
+| `rth` | `(máx. RTH − apertura del After) / máx. RTH × 100` | 16:00 |
+| `full` | `(máx. del día 04:00-16:00 − apertura del After) / máx. × 100` | 16:00 |
+
+El modo `full` mide el **desinflado real del día**, sin que importe si el máximo
+se hizo en premarket o en la sesión regular. Cuando el máximo del día es el PM
+High —lo normal en un gap que se muere— `full` y `rth` dan números muy
+distintos, y `full` es el que describe lo que pasó de verdad.
+
+**Es causal sin necesidad de trucos**, y conviene entender por qué: la apertura
+de la sesión siguiente es NaN hasta que esa sesión abre, y para entonces el
+máximo de referencia ya está cerrado y no puede cambiar. Antes de ese instante
+el indicador no existe y cualquier condición que lo use evalúa False. No se
+puede saber el fade del premercado a las 07:00, y el indicador lo refleja.
+
+**`% Fade`** — caída VIVA, con una referencia que se reancla sola. Parámetro
+`fade_ref`:
+
+- `previous_max` → `(máximo previo − close) / máximo previo × 100`. Usa
+  `ap_session` igual que «Previous Max», y el mismo `shift(1)` (el máximo no
+  incluye la barra actual). Cada máximo nuevo devuelve el fade a cero.
+- `vwap_cross` → `(VWAP de la vela del último cruce − close) / ese VWAP × 100`.
+  La referencia es el VWAP **de la vela en que el precio cruzó**, no el VWAP
+  vivo: por eso el fade sigue creciendo aunque el VWAP también baje. Se reancla
+  en cada cruce nuevo. NaN antes del primer cruce del día.
+
+Un detalle que costó pensar: en el cruce del VWAP, un NaN a cualquiera de los
+dos lados **no cuenta como cruce**. Sin ese guardia, la primera vela con volumen
+(el VWAP pasa de NaN a número) se contaría como un cruce falso y anclaría ahí.
+
+**Las 17 capas tocadas** (el mapa completo, por si sirve para el siguiente):
+
+- Backend: `schemas/strategy.py` (enum + `fade_ref`), `services/indicators.py`
+  (3 helpers nuevos + 2 ramas de cálculo), `backtester/engine.py` (motor
+  legacy), `services/strategy_engine.py` (reenvío del parámetro en
+  `_compute_from_config` — si falta, el parámetro se pierde en silencio),
+  `api_public/.../catalog.py`.
+- Frontend: `types/strategy.ts`, `ConditionBuilder.tsx` (categoría, etiqueta,
+  descripción, defectos y los dos selectores), `WizardStrategyBuilder.tsx`,
+  `indicatorRegistry.ts`, `lib/indicators.ts`, `Chart.tsx`,
+  `IndicatorDropdown.tsx`, `indicatorValidation.ts`, `assistant/schemas.ts`,
+  `assistant/strategyGuard.ts`, `InlineStrategyBuilder.tsx`,
+  `StrategiesTable.tsx`.
+
+No hacen falta en `optimization_service.py`: sus dos parámetros son texto, no
+números, así que no hay nada que barrer.
+
+**Van por el camino clásico a propósito.** Ninguno está en
+`_RAW_INDICATOR_DISPATCH`, así que una estrategia que los use da
+`has_special=True` y se va entera a la vía legacy: **correcta, solo que sin el
+acelerón**. Meterlos en el dispatch sería una optimización, nunca una
+corrección.
+
+**De propina, una limpieza.** El mismo `if` de «este indicador es un
+porcentaje» estaba copiado literal en **cinco sitios** de cuatro ficheros, y ya
+se habían desincronizado: Squeeze llevaba el sufijo `%` en el resumen del
+`ConditionBuilder` pero no en el del wizard, el de la tabla ni el del
+`InlineStrategyBuilder`. Ahora hay dos predicados exportados,
+`isPercentIndicator` e `isMeasureIndicator`, y las cinco copias los usan. Efecto
+lateral visible: **Squeeze ya muestra el `%` en los cuatro resúmenes**.
+
+### 2. Verificación
+
+- **`backend/tests/test_fade_indicators.py`, 15 tests.** Aritmética de los
+  cuatro modos, causalidad, reanclaje, y **paridad `services/indicators.py` ↔
+  `backtester/engine.py`** (incluido un día aleatorio de 480 velas, no solo
+  casos escritos a mano).
+- **Paridad gráfico ↔ backend, medida.** La regla del repo tras lo de Darvas.
+  540 velas dispersas de un día real (35% de minutos ausentes, velas con volumen
+  0), los cuatro modos: **1.441 valores comparados, cero divergencias**, y los
+  NaN caen exactamente en las mismas velas. Se comparó el JS **compilado del
+  fichero real**, no una copia a mano.
+- `tsc --noEmit`: 0 errores. Suite del backend: **sin regresiones** (los 103
+  fallos de este árbol son los mismos con y sin el cambio — dependen del lago
+  local y de GCS; se comprobó con `git stash`).
+
+**Ojo con una trampa al medir esto:** `test_run_backtest_slab_equivalence` pasa
+en un worktree limpio y falla en el árbol de trabajo, porque depende del estado
+local del lago. Parece una regresión y no lo es. La única forma honesta de
+comparar es con el mismo árbol, no con dos.
+
+### 3. `Previous max` / `Previous min`: bucle por barra → vectorizado
+
+Los dos hacían un bucle Python barra a barra. Ahora comparten helper
+(`_previous_extreme_series`) con `% Fade`, para que no puedan divergir. **La
+equivalencia está medida**, no supuesta: un test compara el resultado nuevo
+contra una copia literal del bucle viejo, sobre 200 velas aleatorias y en las
+tres sesiones (`ap.PM`, `ap.RTH`, `ap.AM`). Ni un decimal de diferencia — los
+backtests viejos siguen dando lo mismo.
+
+### 4. Para Álvaro: tres commits que Jaume descarta
+
+De la lista de cosas que quedaban por traer de la rama de Álvaro,
+**Jaume descarta estos tres**, hoy, a conciencia. Se anotan aquí por si alguna
+vez algo no cuadra entre las dos ramas y el rastro lleva por aquí:
+
+| Commit | Qué era | Por qué no |
+|---|---|---|
+| `dfb9f04` | profiler fino de sub-fases de `stream_build` (gated) | No le aporta |
+| `bcc75ba` | warmup de indicadores al arrancar | No le aporta |
+| `8cd3ad9` | pestaña «Últimas pruebas» (reabrir runs auto-guardados) | No le aporta |
+
+**No están en ninguna rama viva.** Salen de la etiqueta
+`staging-antes-del-reinicio-2026-08-29` → `f1555b6` si algún día se quieren.
+Esto no es un juicio sobre el código: es que Jaume no los necesita.
+
+### 5. Walk Forward: el hueco del stop estructural se cierra como «no aplica»
+
+Quedaba abierto que **con un stop de estructura no se puede optimizar nada del
+stop**, porque el generador hace `float(hs["value"])` y el valor es texto
+(`"Previous Max"`). Se había apuntado que merecía un PRD.
+
+**Jaume lo cierra: no lo merece.** Un stop por «Premarket High» o «Previous Max»
+es un **punto fijo del gráfico** — no hay nada que barrer, porque el nivel
+siempre va a ser el mismo. Optimizar tiene sentido para un stop en %, y eso ya
+funciona. Queda fuera de alcance por decisión de producto, no por dificultad.
+
+---
+
+## 📣 2026-08-29 — Entradas de Álvaro, traídas con los cherry-picks del 31-ago
+
+> Estas dos secciones vienen de `alvaro-rama-desarrollo` junto con los commits
+> `9c0cb85` y `8063e0a`. Se conservan tal cual las escribió él. Están fuera de
+> orden cronológico a propósito: llegaron por cherry-pick el 31-ago, después de
+> que aquí ya se hubieran escrito las sesiones del 29, 30 y 31.
 
 - **Lo único que roza al equipo:** el lago de ORIGEN
   (`gs://strategybuilderbbdd/cold_storage/daily_metrics`) acumula desde el
@@ -1681,3 +2420,78 @@ Protege la máquina (local y prod) de datasets "universo entero":
   (gap-vs-gap) hasta que las vías converjan.
 - **Código tocado:** NINGUNO (confirmado)
 - **Estado:** ABIERTO
+### 6. Adoptados los dos commits de Álvaro del 30-ago
+
+Jaume da el visto bueno y entran por cherry-pick suelto (nunca merge de la rama:
+son 30 commits con conflicto seguro en el documento). Autoría de Álvaro
+conservada.
+
+| Commit aquí | Original | Qué trae |
+|---|---|---|
+| `e872c70` | `9c0cb85` | rechazar universos sin reglas + cap de pre-cache |
+| `54186e2` | `8063e0a` | filtros Gap −1 compartidos por las tres vías + rachas por día |
+
+**El único conflicto fue `docs/MEMORIA_MADRE.md`**, como estaba previsto. Se
+resolvió **conservando los dos lados**: las entradas de Álvaro del 29-ago están
+ahora al final, bajo una cabecera que explica que llegaron por cherry-pick y por
+eso van fuera de orden cronológico.
+
+**Verificación de que no corrompe nada:**
+- Los 14 tests que traen sus commits (`test_prev_day_universe_filters.py` y
+  `test_daily_streak_metrics.py`): **14/14 en verde** aquí.
+- Suite completa antes y después de los cherry-picks: **el conjunto de fallos es
+  IDÉNTICO** (los mismos 103, todos dependientes del lago local y de GCS). Los
+  pases suben de 384 a 400 = sus 14 tests + 2 míos del modo `full`.
+- `tsc --noEmit`: 0 errores.
+- Comprobado en la app en marcha: la sección **«GAP-1 DAY»** aparece en el
+  configurador de dataset con sus siete métricas (Open price, Open PM price, PM
+  High Gap, Premarket total volume, Gap, RTH Total volume, Bar RTH Range).
+
+**Consecuencia que conviene tener presente:** cualquier dataset que use una regla
+`Gap −1` deja de pasar por el hot-cache y va por la vía autoritativa, más lenta.
+Es deliberado y es lo correcto — por el camino rápido ese filtro **se ignoraba en
+silencio** y el universo salía sin filtrar.
+
+**Sigue ABIERTO el HALLAZGO 02 de Álvaro** («PM High Gap (%)» significa cosas
+distintas en `engine.py` y en la vía rápida). No se ha tocado: arreglarlo cambia
+los backtests viejos, y es una decisión de producto que Jaume no ha tomado.
+
+### 7. RSI y MACD, y dos borrados grandes
+
+**RSI y las tres líneas del MACD, expuestos.** Sorpresa al mirarlo: el backend
+**ya los calculaba** —y hasta por la vía rápida— y el gráfico **ya los pintaba**.
+Lo único que faltaba era que aparecieran en el desplegable de condiciones. Y
+«MACD Signal» / «MACD Histogram» tampoco estaban en el enum del BACKEND, así que
+guardar una estrategia con ellos habría devuelto 422 (el fallo de Darvas otra
+vez). Las tres líneas son **nombres distintos, no un parámetro**: así las tiene
+el motor. `macd_line` de `IndicatorConfig` queda marcado como ajuste fantasma —
+no lo lee nadie, no conectarle UI.
+
+**Borrado `app/backtester/engine.py` (1.905 líneas).** Código muerto: nadie
+instanciaba `BacktestEngine`, y este documento y dos módulos ya lo decían. Se
+van con él siete scripts y dos tests. Lo único vivo que tenía —
+`find_elapsed_time_condition/minutes`, que solo leen la definición de la
+estrategia— se movió a `backtest_service.py`.
+
+> **Para Álvaro:** con esto, el **HALLAZGO 02** (el «PM High Gap (%)» divergente
+> entre vías) **queda cerrado por desaparición de una de las dos vías**. La que
+> tenía el look-ahead y el denominador raro era justo `engine.py`. Ya no hay dos
+> semánticas: solo queda la causal.
+>
+> **Aviso honesto:** `swing_option` se queda **sin ningún test**. El que había
+> probaba `engine.run()`, o sea una implementación que no se ejecuta — era
+> confianza falsa, pero conviene saber que ahora no hay red.
+
+**Borrado el modo Wizard (7.044 + 347 líneas).** Jaume solo usa el modo libre.
+«Nueva Estrategia» y «Configurar» entran directos al constructor; desaparecen la
+pantalla de elección y el modo `wizard`. Dos detalles que había que atar:
+
+1. Las sesiones guardadas con `mode: 'wizard'` se traducen a `'builder'` al
+   restaurar. Sin eso la página quedaría en un modo inexistente y el cajón no se
+   abriría nunca.
+2. **El tutorial guiado usaba el Wizard en 6 de sus 9 pasos.** No se ha perdido:
+   se rehízo sobre el constructor libre con las anclas que este **ya tenía**
+   (`st-bias`, `st-sessions`, `st-entry`, `st-risk`), comprobadas en el DOM.
+
+Total del día: **10.400 líneas menos**, sin una sola regresión (mismo conjunto
+de 103 fallos de entorno antes y después).

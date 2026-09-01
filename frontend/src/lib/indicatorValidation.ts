@@ -172,6 +172,21 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.SQUEEZE]: [],
     // Current Gap (%): porcentaje vivo vs cierre de ayer — solo cifra fija.
     [IndicatorType.CURRENT_GAP]: [],
+    // Los dos fades son PORCENTAJES DE CAIDA, no niveles de precio: enfrentarlos
+    // a otro indicador no significaria nada. Solo contra una cifra.
+    [IndicatorType.SESSION_FADE]: [],
+    [IndicatorType.FADE]: [],
+
+    // Momentum clasico. El RSI va de 0 a 100 y se compara contra sus niveles
+    // (70/30) o contra otro RSI de distinta temporalidad; contra un precio no
+    // significaria nada.
+    [IndicatorType.RSI]: [IndicatorType.RSI],
+    // El MACD sí se enfrenta a sus hermanos: el uso clasico es «la linea cruza
+    // su Señal», y el histograma contra cero (que es lo mismo dicho de otra
+    // forma). Contra un precio, tampoco.
+    [IndicatorType.MACD]: [IndicatorType.MACD, IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM],
+    [IndicatorType.MACD_SIGNAL]: [IndicatorType.MACD, IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM],
+    [IndicatorType.MACD_HISTOGRAM]: [IndicatorType.MACD, IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM],
 };
 
 const DISTANCE_ALLOWED_TARGETS = [

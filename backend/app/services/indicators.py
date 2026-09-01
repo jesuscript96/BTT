@@ -7,15 +7,9 @@ Supports the full IndicatorConfig schema (BTT March 2026):
   days_lookback, calc_on_heikin, time_hour, time_minute, time_condition
 """
 
-import time
 import numpy as np
 import pandas as pd
 from numba import njit
-
-# Profiler de sub-fases de stream_build (PRD_PERF §7): apagado por defecto
-# (BACKTEST_PROFILE_SUBPHASES=1). Cronometra el cálculo de indicadores del
-# path legacy; los cache-hits salen con ~0 ms, que es su coste real.
-from app.services.subphase_profiler import ENABLED as _SUBPHASE_ON, PROF as _SUBPROF
 
 try:
     import talib as _talib
@@ -947,11 +941,12 @@ def compute_indicator(
     min_pivots: int | None = None,
     session_ref: str | None = None,
     squeeze_direction: str | None = None,
+    fade_ref: str | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -960,8 +955,6 @@ def compute_indicator(
     low = df["low"]
     open_ = df["open"]
     volume = df["volume"]
-
-    _t_ind0 = time.perf_counter() if _SUBPHASE_ON else None
 
     # If calc_on_heikin, transform OHLC to Heikin-Ashi
     if calc_on_heikin:
@@ -982,7 +975,7 @@ def compute_indicator(
         days_lookback, time_hour, time_minute, time_condition,
         band_line, orb_minutes, ap_session, daily_stats, df, range_minutes,
         pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots,
-        session_ref, squeeze_direction
+        session_ref, squeeze_direction, fade_ref
     )
 
     if offset and offset != 0:
@@ -993,9 +986,6 @@ def compute_indicator(
 
     if cache is not None:
         cache[cache_key] = result
-
-    if _SUBPHASE_ON:
-        _SUBPROF.acc("indicators", time.perf_counter() - _t_ind0)
 
     return result
 
@@ -1195,6 +1185,104 @@ def _rth_constant_fallback(df: pd.DataFrame, index, ds: dict | None, key: str) -
     return pd.Series(_safe_float(val if val is not None else np.nan), index=index)
 
 
+def _session_running_max(df: pd.DataFrame, index, from_minutes: int, to_minutes: int) -> pd.Series:
+    """Máximo del high ACUMULADO dentro de una ventana de reloj `[from, to)`.
+
+    Versión general de `_pm_running_series`/`_rth_running_series` para ventanas
+    que no son ni el premarket ni el RTH — la que usa "% Session Fade" en modo
+    "full" (04:00-16:00, premarket y sesión regular juntos). NaN antes de la
+    primera barra de la ventana; tras el cierre se queda en el valor final.
+    """
+    n = len(df) if df is not None else 0
+    if df is None or "timestamp" not in df or n == 0:
+        return pd.Series(np.nan, index=index)
+    timestamps = pd.to_datetime(df["timestamp"])
+    minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+    mask = (minutes >= from_minutes) & (minutes < to_minutes)
+    vals = np.asarray(df["high"], dtype=np.float64)
+    return pd.Series(np.fmax.accumulate(np.where(mask, vals, np.nan)), index=index)
+
+
+def _session_open_series(df: pd.DataFrame, index, from_minutes: int) -> pd.Series:
+    """Open de la PRIMERA barra a partir de `from_minutes` (minutos desde
+    medianoche), constante desde ahí y NaN antes.
+
+    Es la versión general del ramo "open" de `_rth_running_series`: 570 = 09:30
+    (apertura de mercado), 960 = 16:00 (apertura del after). El NaN previo es lo
+    que hace causal a "% Session Fade": la caída de una sesión no existe hasta
+    que abre la siguiente.
+    """
+    n = len(df) if df is not None else 0
+    vals = np.full(n, np.nan)
+    if df is None or "timestamp" not in df or n == 0:
+        return pd.Series(vals, index=index)
+    timestamps = pd.to_datetime(df["timestamp"])
+    minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+    mask = minutes >= from_minutes
+    if not mask.any():
+        return pd.Series(vals, index=index)
+    first_idx = int(np.argmax(mask))
+    vals[first_idx:] = float(np.asarray(df["open"], dtype=np.float64)[first_idx])
+    return pd.Series(vals, index=index)
+
+
+def _ap_session_started(df: pd.DataFrame, ap_session: str | None) -> np.ndarray:
+    """Máscara "la sesión de referencia ya ha empezado", para Previous max/min.
+
+    ap.RTH arranca a las 09:30, ap.AM a las 16:00 y ap.PM (defecto) desde la
+    primera barra del frame.
+    """
+    timestamps = pd.to_datetime(df["timestamp"])
+    hours = timestamps.dt.hour.values
+    minutes = timestamps.dt.minute.values
+    if ap_session == "ap.RTH":
+        start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
+    elif ap_session == "ap.AM":
+        start_mask = hours >= 16
+    else:  # ap.PM default
+        start_mask = np.ones(len(df), dtype=bool)
+    # "started" es pegajoso: una vez dentro, ya no se sale.
+    return np.maximum.accumulate(start_mask.astype(bool))
+
+
+def _previous_extreme_series(
+    df: pd.DataFrame, index, values: pd.Series, ap_session: str | None, which: str
+) -> pd.Series:
+    """Máximo/mínimo acumulado de la sesión de referencia, DESPLAZADO una barra.
+
+    El `.shift(1)` es lo que lo hace "previous": el nivel de la barra actual no
+    se incluye, así que comparar el precio contra él no es circular. Compartido
+    por "Previous max"/"Previous min" y por "% Fade" con referencia al máximo
+    previo, para que no puedan divergir.
+    """
+    started = _ap_session_started(df, ap_session)
+    vals = np.asarray(values, dtype=np.float64)
+    masked = np.where(started, vals, np.nan)
+    acc = np.fmax.accumulate(masked) if which == "max" else np.fmin.accumulate(masked)
+    return pd.Series(acc, index=index).shift(1)
+
+
+def _vwap_cross_ref_series(close: pd.Series, vwap_values: np.ndarray) -> pd.Series:
+    """Precio del VWAP en la vela en que el close lo cruzó por última vez.
+
+    Cruce = la vela cierra al otro lado del VWAP respecto de la anterior. Se
+    guarda el VWAP DE ESA VELA y se arrastra hasta el cruce siguiente, así que
+    "% Fade" se reancla solo cada vez que el precio vuelve a cruzar. NaN antes
+    del primer cruce del día: todavía no hay desde dónde medir.
+    """
+    c = np.asarray(close, dtype=np.float64)
+    v = np.asarray(vwap_values, dtype=np.float64)
+    valid = ~np.isnan(c) & ~np.isnan(v)
+    above = c > v
+    crossed = np.zeros(len(c), dtype=bool)
+    if len(c) > 1:
+        # Un NaN a cualquiera de los dos lados no es un cruce: sin esto, la
+        # primera vela con volumen (VWAP pasa de NaN a número) se contaría.
+        crossed[1:] = (above[1:] != above[:-1]) & valid[1:] & valid[:-1]
+    ref = np.where(crossed, v, np.nan)
+    return pd.Series(ref, index=close.index).ffill()
+
+
 def _compute_raw(
     name: str,
     close: pd.Series,
@@ -1224,6 +1312,7 @@ def _compute_raw(
     min_pivots: int | None = None,
     session_ref: str | None = None,
     squeeze_direction: str | None = None,
+    fade_ref: str | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -1310,6 +1399,53 @@ def _compute_raw(
         if pd.isna(yest_close_val) or yest_close_val == 0:
             return pd.Series(np.nan, index=close.index)
         return (close - float(yest_close_val)) / float(yest_close_val) * 100.0
+
+    if name == "% Session Fade":
+        # Cuánto se desinfló una sesión entera, en POSITIVO (10 = cayó un 10%):
+        #   pm   -> (PM High        − apertura de mercado) / PM High        * 100
+        #   rth  -> (máx. RTH       − apertura del after)  / máx. RTH       * 100
+        #   full -> (máx. PM + RTH  − apertura del after)  / máx. PM+RTH    * 100
+        # Causal sin necesidad de trucos: la apertura de la sesión siguiente es
+        # NaN hasta que esa sesión abre, y para entonces el máximo de referencia
+        # ya está cerrado y no puede cambiar. Antes de eso el indicador es NaN y
+        # cualquier condición evalúa False.
+        if session_ref == "rth":
+            peak = _rth_running_series(df, close.index, "high")
+            if peak is None:
+                peak = _rth_constant_fallback(df, close.index, ds, "rth_high")
+            nxt_open = _session_open_series(df, close.index, 960)
+        elif session_ref == "full":
+            # El día entero de negociación (04:00-16:00): mide el desinflado
+            # REAL, sin que importe si el máximo se hizo en premarket o en RTH.
+            peak = _session_running_max(df, close.index, 240, 960)
+            nxt_open = _session_open_series(df, close.index, 960)
+        else:  # "pm" por defecto
+            peak = _pm_running_series(df, close.index, "high")
+            if peak is None:
+                peak = pd.Series(_safe_float(ds.get("pm_high", np.nan)), index=close.index)
+            nxt_open = _rth_running_series(df, close.index, "open")
+            if nxt_open is None:
+                nxt_open = _rth_constant_fallback(df, close.index, ds, "rth_open")
+        peak = peak.where(peak != 0.0, np.nan)
+        return (peak - nxt_open) / peak * 100.0
+
+    if name == "% Fade":
+        # Caída VIVA desde una referencia que se reancla sola, en positivo. Si la
+        # referencia sube (nuevo máximo, nuevo cruce), el fade vuelve a ~0 y
+        # empieza a contar de nuevo. Negativo = el precio está por encima.
+        if fade_ref == "vwap_cross":
+            vwap_vals = _vwap(
+                high.values.astype(np.float64),
+                low.values.astype(np.float64),
+                close.values.astype(np.float64),
+                volume.values.astype(np.float64),
+            )
+            ref = _vwap_cross_ref_series(close, vwap_vals)
+        else:  # "previous_max" por defecto
+            ref = _previous_extreme_series(df, close.index, high, ap_session, "max")
+        ref = ref.where(ref != 0.0, np.nan)
+        return (ref - close) / ref * 100.0
+
     if name in ("RTH Open", "rth_open"):
         # Causal: NaN antes de la primera barra RTH (antes devolvía la constante
         # del día → una condición premarket "veía" el open de las 09:30).
@@ -1387,52 +1523,10 @@ def _compute_raw(
         return pd.Series(_safe_float(val), index=close.index)
 
     if name == "Previous max":
-        timestamps = pd.to_datetime(df["timestamp"])
-        hours = timestamps.dt.hour
-        minutes = timestamps.dt.minute
-        if ap_session == "ap.RTH":
-            start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
-        elif ap_session == "ap.AM":
-            start_mask = hours >= 16
-        else:  # ap.PM default
-            start_mask = pd.Series(True, index=df.index)
-        result = pd.Series(np.nan, index=close.index)
-        running_max = np.nan
-        started = False
-        for i in range(len(close)):
-            if not started and start_mask.iloc[i]:
-                started = True
-            if started:
-                if np.isnan(running_max):
-                    running_max = high.iloc[i]
-                else:
-                    running_max = max(running_max, high.iloc[i])
-                result.iloc[i] = running_max
-        return result.shift(1)
+        return _previous_extreme_series(df, close.index, high, ap_session, "max")
 
     if name == "Previous min":
-        timestamps = pd.to_datetime(df["timestamp"])
-        hours = timestamps.dt.hour
-        minutes = timestamps.dt.minute
-        if ap_session == "ap.RTH":
-            start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
-        elif ap_session == "ap.AM":
-            start_mask = hours >= 16
-        else:  # ap.PM default
-            start_mask = pd.Series(True, index=df.index)
-        result = pd.Series(np.nan, index=close.index)
-        running_min = np.nan
-        started = False
-        for i in range(len(close)):
-            if not started and start_mask.iloc[i]:
-                started = True
-            if started:
-                if np.isnan(running_min):
-                    running_min = low.iloc[i]
-                else:
-                    running_min = min(running_min, low.iloc[i])
-                result.iloc[i] = running_min
-        return result.shift(1)
+        return _previous_extreme_series(df, close.index, low, ap_session, "min")
 
     if name == "PM Open":
         timestamps = pd.to_datetime(df["timestamp"])
@@ -2051,43 +2145,3 @@ def detect_candle_pattern(
         signal = rolling_sum >= consecutive_count
 
     return signal.astype(bool)
-
-
-def warmup_indicators() -> float:
-    """Pre-compila los indicadores comunes fuera del primer backtest.
-
-    Medido (PRD_PERF §7, 2026-08-27): el primer ticker-día del primer backtest
-    tras un arranque pagaba ~2,4 s solo en compilación (kernels Numba cache=True
-    + primer toque pandas) — los días siguientes, 0,1 ms. Este warmup corre esa
-    penalización en el arranque con un df sintético, en un hilo daemon.
-
-    Best-effort: cualquier indicador que falle aquí se calentará en su primer
-    uso real, exactamente como hasta ahora. Devuelve segundos.
-    """
-    import time
-    t0 = time.time()
-    n = 240
-    rng = np.random.default_rng(7)
-    close = 100.0 + np.cumsum(rng.normal(0, 0.5, n))
-    high = close * 1.005
-    low = close * 0.995
-    open_ = np.roll(close, 1)
-    open_[0] = close[0]
-    vol = rng.integers(1_000, 90_000, n).astype(np.float64)
-    df = pd.DataFrame({
-        "timestamp": pd.date_range("2026-01-05 04:00", periods=n, freq="1min"),
-        "open": open_, "high": high, "low": low, "close": close, "volume": vol,
-    })
-    ts = pd.Series(df["timestamp"])
-    daily_stats = {"_mins": (ts.dt.hour * 60 + ts.dt.minute).to_numpy()}
-    for name, kwargs in (
-        ("EMA", {"period": 20}), ("SMA", {"period": 50}),
-        ("RSI", {"period": 14}), ("ATR", {"period": 14}),
-        ("VWAP", {}), ("Accumulated Volume", {}), ("Volume", {}),
-        ("PM High Gap (%)", {}),
-    ):
-        try:
-            compute_indicator(name, df, daily_stats=daily_stats, **kwargs)
-        except Exception:
-            pass
-    return time.time() - t0

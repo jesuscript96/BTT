@@ -21,12 +21,87 @@ from app.services.strategy_engine import translate_strategy, _parse_risk_managem
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
 from app.services.sim_dispatch import simulate
-from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_condition
-# Profiler de sub-fases de stream_build (PRD_PERF §7). Apagado por defecto:
-# BACKTEST_PROFILE_SUBPHASES=1 al arrancar. Con False todo esto es un no-op.
-from app.services.subphase_profiler import ENABLED as _SUBPHASE_ON, PROF as _SUBPROF
+# Lo usa `find_elapsed_time_condition`, que vino aqui al borrar el motor viejo.
+from app.schemas.strategy import IndicatorType
 
 logger = logging.getLogger("backtester.engine")
+
+
+# Estas dos vivian en `app/backtester/engine.py` junto al motor viejo. Al
+# borrar aquel (2026-08-31, era codigo muerto) se traen aqui tal cual: no
+# tienen nada que ver con el motor, solo leen la definicion de la estrategia
+# buscando una condicion de "Elapsed Time", y este fichero es su unico
+# consumidor.
+def find_elapsed_time_condition(group) -> tuple[float, str]:
+    if not group:
+        return -1.0, "GREATER_THAN_OR_EQUAL"
+    
+    conditions = []
+    if isinstance(group, dict):
+        conditions = group.get("conditions", [])
+    elif hasattr(group, "conditions"):
+        conditions = group.conditions or []
+    else:
+        return -1.0, "GREATER_THAN_OR_EQUAL"
+        
+    for cond in conditions:
+        cond_type = None
+        if isinstance(cond, dict):
+            cond_type = cond.get("type")
+        elif hasattr(cond, "type"):
+            cond_type = cond.type
+            
+        if cond_type == "group":
+            val, comp = find_elapsed_time_condition(cond)
+            if val > 0:
+                return val, comp
+        else:
+            source = None
+            if isinstance(cond, dict):
+                source = cond.get("source")
+            elif hasattr(cond, "source"):
+                source = cond.source
+                
+            if source:
+                name = None
+                if isinstance(source, dict):
+                    name = source.get("name")
+                elif hasattr(source, "name"):
+                    name = source.name
+                
+                name_val = name.value if hasattr(name, "value") else name
+                if name_val == "Elapsed Time" or name_val == IndicatorType.ELAPSED_TIME:
+                    target = None
+                    if isinstance(cond, dict):
+                        target = cond.get("target")
+                    elif hasattr(cond, "target"):
+                        target = cond.target
+                        
+                    comparator = "GREATER_THAN_OR_EQUAL"
+                    if isinstance(cond, dict):
+                        comparator = cond.get("comparator", "GREATER_THAN_OR_EQUAL")
+                    elif hasattr(cond, "comparator"):
+                        comparator = getattr(cond.comparator, "value", getattr(cond.comparator, "name", cond.comparator)) or "GREATER_THAN_OR_EQUAL"
+                    
+                    val = 60.0
+                    if target is not None:
+                        try:
+                            val = float(target)
+                        except (TypeError, ValueError):
+                            if isinstance(target, dict):
+                                val = float(target.get("elapsed_minutes", 60.0))
+                            elif hasattr(target, "elapsed_minutes"):
+                                val = float(target.elapsed_minutes or 60.0)
+                    
+                    if hasattr(comparator, "value"):
+                        comparator = comparator.value
+                    return val, str(comparator)
+    return -1.0, "GREATER_THAN_OR_EQUAL"
+
+
+def find_elapsed_time_minutes(group) -> float:
+    val, _ = find_elapsed_time_condition(group)
+    return val
 
 # Pre-computed time boundaries for patch mask (avoid recreating per iteration)
 _PATCH_START = datetime.time(8, 0)
@@ -535,11 +610,6 @@ def run_backtest(
             _emitir(e)
         _pend.clear()
 
-    if _SUBPHASE_ON:
-        # El next() del iterador (I/O del stream) queda cronometrado aparte del
-        # cuerpo del bucle; ver subphase_profiler.timed_iter.
-        group_source = _SUBPROF.timed_iter(group_source)
-
     for (date_raw, ticker_raw), day_df in group_source:
         scanned += 1
         if progress_callback is not None:
@@ -547,9 +617,6 @@ def run_backtest(
 
         ticker = str(ticker_raw)
         date = str(date_raw)[:10]
-        if _SUBPHASE_ON:
-            _SUBPROF.day_boundary(ticker, date)
-            _SUBPROF.mark("prep")
 
         # Check day/month exclusions
         rm = strategy_def.get("risk_management", {}) if strategy_def else {}
@@ -687,8 +754,6 @@ def run_backtest(
         del day_df
 
         mini_df = pd.DataFrame(arrays)
-        if _SUBPHASE_ON:
-            _SUBPROF.mark("translate")
 
         # --- Signal computation (with optional cache for risk-only optimization) ---
         cache_key = (ticker, date)
@@ -749,9 +814,6 @@ def run_backtest(
                     ],
                     "pyramid_sequential": sig_pyramid_sequential,
                 }
-
-        if _SUBPHASE_ON:
-            _SUBPROF.mark("postproc")
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
         # to prevent new position entries on subsequent swing days.
@@ -906,8 +968,6 @@ def run_backtest(
                 elapsed_limit=elapsed_limit,
                 elapsed_operator=elapsed_operator,
         )
-        if _SUBPHASE_ON:
-            _SUBPROF.mark("simulate")
         try:
             sim_result = simulate(**_sim_kwargs)
         except Exception as exc:
@@ -916,8 +976,6 @@ def run_backtest(
             continue
 
         del mini_df
-        if _SUBPHASE_ON:
-            _SUBPROF.mark("emit")
 
         if not sim_result["trades"]:
             del sim_result
@@ -961,9 +1019,6 @@ def run_backtest(
     from app.services.perf_timing import log_phase as _log_phase
     _log_phase("stream_build", (t_loop - t_total) * 1000, pairs=scanned,
                days=total_days, mode="sequential" if scanned else "pipelined")
-    if _SUBPHASE_ON:
-        _SUBPROF.report((t_loop - t_total) * 1000, (t_loop - t1) * 1000, total_days)
-        _SUBPROF.reset()
     logger.info(
         f"[STREAM] done: {days_with_entries} days with entries "
         f"({round(time.time()-t1, 2)}s)"
@@ -1172,11 +1227,32 @@ def _build_executions(run: list[dict]) -> list[dict]:
     if not run:
         return []
     first = run[0]
+    # Tamaño de la ENTRADA. `first["size"]` es el tamaño del PRIMER LEG (la
+    # cantidad del primer parcial), no la posición que se abrió: con parciales
+    # la marca de entrada del gráfico mostraba una cifra menor que la real
+    # (medido: entrada de 1.666,67 acciones pintada como 1.000, el 60 % que se
+    # llevó el primer parcial). El dinero nunca estuvo mal —esta función es
+    # informativa—, pero el número de acciones sí.
+    #
+    # Todos los legs juntos cierran lo que se abrió, y una reducción de pirámide
+    # también emite su leg, así que se cancela sola:
+    #     sum(legs) = inicial + añadidos   ->   inicial = sum(legs) - añadidos
+    _size_legs = sum(float(leg.get("size") or 0.0) for leg in run)
+    _size_adds = sum(
+        float(pe.get("size") or 0.0)
+        for leg in run
+        for pe in (leg.get("pyr_executions") or [])
+        if pe.get("kind") == "add"
+    )
+    _entry_size = _size_legs - _size_adds
+    if not (_entry_size > 0):  # sin legs utilizables, se deja lo de antes
+        _entry_size = first.get("size")
+
     execs: list[dict] = [{
         "kind": "entry",
         "time_epoch": first.get("entry_time_epoch"),
         "price": first.get("entry_price"),
-        "size": first.get("size"),
+        "size": round(_entry_size, 6) if isinstance(_entry_size, float) else _entry_size,
         "label": "Entrada",
     }]
     # Los añadidos/reducciones de pirámide van colgados de alguna de las legs.

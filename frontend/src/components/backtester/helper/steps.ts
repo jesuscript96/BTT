@@ -11,26 +11,13 @@ import type { Side, Alignment } from "driver.js";
 export type HelperMode =
   | "config"
   | "dataset"
-  | "builder"
-  | "builder_choice"
-  | "wizard";
+  | "builder";
 export type HelperFill = "dataset" | "strategy" | "config";
-/** Claves de los sub-pasos internos del Wizard (deben coincidir con STEPS en
- *  WizardStrategyBuilder.tsx). */
-export type WizardStepKey =
-  | "universo"
-  | "bias"
-  | "apply_day"
-  | "market_sessions"
-  | "entry"
-  | "exit"
-  | "risk"
-  | "summary";
 
 export interface HelperStep {
   id: string;
   /** Estado que la página debe tener ANTES de resaltar este paso. */
-  enter: { mode: HelperMode; fill?: HelperFill; wizardStep?: WizardStepKey };
+  enter: { mode: HelperMode; fill?: HelperFill };
   /** Elemento a resaltar: selector CSS (o función que lo devuelve). */
   element?: string | (() => Element);
   popover: {
@@ -73,99 +60,71 @@ export const HELPER_STEPS: HelperStep[] = [
     },
   },
 
-  // 3 — Selector de modo (Wizard vs libre)
+  // 3 — Constructor libre · dirección y sesión
+  //
+  // Del 2026-08-31: estos pasos iban por el Wizard, que se ha borrado. Se
+  // rehicieron sobre el constructor libre usando las anclas que este YA tenía
+  // (st-bias, st-sessions, st-entry, st-risk). El tour no pierde ningún paso.
   {
-    id: "mode",
-    enter: { mode: "builder_choice" },
-    element: '[data-helper="mode-selector"]',
+    id: "bias",
+    enter: { mode: "builder", fill: "strategy" },
+    element: '[data-helper="st-bias"]',
     popover: {
-      title: "¿Wizard o modo libre?",
+      title: "1 · Dirección y día",
       description:
-        "Puedes montarla pieza a pieza con el <strong>Wizard</strong>, con componentes básicos, " +
-        "o a pelo en <strong>modo libre</strong> con todas las opciones avanzadas. Como esta es " +
-        "simple, vamos por la línea fácil: el <strong>Wizard</strong>. Tranquilo, " +
-        "<em>no vas a necesitar programar</em>.",
+        "Toda estrategia son tres bloques: <strong>qué días miro · cuándo entro · cuánto " +
+        "arriesgo</strong>. Empezamos por la dirección: voy <strong>CORTO</strong> y opero " +
+        "<strong>solo el día del gap</strong> —vamos a probar qué pasa cuando el precio " +
+        "atraviesa el VWAP hacia abajo—. Te lo dejo ya marcado.",
       side: "right",
       align: "start",
     },
   },
 
-  // 4 — Wizard · Universo (carga el ejemplo y entra al wizard)
+  // 4 — Constructor libre · sesión de ejecución
   {
-    id: "universo",
-    enter: { mode: "wizard", fill: "strategy", wizardStep: "universo" },
-    element: '[data-helper="wiz-universo"]',
+    id: "sessions",
+    enter: { mode: "builder" },
+    element: '[data-helper="st-sessions"]',
     popover: {
-      title: "1 · El Universo",
+      title: "2 · En qué sesión",
       description:
-        "Toda estrategia son tres bloques: <strong>universo · parámetros · riesgo</strong>. " +
-        "Empezamos por el universo: qué días miro. Para el ejemplo pido solo gaps bestiales " +
-        "(<strong>PM High Gap ≥ 70 %</strong>). Cuantos más filtros, más fino (y más pequeño) " +
-        "el universo.",
+        "El <strong>horario de mercado (RTH)</strong>, que es donde hay volumen de verdad. " +
+        "Aquí también puedes operar el premercado o el after, o inventarte tu propia franja.",
       side: "right",
       align: "start",
     },
   },
 
-  // 5 — Wizard · Parámetros (dirección + día + sesión, ya marcados)
-  {
-    id: "params",
-    enter: { mode: "wizard", wizardStep: "bias" },
-    element: '[data-helper="wiz-bias"]',
-    popover: {
-      title: "2 · Parámetros del sistema",
-      description:
-        "Ahora la dirección y el cuándo. Voy <strong>CORTO</strong>, opero <strong>solo el día " +
-        "del gap</strong> y en <strong>horario de mercado (RTH)</strong> —porque vamos a probar " +
-        "qué pasa cuando el precio atraviesa el VWAP—. Te lo dejo ya marcado.",
-      side: "right",
-      align: "start",
-    },
-  },
-
-  // 6 — Wizard · Entrada (condición + ventana horaria, en chip)
+  // 5 — Constructor libre · lógica de entrada
   {
     id: "entry",
-    enter: { mode: "wizard", wizardStep: "entry" },
-    element: '[data-helper="wiz-entry"]',
+    enter: { mode: "builder" },
+    element: '[data-helper="st-entry"]',
     popover: {
-      title: "2 · La entrada (la chicha)",
+      title: "3 · La entrada (la chicha)",
       description:
         "Quiero entrar cuando el cierre de la vela (<strong>Close</strong>) <strong>cruza por " +
-        "debajo del VWAP</strong>. El Wizard también permite medir <em>distancia</em> a otra " +
-        "variable para sistemas más finos, pero aquí basta con comparar. Y solo acepto entradas " +
-        "en la ventana de <strong>09:30 a 11:00</strong>, cuando hay más volatilidad.",
+        "debajo del VWAP</strong>. Puedes encadenar condiciones con AND/OR, agruparlas, y medir " +
+        "<em>distancia</em> a otra variable para sistemas más finos. Y solo acepto entradas en la " +
+        "ventana de <strong>09:30 a 11:00</strong>, cuando hay más volatilidad.",
       side: "right",
       align: "start",
     },
   },
 
-  // 7 — Wizard · Riesgo (salida simple + stop + reentradas)
+  // 6 — Constructor libre · riesgo
   {
     id: "risk",
-    enter: { mode: "wizard", wizardStep: "risk" },
-    element: '[data-helper="wiz-risk"]',
+    enter: { mode: "builder" },
+    element: '[data-helper="st-risk"]',
     popover: {
-      title: "3 · El riesgo, simple",
+      title: "4 · El riesgo, simple",
       description:
         "La salida la dejo <strong>sin condición por indicador</strong>: salgo por stop o por la " +
         "hora. Pongo un <strong>stop del 20 %</strong> y permito un <strong>máximo de 2 " +
-        "reentradas</strong> si la cosa va en contra. Mi premisa: cuanto más simple, <em>mejor</em>.",
-      side: "right",
-      align: "start",
-    },
-  },
-
-  // 8 — Wizard · Resumen (la estrategia montada)
-  {
-    id: "summary",
-    enter: { mode: "wizard", wizardStep: "summary" },
-    element: '[data-helper="wiz-summary"]',
-    popover: {
-      title: "¡Y aquí lo tienes!",
-      description:
-        "El resumen de toda tu estrategia, montada de una pieza. Repásala… y vamos a cerrar el " +
-        "círculo con los ajustes del backtest.",
+        "reentradas</strong> si la cosa va en contra. Mi premisa: cuanto más simple, <em>mejor</em>. " +
+        "Debajo tienes piramidación, take profit, trailing y el límite de pérdida diaria.",
       side: "right",
       align: "start",
     },

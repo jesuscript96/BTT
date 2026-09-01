@@ -327,6 +327,52 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
     multi: true,
   },
+  // Los fades van como entradas SEPARADAS por modo en vez de con un parametro
+  // de tipo texto: los params del grafico son `Record<string, number>` y meter
+  // un selector aqui obligaria a tocar el registro entero. Cuatro entradas
+  // planas cuestan menos y se leen mejor en el desplegable.
+  {
+    id: "SESSION_FADE_PM",
+    label: "% Session Fade (PM)",
+    category: "Momentum",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
+  {
+    id: "SESSION_FADE_RTH",
+    label: "% Session Fade (RTH)",
+    category: "Momentum",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
+  {
+    id: "SESSION_FADE_FULL",
+    label: "% Session Fade (día completo)",
+    category: "Momentum",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
+  {
+    // El grafico ancla en el maximo del DIA (equivale a ap.PM). Si la condicion
+    // usa ap.RTH el numero pintado no es el mismo — por eso lo dice la etiqueta.
+    id: "FADE_PREV_MAX",
+    label: "% Fade (máx. del día)",
+    category: "Momentum",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
+  {
+    id: "FADE_VWAP",
+    label: "% Fade (cruce VWAP)",
+    category: "Momentum",
+    displayMode: "panel",
+    params: [],
+    multi: false,
+  },
   {
     id: "HEIKIN_ASHI",
     label: "Heikin-Ashi",
