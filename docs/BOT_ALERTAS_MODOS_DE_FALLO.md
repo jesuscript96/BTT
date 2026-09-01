@@ -98,6 +98,29 @@ Tras el arreglo: 0,63 s en el peor caso con la página abierta.
 **Cuidado al añadir endpoints que se consulten a menudo**: en este proyecto no
 existen las lecturas baratas contra `users.duckdb`.
 
+### Cuando el backend «se cae» y en realidad no se ha caído
+
+Dos fenómenos distintos que se ven igual desde fuera (todo devuelve 000):
+
+**a) Recarga automática.** El lanzador arranca uvicorn con `--reload`: cada
+fichero `.py` que se guarda lo reinicia. De 2 a 10 s sin responder. Es normal
+mientras se programa y no pasa en uso normal.
+
+**b) Cuelgue por el bloqueo de la base.** Una escritura que espera el cerrojo
+bloquea el hilo que la atiende. El servidor tiene un número limitado de hilos
+(el threadpool de los endpoints síncronos), y **si se llenan todos esperando a
+DuckDB deja de responder a TODO** — incluido `/docs` — aunque el proceso siga
+vivo. Eso es lo que se vio el 1-sep: `/docs` en 000 mientras el proceso seguía
+en pie y los puertos escuchando.
+
+La raíz es la misma de siempre: todas las conexiones se abren en escritura y
+DuckDB solo admite una. La caché lo mitiga (la página ya no toca la base), pero
+queda un punto de contacto en cada escritura.
+
+> **Si vuelve a pasar con el bot en marcha**, la solución de raíz es dejar de
+> abrir una conexión por operación y mantener una sola de escritura para el
+> módulo. No se hizo el 1-sep porque tocaba `database.py`, que usa toda la app.
+
 ### El latido distingue «apagado» de «colgado»
 
 El bot manda una señal de vida cada pocos segundos. Sin ella, la página no
@@ -146,6 +169,17 @@ ejecute órdenes.**
 ## 5. Lo que habrá que añadir antes de automatizar la ejecución
 
 Por orden de importancia:
+
+0. **Sacar la base de datos del camino de la orden.** Hoy, publicar un aviso y
+   registrarlo son la misma operación, y esa operación puede quedarse esperando
+   el cerrojo de DuckDB (ver §3). Mientras solo se avise, un bloqueo retrasa una
+   fila en pantalla — y Telegram llega igual porque va por otro camino. Con un
+   bróker detrás, ese mismo bloqueo se cuela **entre «decidí entrar» y «mandé la
+   orden»**, y ahí no es una molestia: es una orden tarde o perdida, en silencio.
+
+   > **La orden va primero; el registro, después.** Ejecutar y contabilizar son
+   > cosas distintas y hoy están mezcladas. Nada que pueda bloquearse debe estar
+   > entre la decisión y el envío.
 
 1. **Reconciliación con el bróker al arrancar y periódicamente.** La posición
    real manda sobre la teórica, siempre. Sin esto, un bot que cree estar fuera

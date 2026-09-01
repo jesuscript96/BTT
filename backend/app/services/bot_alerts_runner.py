@@ -76,14 +76,38 @@ class RunnerAlertas:
     def hidratar(self, ticker: str, day_df: pd.DataFrame, daily_stats: dict | None = None) -> None:
         """Carga de golpe el pasado del dia. Se llama UNA vez, al entrar al radar.
 
-        No genera avisos: lo que ya paso, paso. Avisar de una entrada de hace
-        dos horas solo serviria para que alguien intentase operarla tarde.
+        NO GENERA AVISOS, y hacerlo bien no es no llamar al motor: es llamarlo y
+        TIRAR lo que salga.
+
+        El motor recuerda lo que ya aviso. Si el pasado no se le ensenya, la
+        primera vela nueva le hace descubrir de golpe todas las salidas y
+        piramides del dia y las avisa como si acabaran de pasar. Medido en vivo
+        el 2026-09-01 a las 20:28: el bot aviso de una piramide y una salida de
+        FLYE ocurridas por la manyana, y salieron a Telegram.
+
+        Pasandole el frame hidratado una vez y descartando los eventos, todo eso
+        queda marcado como visto y solo se avisa de lo que pase A PARTIR de
+        ahora, que es lo unico operable.
         """
         self._stats[ticker] = daily_stats or {}
         filas = day_df[list(COLUMNAS)].to_dict("records") if not day_df.empty else []
         self._velas[ticker] = filas
         self._hidratados.add(ticker)
-        logger.info("[BOT] %s hidratado con %d velas", ticker, len(filas))
+
+        sellados = 0
+        if len(filas) >= 2:
+            frame = build_market_frame(pd.DataFrame(filas), ticker, self._stats[ticker])
+            try:
+                sellados = len(self.motor.procesar_vela(ticker, frame, self._stats[ticker]))
+            except Exception as exc:  # noqa: BLE001
+                # Si el sellado falla, es MEJOR no seguir con este ticker que
+                # arriesgarse a avisar de su manyana entera.
+                logger.warning("[BOT] %s: fallo al sellar el pasado (%s); se descarta", ticker, exc)
+                self.soltar(ticker)
+                return
+
+        logger.info("[BOT] %s hidratado con %d velas (%d avisos del pasado descartados)",
+                    ticker, len(filas), sellados)
 
     def nueva_vela(self, ticker: str, vela: dict, daily_stats: dict | None = None) -> list[Evento]:
         """Anyade una vela cerrada y devuelve los avisos que produzca.
