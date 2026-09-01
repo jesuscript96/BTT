@@ -2495,3 +2495,9 @@ pantalla de elección y el modo `wizard`. Dos detalles que había que atar:
 
 Total del día: **10.400 líneas menos**, sin una sola regresión (mismo conjunto
 de 103 fallos de entorno antes y después).
+
+### [HALLAZGO · 2026-08-29 · 02 → RESUELTO POR BORRADO] "PM High Gap (%)" divergente entre vías del motor
+- **Reporta/cierra:** ZCode (para Álvaro)
+- **Resuelto por:** `92edadc` en `staging` (borrado del motor viejo) + merge `da4a1b7` en `alvaro-rama-desarrollo`. `backend/app/backtester/engine.py` (la vía que calculaba el gap con apertura de ayer + PMH final del día) YA NO EXISTE. Solo quedan `indicators.py` y `strategy_engine.py`, que ya coincidían (cierre de ayer + PMH acumulado causal).
+- **Verificación post-merge:** `ls backend/app/backtester/` → solo `__init__.py`, `backtest_validator.py`, `portfolio.py`. Tests del feature Gap -1/rachas: 14/14 pasando sobre el árbol mergeado. Backend reloaded con el código nuevo y API 200.
+- **Estado:** RESUELTO (por eliminación de la vía divergente; merge `da4a1b7`)
