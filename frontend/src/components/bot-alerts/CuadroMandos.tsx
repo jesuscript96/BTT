@@ -1,0 +1,604 @@
+"use client";
+
+/**
+ * Cuadro de mandos del bot de alertas.
+ *
+ * Estetica de hoja de calculo a proposito: rejilla densa, filas bajas, numeros
+ * en monoespaciada y alineados a la derecha. El color NO decora — solo aparece
+ * donde significa algo: direccion, tipo de aviso y estado.
+ *
+ * TRES COSAS QUE NO SON OBVIAS:
+ *
+ * 1. Las acciones se RECALCULAN al precio actual, no se muestra el numero
+ *    congelado del aviso. El aviso sale al cierre de la vela de la senal y para
+ *    cuando se pone la orden el precio se ha movido (0,5% de media, hasta 6%);
+ *    con el numero viejo el riesgo real deja de ser el pedido.
+ *
+ * 2. PORTFOLIO E INCUBADORA VAN EN TABLAS SEPARADAS. Lo que se opera y lo que
+ *    se esta validando no se mezclan: si se mezclaran, una estrategia en pruebas
+ *    podria confundirse con una buena en el momento de operar.
+ *
+ * 3. El interruptor NO arranca ni mata ningun proceso. Solo deja escrito que el
+ *    bot debe vigilar; el bot vive en su propio proceso y lo consulta.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bell, BellOff, Radio, Trash2 } from "lucide-react";
+
+import { color, font, hairline, ErrorBox, Loading } from "@/components/ui";
+import {
+  accionesAlPrecio,
+  cambiarEstado,
+  guardarVigilancia,
+  listarEstrategias,
+  listarEventos,
+  listarFechas,
+  limpiarEventos,
+  leerEstado,
+  type EstadoBot,
+  type EstrategiaCandidata,
+  type EventoAlerta,
+} from "@/lib/api_bot_alerts";
+
+const SONIDO_KEY = "botAlertas.sonido.v1";
+const REFRESCO_MS = 2000;
+/** Sin latido en este tiempo, el bot se considera caido aunque figure encendido. */
+const LATIDO_VIVO_MS = 30_000;
+/** Cuanto se queda iluminada una fila recien llegada. */
+const DESTACADO_MS = 12_000;
+
+/** Alto fijo de las rejillas. Fijo A PROPOSITO: si creciera con cada aviso, la
+ *  pagina se estiraria sin fin y habria que buscar la barra de estado. */
+const ALTO_PORTFOLIO = 430;
+const ALTO_INCUBADORA = 210;
+
+/* ── Piezas de rejilla ────────────────────────────────────────────────── */
+
+function Th({ children, num = false, ancho }: {
+  children?: React.ReactNode; num?: boolean; ancho?: number;
+}) {
+  return (
+    <th style={{
+      textAlign: num ? "right" : "left",
+      fontFamily: font.sans, fontSize: 9, fontWeight: 500,
+      letterSpacing: "0.09em", textTransform: "uppercase",
+      color: color.textMuted, padding: "7px 10px 6px",
+      borderBottom: `0.5px solid ${color.border}`,
+      whiteSpace: "nowrap", width: ancho,
+      // Sticky: al desplazar la lista larga, las cabeceras se quedan.
+      position: "sticky", top: 0, background: color.bgSurface, zIndex: 1,
+    }}>{children}</th>
+  );
+}
+
+function Td({ children, num = false, mono = false, tono, dim = false, title, fuerte = false }: {
+  children?: React.ReactNode; num?: boolean; mono?: boolean;
+  tono?: string; dim?: boolean; title?: string; fuerte?: boolean;
+}) {
+  return (
+    <td title={title} style={{
+      textAlign: num ? "right" : "left",
+      fontFamily: mono || num ? font.mono : font.sans,
+      // Los tres numeros que se teclean en el broker (precio, stop, acciones)
+      // van en NEGRITA, no mas grandes: cambiar el cuerpo rompia la alineacion
+      // optica de la rejilla y hacia que la fila pareciera de otra tabla.
+      fontSize: 11.5,
+      fontWeight: fuerte ? 700 : 400,
+      fontVariantNumeric: num ? "tabular-nums" : undefined,
+      color: tono || (dim ? color.textMuted : color.textPrimary),
+      padding: "5px 10px",
+      borderBottom: `0.5px solid ${color.border}`,
+      whiteSpace: "nowrap",
+    }}>{children}</td>
+  );
+}
+
+function Seccion({ titulo, extra, alto, children }: {
+  titulo: string; extra?: React.ReactNode; alto?: number; children: React.ReactNode;
+}) {
+  return (
+    <section style={{ marginTop: 22 }}>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 12, marginBottom: 7,
+      }}>
+        <h2 style={{
+          fontFamily: font.sans, fontSize: 10, fontWeight: 600,
+          letterSpacing: "0.11em", textTransform: "uppercase",
+          color: color.textSecondary, margin: 0,
+        }}>{titulo}</h2>
+        {extra}
+      </div>
+      <div style={{
+        background: color.bgSurface, border: hairline, borderRadius: 3,
+        overflowX: "auto", overflowY: alto ? "auto" : undefined,
+        maxHeight: alto,
+      }}>{children}</div>
+    </section>
+  );
+}
+
+const fmt = (v: number | null | undefined, d = 2) =>
+  v == null || Number.isNaN(v) ? "—" : v.toLocaleString("es-ES", {
+    minimumFractionDigits: d, maximumFractionDigits: d,
+  });
+
+const hora = (m: string) => (m || "").slice(11, 16);
+
+/* ── Componente ───────────────────────────────────────────────────────── */
+
+export default function CuadroMandos() {
+  const [estado, setEstado] = useState<EstadoBot | null>(null);
+  const [estrategias, setEstrategias] = useState<EstrategiaCandidata[]>([]);
+  const [eventos, setEventos] = useState<EventoAlerta[]>([]);
+  const [fechas, setFechas] = useState<string[]>([]);
+  const [fecha, setFecha] = useState<string>("");
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sonido, setSonido] = useState(true);
+  const [riesgos, setRiesgos] = useState<Record<string, string>>({});
+  /** Ids iluminados ahora mismo. Solo entradas y piramides: son las que hay que
+   *  ejecutar. Una salida tambien avisa, pero no compite por tu atencion. */
+  const [destacados, setDestacados] = useState<Record<string, number>>({});
+
+  const vistosRef = useRef<Set<string>>(new Set());
+  const audioRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(SONIDO_KEY);
+      if (v != null) setSonido(v === "1");
+    } catch { /* modo privado: se queda con el valor por defecto */ }
+  }, []);
+
+  const alternarSonido = useCallback(() => {
+    setSonido((s) => {
+      const n = !s;
+      try { localStorage.setItem(SONIDO_KEY, n ? "1" : "0"); } catch { /* noop */ }
+      // El navegador no deja crear audio sin un gesto del usuario: este clic
+      // es el gesto, asi que se aprovecha para dejar el contexto listo.
+      if (n && !audioRef.current) {
+        try {
+          const Ctx = window.AudioContext
+            || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          audioRef.current = new Ctx();
+        } catch { /* sin audio disponible */ }
+      }
+      return n;
+    });
+  }, []);
+
+  const pitar = useCallback(() => {
+    const ctx = audioRef.current;
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.36);
+    } catch { /* noop */ }
+  }, []);
+
+  /* ── Carga inicial ──────────────────────────────────────────────────── */
+  useEffect(() => {
+    let vivo = true;
+    Promise.all([leerEstado(), listarEstrategias(), listarFechas()])
+      .then(([e, s, f]) => {
+        if (!vivo) return;
+        setEstado(e);
+        setEstrategias(s);
+        setFechas(f.fechas);
+        setRiesgos(Object.fromEntries(
+          s.map((x) => [x.strategy_id, x.riesgo_usd != null ? String(x.riesgo_usd) : ""]),
+        ));
+      })
+      .catch((e) => vivo && setError(e?.message || "No se pudo cargar el cuadro de mandos"))
+      .finally(() => vivo && setCargando(false));
+    return () => { vivo = false; };
+  }, []);
+
+  /* ── Refresco: estado y avisos ──────────────────────────────────────── */
+  useEffect(() => {
+    let vivo = true;
+    const tick = async () => {
+      try {
+        const [e, ev] = await Promise.all([leerEstado(), listarEventos(fecha || undefined)]);
+        if (!vivo) return;
+        setEstado(e);
+        // Solo suena y se ilumina lo que no se habia visto. En la primera carga
+        // se marcan todos como vistos: si no, al abrir la pagina sonarian de
+        // golpe todos los avisos del dia.
+        const primeraVez = vistosRef.current.size === 0;
+        const nuevos = ev.eventos.filter((x) => !vistosRef.current.has(x.id));
+        ev.eventos.forEach((x) => vistosRef.current.add(x.id));
+        if (!primeraVez && nuevos.length) {
+          const aEjecutar = nuevos.filter((x) => x.tipo !== "salida");
+          if (aEjecutar.length) {
+            const ahora = Date.now();
+            setDestacados((prev) => ({
+              ...prev,
+              ...Object.fromEntries(aEjecutar.map((x) => [x.id, ahora])),
+            }));
+          }
+          if (sonido) {
+            pitar();
+            document.title = `(${nuevos.length}) Alertas · BTT`;
+            setTimeout(() => { document.title = "Alertas · BTT"; }, 8000);
+          }
+        }
+        setEventos(ev.eventos);
+      } catch { /* un fallo suelto no debe romper la pagina; se reintenta */ }
+    };
+    tick();
+    const id = setInterval(tick, REFRESCO_MS);
+    return () => { vivo = false; clearInterval(id); };
+  }, [fecha, sonido, pitar]);
+
+  /* ── Apagar la iluminacion pasado su tiempo ─────────────────────────── */
+  useEffect(() => {
+    if (Object.keys(destacados).length === 0) return;
+    const id = setInterval(() => {
+      const corte = Date.now() - DESTACADO_MS;
+      setDestacados((prev) => {
+        const vivos = Object.entries(prev).filter(([, t]) => t > corte);
+        return vivos.length === Object.keys(prev).length
+          ? prev                              // nada que purgar: no re-renderiza
+          : Object.fromEntries(vivos);
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [destacados]);
+
+  /* ── Acciones ───────────────────────────────────────────────────────── */
+  const alternarBot = async () => {
+    if (!estado) return;
+    try {
+      const e = await cambiarEstado(!estado.vigilando);
+      setEstado({ ...estado, ...e });
+    } catch (err) {
+      setError((err as Error)?.message || "No se pudo cambiar el estado del bot");
+    }
+  };
+
+  const guardarEstrategia = async (s: EstrategiaCandidata, activa: boolean) => {
+    const riesgo = Number(riesgos[s.strategy_id]);
+    if (!riesgo || riesgo <= 0) {
+      setError(`Pon un riesgo mayor que 0 para «${s.name}» antes de activarla.`);
+      return;
+    }
+    try {
+      await guardarVigilancia(s.strategy_id, activa, riesgo);
+      setEstrategias((prev) => prev.map((x) =>
+        x.strategy_id === s.strategy_id ? { ...x, activa, riesgo_usd: riesgo } : x));
+      setError(null);
+    } catch (err) {
+      setError((err as Error)?.message || "No se pudo guardar");
+    }
+  };
+
+  const limpiar = async () => {
+    const antes = prompt("Borrar avisos anteriores a (AAAA-MM-DD).\nSe borran de la base de datos, no solo de la vista:");
+    if (!antes) return;
+    try {
+      const r = await limpiarEventos(antes);
+      alert(`Borrados ${r.borrados} avisos.`);
+      const [ev, f] = await Promise.all([listarEventos(fecha || undefined), listarFechas()]);
+      setEventos(ev.eventos); setFechas(f.fechas);
+    } catch (err) {
+      setError((err as Error)?.message || "No se pudo limpiar");
+    }
+  };
+
+  /* ── Derivados ──────────────────────────────────────────────────────── */
+  const porEstrategia = useMemo(
+    () => Object.fromEntries(estrategias.map((s) => [s.strategy_id, s])),
+    [estrategias],
+  );
+
+  const cuboDe = useCallback(
+    (e: EventoAlerta) => e.origen || porEstrategia[e.strategy_id]?.origen || "portfolio",
+    [porEstrategia],
+  );
+
+  const dePortfolio = useMemo(
+    () => eventos.filter((e) => cuboDe(e) !== "incubadora"), [eventos, cuboDe]);
+  const deIncubadora = useMemo(
+    () => eventos.filter((e) => cuboDe(e) === "incubadora"), [eventos, cuboDe]);
+
+  const vivo = useMemo(() => {
+    if (!estado?.latido_at) return false;
+    const t = Date.parse(estado.latido_at.replace(" ", "T"));
+    return Number.isFinite(t) && Date.now() - t < LATIDO_VIVO_MS;
+  }, [estado]);
+
+  if (cargando) return <Loading />;
+
+  const activas = estrategias.filter((s) => s.activa).length;
+
+  /* ── Rejilla de avisos, reutilizada por los dos cuadros ─────────────── */
+  const TablaAvisos = ({ filas, vacio }: { filas: EventoAlerta[]; vacio: string }) => (
+    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
+      <thead>
+        <tr>
+          <Th ancho={56}>Hora</Th>
+          <Th ancho={82}>Tipo</Th>
+          <Th ancho={70}>Ticker</Th>
+          <Th ancho={62}>Lado</Th>
+          <Th num ancho={94}>Precio</Th>
+          <Th num ancho={104}>Stop</Th>
+          <Th num ancho={88}>Distancia</Th>
+          <Th num ancho={110}>Acciones</Th>
+          <Th num ancho={84}>Riesgo €</Th>
+          <Th>Detalle</Th>
+          <Th>Estrategia</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.length === 0 && (
+          <tr><Td dim>{vacio}</Td></tr>
+        )}
+        {filas.map((e) => {
+          const s = porEstrategia[e.strategy_id];
+          const esSalida = e.tipo === "salida";
+          const dist = e.precio != null && e.stop != null ? Math.abs(e.precio - e.stop) : null;
+          // Acciones al precio de AHORA. Mientras no haya precio en vivo, el
+          // ultimo conocido es el del aviso.
+          const acc = esSalida ? null : accionesAlPrecio(
+            e.riesgo_usd ?? s?.riesgo_usd ?? null, e.precio, e.stop, s?.size_by_sl ?? false,
+          );
+          const tonoTipo = e.tipo === "entrada" ? color.copper
+            : e.tipo === "piramide" ? color.info : color.textMuted;
+          const encendida = destacados[e.id] != null;
+          return (
+            <tr key={e.id} style={encendida ? {
+              // Iluminada: cobre muy diluido + una barra a la izquierda. Se
+              // apaga sola pasados unos segundos.
+              background: "rgba(216,122,61,0.10)",
+              boxShadow: `inset 2px 0 0 ${color.copper}`,
+              transition: "background 500ms ease",
+            } : { transition: "background 900ms ease" }}>
+              <Td mono dim>{hora(e.momento)}</Td>
+              <Td tono={tonoTipo}>
+                {e.tipo === "piramide"
+                  ? (e.accion_piramide === "reduce" ? "Reducir" : "Añadir")
+                  : e.tipo === "entrada" ? "Entrada" : "Salida"}
+                {e.modo === "reproduccion" && (
+                  <span style={{ color: color.textMuted, fontSize: 9 }}> ·rep</span>
+                )}
+              </Td>
+              <Td tono={color.textHigh} mono>{e.ticker}</Td>
+              <Td tono={e.direccion === "Short" ? color.loss : color.profit}>
+                {e.direccion === "Short" ? "Corto" : e.direccion === "Long" ? "Largo" : "—"}
+              </Td>
+              {/* Precio, stop y acciones son lo que se teclea en el broker: los
+                  tres en negrita y en blanco. El cobre se perdia contra el
+                  fondo oscuro y ademas competia con el resalte de la fila. */}
+              <Td num fuerte tono={color.textHigh}>{fmt(e.precio, 4)}</Td>
+              <Td num dim={esSalida} fuerte={!esSalida}
+                  tono={esSalida ? undefined : color.textHigh}>
+                {esSalida ? "—" : fmt(e.stop, 4)}
+              </Td>
+              <Td num dim>{esSalida ? "—" : fmt(dist, 4)}</Td>
+              <Td num fuerte={!esSalida} tono={esSalida ? undefined : color.textHigh}>
+                {e.tipo === "piramide" ? fmt(e.acciones, 0) : acc != null ? fmt(acc, 0) : "—"}
+              </Td>
+              <Td num dim>{esSalida ? "—" : fmt(e.riesgo_usd ?? s?.riesgo_usd ?? null, 0)}</Td>
+              <Td dim>
+                {e.tipo === "salida" ? `Motivo: ${e.motivo || "?"}`
+                  : e.tipo === "piramide" ? `Posición total: ${fmt(e.posicion_total, 0)}`
+                  : ""}
+              </Td>
+              <Td dim>{e.estrategia || "—"}</Td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
+  return (
+    <div style={{ padding: "20px 26px 60px", maxWidth: 1680, margin: "0 auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <Radio style={{ width: 19, height: 19, color: color.copper, strokeWidth: 1.5 }} />
+        <h1 style={{
+          fontSize: 24, fontFamily: font.serif, color: color.textHigh,
+          margin: 0, fontWeight: 400,
+        }}>Cuadro de mandos</h1>
+      </div>
+
+      {error && <div style={{ marginBottom: 12 }}><ErrorBox>{error}</ErrorBox></div>}
+
+      {/* ── Barra de estado ─────────────────────────────────────────── */}
+      <div style={{
+        display: "flex", alignItems: "center", flexWrap: "wrap", gap: "10px 22px",
+        background: color.bgSurface, border: hairline, borderRadius: 3,
+        padding: "10px 14px", fontFamily: font.mono, fontSize: 11,
+      }}>
+        <button
+          onClick={alternarBot}
+          style={{
+            fontFamily: font.sans, fontSize: 10.5, fontWeight: 600,
+            letterSpacing: "0.08em", textTransform: "uppercase",
+            padding: "5px 14px", borderRadius: 3, cursor: "pointer",
+            border: `0.5px solid ${estado?.vigilando ? color.profit : color.border}`,
+            background: estado?.vigilando ? "rgba(74,157,127,0.12)" : "transparent",
+            color: estado?.vigilando ? color.profit : color.textSecondary,
+          }}
+        >{estado?.vigilando ? "Vigilando" : "Parado"}</button>
+
+        <Dato etiqueta="Proceso" valor={
+          !estado?.vigilando ? "—"
+            : vivo ? `vivo · ${estado?.fuente || "?"}`
+            : "SIN RESPUESTA"
+        } tono={!estado?.vigilando ? color.textMuted : vivo ? color.profit : color.loss} />
+
+        <Dato etiqueta="Tickers" valor={String(estado?.tickers_seguidos ?? 0)} />
+        <Dato etiqueta="Estrategias" valor={`${activas} de ${estrategias.length}`} />
+        <Dato
+          etiqueta="Telegram"
+          valor={estado?.telegram?.enviando ? "enviando" : (estado?.telegram?.detalle || "apagado")}
+          tono={estado?.telegram?.enviando ? color.profit : color.textMuted}
+        />
+
+        <button
+          onClick={alternarSonido}
+          title={sonido ? "Silenciar" : "Activar sonido"}
+          style={{
+            marginLeft: "auto", display: "flex", alignItems: "center", gap: 6,
+            background: "transparent", border: `0.5px solid ${color.border}`,
+            borderRadius: 3, padding: "4px 10px", cursor: "pointer",
+            color: sonido ? color.copper : color.textMuted,
+            fontFamily: font.sans, fontSize: 10.5,
+          }}
+        >
+          {sonido ? <Bell style={{ width: 13, height: 13, strokeWidth: 1.5 }} />
+                  : <BellOff style={{ width: 13, height: 13, strokeWidth: 1.5 }} />}
+          {sonido ? "Sonido" : "Silencio"}
+        </button>
+      </div>
+
+      {/* ── Estrategias ─────────────────────────────────────────────── */}
+      <Seccion titulo="Estrategias vigiladas">
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 880 }}>
+          <thead>
+            <tr>
+              <Th ancho={40} />
+              <Th>Estrategia</Th>
+              <Th ancho={96}>Origen</Th>
+              <Th ancho={64}>Sesgo</Th>
+              <Th num ancho={110}>Riesgo €</Th>
+              <Th>El riesgo es</Th>
+              <Th ancho={130}>Ventana</Th>
+              <Th num ancho={90}>Avisos hoy</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {estrategias.length === 0 && (
+              <tr><Td dim>
+                No hay estrategias en el portfolio ni en la incubadora.
+                Añade alguna desde la página de Portfolio.
+              </Td></tr>
+            )}
+            {estrategias.map((s) => {
+              const n = eventos.filter((e) => e.strategy_id === s.strategy_id).length;
+              const esIncubadora = s.origen === "incubadora";
+              return (
+                <tr key={s.strategy_id}>
+                  <Td>
+                    <input
+                      type="checkbox" checked={s.activa}
+                      onChange={(e) => guardarEstrategia(s, e.target.checked)}
+                      style={{ accentColor: color.copper, cursor: "pointer" }}
+                    />
+                  </Td>
+                  <Td tono={s.activa ? color.textHigh : color.textMuted}>{s.name}</Td>
+                  <Td tono={esIncubadora ? color.warning : color.textSecondary}>
+                    {esIncubadora ? "Incubadora" : "Portfolio"}
+                  </Td>
+                  <Td tono={s.bias === "short" ? color.loss : color.profit}>
+                    {s.bias === "short" ? "Corto" : s.bias === "long" ? "Largo" : "—"}
+                  </Td>
+                  <Td num>
+                    <input
+                      type="number" min={1} step={50}
+                      value={riesgos[s.strategy_id] ?? ""}
+                      onChange={(e) => setRiesgos((p) => ({ ...p, [s.strategy_id]: e.target.value }))}
+                      onBlur={() => s.activa && guardarEstrategia(s, true)}
+                      style={{
+                        width: 84, textAlign: "right", background: color.bgElevated,
+                        border: `0.5px solid ${color.border}`, borderRadius: 2,
+                        color: color.textPrimary, fontFamily: font.mono, fontSize: 11.5,
+                        padding: "2px 6px",
+                      }}
+                    />
+                  </Td>
+                  <Td dim title={s.size_by_sl
+                    ? "Se divide entre la distancia al stop: es la pérdida máxima si salta."
+                    : "Se divide entre el precio: es el capital que se despliega."}>
+                    {s.size_by_sl ? "pérdida máxima" : "capital a desplegar"}
+                  </Td>
+                  <Td dim mono>{s.ventana?.inicio || "—"} → {s.ventana?.fin || "—"}</Td>
+                  <Td num dim>{n || "—"}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Seccion>
+
+      {/* ── Avisos de portfolio ─────────────────────────────────────── */}
+      <Seccion
+        titulo="Avisos · portfolio"
+        alto={ALTO_PORTFOLIO}
+        extra={
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <select
+              value={fecha}
+              onChange={(e) => { setFecha(e.target.value); vistosRef.current.clear(); }}
+              style={{
+                background: color.bgElevated, border: `0.5px solid ${color.border}`,
+                borderRadius: 2, color: color.textSecondary, fontFamily: font.mono,
+                fontSize: 11, padding: "3px 8px",
+              }}
+            >
+              <option value="">Últimos</option>
+              {fechas.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <button
+              onClick={limpiar} title="Borrar avisos antiguos de la base de datos"
+              style={{
+                display: "flex", alignItems: "center", gap: 5, background: "transparent",
+                border: `0.5px solid ${color.border}`, borderRadius: 2, padding: "3px 9px",
+                cursor: "pointer", color: color.textMuted, fontFamily: font.sans, fontSize: 10.5,
+              }}
+            >
+              <Trash2 style={{ width: 12, height: 12, strokeWidth: 1.5 }} /> Limpiar
+            </button>
+          </div>
+        }
+      >
+        <TablaAvisos
+          filas={dePortfolio}
+          vacio={`Sin avisos${fecha ? ` el ${fecha}` : " todavía"}.${
+            !estado?.vigilando ? " El bot está parado." : ""}`}
+        />
+      </Seccion>
+
+      {/* ── Avisos de incubadora ────────────────────────────────────── */}
+      <Seccion titulo="Avisos · incubadora" alto={ALTO_INCUBADORA}>
+        <TablaAvisos
+          filas={deIncubadora}
+          vacio="Sin avisos de estrategias en validación."
+        />
+      </Seccion>
+
+      {/* ── Radar (pendiente del WebSocket) ─────────────────────────── */}
+      <Seccion titulo="Radar">
+        <div style={{
+          padding: "14px", fontFamily: font.sans, fontSize: 11.5,
+          color: color.textMuted,
+        }}>
+          Los tickers que crucen el umbral aparecerán aquí. Necesita la conexión
+          de datos en vivo, que está pendiente de la clave propia de Massive.
+        </div>
+      </Seccion>
+    </div>
+  );
+}
+
+function Dato({ etiqueta, valor, tono }: { etiqueta: string; valor: string; tono?: string }) {
+  return (
+    <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+      <span style={{
+        fontFamily: font.sans, fontSize: 9, letterSpacing: "0.09em",
+        textTransform: "uppercase", color: color.textMuted,
+      }}>{etiqueta}</span>
+      <span style={{ color: tono || color.textPrimary }}>{valor}</span>
+    </span>
+  );
+}

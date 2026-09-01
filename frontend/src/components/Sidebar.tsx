@@ -11,6 +11,7 @@ import {
     Flame,
     BarChart3,
     ShieldCheck,
+    Radio,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -259,6 +260,21 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Portfolio</span>
+                    </Link>
+                )}
+
+                {/* Cuadro de mandos del bot de alertas — solo local, gated por
+                    NEXT_PUBLIC_BOT_ALERTS_ENABLED (apagado por defecto). */}
+                {process.env.NEXT_PUBLIC_BOT_ALERTS_ENABLED === "true" && (
+                    <Link
+                        href="/bot-alertas"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/bot-alertas"),
+                        }}
+                    >
+                        <Radio style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Alertas</span>
                     </Link>
                 )}
 
