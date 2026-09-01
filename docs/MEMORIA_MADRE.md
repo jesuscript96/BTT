@@ -2213,3 +2213,78 @@ verde, nombrados: `sim_jit_equivalence`, `n2a_native`, `n2a_e2e`,
 `current_gap`, `fade_indicators`, `max_reentries`, `daily_loss_limit`,
 `daily_limit_sequential`, `locates`, `pm_lookahead` — **157 tests del camino
 secuencial de punta a punta**.
+
+---
+
+## 2026-09-01 — Bot de alertas en vivo, y `staging` igualada a `sailor`
+
+### 📣 Para Álvaro: `staging` se ha reiniciado hoy
+
+`staging` apunta ahora a `93da17d`, el mismo commit que
+`sailor-rama-desarrollo`. **No se ha perdido trabajo:** los 8 commits que
+`staging` tenía y `sailor` no (el borrado del motor viejo, RSI/MACD, «% Session
+Fade», los filtros Gap−1, el fix de datasets y los dos de memoria) **ya estaban
+en `sailor` con otro hash** — se habían subido por las dos vías. Se comprobó uno
+a uno por mensaje antes de forzar.
+
+Etiqueta de rescate en el remoto, por si acaso:
+`staging-antes-del-reinicio-2026-09-01` → `9ba2308`.
+
+### Lo que trae esta sesión: el bot de alertas
+
+Proyecto **propio de Sailor**, aislado del producto: un bot que lleva las
+estrategias del portfolio a avisos en tiempo real por Telegram y a una página
+nueva (`/bot-alertas`). Ejecución manual — el bot avisa, la orden la mete una
+persona.
+
+**Casi todo es código nuevo y separado** (`bot_alerts_*.py`, `market_frame.py`,
+`CuadroMandos.tsx`). Solo tres cosas tocan lo existente:
+
+1. **`backtest_service.py`, −58 líneas.** La fórmula que construye el frame
+   (HOD/LOD, máximos de premercado acumulados, Previous Max/Min) se extrajo a
+   `app/services/market_frame.py` porque el bot la necesita igual y la tenía
+   COPIADA fuera del repo. **El comportamiento no cambia**: verificado idéntico
+   bit a bit —los 15 arrays, 150 ticker-días, 76.385 barras— y con la suite
+   completa antes y después (455 pasan / 103 fallan / 13 errores, los mismos).
+
+   > `backtest_signals._compute_signals_for_pair` conserva SU versión en numpy
+   > puro. **No se unificaron a propósito**: son fórmulas distintas de lo mismo
+   > (`cummax` de pandas vs `np.maximum.accumulate`, que difieren ante NaN) con
+   > su paridad ya verificada aparte. Fundirlas sería un cambio de
+   > comportamiento disfrazado de limpieza.
+
+2. **`main.py` y `Sidebar.tsx`**: registrar la página nueva. Inocuo.
+
+3. **Borrado de la página del Screener** (`Screener.tsx` y su ruta, −2.078
+   líneas). ⚠️ **Ojo, Álvaro:** el screener figura en todos los planes de
+   `entitlements/policy.py`. Se retiró porque en esta línea de trabajo no se usa
+   y Sailor lo decidió así. **El SERVICIO se conserva**
+   (`live_screener_service.py` y `/api/screener/live`): mantiene por ticker el
+   cierre de ayer, el máximo de premercado y el volumen acumulado desde el
+   WebSocket, que es justo lo que necesita el bot. **Si esto llega a producción,
+   hay que reponer la página.**
+
+### Dos hallazgos que valen para todo el proyecto
+
+**El volumen del WebSocket por segundo se queda corto.** Construir velas sumando
+los agregados `A` da los precios bien pero **al volumen le falta entre un 1,5 %
+y un 4,6 %** (medido con AAPL/TSLA/NVDA/SPY): el proveedor cuenta operaciones
+—bloques fuera de secuencia, lotes sueltos— que no aparecen ahí. Hay que usar
+`AM`, el agregado por minuto, que llega ya cerrado y oficial: 20 velas, 20
+idénticas al REST. Importa para cualquier cosa que decida con volumen.
+
+**`get_user_db_connection(read_only=True)` ignora el parámetro** y abre todas
+las conexiones en escritura (`database.py:11-15`). Como DuckDB solo admite un
+escritor, **una página que consulta cada 2 s bloquea las escrituras**: medido,
+un POST esperando más de 60 s hasta agotar el tiempo, y con la página cerrada
+0,2 s. Y si se llenan los hilos del servidor esperando, **deja de responder a
+todo, incluido `/docs`**, aunque el proceso siga vivo — eso es lo que parecía
+que el backend «se caía». Aquí se resolvió con caché en memoria; **cualquier
+módulo nuevo que consulte a menudo se va a encontrar lo mismo.**
+
+### Documentación
+
+`docs/BOT_ALERTAS_MODOS_DE_FALLO.md` — mapa de caídas, decisiones de diseño y
+lo que hará falta antes de conectar la API de un bróker (reconciliación,
+idempotencia de órdenes, interruptor de emergencia). Se escribió pensando en esa
+conversación futura.
