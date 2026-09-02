@@ -5,7 +5,6 @@ import {
     LayoutDashboard,
     Play,
     Briefcase,
-    Radar,
     KeyRound,
     MessageSquarePlus,
     Flame,
@@ -164,19 +163,13 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </div>
                 )}
 
-                {/* Screener */}
-                {allowed("screener.access") && (
-                    <Link
-                        href="/screener"
-                        style={{
-                            ...linkBase(isCollapsed),
-                            ...linkActive("/screener"),
-                        }}
-                    >
-                        <Radar style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                        <span style={labelFade(isCollapsed)}>Screener</span>
-                    </Link>
-                )}
+                {/* La página del Screener se retiró el 2026-09-02 a petición de
+                    Álvaro (no la usa; el bot de alertas que la reemplaza en
+                    staging está excluido de esta rama). Componente y página en
+                    _archive/frontend-screener-20260902/. El SERVICIO backend
+                    (live_screener_service, /api/screener/live y /api/screener/daily)
+                    se conserva: el endpoint de datos /market/screener lo usan
+                    Ticker Analysis y el análisis por ticker. */}
 
                 {/* Market Analysis */}
                 <Link

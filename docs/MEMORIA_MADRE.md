@@ -2999,3 +2999,19 @@ staging) y esta memoria (ambos lados conservados). Lo nuestro que staging no
 adoptó se conserva solo (warmup de indicadores, splits en `init_db.py`
 con `LAKE_PREV_CLOSE_YA_AJUSTADO`, «Últimas pruebas» en Portfolio,
 `subphase_profiler.py`): staging no lo tocó desde la base del merge.
+
+## 2026-09-02 (2ª sesión) — Retirada de la página del Screener (cambio de decisión)
+
+Álvaro decide que la página del Screener no le hace falta ahora mismo. En el
+merge de esta mañana se había CONSERVADO a propósito (staging la retiró como
+parte del bot de alertas, que aquí está excluido); ahora se retira también aquí,
+alineando la rama con staging en este punto:
+
+- `frontend/src/app/screener/page.tsx` y `frontend/src/components/Screener.tsx`
+  movidos a `_archive/frontend-screener-20260902/` (no borrados, regla de oro 5).
+- Link del Sidebar retirado (con comentario explicativo in situ).
+- El SERVICIO backend se conserva intacto (`live_screener_service`,
+  `/api/screener/live`, `/api/screener/daily`): igual que en staging. El
+  endpoint de DATOS `/market/screener` lo siguen usando Ticker Analysis
+  (`page.tsx` home) y `analysis/[ticker]/[date]` — NO tocar.
+- Verificado: `tsc --noEmit` 0 errores, `GET /screener` → 404, `/` → 200.
