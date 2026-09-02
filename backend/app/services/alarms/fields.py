@@ -39,16 +39,16 @@ class Field:
 
 # ── Campos instantáneos ──────────────────────────────────────────────────────
 # Salen de TickerLiveState / _metrics del live screener. Los cinco primeros son
-# exactamente los que ya existían en las alarmas sonoras: las reglas guardadas en
-# localStorage migran a este modelo sin traducción.
+# exactamente los que ya existían en las alarmas sonoras client-side: las reglas
+# guardadas en localStorage migran a este modelo sin traducción.
 _INSTANT: List[Field] = [
     Field("price", "Precio", INSTANT, "$", "Último precio negociado."),
     Field("change_pct", "Change %", INSTANT, "%", "Variación sobre el cierre de ayer."),
     Field("volume", "Volumen del día", INSTANT, "acciones", "Volumen acumulado de la sesión."),
     Field("pmh_gap_pct", "Gap del máximo de premarket", INSTANT, "%",
-          "Máximo de premarket contra el cierre de ayer. El filtro del 50% de la 1B."),
+          "Máximo de premarket contra el cierre de ayer. El filtro clásico de gapper."),
     Field("pre_volume", "Volumen de premarket", INSTANT, "acciones",
-          "Acumulado desde las 4:00 ET. El filtro de los 2M de la 1B."),
+          "Acumulado desde las 4:00 ET."),
     Field("pre_high", "Máximo de premarket", INSTANT, "$", ""),
     Field("gap_pct", "Gap de apertura", INSTANT, "%", "Apertura RTH contra el cierre de ayer."),
     Field("prev_close", "Cierre de ayer", INSTANT, "$", ""),
@@ -77,7 +77,7 @@ _BAR: List[Field] = [
           "El máximo hasta este minuto, no el del día entero."),
     Field("pm_low", "Mínimo de premarket (corrido)", BAR, "$", ""),
     Field("previous_max", "Máximo previo de la sesión", BAR, "$",
-          "Extremo corrido del día. Es la referencia del stop de la 1B."),
+          "Extremo corrido del día. Referencia habitual del stop en cortos."),
     Field("previous_min", "Mínimo previo de la sesión", BAR, "$", ""),
     Field("mins_since_high", "Minutos desde el último máximo", BAR, "min",
           "Cuánto lleva el precio sin hacer máximos nuevos."),

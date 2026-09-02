@@ -48,8 +48,8 @@ async def _fetch(client: httpx.AsyncClient, url: str, params: Dict[str, Any]) ->
 
 
 async def _prev_close(client: httpx.AsyncClient, ticker: str, date: str) -> Optional[float]:
-    """Cierre de la sesión anterior. Es la base de `pmh_gap_pct`, o sea del filtro
-    de universo de la 1B: sin él la reproducción no puede evaluar el universo."""
+    """Cierre de la sesión anterior. Es la base de `pmh_gap_pct` y de
+    `change_pct`: sin él la reproducción no puede evaluar filtros de universo."""
     d = datetime.strptime(date, "%Y-%m-%d").date()
     start = (d - timedelta(days=12)).isoformat()
     data = await _fetch(client, f"{REST_BASE}/v2/aggs/ticker/{ticker}/range/1/day/{start}/{date}",

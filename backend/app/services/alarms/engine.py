@@ -553,11 +553,11 @@ def _compute_sizing(cfg: Dict[str, Any], side: str, price: Optional[float],
     out["stop_ref"] = ref_key
     out["stop_offset_pct"] = offset
 
-    # Dos formas de dimensionar, y la 1B es ambigua entre ellas: «Size por
-    # distancia a Stop Loss» dice riesgo, «Se entra con 300» dice nominal. Con
-    # entrada 3,42 y stop 3,85 salen 697 acciones (riesgo 300 $) frente a 88
-    # (nominal 300 $) — 8x de diferencia. Se soportan las dos explícitamente en
-    # vez de elegir una en silencio.
+    # Dos formas de dimensionar, y no son intercambiables: «riesgo» reparte una
+    # cantidad fija de pérdida sobre la distancia al stop; «nominal» compra una
+    # cantidad fija de exposición. Con un stop cercano la primera da muchas más
+    # acciones que la segunda. Se soportan ambas de forma explícita en vez de
+    # elegir una en silencio y que el usuario descubra la diferencia operando.
     distance = abs(stop - price)
     notional = _f(cfg.get("notional_usd"))
     shares = 0

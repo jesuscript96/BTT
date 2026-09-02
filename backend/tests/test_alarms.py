@@ -103,18 +103,20 @@ def test_close_stale_cierra_la_barra_de_un_ticker_parado():
 
 
 # ── evaluador ────────────────────────────────────────────────────────────────
-def test_condiciones_1b_completas():
+def test_varias_condiciones_se_combinan_con_and():
+    """Cuatro condiciones, incluidas dos que comparan contra otro campo en vez de
+    contra un número. Todas tienen que cumplirse."""
     conds = normalize_conditions([
-        {"left": "close", "op": ">", "right": 0.7},
-        {"left": "dollar_volume", "op": ">", "right": 500000},
+        {"left": "close", "op": ">", "right": 1.0},
+        {"left": "dollar_volume", "op": ">", "right": 100_000},
         {"left": "close", "op": "<", "right": "prev_bar_low"},
         {"left": "close", "op": ">", "right": "vwap"},
     ])
-    ctx = {"close": 3.42, "dollar_volume": 780_000, "prev_bar_low": 3.50, "vwap": 3.30}
+    ctx = {"close": 10.0, "dollar_volume": 250_000, "prev_bar_low": 11.0, "vwap": 9.0}
     ok, reasons = evaluate(conds, ctx)
     assert ok and len(reasons) == 4
 
-    ctx_malo = {**ctx, "close": 3.60}   # ya no cierra bajo el mínimo anterior
+    ctx_malo = {**ctx, "close": 12.0}   # deja de cerrar bajo el mínimo anterior
     assert evaluate(conds, ctx_malo)[0] is False
 
 
@@ -238,7 +240,7 @@ def test_el_token_de_vinculacion_es_de_un_solo_uso(store_tmp):
 def test_los_eventos_tambien_van_por_dueno(store_tmp):
     st = store_tmp
     a = st.create_alarm("user_A", "De A", "short", {"conditions": []})
-    st.record_event(a["id"], "user_A", "XYZ", "2026-08-31", 3.42, {"x": 1})
+    st.record_event(a["id"], "user_A", "XYZ", "2026-08-31", 10.0, {"x": 1})
     assert len(st.list_events("user_A")) == 1
     assert st.list_events("user_B") == []
 

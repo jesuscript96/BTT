@@ -9,9 +9,9 @@ constructor del backtester ya tiene ese árbol y es caro de entender; aquí una
 alarma se lee de un vistazo. Quien necesite un OR configura dos alarmas.
 
 Regla dura: un campo sin valor (None) hace que la condición NO se cumpla. Nunca
-se sustituye por cero — un 0 silencioso convierte «dollar volume > 500000» en
-«siempre falso» pero «precio < 1» en «siempre verdadero», y eso dispara avisos
-falsos que nadie sabría explicar.
+se sustituye por cero — un 0 silencioso convierte «volumen > X» en «siempre
+falso» pero «precio < X» en «siempre verdadero», y eso dispara avisos falsos que
+nadie sabría explicar.
 """
 
 from __future__ import annotations

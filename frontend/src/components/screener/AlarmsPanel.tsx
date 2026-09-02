@@ -424,8 +424,9 @@ export function AlarmsPanel() {
                      style={{ flex: 1, minWidth: 120, fontSize: 11 }} />
             </div>
             <span style={HINT}>
-              Elige uno de los dos. Con entrada 3,42 $ y stop 3,85 $, «riesgo 300 $»
-              da 697 acciones y «nominal 300 $» da 88: no son lo mismo.
+              Elige uno de los dos. <b>Riesgo</b> reparte esa pérdida sobre la
+              distancia al stop; <b>nominal</b> compra esa exposición. Con el stop
+              cerca, el primero da bastantes más acciones que el segundo.
             </span>
             {draftSide === "short" && (
               <Input type="number" step="any" placeholder="Coste por paquete de locates $ (opcional)"
