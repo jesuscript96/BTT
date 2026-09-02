@@ -10,6 +10,38 @@
 3. **Antes de cada `push`, pídele confirmación explícita al usuario.**
 4. **Nunca commitees secretos ni datos:** `.env`, `.env.local`, `gcs-key.json`, `*.duckdb`, `data/`, `.cache/`, `.venv/`, `node_modules/`. Ya están en `.gitignore`; no los fuerces.
 5. **Antes de modificar un archivo, léelo completo.** Un paso a la vez; confirma antes de continuar. No borres código: muévelo a `_archive/`.
+6. **🚨 EL BOT DE AVISOS EN VIVO Y LA PÁGINA DE ALERTAS NO SE TOCAN** (sección siguiente). No los modifiques, no los arranques, no los configures y **no te los descargues para probarlos**. Si tu tarea te lleva ahí, **para y pregunta a Jaume**.
+
+## 🚨 Zona cerrada: el bot de avisos en vivo (Alertas)
+
+**Esto lo llevan Jaume y Sailor en exclusiva, por ahora.** No es celo de código:
+hay tres razones concretas, y ninguna se arregla teniendo cuidado.
+
+1. **Opera con dinero real.** Los avisos salen a un grupo de Telegram y Jaume
+   pone las órdenes a mano con ellos. Un cambio que altere una condición no
+   rompe un test: le hace entrar en una operación que no era.
+2. **La cuenta de datos en vivo admite UNA sola conexión.** Si arrancas el bot
+   en tu equipo **echas al de Jaume y lo dejas sordo**, sin que ninguno de los
+   dos vea un error. Pasó el 2026-09-02 con una simple prueba.
+3. **Está en desarrollo activo** y todavía sin cobertura suficiente. Lo que hoy
+   parece código muerto o mejorable suele ser una decisión medida.
+
+**No toques, no arranques, no configures y no descargues:**
+
+```
+backend/app/services/bot_alerts_*.py    backend/app/routers/bot_alerts.py
+backend/tests/test_bot_alerts_*.py      docs/BOT_ALERTAS_MODOS_DE_FALLO.md
+frontend/src/components/bot-alerts/     frontend/src/lib/api_bot_alerts.ts
+frontend/src/app/bot-alertas/           (y `D:\bot_senales\`, fuera del repo)
+```
+
+**Excepción, con aviso: `backend/app/services/market_frame.py`.** Ese SÍ es
+compartido — el backtester y el bot usan la misma fórmula a propósito, verificada
+bit a bit. Leerlo, todo lo que quieras. Para **cambiarlo**, avisa a Jaume antes:
+cualquier retoque mueve las señales en vivo aunque los backtests sigan pasando.
+
+Si algo de Alertas te estorba para una tarea legítima, dilo y se resuelve — pero
+la decisión es de Jaume, no del agente.
 
 ## 🔒 Seguridad en desarrollo local (imprescindible)
 

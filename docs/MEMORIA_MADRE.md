@@ -2288,3 +2288,115 @@ módulo nuevo que consulte a menudo se va a encontrar lo mismo.**
 lo que hará falta antes de conectar la API de un bróker (reconciliación,
 idempotencia de órdenes, interruptor de emergencia). Se escribió pensando en esa
 conversación futura.
+
+---
+
+## 2026-09-02
+
+### 🚨 AVISO PARA ÁLVARO Y SU IA — Alertas es zona cerrada
+
+**El bot de avisos en vivo y la página de Alertas los llevan Jaume y Sailor en
+exclusiva por ahora. No se tocan, no se arrancan, no se configuran y no se
+descargan para probarlos.** Está también como regla de oro nº 6 en `AGENTS.md`,
+en `CLAUDE.md` y en `.agent/ALVARO_DEV_BRANCH.md`, con la lista de ficheros.
+
+No es celo de código. Son tres razones concretas y ninguna se arregla teniendo
+cuidado:
+
+1. **Opera con dinero real.** Los avisos salen a un grupo de Telegram y Jaume
+   pone las órdenes a mano con ellos. Un cambio que altere una condición no
+   rompe un test: le hace entrar en una operación que no era.
+2. **La cuenta de datos en vivo admite UNA sola conexión.** Arrancar el bot en
+   otra máquina **echa al de Jaume y lo deja sordo**, sin que ninguno de los dos
+   vea un error — el bot sigue diciendo «conectado». Pasó hoy mismo con una
+   prueba de nada.
+3. **Está en desarrollo activo** y sin cobertura suficiente. Lo que parece
+   código muerto o mejorable suele ser una decisión medida, y el porqué está en
+   los comentarios.
+
+**Traerlo por `staging` no es tocarlo**: esos ficheros llegarán en el merge y no
+hay que hacer nada con ellos. La única excepción de lectura/escritura es
+`backend/app/services/market_frame.py`, compartido a propósito con el backtester
+(fórmula verificada bit a bit sobre 150 ticker-días): leerlo, sin problema;
+**cambiarlo, avisando antes**, porque mueve las señales en vivo aunque los
+backtests sigan en verde. Si algo de Alertas bloquea una tarea legítima, se
+habla con Jaume — la decisión es suya, no del agente.
+
+### El radar vigila las condiciones de CADA estrategia, no un umbral inventado
+
+**Cómo estaba mal.** El radar filtraba por el precio ACTUAL contra el cierre de
+ayer, con un umbral puesto a ojo (30 %). Pero `PM High Gap %` —la condición de
+1B— es un **máximo acumulado que no baja**. Un ticker que hizo +80 % y retrocedió
+a +22 % sigue cumpliendo, y el radar lo descartaba. En gaps en corto retroceder
+tras el máximo es lo NORMAL: el fallo afectaba al caso típico, no a uno raro.
+
+**Cómo está ahora** (`bot_alerts_mercado.py`, `bot_alerts_universo.py`,
+`RadarPorEstrategia`): el bot se suscribe a `AM.*` (mercado entero), acumula por
+ticker máximo de premercado, volumen y precio, y evalúa **el filtro de universo
+de cada estrategia activa**. Admitido un ticker, no sale hasta cambiar de día.
+Cada candidato lleva de qué estrategia viene y por qué regla.
+
+**Lo que se puede y no se puede saber antes de las 09:30:** `PM High Gap %`,
+`Current Gap %`, `Premarket Volume`, `Volume`, `Price` y `Previous Close`, sí.
+**`Open Gap %` NO existe antes de la apertura**, así que 2.1B y 3B no son
+vigilables en premercado — y el bot lo dice al arrancar en vez de ignorarlas en
+silencio. Lo que no se sabe calcular se declara NO EVALUABLE y el ticker no
+entra: dar por cumplida una condición sin comprobarla haría avisar de lo que no
+toca.
+
+**Bug grave arreglado: el cierre de ayer.** El bot llamaba a
+`build_market_frame` con `daily_stats` VACÍO, y el código cae a un valor de
+emergencia: **usa el primer precio de hoy como cierre de ayer**. Sin error, sin
+log. Medido con SGLD: PM High Gap salía 50,4 % cuando el real era 525 %.
+Arreglado pidiendo el snapshot (`prevDay.c`). **Verificado que `prevDay.c` es el
+cierre RTH y no el after-hours**: SGLD cerró RTH en 5,08 y after-hours en 17,30;
+el campo da 5,08.
+
+### Prealertas: la vela se mira cada segundo del 50 al 59
+
+El backtest entra al `open` de la vela siguiente a la señal, o sea en el instante
+en que la vela de señal cierra. Avisar al cierre deja **margen cero** para poner
+la orden a mano. La prealerta evalúa la vela a medias y avisa antes.
+
+Estaba mirando **una sola vez**, en el segundo 50. Eso dejaba escapar las señales
+que se completan después, y ésas llegaban al cierre sin margen. Medido sobre el
+tick data del lago:
+
+| | captura | margen | falsas alarmas |
+|---|---|---|---|
+| solo el segundo 50 | 12/14 (86 %) | 10 s | 3 de 8 |
+| del 50 al 59 | **14/14 (100 %)** | 9,4 s de media, 6 s el peor | 3 de 9 |
+
+Captura todas, el margen apenas baja y **no añade falsas alarmas** — el riesgo
+era una condición que se cumple en el 52 y deja de cumplirse en el 58, y no pasó
+ni una vez en 2.959 velas de premercado. El máximo sigue siendo 10 s; el peor
+caso teórico es 1 s, pero medido ninguna bajó de 6.
+
+**Detalle de implementación que parece menor y no lo es:** el minuto se marca
+como avisado desde **el bot, al publicar**, no dentro de `aplicar()`. Marcarlo
+dentro haría volver a mirar una sola vez, y **no lo notaría nadie**: el bot
+seguiría avisando, solo que menos. Hay tests que lo fijan
+(`backend/tests/test_bot_alerts_prealertas.py`), incluido uno para que un mismo
+aviso no se repita ocho veces en el minuto.
+
+**El volumen de la vela parcial sale de `av`, no de sumar los `v`.** Sumar los
+agregados por segundo deja fuera operaciones (hasta un 4,6 % menos) y 1B decide
+con dollar volume acumulado. `av` es el volumen acumulado del día, ya oficial:
+restándole el que había al empezar el minuto sale el del minuto exacto. Si no
+viene `av` el volumen se declara 0 en vez de aproximarlo — un volumen corto haría
+cumplir la condición más tarde de lo que toca, y eso es peor que no prealertar.
+
+### Dos cosas que valen para cualquiera que trabaje en este repo
+
+**Editar código del backend con `--reload` puesto tumba lo que dependa de él.**
+Cada fichero guardado reinicia uvicorn; durante el reinicio devuelve 500 y luego
+deja de aceptar conexiones unos segundos. Los «cuelgues del backend» que se
+llevaban investigando días eran esto, provocado desde el propio editor.
+Confirmado por descarte: cuatro horas sin un solo error en cuanto se dejó de
+tocar código, con el bot procesando 528 velas.
+
+**Un comentario no es una garantía.** `hidratar()` decía «no genera avisos: lo
+que ya pasó, pasó» y no estaba implementado: el bot avisó a las 20:28 de
+operaciones de las 14:27 y salieron a Telegram. Está arreglado (se llama al
+motor con el frame hidratado y se descartan los eventos, para marcarlos como
+vistos), pero la lección es general.
