@@ -43,6 +43,47 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _mark_dirty() -> None:
+    """Marca users.duckdb como modificada.
+
+    Sin esto, `upload_user_db(only_if_dirty=True)` del apagado se salta la subida
+    y el `download_user_db()` del siguiente arranque sobrescribe el fichero local
+    con la copia de GCS: alarmas, vínculos de Telegram y señales desaparecerían en
+    el primer redeploy. Lo llaman todas las rutas de escritura de la app; que esta
+    no lo hiciera no era una excepción de diseño, era un olvido."""
+    try:
+        from app.gcs_sync import mark_user_db_dirty
+        mark_user_db_dirty()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+_last_sync = 0.0
+SYNC_MIN_INTERVAL_SECONDS = 300.0
+
+
+def sync_to_gcs(force: bool = False) -> None:
+    """Sube users.duckdb a GCS, como mucho una vez cada 5 minutos.
+
+    Las señales las escribe el motor, fuera de cualquier petición, así que no hay
+    BackgroundTasks donde colgar la subida. Y marcar la BD como sucia solo salva
+    los datos en un apagado ORDENADO: si el contenedor se mata en seco, las
+    señales del día se pierden. Con el throttle, el coste es una subida cada 5
+    minutos como mucho aunque salten muchas alarmas seguidas."""
+    global _last_sync
+    import time as _time
+    now = _time.monotonic()
+    if not force and (now - _last_sync) < SYNC_MIN_INTERVAL_SECONDS:
+        return
+    _last_sync = now
+    try:
+        import threading
+        from app.gcs_sync import upload_user_db
+        threading.Thread(target=upload_user_db, daemon=True).start()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[ALARMS] subida a GCS no programada: %s", e)
+
+
 _schema_ready = False
 
 
@@ -175,6 +216,7 @@ def create_alarm(user_id: Optional[str], name: str, side: str,
             )
         finally:
             con.close()
+    _mark_dirty()
     return {"id": new_id, "name": name, "enabled": enabled, "side": side,
             "definition": definition, "created_at": now.isoformat(), "updated_at": now.isoformat()}
 
@@ -203,6 +245,7 @@ def update_alarm(user_id: Optional[str], alarm_id: str, name: Optional[str] = No
             con.execute(f"UPDATE alarms SET {', '.join(sets)} WHERE id = ? AND user_id = ?", params)
         finally:
             con.close()
+    _mark_dirty()
     return get_alarm(user_id, alarm_id)
 
 
@@ -216,6 +259,7 @@ def delete_alarm(user_id: Optional[str], alarm_id: str) -> bool:
             con.execute("DELETE FROM alarms WHERE id = ? AND user_id = ?", [alarm_id, _owner(user_id)])
         finally:
             con.close()
+    _mark_dirty()
     return True
 
 
@@ -275,6 +319,7 @@ def record_event(alarm_id: str, user_id: str, ticker: str, session_date: str,
             )
         finally:
             con.close()
+    _mark_dirty()
     return event_id
 
 
@@ -343,6 +388,7 @@ def create_link_token(user_id: Optional[str]) -> Dict[str, Any]:
             )
         finally:
             con.close()
+    _mark_dirty()
     return {"token": token, "expires_at": expires.isoformat(),
             "ttl_minutes": LINK_TOKEN_TTL_MINUTES}
 
@@ -373,6 +419,7 @@ def consume_link_token(token: str, chat_id: str, username: Optional[str]) -> Opt
             )
         finally:
             con.close()
+    _mark_dirty()
     return uid
 
 
@@ -402,6 +449,7 @@ def unlink(user_id: Optional[str]) -> bool:
             con.execute("DELETE FROM telegram_links WHERE user_id = ?", [_owner(user_id)])
         finally:
             con.close()
+    _mark_dirty()
     return True
 
 
@@ -416,3 +464,4 @@ def mark_link_broken(chat_id: str) -> None:
                         [_now(), str(chat_id)])
         finally:
             con.close()
+    _mark_dirty()

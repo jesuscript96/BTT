@@ -190,6 +190,9 @@ class UpdatePoller:
         username = (chat.get("username") or msg.get("from", {}).get("username"))
         uid = await asyncio.to_thread(store.consume_link_token, token, str(chat_id), username)
         if uid:
+            # Vincular es raro y caro de rehacer (el usuario tendría que volver a
+            # pulsar Start), así que se sube ya, sin esperar al throttle.
+            await asyncio.to_thread(store.sync_to_gcs, True)
             await send_message(str(chat_id),
                                "✅ <b>Telegram conectado.</b>\n"
                                "A partir de ahora recibirás aquí los avisos de tus alarmas.")

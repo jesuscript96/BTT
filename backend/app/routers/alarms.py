@@ -11,7 +11,9 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user_id
@@ -52,6 +54,21 @@ class AlarmPatch(BaseModel):
     definition: Optional[AlarmDefinition] = None
 
 
+def _sync_user_db(background_tasks: BackgroundTasks) -> None:
+    """Sube users.duckdb a GCS tras cambiar una alarma, igual que hace
+    strategies.py al guardar una estrategia.
+
+    `_mark_dirty()` solo garantiza la subida en un apagado ORDENADO. Si el
+    contenedor se mata en seco (deploy, OOM), lo marcado y no subido se pierde:
+    el arranque siguiente descarga la copia de GCS encima. Para contenido que
+    crea el usuario, esperar al apagado no es suficiente."""
+    try:
+        from app.gcs_sync import upload_user_db
+        background_tasks.add_task(upload_user_db)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ALARMS] no se pudo programar la subida a GCS: %s", e)
+
+
 def _validate(definition: Dict[str, Any]) -> Dict[str, Any]:
     """Valida la definición y le añade el modo deducido.
 
@@ -90,11 +107,13 @@ def list_alarms(user_id: Optional[str] = Depends(get_current_user_id)):
 
 
 @router.post("", status_code=201)
-def create_alarm(payload: AlarmPayload,
+def create_alarm(payload: AlarmPayload, background_tasks: BackgroundTasks,
                  user_id: Optional[str] = Depends(get_current_user_id)):
     definition = _validate(payload.definition.model_dump())
-    return store.create_alarm(user_id, payload.name.strip() or "Alarma sin nombre",
-                              payload.side, definition, payload.enabled)
+    alarm = store.create_alarm(user_id, payload.name.strip() or "Alarma sin nombre",
+                               payload.side, definition, payload.enabled)
+    _sync_user_db(background_tasks)
+    return alarm
 
 
 @router.get("/{alarm_id}")
@@ -107,20 +126,23 @@ def get_alarm(alarm_id: str, user_id: Optional[str] = Depends(get_current_user_i
 
 
 @router.put("/{alarm_id}")
-def update_alarm(alarm_id: str, patch: AlarmPatch,
+def update_alarm(alarm_id: str, patch: AlarmPatch, background_tasks: BackgroundTasks,
                  user_id: Optional[str] = Depends(get_current_user_id)):
     definition = _validate(patch.definition.model_dump()) if patch.definition else None
     updated = store.update_alarm(user_id, alarm_id, name=patch.name, side=patch.side,
                                  definition=definition, enabled=patch.enabled)
     if updated is None:
         raise HTTPException(status_code=404, detail="Alarma no encontrada")
+    _sync_user_db(background_tasks)
     return updated
 
 
 @router.delete("/{alarm_id}")
-def delete_alarm(alarm_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+def delete_alarm(alarm_id: str, background_tasks: BackgroundTasks,
+                 user_id: Optional[str] = Depends(get_current_user_id)):
     if not store.delete_alarm(user_id, alarm_id):
         raise HTTPException(status_code=404, detail="Alarma no encontrada")
+    _sync_user_db(background_tasks)
     return {"deleted": True}
 
 
@@ -206,8 +228,10 @@ async def telegram_link(user_id: Optional[str] = Depends(get_current_user_id)):
 
 
 @router.delete("/telegram/link")
-def telegram_unlink(user_id: Optional[str] = Depends(get_current_user_id)):
+def telegram_unlink(background_tasks: BackgroundTasks,
+                    user_id: Optional[str] = Depends(get_current_user_id)):
     store.unlink(user_id)
+    _sync_user_db(background_tasks)
     return {"unlinked": True}
 
 

@@ -401,6 +401,9 @@ class AlarmEngine:
 
         await asyncio.to_thread(store.record_event, alarm["id"], alarm["user_id"],
                                 ticker, session, price, payload, delivered)
+        # Throttled: sin esto las señales solo llegarían a GCS en un apagado
+        # ordenado, y un contenedor matado en seco se llevaría el día entero.
+        store.sync_to_gcs()
 
         if plan["channels"].get("browser", True):
             event = {"type": "alarm", "user_id": alarm["user_id"],
