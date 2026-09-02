@@ -104,6 +104,41 @@ def hidratar_rest(ticker: str, dia: Optional[str] = None) -> pd.DataFrame:
     return df.sort_values("timestamp").reset_index(drop=True)
 
 
+def datos_del_dia_anterior(ticker: str) -> dict:
+    """Cierre y apertura de AYER. Es `daily_stats` para el motor.
+
+    IMPRESCINDIBLE, y su ausencia no da error: si no se pasa, `market_frame`
+    cae a un valor de emergencia y usa **el primer precio de hoy como cierre de
+    ayer**. Todo lo que dependa de ese dato sale mal en silencio — y de ahi vive
+    la condicion principal de 1B (`PM High Gap %`).
+
+    Medido el 2026-09-02 con SGLD: el bot calculaba un gap del 50,4 % cuando el
+    real era del 525 %. Ahi coincidio que ambos pasaban el umbral; en otro
+    ticker el gap real podria ser del 80 % y el calculado del 5 %, y no avisar.
+    """
+    key = clave_bot()
+    if not key:
+        return {}
+    try:
+        r = httpx.get(
+            f"{REST}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}",
+            params={"apiKey": key}, timeout=20, verify=_ssl_ctx(),
+        )
+        r.raise_for_status()
+        t = r.json().get("ticker") or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[FEED] sin datos de ayer para %s: %s", ticker, exc)
+        return {}
+
+    prev = t.get("prevDay") or {}
+    out: dict = {}
+    if prev.get("c"):
+        out["prev_close"] = float(prev["c"])
+    if prev.get("o"):
+        out["yesterday_open"] = float(prev["o"])
+    return out
+
+
 def vela_de_mensaje(ev: dict) -> Optional[dict]:
     """Un mensaje `AM` -> una vela lista para el motor."""
     o, h, l, c = ev.get("o"), ev.get("h"), ev.get("l"), ev.get("c")
@@ -130,10 +165,17 @@ class FeedEnVivo:
         tickers: Iterable[str],
         al_cerrar_vela: Callable[[str, dict], Any],
         al_tick: Optional[Callable[[str, dict], Any]] = None,
+        todo_el_mercado: bool = False,
+        al_mercado: Optional[Callable[[dict], Any]] = None,
     ):
         self.tickers = [t.upper() for t in tickers]
         self.al_cerrar_vela = al_cerrar_vela
         self.al_tick = al_tick
+        # Suscribirse al mercado entero para que el radar pueda descubrir gaps.
+        # `al_mercado` recibe TODOS los agregados de minuto, incluidos los de
+        # los tickers ya vigilados.
+        self.todo_el_mercado = todo_el_mercado
+        self.al_mercado = al_mercado
         self.conectado = False
         self.velas_recibidas = 0
         self.ticks_recibidos = 0
@@ -142,6 +184,19 @@ class FeedEnVivo:
 
     def parar(self) -> None:
         self._parar = True
+
+    def quitar(self, fuera: Iterable[str]) -> list[str]:
+        """Deja de seguir tickers. Devuelve los que se quitaron.
+
+        NO se desuscribe del socket: recibir unos mensajes de mas es gratis
+        (se descartan al no tener frame), y desuscribirse anyade una via de
+        fallo por si el ticker vuelve a entrar al radar dos minutos despues.
+        Lo que importa es liberar el CUPO y dejar de evaluarlo.
+        """
+        quitados = [t.upper() for t in fuera if t.upper() in self.tickers]
+        for t in quitados:
+            self.tickers.remove(t)
+        return quitados
 
     async def anyadir(self, nuevos: Iterable[str]) -> list[str]:
         """Empieza a seguir tickers con la conexion ya abierta.
@@ -190,6 +245,13 @@ class FeedEnVivo:
                     # tickers mientras el socket estaba caido, entran aqui.
                     canales = ([f"AM.{t}" for t in self.tickers]
                                + [f"A.{t}" for t in self.tickers])
+                    if self.todo_el_mercado:
+                        # Los agregados por minuto de TODO el mercado. Es lo que
+                        # alimenta al radar: sin ver el mercado entero no se
+                        # pueden descubrir gaps, solo seguir los ya conocidos.
+                        # Se usa AM y no A: uno por ticker y minuto en vez de uno
+                        # por segundo, con el volumen ya oficial.
+                        canales.append("AM.*")
                     if canales:
                         await ws.send(json.dumps({"action": "subscribe",
                                                   "params": ",".join(canales)}))
@@ -231,16 +293,27 @@ class FeedEnVivo:
             if tipo == "status":
                 logger.info("[FEED] %s: %s", ev.get("status"), ev.get("message"))
             elif tipo == "AM":
+                sym = str(ev.get("sym", ""))
+                # Primero al estado del mercado (lo usa el radar): esto entra
+                # para TODOS los tickers, esten vigilados o no.
+                if self.al_mercado is not None:
+                    try:
+                        self.al_mercado(ev)
+                    except Exception:  # noqa: BLE001
+                        pass
+                # Y al motor solo si es un ticker que se esta vigilando.
+                if sym not in self.tickers:
+                    continue
                 vela = vela_de_mensaje(ev)
                 if vela is None:
                     continue
                 self.velas_recibidas += 1
                 try:
-                    self.al_cerrar_vela(str(ev.get("sym", "")), vela)
+                    self.al_cerrar_vela(sym, vela)
                 except Exception as exc:  # noqa: BLE001
                     # Un fallo con un ticker no puede dejar sordo al bot para
                     # los demas.
-                    logger.warning("[FEED] fallo al procesar %s: %s", ev.get("sym"), exc)
+                    logger.warning("[FEED] fallo al procesar %s: %s", sym, exc)
             elif tipo == "A":
                 self.ticks_recibidos += 1
                 if self.al_tick is not None:

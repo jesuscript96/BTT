@@ -39,6 +39,7 @@ import {
   type EstadoBot,
   type EstrategiaCandidata,
   type EventoAlerta,
+  type Radar,
 } from "@/lib/api_bot_alerts";
 
 const SONIDO_KEY = "botAlertas.sonido.v1";
@@ -75,6 +76,7 @@ const ANIMACIONES = `
  *  pagina se estiraria sin fin y habria que buscar la barra de estado. */
 const ALTO_PORTFOLIO = 430;
 const ALTO_INCUBADORA = 210;
+const ALTO_RADAR = 260;
 
 /* ── Piezas de rejilla ────────────────────────────────────────────────── */
 
@@ -164,6 +166,8 @@ export default function CuadroMandos() {
   /** Ids iluminados ahora mismo. Solo entradas y piramides: son las que hay que
    *  ejecutar. Una salida tambien avisa, pero no compite por tu atencion. */
   const [destacados, setDestacados] = useState<Record<string, number>>({});
+  /** A quién está mirando el bot ahora mismo. Llega por el WebSocket. */
+  const [radar, setRadar] = useState<Radar | null>(null);
 
   const vistosRef = useRef<Set<string>>(new Set());
   const audioRef = useRef<AudioContext | null>(null);
@@ -239,8 +243,9 @@ export default function CuadroMandos() {
    * Se mantiene la vía de consulta como respaldo por si el WebSocket no
    * conecta (proxy, extensión del navegador): mejor lento que en blanco.
    */
-  const aplicar = useCallback((e: EstadoBot, eventos: EventoAlerta[]) => {
+  const aplicar = useCallback((e: EstadoBot, eventos: EventoAlerta[], r?: Radar | null) => {
     setEstado(e);
+    if (r) setRadar(r);
     // Solo suena y se ilumina lo que no se había visto. En la primera carga se
     // marcan todos como vistos: si no, al abrir la página sonarían de golpe
     // todos los avisos del día.
@@ -253,14 +258,18 @@ export default function CuadroMandos() {
     const nuevos = eventos.filter((x) => !vistosRef.current.has(clave(x)));
     eventos.forEach((x) => vistosRef.current.add(clave(x)));
     if (!primeraVez && nuevos.length) {
-      const aEjecutar = nuevos.filter((x) => x.tipo !== "salida");
+      // Ni las salidas ni las prealertas caídas piden atención: una salida
+      // ya avisó por Telegram y una caída no tiene nada que ejecutar.
+      const aEjecutar = nuevos.filter(
+        (x) => x.tipo !== "salida" && x.estado !== "descartada");
       if (aEjecutar.length) {
         const ahora = Date.now();
         setDestacados((prev) => ({
           ...prev, ...Object.fromEntries(aEjecutar.map((x) => [clave(x), ahora])),
         }));
       }
-      if (sonidoRef.current) {
+      const suena = nuevos.some((x) => x.estado !== "descartada");
+      if (sonidoRef.current && suena) {
         pitar();
         document.title = `(${nuevos.length}) Alertas · BTT`;
         setTimeout(() => { document.title = "Alertas · BTT"; }, 8000);
@@ -297,7 +306,7 @@ export default function CuadroMandos() {
       ws.onmessage = (m) => {
         try {
           const d = JSON.parse(m.data);
-          if (d?.estado) aplicar(d.estado, Array.isArray(d.eventos) ? d.eventos : []);
+          if (d?.estado) aplicar(d.estado, Array.isArray(d.eventos) ? d.eventos : [], d.radar);
         } catch { /* trama malformada: se ignora */ }
       };
       ws.onclose = () => {
@@ -443,6 +452,10 @@ export default function CuadroMandos() {
             : e.tipo === "piramide" ? color.info : color.textMuted;
           const encendida = destacados[`${e.id}|${e.estado}`] != null;
           const espera = e.estado === "prealerta";
+          // Una prealerta que no se confirmo. Se queda en la tabla, apagada:
+          // borrarla escondería que hubo un aviso, y saber que se cayó también
+          // es información. No suena ni destella.
+          const caida = e.estado === "descartada";
           // Al llegar, la fila se enciende y se va apagando sola: ámbar si es
           // prealerta, rojo si es la alerta confirmada.
           //
@@ -451,7 +464,9 @@ export default function CuadroMandos() {
           // animación — ahora en rojo. Con la key fija cambiaría el color pero
           // no habría destello, y el momento importante (la confirmación) se
           // vería menos que la prealerta que lo precedió.
-          const anim = encendida
+          // Una prealerta caída NO destella: no hay nada que ejecutar, y un
+          // destello es una llamada de atención.
+          const anim = encendida && !caida
             ? {
                 animation: `bot-flash-${espera ? "prealerta" : "alerta"} `
                   + `${DESTACADO_MS}ms ease-out forwards`,
@@ -462,8 +477,8 @@ export default function CuadroMandos() {
                 className={espera ? "bot-fila-prealerta" : "bot-fila-alerta"}
                 style={anim}>
               <Td mono dim>{hora(e.momento)}</Td>
-              <Td tono={espera ? color.warning : color.textSecondary}>
-                {espera ? "Prealerta" : "Alerta"}
+              <Td tono={espera ? color.warning : caida ? color.textMuted : color.textSecondary}>
+                {espera ? "Prealerta" : caida ? "No confirmada" : "Alerta"}
               </Td>
               <Td tono={tonoTipo}>
                 {e.tipo === "piramide"
@@ -680,15 +695,58 @@ export default function CuadroMandos() {
         />
       </Seccion>
 
-      {/* ── Radar (pendiente del WebSocket) ─────────────────────────── */}
-      <Seccion titulo="Radar">
-        <div style={{
-          padding: "14px", fontFamily: font.sans, fontSize: 11.5,
-          color: color.textMuted,
-        }}>
-          Los tickers que crucen el umbral aparecerán aquí. Necesita la conexión
-          de datos en vivo, que está pendiente de la clave propia de Massive.
-        </div>
+      {/* ── Radar ───────────────────────────────────────────────────── */}
+      <Seccion
+        titulo="Radar"
+        alto={ALTO_RADAR}
+        extra={radar?.actualizado ? (
+          <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>
+            {radar.actualizado.slice(11, 19)}
+          </span>
+        ) : undefined}
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
+          <thead>
+            <tr>
+              <Th ancho={90}>Estado</Th>
+              <Th ancho={80}>Ticker</Th>
+              <Th>Estrategia</Th>
+              <Th ancho={140}>Cumple</Th>
+              <Th num ancho={96}>Valor</Th>
+              <Th num ancho={100}>Precio</Th>
+              <Th num ancho={100}>Cierre ayer</Th>
+              <Th num ancho={130}>Volumen</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {(!radar || radar.candidatos.length === 0) && (
+              <tr><Td dim>
+                {estado?.vigilando
+                  ? "Ningún ticker cruza el umbral ahora mismo."
+                  : "El bot está parado; el radar no está barriendo."}
+              </Td></tr>
+            )}
+            {(radar?.candidatos || []).map((c) => (
+              // Un mismo ticker puede aparecer por VARIAS estrategias, cada una
+              // con su umbral, así que la clave lleva las dos.
+              <tr key={`${c.ticker}|${c.estrategia}`}>
+                {/* `seguido` es la distinción que importa: un ticker puede
+                    cumplir el filtro y NO estar vigilándose porque el cupo está
+                    lleno. Sin decirlo, parecería que el bot lo está mirando. */}
+                <Td tono={c.seguido ? color.profit : color.warning}>
+                  {c.seguido ? "Vigilando" : "Sin cupo"}
+                </Td>
+                <Td tono={color.textHigh} mono>{c.ticker}</Td>
+                <Td dim>{c.estrategia || "—"}</Td>
+                <Td dim>{c.metrica || "—"}</Td>
+                <Td num fuerte tono={color.textHigh}>{fmt(c.valor, 1)}</Td>
+                <Td num>{fmt(c.precio, 4)}</Td>
+                <Td num dim>{fmt(c.prev_close, 4)}</Td>
+                <Td num dim>{fmt(c.volumen, 0)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </Seccion>
     </div>
   );

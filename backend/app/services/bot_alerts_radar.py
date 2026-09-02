@@ -42,6 +42,112 @@ TIPOS = ("CS", "ADRC")
 
 
 @dataclass
+class CandidatoEstrategia:
+    """Un ticker que cumple el filtro de universo de una estrategia concreta."""
+    ticker: str
+    strategy_id: str
+    estrategia: str
+    metrica: str            # que regla lo trajo, p.ej. "PM High Gap %"
+    valor: float            # cuanto vale esa metrica ahora
+    precio: float
+    prev_close: float
+    volumen: float
+
+
+class RadarPorEstrategia:
+    """El radar de verdad: vigila lo que pide CADA estrategia, no un umbral mio.
+
+    Si 1B pide `PM High Gap % >= 50`, entra lo que pase de 50. Si otra pide 30,
+    lo que pase de 30 — y un ticker puede entrar por las dos, cada una con su
+    etiqueta.
+
+    UNA VEZ DENTRO, NO SE SALE. El filtro de universo es acumulado: `PM High
+    Gap %` es un maximo y no baja. Que el precio haya retrocedido no deshace que
+    el gap se hizo, y la estrategia lo seguiria operando. Solo se limpia al
+    cambiar de dia.
+    """
+
+    def __init__(self, mercado):
+        self.mercado = mercado
+        # (ticker, strategy_id) ya admitidos. Es lo que hace que no se salga.
+        self._admitidos: dict[tuple[str, str], CandidatoEstrategia] = {}
+        self._estrategias: list[dict] = []
+        self._avisos: list[str] = []
+
+    def configurar(self, estrategias: list[dict]) -> list[str]:
+        """Las estrategias vigiladas. Devuelve los avisos que hay que contar."""
+        from app.services import bot_alerts_universo as uni
+        self._estrategias = estrategias
+        self._avisos = []
+        for e in estrategias:
+            info = uni.analizar(e["definition"])
+            reglas = uni.resumen_reglas(e["definition"])
+            if info["no_evaluables"]:
+                self._avisos.append(
+                    f"{e['name']}: NO se puede vigilar — no se sabe calcular en vivo "
+                    f"{', '.join(info['no_evaluables'])}")
+            elif info["solo_rth"]:
+                self._avisos.append(
+                    f"{e['name']}: solo vigilable a partir de las 09:30 — "
+                    f"{', '.join(info['solo_rth'])} no existe en premercado")
+            elif not info["reglas"]:
+                self._avisos.append(f"{e['name']}: sin filtro de universo, no aporta candidatos")
+            else:
+                self._avisos.append(f"{e['name']}: vigilando {reglas}")
+        return self._avisos
+
+    def limpiar_dia(self) -> None:
+        self._admitidos.clear()
+
+    def escanear(self) -> list[CandidatoEstrategia]:
+        """Recorre el mercado y devuelve TODO lo admitido, viejo y nuevo."""
+        from app.services import bot_alerts_universo as uni
+
+        for st in self.mercado.todos():
+            if st.precio is None or st.prev_close is None:
+                continue
+            metricas = st.metricas()
+            for e in self._estrategias:
+                clave = (st.ticker, e["strategy_id"])
+                if clave in self._admitidos:
+                    continue                     # ya dentro: no se revisa
+                if not uni.cumple(metricas, e["definition"]):
+                    continue
+                # Que regla lo trajo, para poder ensenyarlo.
+                metrica = valor = None
+                for r in uni.reglas_de(e["definition"]):
+                    interna = uni.SOPORTADAS.get(str(r.get("metric") or ""))
+                    if interna and metricas.get(interna) is not None:
+                        metrica, valor = str(r.get("metric")), metricas[interna]
+                        break
+                self._admitidos[clave] = CandidatoEstrategia(
+                    ticker=st.ticker, strategy_id=e["strategy_id"],
+                    estrategia=e["name"], metrica=metrica or "?",
+                    valor=float(valor or 0.0), precio=float(st.precio),
+                    prev_close=float(st.prev_close), volumen=float(st.day_volume),
+                )
+
+        # Refrescar precio y volumen de los admitidos, que sí cambian.
+        for (tk, _sid), c in self._admitidos.items():
+            st = self.mercado.estado(tk)
+            if st is not None:
+                if st.precio is not None:
+                    c.precio = float(st.precio)
+                c.volumen = float(st.day_volume)
+                m = st.metricas()
+                interna = uni.SOPORTADAS.get(c.metrica)
+                if interna and m.get(interna) is not None:
+                    c.valor = float(m[interna])
+
+        return sorted(self._admitidos.values(), key=lambda c: c.valor, reverse=True)
+
+    @property
+    def tickers(self) -> set[str]:
+        """Los tickers a vigilar, sin repetir aunque vengan de varias."""
+        return {tk for (tk, _sid) in self._admitidos}
+
+
+@dataclass
 class Umbrales:
     """El filtro barato. Valores pensados para gaps, ajustables desde fuera."""
     # Subida minima desde el cierre de ayer. 1B pide 50 en su filtro de
@@ -115,6 +221,45 @@ class Radar:
         if simbolos:
             self._universo = simbolos
         return len(self._universo)
+
+    def cierres_de_ayer(self) -> dict[str, float]:
+        """El cierre de ayer de TODO el mercado, en una llamada.
+
+        Es la base de cualquier gap y el socket NO la trae: los agregados hablan
+        de hoy. Se pide una vez al arrancar y se refresca de tanto en tanto por
+        si aparecen tickers nuevos.
+
+        Es `prevDay.c`, el cierre de la sesion REGULAR — no el de after-hours.
+        Comprobado el 2026-09-02 con SGLD: prevDay.c = 5,08, que es el `close`
+        oficial del dia anterior; su after-hours fue 17,30 y NO es lo que se usa.
+        """
+        key = clave_bot()
+        if not key:
+            return {}
+        try:
+            with httpx.Client(timeout=30.0, verify=_ssl_ctx()) as cli:
+                r = cli.get(
+                    f"{REST}/v2/snapshot/locale/us/markets/stocks/tickers",
+                    params={"apiKey": key},
+                )
+                r.raise_for_status()
+                filas = r.json().get("tickers") or []
+        except Exception as exc:  # noqa: BLE001
+            self.ultimo_error = f"cierres de ayer: {exc}"
+            logger.warning("[RADAR] no se pudieron pedir los cierres de ayer: %s", exc)
+            return {}
+
+        out: dict[str, float] = {}
+        for f in filas:
+            sym = str(f.get("ticker", "") or "")
+            if not sym:
+                continue
+            if self._universo and sym not in self._universo:
+                continue
+            pc = _num((f.get("prevDay") or {}).get("c"))
+            if pc and pc > 0:
+                out[sym] = pc
+        return out
 
     # ── barrido ──────────────────────────────────────────────────────────
     def escanear(self) -> list[Candidato]:

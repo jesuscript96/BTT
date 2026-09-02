@@ -139,6 +139,19 @@ class ClienteBackend:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[BOT] no se pudo dejar el interruptor en parado: %s", exc)
 
+    def publicar_radar(self, candidatos: list[dict]) -> None:
+        """Lo que el radar esta viendo, para que la pagina lo pinte.
+
+        Sin esto, el cuadro de mandos no puede ensenyar a quien mira el bot y
+        se opera a ciegas: se ven las alertas, pero no de donde salen ni que
+        estuvo a punto de salir.
+        """
+        try:
+            self._cli.post(f"{self.base}/bot-alerts/radar",
+                           json={"candidatos": candidatos})
+        except Exception:  # noqa: BLE001
+            pass  # el radar de la pagina es informativo; no vale romper por el
+
     def latir(self, tickers: int, fuente: str, detalle: str = "") -> None:
         """Senyal de vida. Sin esto la pagina no distingue apagado de colgado."""
         try:

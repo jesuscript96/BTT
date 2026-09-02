@@ -72,11 +72,13 @@ export interface EventoAlerta {
    */
   modo: "vivo" | "reproduccion";
   /**
-   * 'prealerta' mientras la vela se esta formando, 'alerta' cuando cierra.
-   * La misma fila pasa de una a otra: comparten id, asi que la confirmacion
-   * actualiza la fila en vez de anyadir una nueva.
+   * 'prealerta' mientras la vela se está formando, 'alerta' cuando cierra y
+   * se confirma, 'descartada' cuando cerró y la señal se cayó. Los tres
+   * comparten id: la fila se transforma en el sitio en vez de duplicarse.
+   *
+   * Un descarte NO se avisa por Telegram (sería ruido): se ve aquí y basta.
    */
-  estado: "prealerta" | "alerta";
+  estado: "prealerta" | "alerta" | "descartada";
 }
 
 export function listarEventos(fecha?: string, limite = 500): Promise<{ eventos: EventoAlerta[] }> {
@@ -118,6 +120,31 @@ export interface EstadoBot {
 
 export function leerEstado(): Promise<EstadoBot> {
   return apiRequest<EstadoBot>("/bot-alerts/estado");
+}
+
+/* ── Radar ────────────────────────────────────────────────────────────── */
+
+export interface CandidatoRadar {
+  ticker: string;
+  /** De qué estrategia viene la vigilancia: un ticker puede entrar por varias. */
+  estrategia: string;
+  /** Qué regla lo trajo, p. ej. "PM High Gap %", y cuánto vale ahora. */
+  metrica: string;
+  valor: number;
+  precio: number;
+  volumen: number;
+  prev_close: number;
+  /** Si el bot lo está evaluando, o solo lo ve pasar porque el cupo está lleno. */
+  seguido: boolean;
+}
+
+export interface Radar {
+  candidatos: CandidatoRadar[];
+  actualizado: string | null;
+}
+
+export function leerRadar(): Promise<Radar> {
+  return apiRequest<Radar>("/bot-alerts/radar");
 }
 
 export function cambiarEstado(vigilando: boolean): Promise<EstadoBot> {

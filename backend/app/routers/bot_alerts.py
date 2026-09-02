@@ -122,8 +122,9 @@ class EventoIn(BaseModel):
     origen: str = "portfolio"      # portfolio | incubadora
     modo: str = "vivo"             # vivo | reproduccion
     # prealerta = la vela aun se esta formando; alerta = ha cerrado y se
-    # confirma. Comparten id, asi que la segunda ACTUALIZA la fila de la
-    # primera en vez de anyadir otra.
+    # confirma; descartada = la vela cerro y la senal se cayo. Los tres
+    # comparten id, asi que el siguiente ACTUALIZA la fila del anterior en vez
+    # de anyadir otra.
     estado: str = "alerta"
 
 
@@ -227,15 +228,51 @@ class LatidoReq(BaseModel):
 
 @router.post("/latido")
 def latido(req: LatidoReq):
-    """El BOT dice que sigue vivo. Sin esto no se distingue apagado de colgado."""
+    """El BOT dice que sigue vivo. Sin esto no se distingue apagado de colgado.
+
+    NI ABRE CONEXION NI TOMA EL CERROJO: el latido va a memoria. Llega cada 5 s
+    y en este proyecto cada escritura bloquea a las demas — asi montado era la
+    fuente de escritura mas frecuente de toda la aplicacion.
+    """
     _guard()
-    with get_user_db_lock():
-        con = get_user_db_connection()
-        try:
-            bas.latido(con, req.tickers, req.fuente, req.detalle)
-            return {"ok": True}
-        finally:
-            con.close()
+    bas.latido(None, req.tickers, req.fuente, req.detalle)
+    return {"ok": True}
+
+
+class CandidatoRadar(BaseModel):
+    ticker: str
+    # De QUE estrategia viene la vigilancia, y por que regla entro. Un mismo
+    # ticker puede aparecer por varias, cada una con su umbral.
+    estrategia: str = ""
+    metrica: str = ""
+    valor: float = 0.0
+    precio: float = 0.0
+    volumen: float = 0.0
+    prev_close: float = 0.0
+    # Si el bot lo esta siguiendo de verdad o solo lo ve pasar (cupo lleno).
+    seguido: bool = False
+
+
+class RadarReq(BaseModel):
+    candidatos: list[CandidatoRadar]
+
+
+@router.post("/radar")
+def publicar_radar(req: RadarReq):
+    """El BOT publica a quien esta mirando. No lo llama la pagina.
+
+    Va a memoria, no a la base: es una foto que se reemplaza cada 30 s y no
+    interesa guardarla. Y cada escritura en DuckDB compite con las demas.
+    """
+    _guard()
+    bas.set_radar([c.model_dump() for c in req.candidatos])
+    return {"ok": True, "n": len(req.candidatos)}
+
+
+@router.get("/radar")
+def leer_radar():
+    _guard()
+    return bas.get_radar()
 
 
 @router.websocket("/live")
@@ -280,6 +317,7 @@ async def live(websocket: WebSocket):
             "version": bas.version(),
             "estado": {**estado, "telegram": tg_estado},
             "eventos": eventos,
+            "radar": bas.get_radar(),
         }
 
     ultima = -1

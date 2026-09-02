@@ -143,6 +143,51 @@ class RunnerAlertas:
                     logger.warning("[BOT] fallo al notificar %s: %s", ev.ticker, exc)
         return eventos
 
+    def tiene_posicion(self, ticker: str) -> bool:
+        """Si el motor cree que hay una posicion viva en ese ticker.
+
+        Lo usa el radar antes de soltarlo: dejar de mirar un ticker con posicion
+        abierta seria perderse su SALIDA, que es justo la orden que hay que
+        ejecutar. Un ticker puede caer del filtro (deja de subir) estando dentro
+        — de hecho es lo normal en un corto que va bien.
+        """
+        for (tk, _sid), estado in self.motor._estado.items():
+            if tk != ticker:
+                continue
+            # Hay entrada avisada cuya salida aun no se ha avisado.
+            if len(estado.entradas_avisadas) > len(estado.salidas_avisadas):
+                return True
+        return False
+
+    def evaluar_parcial(self, ticker: str, vela: dict) -> list[Evento]:
+        """Evalua la vela EN FORMACION, para las prealertas.
+
+        NO TOCA EL ESTADO. Ni guarda la vela, ni marca nada como avisado, ni
+        deja rastro: se le anyade la vela a medias al frame, se mira lo que
+        sale y se tira. Si se guardara, la vela definitiva (que puede ser
+        distinta) no podria sustituirla, y el motor decidiria sobre una vela
+        que nunca existio.
+
+        Como el motor recuerda lo avisado en su propio estado, aqui se usa un
+        motor APARTE con el mismo estado ya sellado — asi una prealerta no
+        impide que luego se avise la alerta de verdad.
+        """
+        if ticker not in self._hidratados:
+            return []
+        filas = self._velas.get(ticker) or []
+        if len(filas) < 1:
+            return []
+
+        frame = build_market_frame(
+            pd.DataFrame(filas + [{c: vela.get(c) for c in COLUMNAS}]),
+            ticker, self._stats.get(ticker, {}),
+        )
+        try:
+            return self.motor.mirar_sin_marcar(ticker, frame, self._stats.get(ticker, {}))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[BOT] %s: fallo al mirar la vela en curso: %s", ticker, exc)
+            return []
+
     def soltar(self, ticker: str) -> None:
         """Deja de seguir un ticker y libera su frame."""
         self._velas.pop(ticker, None)

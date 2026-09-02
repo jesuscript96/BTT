@@ -261,6 +261,36 @@ class MotorAlertas:
     def _par(self, ticker: str, strategy_id: str) -> _EstadoPar:
         return self._estado.setdefault((ticker, strategy_id), _EstadoPar())
 
+    def mirar_sin_marcar(
+        self,
+        ticker: str,
+        frame: pd.DataFrame,
+        daily_stats: dict | None = None,
+    ) -> list[Evento]:
+        """Que saldria con este frame, SIN dejar constancia de haberlo visto.
+
+        Es lo que usan las prealertas: la vela en formacion puede cambiar en los
+        ultimos segundos, asi que mirarla no puede marcar nada como avisado — si
+        lo hiciera, la alerta de verdad (al cerrar la vela) se daria por ya dada
+        y no llegaria nunca.
+
+        Se hace con una COPIA del estado y se descarta: mas simple y mas seguro
+        que intentar deshacer las marcas despues.
+        """
+        import copy
+        guardado = self._estado
+        self._estado = copy.deepcopy(guardado)
+        try:
+            eventos = self.procesar_vela(ticker, frame, daily_stats)
+        finally:
+            self._estado = guardado
+        for ev in eventos:
+            ev.estado = "prealerta"
+        # Una salida a medio formar no se avisa: el stop puede tocarse y
+        # recuperarse dentro del mismo minuto, y no hay nada que ejecutar por
+        # adelantado. Solo interesan las ordenes de abrir o anyadir.
+        return [e for e in eventos if e.tipo in ("entrada", "piramide")]
+
     def procesar_vela(
         self,
         ticker: str,

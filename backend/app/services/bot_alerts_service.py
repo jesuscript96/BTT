@@ -174,6 +174,27 @@ def _marcar_cambio() -> None:
     _version += 1
 
 
+# Lo que el radar esta mirando ahora mismo. SOLO EN MEMORIA, sin tabla: es una
+# foto que se reemplaza cada 30 s y no interesa guardarla — y cada escritura en
+# DuckDB compite con las demas (ver la nota de arriba).
+_cache_radar: list[dict] = []
+_radar_at: Optional[str] = None
+
+
+def set_radar(candidatos: list[dict]) -> None:
+    """Lo publica el BOT en cada barrido."""
+    global _cache_radar, _radar_at
+    with _CACHE_LOCK:
+        _cache_radar = list(candidatos)
+        _radar_at = str(datetime.datetime.now())
+        _marcar_cambio()          # despierta al WebSocket de la pagina
+
+
+def get_radar() -> dict:
+    with _CACHE_LOCK:
+        return {"candidatos": list(_cache_radar), "actualizado": _radar_at}
+
+
 def _invalidar_cache_eventos() -> None:
     with _CACHE_LOCK:
         _cache_eventos.clear()
@@ -297,10 +318,14 @@ def get_estado(con) -> dict:
                 "fuente": None, "detalle": None}
     estado = {
         "vigilando": bool(r[0]),
-        "latido_at": str(r[1]) if r[1] else None,
-        "tickers_seguidos": int(r[2] or 0),
-        "fuente": r[3],
-        "detalle": r[4],
+        # El latido NO se lee de la base: ya no se guarda ahi (va a memoria) y
+        # la columna conserva el ultimo valor de antes del cambio. Devolverlo
+        # haria creer que el bot esta vivo cuando ni siquiera se ha arrancado.
+        # En blanco es lo correcto: hasta que el bot no late, no hay bot.
+        "latido_at": None,
+        "tickers_seguidos": 0,
+        "fuente": None,
+        "detalle": None,
     }
     with _CACHE_LOCK:
         _cache_estado = estado
@@ -329,16 +354,21 @@ def set_vigilando(con, vigilando: bool) -> dict:
 
 def latido(con, tickers: int, fuente: str, detalle: str = "") -> None:
     """El bot dice que sigue vivo. Sin esto la pagina no puede distinguir
-    'apagado' de 'colgado'."""
-    ensure_eventos_table(con)
-    ahora = datetime.datetime.now()
-    con.execute(
-        "UPDATE bot_alert_estado SET latido_at = CURRENT_TIMESTAMP, "
-        "tickers_seguidos = ?, fuente = ?, detalle = ? WHERE id = 1",
-        [int(tickers), fuente, detalle],
+    'apagado' de 'colgado'.
+
+    SOLO A MEMORIA, NO A LA BASE. Llega cada 5 segundos —720 escrituras por
+    hora— y en este proyecto escribir BLOQUEA (ver la nota de la cache): era la
+    fuente de escritura mas frecuente que ha tenido nunca la aplicacion, y con
+    ella empezaron los cuelgues del backend del 2026-09-02.
+
+    Y no hace falta guardarlo: si el backend se reinicia, el bot vuelve a latir
+    en cinco segundos. Lo unico que SI se persiste es `vigilando`, porque eso es
+    una decision del usuario y tiene que sobrevivir a un reinicio.
+    """
+    _refrescar_estado_cache(
+        latido_at=str(datetime.datetime.now()), tickers_seguidos=int(tickers),
+        fuente=fuente, detalle=detalle,
     )
-    _refrescar_estado_cache(latido_at=str(ahora), tickers_seguidos=int(tickers),
-                            fuente=fuente, detalle=detalle)
 
 
 def get_watch(con) -> dict[str, dict]:
