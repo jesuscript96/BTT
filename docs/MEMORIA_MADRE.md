@@ -2501,3 +2501,111 @@ de 103 fallos de entorno antes y después).
 - **Resuelto por:** `92edadc` en `staging` (borrado del motor viejo) + merge `da4a1b7` en `alvaro-rama-desarrollo`. `backend/app/backtester/engine.py` (la vía que calculaba el gap con apertura de ayer + PMH final del día) YA NO EXISTE. Solo quedan `indicators.py` y `strategy_engine.py`, que ya coincidían (cierre de ayer + PMH acumulado causal).
 - **Verificación post-merge:** `ls backend/app/backtester/` → solo `__init__.py`, `backtest_validator.py`, `portfolio.py`. Tests del feature Gap -1/rachas: 14/14 pasando sobre el árbol mergeado. Backend reloaded con el código nuevo y API 200.
 - **Estado:** RESUELTO (por eliminación de la vía divergente; merge `da4a1b7`)
+
+## 2026-09-01
+
+### Investigación: «Bar Close [t-5] > PM High» — el NÚCLEO evalúa correcto
+
+Petición de Álvaro: «¿es verdad que la condición "bar close 5 velas atrás > PMH"
+funciona mal? ¿hay algún bug?». Verificado el camino completo por lectura de
+código + repro sintética (`backend/scratch/test_offset_pmh_repro.py`, fichero
+efímero de un uso):
+
+- La condición viaja como `source={"name":"Bar Close","offset":5}` vs
+  `target={"name":"PM High"}`. `compute_indicator` hace `result.shift(5)`
+  (`indicators.py:981`), PMH es el running causal del premarket
+  (`_pm_running_series`, congelado tras las 09:30). Con offset la estrategia
+  cae SIEMPRE en la vía clásica (`_cfg_native_ok` marca `has_special` en
+  `strategy_engine.py:509`; el dispatch nativo ignora el offset, por eso el
+  gate). `compile_strategy_def` no pierde el campo.
+- Repro 1m día completo (720 barras): señal del motor = `close[i-5] > PMH[i]`
+  con **0 mismatches**. Idem sin offset, idem frame solo-RTH (PMH cae a la
+  constante de `daily_stats`, causal en RTH), idem a 5m (offset=5 ⇒ 25 min,
+  unidades = velas del timeframe de la condición, coherente con el label).
+
+**Conclusión: no hay bug en la evaluación de la condición en sí.** Lo que sí
+hay son dos salvedades, registradas como hallazgos abajo: semántica de "vela"
+con datos dispersos (01) y contaminación de sesiones en modo swing (02).
+
+### [HALLAZGO · 2026-09-01 · 01] «Bars Back» cuenta FILAS dispersas, no MINUTOS — en premarket la ventana real varía por ticker
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** duda (semántica de diseño, no bug de cálculo)
+- **Dónde:** `backend/app/services/indicators.py:981` (`result.shift(offset)`)
+- **Qué observé:** `offset` («Bars Back (X)» en la UI, `[t-N]` en el label) se
+  aplica con `shift(N)` sobre las filas del df del día. Las velas del lago son
+  dispersas (solo minutos con operaciones; documentado para Squeeze en la
+  entrada del 2026-08-26: huecos de hasta 37 min en premarket). Resultado: en
+  un ticker con huecos, "5 velas atrás" puede mirar el cierre de hace 8, 15 o
+  30 minutos de reloj, y la ventana difiere entre tickers y tramos del día.
+  Squeeze se resolvió por reloj (asof sobre timestamps) precisamente por esto;
+  el offset genérico no.
+- **Cómo reproducir:** cualquier condición `Bar Close` con offset>=2 sobre un
+  ticker con premarket iliquido; comparar `close.shift(N)` contra el cierre de
+  hace N*tf minutos de reloj — divergen en cuanto hay huecos.
+- **Evidencia:** repro sintética `backend/scratch/test_offset_pmh_repro.py`
+  (datos continuos: 0 mismatches — el shift es correcto por filas); la
+  dispersión del lago real está medida en la entrada de Squeeze
+  (MEMORIA_MADRE 2026-08-26 §1).
+- **Impacto:** si Álvaro lee «5 velas atrás» como «hace 5 minutos», la
+  condición parece "funcionar mal" en premarket/illiquidos aunque el motor haga
+  exactamente lo que el label dice. En RTH denso casi nunca se nota. Decidir:
+  mantener filas (documentar) o pasar el offset a asof por reloj (como
+  Squeeze; CAMBIA resultados de estrategias guardadas).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-01 · 02] Modo swing: PMH/PML/RTH-High/Low/Open acumulan A TRAVÉS de los días concatenados
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/services/indicators.py:1123-1171` (`_pm_running_series`/`_rth_running_series` usan minutos-del-día + `fmax.accumulate` sobre el frame ENTERO) + `backend/app/services/backtest_signals.py:450-457` (concat de días del swing)
+- **Qué observé:** en swing, `_preprocess_pair` concatena gap-day + días
+  posteriores en un solo frame y `translate_strategy` evalúa sobre él. Las
+  series de sesión enmascaran por minutos-del-día y acumulan sin cortar por
+  fecha: en el día 2, "PM High" vale max(PMH día 1, PMH día 2) — no el PMH de
+  NI un día concreto. Ídem RTH High/Low. Las ENTRADAS del día 2+ se suprimen
+  (máscara `is_subsequent_np`), pero las SALIDAS y cualquier condición evaluada
+  en días posteriores ven la serie mezclada; y `close.shift(5)` en las primeras
+  barras del día 2 lee las últimas velas del día 1.
+- **Cómo reproducir:** `backend/scratch/test_swing_pmh.py` (efímero): día 1 con
+  PMH 10.47 y día 2 con PMH ~10.2 concatenados → `compute_indicator("PM High")`
+  en el día 2 devuelve 10.47 (el del día 1); `RTH High` día 2 devuelve el RTH
+  high del día 1.
+- **Evidencia:** salida del repro: `PMH día2 09:31 = 10.4700` (per-día sería
+  ~10.20), `PMH día2 12:00 = 10.4700`, `RTH High día2 12:00 = 10.3200` (es el
+  high RTH del día 1).
+- **Hipótesis de causa:** HIPÓTESIS — las series de sesión se diseñaron para
+  frames de un solo día (el caso no-swing es el 99% del uso) y nadie cortó el
+  accumulate por fecha al introducir la concatenación swing. Nota: para un
+  swing corto abierto el día del gap, anclar salidas al PMH del DÍA DEL GAP
+  sería defendible como semántica; el máx mezclado no corresponde a ninguna de
+  las dos lecturas (si el día 2 supera al 1, la serie se salta al PMH del día
+  2). Los stops estructurales del simulador (`pm_highs` de `arrays_out`) usan
+  la misma serie acumulada.
+- **Impacto:** estrategias swing cuyas SALIDAS (o stops de estructura)
+  referencien PMH/PML/RTH-High/Low: en días 2+ se comparan contra niveles que
+  no son los de ningún día real. Con la condición de esta investigación como
+  SALIDA («close 5 velas atrás > PMH») en swing, sí "funciona mal".
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### Receta (sin código): setup «First Red Day» — racha de gaps en días PREVIOS al operado
+
+Petición de Álvaro: filtrar que los 2 días anteriores al día operado hayan tenido
+cada uno un gap grande (>= 25%). Verificado contra el código (2026-09-01):
+
+- Las `rules` de universo solo tienen LAG 1 filtrable (`lag_gap_pct_1`,
+  `lag_pmh_gap_pct_1`, etc., `qualifying_windows.PREV_DAY_LAG_SOURCES`). LAG 2
+  existe en stage-2 solo para OHLCV/pm_high (`lag_rth_*_2`, `lag_pm_high_2`),
+  NO para gap_pct/pmh_gap_pct → «el gap de hace 2 días» no es regla directa.
+- **Inversión del ancla**: anclar el dataset en el ÚLTIMO día de subida T-1
+  (rules: `pmh_gap_pct >= 25` + `lag_pmh_gap_pct_1 >= 25`) y poner la estrategia
+  `apply_day: gap_1_day` → opera T. `_remap_trading_day` re-escribe
+  yesterday_*/rth_*/pm_high/gap_pct al día operado con semántica correcta
+  (yesterday_close = cierre de T-1). Selecciona exactamente los mismos días que
+  «T-1 y T-2 gappearon y opero T».
+- Reglas AND-only: «(gap_pct O pmh_gap_pct) >= 25 por día» NO es expresable en
+  un dataset; elegir una métrica o lanzar variantes.
+- Precaución look-ahead: postgap_preconditions con `day: 'gap_1_day'` usan la
+  métrica DIARIA completa del día operado (cierre de T): como filtro de universo
+  en backtest es conocimiento del futuro. El "día rojo" debe decidirse con
+  condiciones intradía, no con el cierre.
