@@ -218,6 +218,12 @@ class AlarmEngine:
         if not rows:
             return
         by_ticker = {r["ticker"]: r for r in rows}
+        # El contexto se construye UNA vez por ticker y tick, no una por alarma.
+        # Antes se rearmaba dentro de los dos bucles: con ~8.000 tickers y unas
+        # pocas alarmas salían decenas de miles de dicts por segundo y el tick de
+        # 1 s no llegaba. Ahora el coste lo acota el mercado, no cuánta gente use
+        # el sistema.
+        ctx_by_ticker = {tk: _instant_ctx(m) for tk, m in by_ticker.items()}
 
         new_watch: Set[str] = set()
         for alarm in self._alarms:
@@ -229,7 +235,7 @@ class AlarmEngine:
             # Universo. Pegajoso a propósito: «gap del máximo de premarket ≥ 50%»
             # es una propiedad del DÍA. Si el gap afloja a las 7:00, el ticker
             # sigue siendo del universo — igual que en el backtest.
-            for tk, m in by_ticker.items():
+            for tk in by_ticker:
                 if tk in self._split_tickers:
                     continue     # día de split: gap fantasma, no es un runner
                 if plan["watchlist"] and tk not in plan["watchlist"]:
@@ -240,7 +246,7 @@ class AlarmEngine:
                     if plan["watchlist"]:
                         sticky.add(tk)
                     continue
-                ok, _ = evaluate(plan["universe"], _instant_ctx(m))
+                ok, _ = evaluate(plan["universe"], ctx_by_ticker[tk])
                 if ok:
                     sticky.add(tk)
 
@@ -254,7 +260,7 @@ class AlarmEngine:
                 m = by_ticker.get(tk)
                 if not m or tk in self._split_tickers:
                     continue
-                ok, reasons = evaluate(plan["conditions"], _instant_ctx(m))
+                ok, reasons = evaluate(plan["conditions"], ctx_by_ticker[tk])
                 if ok:
                     await self._fire(alarm, plan, tk, _f(m.get("price")), reasons, {}, m)
 
