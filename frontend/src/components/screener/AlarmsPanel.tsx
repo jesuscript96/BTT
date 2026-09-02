@@ -60,15 +60,25 @@ function ConditionRows({
       {value.map((c, i) => {
         const rightIsField = typeof c.right === "string" && Number.isNaN(Number(c.right));
         return (
-          <div key={i} style={ROW}>
+          /* Grid y no flex: los primitivos Select/Input traen `width: 100%`
+             propio, que con flex pelea contra el flex-basis — o los apila uno por
+             línea, o deja el campo del valor en 23 px, ilegible. Con
+             `minmax(0, Nfr)` las columnas sí encogen por debajo del ancho de la
+             opción más larga y el reparto es determinista. */
+          <div key={i} style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0,2fr) minmax(0,1.4fr) 72px minmax(0,1.7fr) 18px",
+            gap: 6,
+            alignItems: "center",
+          }}>
             <Select value={c.left} onChange={(e) => set(i, { left: e.target.value })}
-                    style={{ flex: 2, fontSize: 11 }}>
+                    style={{ fontSize: 11 }}>
               {catalog?.fields.map((f) => (
                 <option key={f.key} value={f.key}>{f.label}</option>
               ))}
             </Select>
             <Select value={c.op} onChange={(e) => set(i, { op: e.target.value })}
-                    style={{ flex: 1, fontSize: 11, minWidth: 62 }}>
+                    style={{ fontSize: 11 }}>
               {catalog?.operators.map((o) => (
                 <option key={o.key} value={o.key}>{o.label}</option>
               ))}
@@ -78,14 +88,14 @@ function ConditionRows({
               onChange={(e) => set(i, {
                 right: e.target.value === "__field__" ? (catalog?.fields[0]?.key ?? "vwap") : 0,
               })}
-              style={{ width: 74, fontSize: 11 }}
+              style={{ fontSize: 11 }}
             >
               <option value="__number__">número</option>
               <option value="__field__">campo</option>
             </Select>
             {rightIsField ? (
               <Select value={String(c.right)} onChange={(e) => set(i, { right: e.target.value })}
-                      style={{ flex: 2, fontSize: 11 }}>
+                      style={{ fontSize: 11 }}>
                 {catalog?.fields.map((f) => (
                   <option key={f.key} value={f.key}>{f.label}</option>
                 ))}
@@ -93,7 +103,7 @@ function ConditionRows({
             ) : (
               <Input type="number" value={String(c.right ?? "")} step="any"
                      onChange={(e) => set(i, { right: Number(e.target.value) })}
-                     style={{ flex: 2, fontSize: 11 }} />
+                     style={{ fontSize: 11 }} />
             )}
             <button onClick={() => onChange(value.filter((_, j) => j !== i))}
                     title="Quitar condición"
