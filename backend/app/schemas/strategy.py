@@ -401,6 +401,12 @@ class StrategyCreate(BaseModel):
     # pydantic lo descartaba en SILENCIO (extra="ignore" por defecto) y una
     # estrategia guardada no podia conservar su piramidacion.
     pyramiding: Optional[dict] = None
+    # Modelos avanzados (XGBoost / HMM). Dict opaco por el mismo motivo que
+    # `pyramiding`: la lista de features es el mismo tipo de arbol que las
+    # condiciones y ya lo valida `advanced_backtest.parse_config`. Sin este
+    # campo, pydantic lo descartaria en SILENCIO (extra="ignore" por defecto) y
+    # una estrategia guardada perderia su modelo sin dar ningun error.
+    advanced_model: Optional[dict] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

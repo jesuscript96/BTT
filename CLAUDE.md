@@ -17,6 +17,14 @@ IA (Claude Code, GLM, Antigravity…). Léelo entero antes de tocar nada:
   - Antes de cada `push`: pedir confirmación explícita al usuario.
 - **Nunca commitear** secretos ni datos (`.env`, `gcs-key.json`, `*.duckdb*`,
   `data/`, `.cache/`).
+- **🚨 El bot de avisos en vivo y la página de Alertas NO se tocan.** Los llevan
+  Jaume y Sailor en exclusiva. No los modifiques, no los arranques, no los
+  configures y **no te los descargues para probarlos**: los avisos salen a
+  Telegram y Jaume opera con ellos, y la cuenta de datos en vivo admite **una
+  sola conexión** — arrancar el bot en otra máquina deja sordo el suyo sin que
+  salte ningún error. Ficheros y la única excepción (`market_frame.py`), en la
+  sección «Zona cerrada» de `AGENTS.md`. Si tu tarea te lleva ahí, **para y
+  pregunta a Jaume**.
 
 ## Si el desarrollador es Sailor — leer también
 

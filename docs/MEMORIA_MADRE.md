@@ -2420,6 +2420,7 @@ Protege la máquina (local y prod) de datasets "universo entero":
   (gap-vs-gap) hasta que las vías converjan.
 - **Código tocado:** NINGUNO (confirmado)
 - **Estado:** ABIERTO
+
 ### 6. Adoptados los dos commits de Álvaro del 30-ago
 
 Jaume da el visto bueno y entran por cherry-pick suelto (nunca merge de la rama:
@@ -2609,3 +2610,392 @@ cada uno un gap grande (>= 25%). Verificado contra el código (2026-09-01):
   métrica DIARIA completa del día operado (cierre de T): como filtro de universo
   en backtest es conocimiento del futuro. El "día rojo" debe decidirse con
   condiciones intradía, no con el cierre.
+
+## 2026-08-31 (tarde) — Bloque «Modelos avanzados»: XGBoost como filtro
+
+Petición de Jaume: poder aplicar un modelo a una estrategia existente y ver el
+resultado **fuera de muestra** como si fuera un backtest normal. Modo filtro
+terminado; el modo «estrategia» (el modelo decidiendo solo) queda declarado en
+la interfaz pero devuelve un aviso de que no está implementado.
+
+### Cómo está montado, y por qué así
+
+**Entrenar y probar son la MISMA `run_backtest`, llamada dos veces con
+universos distintos.** De ahí salen tres propiedades sin escribir código:
+
+- Lo que se devuelve —equity, trades, métricas, gráfico— es el periodo de
+  prueba y nada más: al motor simplemente no se le dan los días de
+  entrenamiento. No hay que filtrar métricas a posteriori.
+- El entrenamiento no puede contaminarse: literalmente no ha visto esos días.
+- Si alguien cambia el motor, las dos pasadas cambian igual.
+
+Por eso el bloque tiene **sus propias fechas** y no reutiliza el deslizador
+IS/OOS del panel: ese reparte UN backtest en dos tramos y las métricas que
+enseña son las del IS. La interfaz avisa de que hay que dejarlo al 100 % IS.
+
+**El punto de contacto con el motor es UNO:** una máscara sobre `entries_arr`,
+en el mismo sitio donde ya filtra el swing. El modelo solo QUITA entradas,
+nunca añade, así que el peor caso posible es operar menos. Simulador, gestión
+de riesgo, métricas, gráfico y Walk Forward quedan intactos.
+
+Va **después** del filtro de swing, a petición de Jaume: con swing el frame
+abarca varios días y es el swing quien impide abrir en los posteriores. Si el
+modelo corriera antes, juzgaría señales que el swing va a descartar igualmente.
+
+### El hallazgo: el HMM de librería tiene look-ahead
+
+`predict` (Viterbi) y `predict_proba` (forward-backward) de `hmmlearn` miran la
+secuencia **entera**: el estado que asignan a las 09:35 está calculado sabiendo
+lo que pasó a las 15:00 de ese mismo día. **Da igual con qué periodo se haya
+entrenado** — el futuro entra por la inferencia, no por el entrenamiento.
+
+Por eso la recursión hacia delante está escrita a mano. Hay un test que lo
+demuestra recalculando con el día cortado, y **otro que comprueba que la función
+de la librería SÍ falla esa prueba**, para que nadie la sustituya por comodidad
+dentro de seis meses.
+
+### Decisiones de diseño que no son evidentes
+
+- **Se eligen indicadores, no rangos.** Encontrar los cortes («RSI > 68 con
+  volumen alto») es exactamente lo que hace un árbol de decisión; dárselos
+  hechos es hacerle el trabajo peor y le impide encontrar uno mejor.
+- **Los niveles de precio entran como distancia en %.** Un VWAP crudo haría que
+  el modelo memorizara «18,40 dólares», que no se traslada a otro ticker.
+- **Las señales que no llegaron a operarse se descartan**, no se etiquetan como
+  perdedoras: «no se ejecutó» no es «salió mal».
+- **El recuento de señales vetadas lo lleva el propio modelo**, gratis. Correr
+  la prueba otra vez sin modelo solo para restar es un backtest entero más, así
+  que esa comparación va apagada por defecto.
+- **La configuración se valida antes de cargar un solo dato**, y sus errores van
+  como 400 con el texto: el diagnóstico del frontend pinta los 5xx como
+  `Response Data: {}` y parecen un error mudo.
+
+### Tiempos, medidos
+
+El modelo es prácticamente gratis; **el coste es el lago**. XGBoost con 1.000
+operaciones tarda 0,13 s; el HMM sobre un millón de velas, 15 s; la inferencia
+por vela, 0,2 ms. **Un backtest con modelo ≈ 2× uno normal**, por las dos
+pasadas.
+
+### Verificación y dependencias
+
+30 tests nuevos. Suite completa sin regresiones, `tsc` limpio, bloque
+comprobado en la app. **No se ha corrido todavía un backtest real de punta a
+punta** con el bloque activo (hace falta dataset y minutos de lago).
+
+Tres dependencias nuevas: `xgboost`, `scikit-learn`, `hmmlearn`. Comprobado con
+un simulacro previo que **no tocan numpy, pandas ni scipy** — solo añaden.
+
+### Lo que falta
+
+1. El modo «estrategia» (standalone).
+2. **Persistencia del modelo entrenado.** Hoy se entrena en cada backtest, así
+   que una estrategia guardada con modelo no puede reproducir un run viejo.
+   Haría falta versionar los binarios y que la estrategia guarde el id.
+
+### Modo «estrategia» completado, con guardas
+
+Jaume fijó la especificación y es la buena: **el stop lo pone él, no el modelo.**
+El etiquetado (`label_triple_barrier`) simula desde cada vela con **su** stop y
+**su** take profit —los mismos valores que `_parse_risk_management` le entrega
+al simulador, no una interpretación aparte— y mira qué pasa primero: toca
+objetivo (buena), toca stop (mala), o se acaba el plazo (el signo de lo que
+llevara). Empate en la misma vela: gana el stop, que es lo pesimista.
+
+**Por qué no el atajo fácil.** La tentación es etiquetar con «¿subió un X% en N
+minutos?». Eso **ignora el camino**: una vela desde la que el precio primero cae
+un 20% —stop saltado, estás fuera— y luego sube saldría marcada como BUENA. El
+modelo aprendería a buscar justo esas y en real comerías stop tras stop mientras
+el backtest presume de aciertos. Hay un test dedicado a ese caso concreto.
+
+**Las guardas, que también las pidió él.** En modo «estrategia» el backtest se
+para ANTES de cargar un solo dato si están activas la lógica de entrada, la de
+salida, la piramidación o el swing: todas ponen entradas, y el resultado sería
+una mezcla de dos sistemas de la que no se sabría de quién es el mérito. El
+mensaje dice cuál sobra y ofrece la alternativa. Y se exige un stop configurado.
+
+**Lo que sí se respeta, tal cual:** stop, take profit total y parcial, trailing,
+salida por hora, límite de pérdida diaria, reentradas, locates, comisiones y
+slippage. Lo aplica el simulador de siempre, exactamente igual que en cualquier
+otra estrategia.
+
+**Una decisión que se tomó sin preguntar, por si algún día chirría:** las
+SALIDAS no las da el modelo, vienen de la gestión de riesgo. Un modelo de salida
+necesitaría su propia etiqueta («¿fue bueno salir aquí?»), que es un segundo
+problema de modelado entero.
+
+**Dos detalles de implementación que no son evidentes:** el motor se salta los
+días sin señales, y en este modo no hay señales de las reglas — ese atajo se
+desactiva solo en este modo. Y el día se **muestrea** (~120 velas de las ~700)
+para entrenar: con miles de días, guardarlas todas son cientos de megas y la
+vela 301 no enseña nada que no enseñara la 300.
+
+## 2026-08-31 (noche) — Auditoría del bloque de modelos: DOS fugas, resultados inválidos
+
+Jaume corrió un backtest con el modelo y los números salieron «una auténtica
+locura». Pidió auditoría antes de creérselos. **Tenía razón: había dos fallos
+reales**, los dos introducidos con el bloque el mismo día. La auditoría se hizo
+primero en SOLO LECTURA (reproducciones contra el código instalado, sin tocar
+un fichero, con un backtest suyo aún en cola) y después se aplicaron los
+arreglos. Commit `09db5f7`.
+
+### Fuga 1 — el HMM sabía el volumen del futuro (la que infló la curva)
+
+`hmm_observations` normalizaba el volumen de cada vela por la **media del día
+entero** (`np.nanmean`). La vela de las 07:00 quedaba escalada por el volumen
+que llegaría por la tarde. Medido con dos días idénticos hasta la vela 330 (uno
+con spike de volumen posterior, otro sin él): **la probabilidad de estado que ve
+XGBoost en la misma vela difiere hasta en 0,86** de un máximo de 1.
+
+En este universo eso no es un matiz: el volumen total del día es LA información
+(¿va a ser un pump monstruo o va a morirse?). El modelo la explotaba y el
+backtest salía espectacular — e irreproducible en vivo, porque a las 07:00 ese
+dato no existe. Arreglo: volumen relativo a la **media acumulada hasta t**.
+
+### Fuga 2 — con sesión RTH, las etiquetas se emparejaban con la vela equivocada
+
+Los hooks del modelo corrían **antes** del recorte de sesión: la señal quedaba
+indexada sobre el día completo (premarket incluido) y el trade del simulador
+sobre el frame recortado — ~330 velas de desfase. Las parejas señal-trade no se
+encontraban nunca, **sin error y sin aviso**: el modelo entrenaba con parejas
+rotas o descartaba casi todo. Arreglo: los hooks van después del recorte y del
+`candle_delay` (mismo espacio de índices que los trades), las features se siguen
+calculando sobre el día completo, y la máscara de sesión traduce entre los dos
+espacios.
+
+### Blindaje adicional
+
+- **Slab y paralelo quedan excluidos cuando hay modelo**: sus caminos no tienen
+  los hooks y lo habrían ignorado en silencio (un resultado etiquetado como
+  «filtrado» sin haber filtrado nada).
+- Test de causalidad **de punta a punta**: el score completo (features + HMM +
+  XGBoost) del día cortado en la vela k coincide con el prefijo del score del
+  día entero. Más los dos tests de regresión de cada fuga.
+
+### La regla que queda
+
+> **Cualquier backtest con modelo anterior a `09db5f7` es inválido.** Con HMM
+> activado llevaba la fuga 1; con sesión recortada, la 2. Re-lanzar.
+
+### El motor principal, verificado intacto
+
+Sin el bloque, `parse_config` devuelve `None` y la llamada a `run_backtest` es
+idéntica a la de siempre. Suite completa: el mismo conjunto de 103 fallos de
+entorno que antes de que el bloque existiera (comparado en cada paso). Y en
+verde, nombrados: `sim_jit_equivalence`, `n2a_native`, `n2a_e2e`,
+`current_gap`, `fade_indicators`, `max_reentries`, `daily_loss_limit`,
+`daily_limit_sequential`, `locates`, `pm_lookahead` — **157 tests del camino
+secuencial de punta a punta**.
+
+---
+
+## 2026-09-01 — Bot de alertas en vivo, y `staging` igualada a `sailor`
+
+### 📣 Para Álvaro: `staging` se ha reiniciado hoy
+
+`staging` apunta ahora a `93da17d`, el mismo commit que
+`sailor-rama-desarrollo`. **No se ha perdido trabajo:** los 8 commits que
+`staging` tenía y `sailor` no (el borrado del motor viejo, RSI/MACD, «% Session
+Fade», los filtros Gap−1, el fix de datasets y los dos de memoria) **ya estaban
+en `sailor` con otro hash** — se habían subido por las dos vías. Se comprobó uno
+a uno por mensaje antes de forzar.
+
+Etiqueta de rescate en el remoto, por si acaso:
+`staging-antes-del-reinicio-2026-09-01` → `9ba2308`.
+
+### Lo que trae esta sesión: el bot de alertas
+
+Proyecto **propio de Sailor**, aislado del producto: un bot que lleva las
+estrategias del portfolio a avisos en tiempo real por Telegram y a una página
+nueva (`/bot-alertas`). Ejecución manual — el bot avisa, la orden la mete una
+persona.
+
+**Casi todo es código nuevo y separado** (`bot_alerts_*.py`, `market_frame.py`,
+`CuadroMandos.tsx`). Solo tres cosas tocan lo existente:
+
+1. **`backtest_service.py`, −58 líneas.** La fórmula que construye el frame
+   (HOD/LOD, máximos de premercado acumulados, Previous Max/Min) se extrajo a
+   `app/services/market_frame.py` porque el bot la necesita igual y la tenía
+   COPIADA fuera del repo. **El comportamiento no cambia**: verificado idéntico
+   bit a bit —los 15 arrays, 150 ticker-días, 76.385 barras— y con la suite
+   completa antes y después (455 pasan / 103 fallan / 13 errores, los mismos).
+
+   > `backtest_signals._compute_signals_for_pair` conserva SU versión en numpy
+   > puro. **No se unificaron a propósito**: son fórmulas distintas de lo mismo
+   > (`cummax` de pandas vs `np.maximum.accumulate`, que difieren ante NaN) con
+   > su paridad ya verificada aparte. Fundirlas sería un cambio de
+   > comportamiento disfrazado de limpieza.
+
+2. **`main.py` y `Sidebar.tsx`**: registrar la página nueva. Inocuo.
+
+3. **Borrado de la página del Screener** (`Screener.tsx` y su ruta, −2.078
+   líneas). ⚠️ **Ojo, Álvaro:** el screener figura en todos los planes de
+   `entitlements/policy.py`. Se retiró porque en esta línea de trabajo no se usa
+   y Sailor lo decidió así. **El SERVICIO se conserva**
+   (`live_screener_service.py` y `/api/screener/live`): mantiene por ticker el
+   cierre de ayer, el máximo de premercado y el volumen acumulado desde el
+   WebSocket, que es justo lo que necesita el bot. **Si esto llega a producción,
+   hay que reponer la página.**
+
+### Dos hallazgos que valen para todo el proyecto
+
+**El volumen del WebSocket por segundo se queda corto.** Construir velas sumando
+los agregados `A` da los precios bien pero **al volumen le falta entre un 1,5 %
+y un 4,6 %** (medido con AAPL/TSLA/NVDA/SPY): el proveedor cuenta operaciones
+—bloques fuera de secuencia, lotes sueltos— que no aparecen ahí. Hay que usar
+`AM`, el agregado por minuto, que llega ya cerrado y oficial: 20 velas, 20
+idénticas al REST. Importa para cualquier cosa que decida con volumen.
+
+**`get_user_db_connection(read_only=True)` ignora el parámetro** y abre todas
+las conexiones en escritura (`database.py:11-15`). Como DuckDB solo admite un
+escritor, **una página que consulta cada 2 s bloquea las escrituras**: medido,
+un POST esperando más de 60 s hasta agotar el tiempo, y con la página cerrada
+0,2 s. Y si se llenan los hilos del servidor esperando, **deja de responder a
+todo, incluido `/docs`**, aunque el proceso siga vivo — eso es lo que parecía
+que el backend «se caía». Aquí se resolvió con caché en memoria; **cualquier
+módulo nuevo que consulte a menudo se va a encontrar lo mismo.**
+
+### Documentación
+
+`docs/BOT_ALERTAS_MODOS_DE_FALLO.md` — mapa de caídas, decisiones de diseño y
+lo que hará falta antes de conectar la API de un bróker (reconciliación,
+idempotencia de órdenes, interruptor de emergencia). Se escribió pensando en esa
+conversación futura.
+
+---
+
+## 2026-09-02
+
+### 🚨 AVISO PARA ÁLVARO Y SU IA — Alertas es zona cerrada
+
+**El bot de avisos en vivo y la página de Alertas los llevan Jaume y Sailor en
+exclusiva por ahora. No se tocan, no se arrancan, no se configuran y no se
+descargan para probarlos.** Está también como regla de oro nº 6 en `AGENTS.md`,
+en `CLAUDE.md` y en `.agent/ALVARO_DEV_BRANCH.md`, con la lista de ficheros.
+
+No es celo de código. Son tres razones concretas y ninguna se arregla teniendo
+cuidado:
+
+1. **Opera con dinero real.** Los avisos salen a un grupo de Telegram y Jaume
+   pone las órdenes a mano con ellos. Un cambio que altere una condición no
+   rompe un test: le hace entrar en una operación que no era.
+2. **La cuenta de datos en vivo admite UNA sola conexión.** Arrancar el bot en
+   otra máquina **echa al de Jaume y lo deja sordo**, sin que ninguno de los dos
+   vea un error — el bot sigue diciendo «conectado». Pasó hoy mismo con una
+   prueba de nada.
+3. **Está en desarrollo activo** y sin cobertura suficiente. Lo que parece
+   código muerto o mejorable suele ser una decisión medida, y el porqué está en
+   los comentarios.
+
+**Traerlo por `staging` no es tocarlo**: esos ficheros llegarán en el merge y no
+hay que hacer nada con ellos. La única excepción de lectura/escritura es
+`backend/app/services/market_frame.py`, compartido a propósito con el backtester
+(fórmula verificada bit a bit sobre 150 ticker-días): leerlo, sin problema;
+**cambiarlo, avisando antes**, porque mueve las señales en vivo aunque los
+backtests sigan en verde. Si algo de Alertas bloquea una tarea legítima, se
+habla con Jaume — la decisión es suya, no del agente.
+
+### El radar vigila las condiciones de CADA estrategia, no un umbral inventado
+
+**Cómo estaba mal.** El radar filtraba por el precio ACTUAL contra el cierre de
+ayer, con un umbral puesto a ojo (30 %). Pero `PM High Gap %` —la condición de
+1B— es un **máximo acumulado que no baja**. Un ticker que hizo +80 % y retrocedió
+a +22 % sigue cumpliendo, y el radar lo descartaba. En gaps en corto retroceder
+tras el máximo es lo NORMAL: el fallo afectaba al caso típico, no a uno raro.
+
+**Cómo está ahora** (`bot_alerts_mercado.py`, `bot_alerts_universo.py`,
+`RadarPorEstrategia`): el bot se suscribe a `AM.*` (mercado entero), acumula por
+ticker máximo de premercado, volumen y precio, y evalúa **el filtro de universo
+de cada estrategia activa**. Admitido un ticker, no sale hasta cambiar de día.
+Cada candidato lleva de qué estrategia viene y por qué regla.
+
+**Lo que se puede y no se puede saber antes de las 09:30:** `PM High Gap %`,
+`Current Gap %`, `Premarket Volume`, `Volume`, `Price` y `Previous Close`, sí.
+**`Open Gap %` NO existe antes de la apertura**, así que 2.1B y 3B no son
+vigilables en premercado — y el bot lo dice al arrancar en vez de ignorarlas en
+silencio. Lo que no se sabe calcular se declara NO EVALUABLE y el ticker no
+entra: dar por cumplida una condición sin comprobarla haría avisar de lo que no
+toca.
+
+**Bug grave arreglado: el cierre de ayer.** El bot llamaba a
+`build_market_frame` con `daily_stats` VACÍO, y el código cae a un valor de
+emergencia: **usa el primer precio de hoy como cierre de ayer**. Sin error, sin
+log. Medido con SGLD: PM High Gap salía 50,4 % cuando el real era 525 %.
+Arreglado pidiendo el snapshot (`prevDay.c`). **Verificado que `prevDay.c` es el
+cierre RTH y no el after-hours**: SGLD cerró RTH en 5,08 y after-hours en 17,30;
+el campo da 5,08.
+
+### Prealertas: la vela se mira cada segundo del 50 al 59
+
+El backtest entra al `open` de la vela siguiente a la señal, o sea en el instante
+en que la vela de señal cierra. Avisar al cierre deja **margen cero** para poner
+la orden a mano. La prealerta evalúa la vela a medias y avisa antes.
+
+Estaba mirando **una sola vez**, en el segundo 50. Eso dejaba escapar las señales
+que se completan después, y ésas llegaban al cierre sin margen. Medido sobre el
+tick data del lago:
+
+| | captura | margen | falsas alarmas |
+|---|---|---|---|
+| solo el segundo 50 | 12/14 (86 %) | 10 s | 3 de 8 |
+| del 50 al 59 | **14/14 (100 %)** | 9,4 s de media, 6 s el peor | 3 de 9 |
+
+Captura todas, el margen apenas baja y **no añade falsas alarmas** — el riesgo
+era una condición que se cumple en el 52 y deja de cumplirse en el 58, y no pasó
+ni una vez en 2.959 velas de premercado. El máximo sigue siendo 10 s; el peor
+caso teórico es 1 s, pero medido ninguna bajó de 6.
+
+**Detalle de implementación que parece menor y no lo es:** el minuto se marca
+como avisado desde **el bot, al publicar**, no dentro de `aplicar()`. Marcarlo
+dentro haría volver a mirar una sola vez, y **no lo notaría nadie**: el bot
+seguiría avisando, solo que menos. Hay tests que lo fijan
+(`backend/tests/test_bot_alerts_prealertas.py`), incluido uno para que un mismo
+aviso no se repita ocho veces en el minuto.
+
+**El volumen de la vela parcial sale de `av`, no de sumar los `v`.** Sumar los
+agregados por segundo deja fuera operaciones (hasta un 4,6 % menos) y 1B decide
+con dollar volume acumulado. `av` es el volumen acumulado del día, ya oficial:
+restándole el que había al empezar el minuto sale el del minuto exacto. Si no
+viene `av` el volumen se declara 0 en vez de aproximarlo — un volumen corto haría
+cumplir la condición más tarde de lo que toca, y eso es peor que no prealertar.
+
+### Dos cosas que valen para cualquiera que trabaje en este repo
+
+**Editar código del backend con `--reload` puesto tumba lo que dependa de él.**
+Cada fichero guardado reinicia uvicorn; durante el reinicio devuelve 500 y luego
+deja de aceptar conexiones unos segundos. Los «cuelgues del backend» que se
+llevaban investigando días eran esto, provocado desde el propio editor.
+Confirmado por descarte: cuatro horas sin un solo error en cuanto se dejó de
+tocar código, con el bot procesando 528 velas.
+
+**Un comentario no es una garantía.** `hidratar()` decía «no genera avisos: lo
+que ya pasó, pasó» y no estaba implementado: el bot avisó a las 20:28 de
+operaciones de las 14:27 y salieron a Telegram. Está arreglado (se llama al
+motor con el frame hidratado y se descartan los eventos, para marcarlos como
+vistos), pero la lección es general.
+
+## 2026-09-02 — Merge de `staging` en `alvaro-rama-desarrollo` SIN el bot de alertas
+
+Merge de `origin/staging` (`6db5a36`, staging reescrita sobre la historia de
+sailor el 2026-09-01). Trae: bloque «Modelos avanzados» (XGBoost+HMM, modo
+filtro), el fix de las DOS fugas de la auditoría (`09db5f7`), modo
+«estrategia» con guardas, `market_frame.py` (fórmula del frame extraída de
+`backtest_service`, compartida con el bot), y las entradas de memoria de
+Sailor/Jaume.
+
+**Decisión de Álvaro: el bot de alertas queda EXCLUIDO de esta rama** (zona
+cerrada de Jaume/Sailor, ver `AGENTS.md` § zona cerrada). Excluidos del merge y
+a excluir también en futuros merges de staging: `backend/app/services/bot_alerts_*.py`,
+`backend/app/routers/bot_alerts.py`, `backend/tests/test_bot_alerts_*.py`,
+`frontend/src/app/bot-alertas/`, `frontend/src/components/bot-alertas/`,
+`frontend/src/lib/api_bot_alerts.ts`, `docs/BOT_ALERTAS_MODOS_DE_FALLO.md`.
+También se revirtió el registro del router en `main.py` y el link del Sidebar.
+Se CONSERVA: `market_frame.py` (lo importa `backtest_service`), el servicio del
+screener y **la página del Screener** (staging la retiró como parte del proyecto
+del bot; sin el bot, Álvaro se queda con el Screener).
+
+Conflictos resueltos: `backtest_service.py` (import de `market_frame`, lado
+staging) y esta memoria (ambos lados conservados). Lo nuestro que staging no
+adoptó se conserva solo (warmup de indicadores, splits en `init_db.py`
+con `LAKE_PREV_CLOSE_YA_AJUSTADO`, «Últimas pruebas» en Portfolio,
+`subphase_profiler.py`): staging no lo tocó desde la base del merge.

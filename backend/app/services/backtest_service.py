@@ -21,6 +21,7 @@ from app.services.strategy_engine import translate_strategy, _parse_risk_managem
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
 from app.services.sim_dispatch import simulate
+from app.services.market_frame import build_market_arrays
 # Lo usa `find_elapsed_time_condition`, que vino aqui al borrar el motor viejo.
 from app.schemas.strategy import IndicatorType
 
@@ -168,7 +169,22 @@ def run_backtest(
     monthly_expenses: float = 0.0,
     _signal_cache: dict | None = None,
     progress_callback=None,
+    # ── Modelos avanzados (2026-08-31) ────────────────────────────────────
+    # Los dos son OPCIONALES y, en None, esta funcion se comporta EXACTAMENTE
+    # igual que siempre: ni una rama nueva se ejecuta.
+    #   · entry_model      — veta entradas que no superan el umbral del modelo.
+    #                        Es una mascara sobre `entries`, igual que el swing.
+    #   · feature_collector — recoge material de entrenamiento durante la
+    #                        pasada, para no tener que recorrer los datos dos
+    #                        veces.
+    entry_model=None,
+    feature_collector=None,
 ) -> dict:
+    # En modo «estrategia» las entradas las pone el modelo, asi que un dia
+    # sin señales de las reglas NO es un dia que saltarse.
+    _modelo_genera = bool(entry_model is not None and getattr(entry_model, 'generates', False))
+    _recoge_standalone = bool(feature_collector is not None and getattr(feature_collector, 'standalone', False))
+    _sin_reglas = _modelo_genera or _recoge_standalone
     if strategy_def:
         rm = strategy_def.get("risk_management", {})
         if rm.get("size_by_sl") is not None:
@@ -184,6 +200,10 @@ def run_backtest(
         _bsig.slab_stream_enabled()
         and _signal_cache is None
         and qualifying_df is not None and not qualifying_df.empty
+        # Los hooks de modelos avanzados viven en el bucle secuencial. Si el
+        # slab corriera con modelo, lo IGNORARIA en silencio: el resultado
+        # saldria etiquetado como "filtrado" sin haber filtrado nada.
+        and entry_model is None and feature_collector is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -442,7 +462,8 @@ def run_backtest(
     # intacto y, cuando se usa esta rama, opera sobre un group_source ya agotado
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
-    if (not _slab_mode) and _bsig.should_parallelize(_signal_cache, _n_workers):
+    if (not _slab_mode) and entry_model is None and feature_collector is None \
+            and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
             "strategy_def": strategy_def,
@@ -693,64 +714,12 @@ def run_backtest(
         # Base cash for this sim run is initial + accumulated global PnL
         compounding_cash = init_cash + global_realized_pnl
         
-        # Compute market structure levels on the full day_df
-        high_series = day_df["high"]
-        low_series = day_df["low"]
-        hod_vals = high_series.cummax().values.astype(np.float64)
-        lod_vals = low_series.cummin().values.astype(np.float64)
-        
-        # Premarket High/Low
-        ts_series = pd.to_datetime(day_df["timestamp"])
-        pm_mask = (ts_series.dt.hour * 60 + ts_series.dt.minute >= 4 * 60) & (ts_series.dt.hour * 60 + ts_series.dt.minute < 9 * 60 + 30)
-        # PM High/Low ACUMULADOS hasta cada barra (causal). El valor final del día
-        # broadcast a todas las barras introducía lookahead en entradas premarket
-        # (condiciones PMH/PML y stops de estructura anclados a un máximo futuro).
-        # NaN antes de la primera barra PM; tras las 09:30 vale el PM completo.
-        # MISMA fórmula numpy que en backtest_signals._compute_signals_for_pair
-        # (paridad bit a bit secuencial↔paralelo).
-        pm_mask_np = pm_mask.values if hasattr(pm_mask, "values") else np.asarray(pm_mask)
-        _h64 = day_df["high"].values.astype(np.float64)
-        _l64 = day_df["low"].values.astype(np.float64)
-        if pm_mask_np.any():
-            pm_highs_vals = np.fmax.accumulate(np.where(pm_mask_np, _h64, np.nan))
-            pm_lows_vals = np.fmin.accumulate(np.where(pm_mask_np, _l64, np.nan))
-        else:
-            pm_highs_vals = np.full(len(day_df), np.nan, dtype=np.float64)
-            pm_lows_vals = np.full(len(day_df), np.nan, dtype=np.float64)
-        
-        # Previous Max / Previous Min (running high/low shifted by 1 bar)
-        prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)
-        prev_lows_vals = pd.Series(lod_vals).shift(1).fillna(low_series.iloc[0] if len(low_series) > 0 else 0.0).values.astype(np.float64)
-
-        # Yesterday's Close from daily_stats (from qualifying_df)
-        prev_close_val = daily_stats.get("prev_close")
-        if prev_close_val is None or pd.isna(prev_close_val):
-            prev_close_val = day_df["close"].iloc[0] if len(day_df) > 0 else np.nan
-        prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
-
-        # Yesterday's Open from daily_stats (from qualifying_df)
-        yest_open_val = daily_stats.get("yesterday_open", daily_stats.get("lag_rth_open_1"))
-        if yest_open_val is None or pd.isna(yest_open_val):
-            yest_open_val = day_df["open"].iloc[0] if len(day_df) > 0 else np.nan
-        yest_opens_vals = np.full(len(day_df), yest_open_val, dtype=np.float64)
-
-        arrays = {
-            "ticker": np.full(len(day_df), ticker, dtype=object),
-            "open": day_df["open"].values.astype(np.float64),
-            "high": day_df["high"].values.astype(np.float64),
-            "low": day_df["low"].values.astype(np.float64),
-            "close": day_df["close"].values.astype(np.float64),
-            "volume": day_df["volume"].values,
-            "timestamp": day_df["timestamp"].values,
-            "hod": hod_vals,
-            "lod": lod_vals,
-            "pm_high": pm_highs_vals,
-            "pm_low": pm_lows_vals,
-            "prev_high": prev_highs_vals,
-            "prev_low": prev_lows_vals,
-            "prev_close": prev_closes_vals,
-            "yesterday_open": yest_opens_vals,
-        }
+        # Estructura de mercado (HOD/LOD, PM High/Low acumulados, Previous
+        # Max/Min) + OHLCV. La logica vive en market_frame porque el bot de
+        # senales necesita EL MISMO frame: tenerla copiada alli, fuera del repo,
+        # significaba que tocar este bloque desincronizaba el bot en silencio.
+        # Verificado identico bit a bit sobre 150 ticker-dias antes de extraer.
+        arrays = build_market_arrays(day_df, ticker, daily_stats)
         del day_df
 
         mini_df = pd.DataFrame(arrays)
@@ -769,7 +738,7 @@ def run_backtest(
             sig_pyramid_levels = cached.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
 
-            if not np.any(entries_arr):
+            if not np.any(entries_arr) and not _sin_reglas:
                 del mini_df
                 continue
 
@@ -783,7 +752,7 @@ def run_backtest(
             except Exception:
                 del mini_df
                 continue
-            if not signals["entries"].any():
+            if not signals["entries"].any() and not _sin_reglas:
                 del mini_df, signals
                 continue
 
@@ -824,6 +793,14 @@ def run_backtest(
                 entries_arr = entries_arr.copy()
                 entries_arr[is_subsequent_np] = False
 
+        # Para los modelos avanzados (hooks mas abajo): el frame COMPLETO del
+        # dia y la mascara de sesion. Los indicadores necesitan el dia entero
+        # (premarket incluido) para calcular con contexto, pero los indices de
+        # los trades del simulador viven en el frame RECORTADO — el modelo
+        # necesita las dos coordenadas para no descuadrarse.
+        _df_full = mini_df
+        _sess_mask_np = None
+
         # --- Trim DataFrame and signals to the selected market session window ---
         # This is done AFTER signal translation so indicators have full-day context.
         # This ensures that the simulator's "last candle" (n-1) IS the session
@@ -855,6 +832,7 @@ def run_backtest(
             
             # Apply mask to signals
             session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
+            _sess_mask_np = session_mask_np
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
             if sig_pyramid_levels:
@@ -893,6 +871,57 @@ def run_backtest(
                                 exits_arr = np.zeros_like(exits_arr)
                 except (ValueError, TypeError):
                     pass
+
+        # ── Modelos avanzados ─────────────────────────────────────────────
+        # AQUI y no antes, y la posicion es parte de la correccion (31-ago,
+        # tarde): tiene que ser DESPUES del recorte de sesion y del
+        # candle_delay, porque a partir de este punto `entries_arr` esta en el
+        # MISMO espacio de indices que los trades que emitira el simulador. La
+        # primera version corria antes del recorte: con una estrategia RTH, la
+        # señal quedaba en el indice del dia completo (premarket incluido) y el
+        # trade en el del frame recortado — las etiquetas de entrenamiento se
+        # emparejaban con la vela equivocada, sin error y sin aviso.
+        #
+        # Las FEATURES se calculan sobre `_df_full` (el dia entero, para que
+        # PM High, % Fade, etc. tengan contexto) y `_sess_mask_np` traduce
+        # entre los dos espacios. Tambien va despues del swing: el modelo debe
+        # juzgar solo señales que podrian llegar a operarse.
+        if feature_collector is not None:
+            try:
+                if _recoge_standalone:
+                    # Sin reglas: se muestrea el dia y se etiqueta con TU stop y
+                    # TU take profit, los mismos que acaba de parsear el motor.
+                    # Las barreras se miden sobre el frame RECORTADO, que es el
+                    # que simula (la salida EOD es el fin de la sesion elegida).
+                    _horiz = int(sig_tp_time_limit) if isinstance(sig_tp_time_limit, (int, float)) and sig_tp_time_limit else 0
+                    feature_collector.collect_standalone(
+                        ticker, date, _df_full, daily_stats, sig_direction,
+                        sig_sl_stop, sig_tp_stop, _horiz,
+                        session_mask=_sess_mask_np, df_trimmed=mini_df)
+                elif np.any(entries_arr):
+                    feature_collector.collect(ticker, date, entries_arr, _df_full,
+                                              daily_stats, session_mask=_sess_mask_np)
+            except Exception:
+                logger.exception("[MODELO] fallo recogiendo features en %s %s", ticker, date)
+
+        if _modelo_genera:
+            try:
+                entries_arr = entry_model.generate(_df_full, daily_stats,
+                                                   session_mask=_sess_mask_np)
+            except Exception:
+                logger.exception("[MODELO] fallo generando entradas en %s %s", ticker, date)
+                entries_arr = np.zeros(len(mini_df), dtype=bool)
+        elif entry_model is not None and np.any(entries_arr):
+            try:
+                # El modelo solo QUITA entradas, nunca añade: el peor caso es
+                # operar menos, jamas operar algo que las reglas no encontraron.
+                entries_arr = entry_model.mask(entries_arr, _df_full, daily_stats,
+                                               session_mask=_sess_mask_np)
+            except Exception:
+                # Un fallo del modelo no puede inventar operaciones: este dia se
+                # queda sin entradas y el backtest sigue.
+                logger.exception("[MODELO] fallo aplicando el veto en %s %s", ticker, date)
+                entries_arr = np.zeros_like(entries_arr, dtype=bool)
 
         # If we have no entries, skip simulation
         if not np.any(entries_arr):

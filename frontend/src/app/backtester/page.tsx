@@ -242,6 +242,7 @@ export default function Home() {
         custom_start_time: draftStrategy.custom_start_time || activeCustomStartTime,
         custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
         ...((draftStrategy as any).pyramiding ? { pyramiding: (draftStrategy as any).pyramiding } : {}),
+        ...((draftStrategy as any).advanced_model ? { advanced_model: (draftStrategy as any).advanced_model } : {}),
       });
 
       if (isExisting) {
@@ -379,6 +380,7 @@ export default function Home() {
           custom_start_time: def.custom_start_time,
           custom_end_time: def.custom_end_time,
           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
         } as any;
       }
       return prev;
@@ -483,6 +485,7 @@ export default function Home() {
         // La clave solo viaja si el draft la trae: sin piramidar, la definicion
         // queda byte-identica a la de siempre (regla nº1).
         ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
+        ...((draft as any).advanced_model ? { advanced_model: (draft as any).advanced_model } : {}),
       }
     });
 
@@ -531,6 +534,7 @@ export default function Home() {
           // backend: strategy_engine hace strategy_def.get("pyramiding") y se
           // quedaba vacio, apagando pyramid_mode en SILENCIO (sin error).
           ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
+        ...((draft as any).advanced_model ? { advanced_model: (draft as any).advanced_model } : {}),
         },
         init_cash: p?.init_cash ?? 10000,
         risk_r: p?.risk_r ?? 100,
@@ -682,6 +686,7 @@ export default function Home() {
             custom_start_time: def.custom_start_time || params.custom_start_time,
             custom_end_time: def.custom_end_time || params.custom_end_time,
             ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
           } as any;
           await handleRunWithDraft(draft);
           return;
@@ -724,6 +729,9 @@ export default function Home() {
         custom_end_time: targetDraft.definition?.custom_end_time || targetDraft.custom_end_time || params.custom_end_time,
         ...((targetDraft.definition?.pyramiding || targetDraft.pyramiding)
           ? { pyramiding: targetDraft.definition?.pyramiding || targetDraft.pyramiding }
+          : {}),
+        ...((targetDraft.definition?.advanced_model || (targetDraft as any).advanced_model)
+          ? { advanced_model: targetDraft.definition?.advanced_model || (targetDraft as any).advanced_model }
           : {}),
       } as any;
       await handleRunWithDraft(draft);
@@ -825,6 +833,7 @@ export default function Home() {
             custom_start_time: def.custom_start_time,
             custom_end_time: def.custom_end_time,
             ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
           } as any);
         } else {
           setDraftStrategy(null);
@@ -1374,6 +1383,7 @@ export default function Home() {
                       custom_start_time: def.custom_start_time,
                       custom_end_time: def.custom_end_time,
                       ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
                     } as any);
                     
                     setActiveSessions(def.market_sessions || ["rth"]);
@@ -1707,6 +1717,7 @@ export default function Home() {
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
                           ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
+                          ...((strategyToSave as any).advanced_model ? { advanced_model: (strategyToSave as any).advanced_model } : {}),
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -1770,6 +1781,7 @@ export default function Home() {
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
                           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
                         } as any;
                         setBuilderDraft(savedDraft);
 
@@ -1892,6 +1904,7 @@ export default function Home() {
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
                           ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
+                          ...((strategyToSave as any).advanced_model ? { advanced_model: (strategyToSave as any).advanced_model } : {}),
                         } as any);
 
                         // Persist backtest results linked to this strategy
@@ -1954,6 +1967,7 @@ export default function Home() {
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
                           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
                         } as any;
                         setBuilderDraft(updatedDraft);
 
