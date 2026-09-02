@@ -71,6 +71,10 @@ class AlarmEngine:
         self._stop = False
         self._fired: Dict[Tuple[str, str], Tuple[int, float]] = {}  # (alarm,ticker) -> (n, last_ts)
         self._started = False
+        # Minuto más alto visto EN LOS DATOS. Es el reloj del feed, y no tiene por
+        # qué coincidir con el de pared: con MASSIVE_WS_URL apuntando al feed
+        # retrasado (wss://delayed.massive.com/stocks) va 15 minutos por detrás.
+        self._feed_minute: Optional[int] = None
 
     # ── ciclo de vida ────────────────────────────────────────────────────────
     async def start(self) -> None:
@@ -134,6 +138,9 @@ class AlarmEngine:
         except (TypeError, ValueError):
             return
         session = et_date_key(ts)
+        minute = et_minute_of_day(ts)
+        if self._feed_minute is None or minute > self._feed_minute:
+            self._feed_minute = minute
         series = self._bars.get(sym, session)
         closed = series.ingest(ts, _f(ev.get("o")), _f(ev.get("h")),
                                _f(ev.get("l")), _f(ev.get("c")), _f(ev.get("v")))
@@ -313,11 +320,20 @@ class AlarmEngine:
     async def _stale_sweep_loop(self) -> None:
         """Un ticker que deja de operar no manda más agregados y su última barra
         se quedaría abierta para siempre. Cada pocos segundos se cierran las que
-        el reloj ya dejó atrás."""
+        el feed ya dejó atrás.
+
+        Se usa el reloj del FEED (el minuto más alto visto en los datos), no el de
+        pared. Con el feed retrasado de Massive los datos llegan 15 minutos tarde:
+        contra el reloj de pared la barra en curso siempre parecería vencida y se
+        cerraría tras su primer tick, dejando barras de un segundo y VWAP, máximos
+        y dollar volume mal. Con el reloj del feed funciona igual en tiempo real y
+        en retrasado."""
         while not self._stop:
             try:
                 await asyncio.sleep(STALE_SWEEP_SECONDS)
-                now_min = et_minute_of_day(int(time.time() * 1000))
+                now_min = self._feed_minute
+                if now_min is None:
+                    continue
                 for tk in list(self._watched):
                     series = self._bars.peek(tk)
                     if series is None:

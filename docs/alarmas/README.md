@@ -248,7 +248,27 @@ servidor. Rotarlo es cambiar el valor y reiniciar.
 <a id="5"></a>
 ## 5 · Cómo validarlo
 
-### Probar sin WebSocket: reproducir un día real
+### Opción A: el feed retrasado en QA
+
+`MASSIVE_WS_URL=wss://delayed.massive.com/stocks` apunta el screener al feed con
+15 minutos de retraso en vez de al de tiempo real. La variable ya existe; no hace
+falta tocar código.
+
+**Sin confirmar:** que ese feed no consuma el mismo cupo de conexión que el de
+tiempo real. Si lo consume, QA seguiría expulsando a producción y no sirve.
+Compruébalo mirando los logs de producción mientras QA está conectado: si aparece
+`[LIVE] WS disconnected … reconnecting` en bucle, comparten cupo — quítalo.
+
+El motor sí está preparado para datos retrasados: el barrido de barras usa el
+reloj del **feed** (el minuto más alto visto en los datos), no el de pared. Con el
+reloj de pared, cada barra se habría cerrado tras su primer tick y VWAP, máximos y
+dollar volume habrían salido mal.
+
+Ojo a una inconsistencia inherente: los campos instantáneos vienen del snapshot
+REST, que **no** va retrasado. Con el feed retrasado convives con dos relojes.
+Para validar mecánica da igual; para juzgar señales, no.
+
+### Opción B: reproducir un día real, sin WebSocket ninguno
 
 Massive admite **una conexión WS por API key**. Si QA y producción levantan las
 dos el screener con la misma clave, se expulsan en bucle (cierre 1008) y ninguno
